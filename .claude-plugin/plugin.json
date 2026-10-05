@@ -1,0 +1,226 @@
+{
+  "name": "chassis-delegation",
+  "version": "0.4.0",
+  "description": "brain-seat delegation for Claude Code: tiering, verification, background debrief and eval, dashboard",
+  "author": {
+    "name": "Ben Nelsen"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "autoEscalate": {
+      "type": "boolean",
+      "title": "Auto-escalate",
+      "description": "On a failing verdict, resume the worker (first failure) or respawn it one tier up (second) without asking",
+      "default": false
+    },
+    "applyAmends": {
+      "type": "boolean",
+      "title": "Apply hand-back amends",
+      "description": "Append the hand-back's scope+= / forbid+= amend blocks to the brief before verifying (the chassis amend protocol); a block with scope-= or forbid-= always waits for approval. Off lists every block on the verdict row instead",
+      "default": true
+    },
+    "defaultBudget": {
+      "type": "number",
+      "title": "Default budget",
+      "description": "Attempts per task when the brief names no budget=<n>-attempts: 3 covers a spawn, a resume, and a respawn one tier up",
+      "default": 3
+    },
+    "gateMap": {
+      "type": "string",
+      "title": "Gate map (JSON)",
+      "description": "Brief gate= id to the command the verifier re-runs in the worker's worktree, by argv (no shell); {files} is files.txt; chain with \" && \". No sf, git, gh, network, rm or publish. Ids the map lacks are named \"gate not re-run\". Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
+    "probeModels": {
+      "type": "boolean",
+      "title": "Probe candidate models",
+      "description": "Once a day, ask each candidate model id one token and toast the first time one answers",
+      "default": false
+    },
+    "candidateIds": {
+      "type": "string",
+      "title": "Candidate model ids",
+      "description": "Comma-separated model ids to probe when Probe candidate models is on",
+      "default": ""
+    },
+    "briefDir": {
+      "type": "string",
+      "title": "Brief folder",
+      "description": "Where /dispatch writes <TASK-ID>.brief.md; empty = <repo root>/.delegation/briefs/ (the session scratchpad briefs/ only when the root is not writable)",
+      "default": ""
+    },
+    "briefTemplate": {
+      "type": "string",
+      "title": "Brief template",
+      "description": "A template file for the brief body; empty = the repo file's briefTemplate, else the mod's templates/brief.md",
+      "default": ""
+    },
+    "agentTypes": {
+      "type": "string",
+      "title": "Agent type per domain (JSON)",
+      "description": "Card domain to the subagent type /dispatch spawns; built in: frontend and backend to their own, every other domain to general-purpose. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
+    "tierMap": {
+      "type": "string",
+      "title": "Tier map (JSON)",
+      "description": "Tier to model alias, e.g. {\"standard\":\"opus\"}; built in: economy haiku, standard sonnet, frontier opus (fable is never spawned, it becomes opus). Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
+    "domains": {
+      "type": "string",
+      "title": "Domains",
+      "description": "Comma-separated card domains /dispatch accepts (each becomes agent/<domain>/<id>); built in: frontend, backend, ops, dispatcher, cross, shared. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
+    "briefExtra": {
+      "type": "string",
+      "title": "Brief extra lines",
+      "description": "Lines the brief adds under its rules, for what only this repo needs (a gate script, a test command). Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
+    "worktreeRoot": {
+      "type": "string",
+      "title": "Worktree folder",
+      "description": "Where /dispatch adds worktrees: <folder>/<repo name>-<id>; empty = beside the repo (<root>-<id>). Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
+    "verdictVerbosity": {
+      "type": "string",
+      "title": "Verdict verbosity",
+      "description": "line: one line per verdict (the claim lines go to the debug log); full: the verdict line plus the verifier's claim lines; silent: no row, a toast only",
+      "options": [
+        "line",
+        "full",
+        "silent"
+      ],
+      "default": "line"
+    },
+    "maxWorkers": {
+      "type": "number",
+      "title": "Max workers",
+      "description": "Briefed workers that run at once (built in: 2); a briefed spawn past it is queued and starts when a slot frees (ad hoc spawns never wait). Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": 0
+    },
+    "autoDebrief": {
+      "type": "boolean",
+      "title": "Background debrief",
+      "description": "At a clean stop (idle, no worker, nothing pending or queued, enough friction, past the cooldown) a background agent writes a debrief: ~/.claude/commands/debrief.md when it exists, else the built-in templates/debrief.md into <root>/.delegation/debriefs/",
+      "default": true
+    },
+    "debriefIdleMinutes": {
+      "type": "number",
+      "title": "Debrief idle minutes",
+      "description": "Minutes without a turn before the clean-stop check runs",
+      "default": 20
+    },
+    "debriefMinNewLines": {
+      "type": "number",
+      "title": "Debrief new breadcrumb lines",
+      "description": "With a harness breadcrumb file: the lines past its .done watermark a debrief needs",
+      "default": 25
+    },
+    "debriefMinEvents": {
+      "type": "number",
+      "title": "Debrief friction events",
+      "description": "With no breadcrumb file: corrections typed (a prompt starting no/stop/don't/actually) + tool calls denied + refuted verdicts since the last debrief that a debrief needs",
+      "default": 5
+    },
+    "debriefCooldownHours": {
+      "type": "number",
+      "title": "Debrief cooldown hours",
+      "description": "Hours between two background debriefs of one session",
+      "default": 6
+    },
+    "debriefAgent": {
+      "type": "string",
+      "title": "Debrief agent type",
+      "description": "The subagent type the background debrief runs as",
+      "default": "general-purpose"
+    },
+    "autoEval": {
+      "type": "boolean",
+      "title": "Background eval",
+      "description": "When origin/main has moved and the session is idle, an eval-runner subagent runs evalCommand once per sha. Runs only when an evalCommand is set (here or in the repo file); the repo file can turn it on too",
+      "default": false
+    },
+    "evalIdleMinutes": {
+      "type": "number",
+      "title": "Eval idle minutes",
+      "description": "Minutes without a turn before the eval trigger looks at origin/main",
+      "default": 10
+    },
+    "evalCommand": {
+      "type": "string",
+      "title": "Eval command (T1)",
+      "description": "What the eval runner subagent runs (the mod itself never runs it); none built in. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
+    "evalLive": {
+      "type": "boolean",
+      "title": "Live eval (T2)",
+      "description": "After a clean T1, run the live eval once a session within the cost ceiling",
+      "default": false
+    },
+    "evalLiveCommand": {
+      "type": "string",
+      "title": "Eval command (T2)",
+      "description": "What the live eval runner runs; none built in. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
+    "evalLiveMaxUsd": {
+      "type": "number",
+      "title": "Live eval ceiling (USD)",
+      "description": "What one T2 run may spend; T2 runs only while the session cost plus this stays within the session cap",
+      "default": 1
+    },
+    "sessionUsdCap": {
+      "type": "number",
+      "title": "Session cost cap (USD)",
+      "description": "T2 never starts when the session cost plus the T2 ceiling would pass this",
+      "default": 50
+    },
+    "evalAgent": {
+      "type": "string",
+      "title": "Eval agent type",
+      "description": "The subagent type the eval runner runs as",
+      "default": "general-purpose"
+    },
+    "ledgerFile": {
+      "type": "boolean",
+      "title": "Ledger file",
+      "description": "Append one JSON line per judged attempt to <repo root>/.delegation/ledger.jsonl",
+      "default": true
+    },
+    "gitGuard": {
+      "type": "boolean",
+      "title": "Git guard",
+      "description": "Deny a Bash git commit, merge, cherry-pick, rebase or push on a guarded branch (and a push naming one from any branch): branch first",
+      "default": true
+    },
+    "guardBranches": {
+      "type": "string",
+      "title": "Guarded branches",
+      "description": "Comma-separated branches the git guard holds",
+      "default": "main,master"
+    },
+    "baseRef": {
+      "type": "string",
+      "title": "Base ref",
+      "description": "Where a brief's delta starts when it names no base=: a ref such as main or HEAD. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in chain origin/main, main, origin/master, master; a value here wins over both",
+      "default": ""
+    },
+    "ignore": {
+      "type": "string",
+      "title": "Ignore globs (repo=here)",
+      "description": "Comma-separated globs subtracted from a repo=here dirty-tree delta before the files= and scope checks, each disclosed on the ignored: line. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in .delegation/**; a value here wins over both",
+      "default": ""
+    },
+    "cardDir": {
+      "type": "string",
+      "title": "Card folder",
+      "description": "Where the task cards live, relative to the repo root (default agents/tasks). In a repo that is itself a plugin keep it out of agents/, which the engine reads as subagent definitions. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    }
+  }
+}

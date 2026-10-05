@@ -1,0 +1,3 @@
+{"prompt": "SEED (replace from the ledger): Rename every fixture file under app/test/fixtures from *_old.json to *.json and update the three imports that name them. Red test: npm test -- fixtures.test.js fails on main.", "tier": "economy"}
+{"prompt": "SEED (replace from the ledger): Add a Mark done button to the task card that calls TaskService.markDone and hides the card; write the Jest test first.", "tier": "standard"}
+{"prompt": "SEED (replace from the ledger): The nightly export job intermittently drops rows on large accounts; work out whether the request timeout, the job chain or the retry cascade is at fault and propose the contract change across the API and the web client.", "tier": "frontier"}

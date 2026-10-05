@@ -1,0 +1,1114 @@
+import { test, expect, describe } from 'claude-code/testing'
+import { world, spawnInput, turnInput, agentResult, sessionStart, commandInput, ROOT, SCRATCH, type RunAnswer } from './harness'
+import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER } from './fixtures/sample-card'
+
+const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task}`) ?? []) as Record<string, unknown>[]
+const argvs = (w: { runs: { argv: string[] }[] }) => w.runs.map(r => r.argv)
+// What reached the brain or Ben for a background verdict: the appended row, or
+// (the kit cannot answer a plugin's own session.append) the transcript log line.
+const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
+const resultText = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+const fullSha = (sha: string) => sha.padEnd(40, '0')
+const MB = 'b'.repeat(40)
+/** The first git read of a native verify (5A): the report's sha resolved. */
+const isVerifyStart = (argv: readonly string[]) => argv[0] === 'git' && (argv[argv.length - 1] ?? '').endsWith('^{commit}')
+/**
+ * A worker repo answered from memory for the native verifier (5A): the branch and
+ * the sha exist, HEAD is the sha last asked about, the tree is clean, the delta is
+ * a/x.ts, and the gate (npx …) is red unless `gate` says otherwise.
+ */
+const nativeRun = (o: { gate?: number; delta?: string } = {}) => {
+  let head = ''
+  return (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npx') return { exitCode: o.gate ?? 1, stdout: 'a/x.ts: not formatted\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) {
+      head = fullSha(last.slice(0, -'^{commit}'.length))
+      return { exitCode: 0, stdout: `${head}\n` }
+    }
+    if (sub[0] === 'rev-parse' && sub[1] === '--verify') return { exitCode: 0, stdout: `${last === 'origin/main' ? MB : head}\n` }
+    if (sub[0] === 'rev-parse' && last === 'HEAD' && sub[1] !== '--abbrev-ref') return { exitCode: 0, stdout: `${head}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: o.delta ?? 'a/x.ts\n' }
+    return undefined
+  }
+}
+
+describe('agent.spawn: tier selection, ledger, store', () => {
+  test('a spawn whose prompt carries a header resolves model sonnet', async ($, on) => {
+    const w = world(on)
+    const r = await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-1 subtask=main purpose=build tier=standard model=opus]]\nDo it.' }))
+    expect(w.spawns[0]?.model).toBe('sonnet')
+    expect(r.model).toBe('claude-sonnet-5-5')
+    expect(w.notices).toContain('tier=standard → sonnet (brief)')
+    expect(w.runs).toEqual([]) // 5A: no ledger script, no which-model; the store is the ledger
+    expect(records(w, 'T-1')[0]).toMatchObject({ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', resolvedModel: 'claude-sonnet-5-5', verdict: 'pending', source: 'brief' })
+    expect(w.store.get('delegation.alias.sonnet')).toBe('claude-sonnet-5-5')
+  })
+
+  test('a header in a named .brief.md file counts; the built-in tier map maps it', async ($, on) => {
+    const brief = `${SCRATCH}/briefs/T-9.brief.md`
+    const w = world(on, { files: { [brief]: '[[brief v=1 task=T-9 subtask=main purpose=review tier=economy]]\nbody' } })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${brief}. Read it whole.` }))
+    expect(w.spawns[0]?.model).toBe('haiku')
+    expect(records(w, 'T-9')[0]).toMatchObject({ tier: 'economy', alias: 'haiku', purpose: 'review', source: 'brief' })
+    expect(w.runs).toEqual([])
+  })
+
+  test('5B: the repo file tierMap moves a tier to another alias', async ($, on) => {
+    const w = world(on, { files: { [`${ROOT}/.chassis-delegation.json`]: '{"tierMap":{"standard":"opus"}}' } })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-8 subtask=main tier=standard]]\nDo it.' }))
+    expect(w.spawns[0]?.model).toBe('opus')
+    expect(w.notices).toContain('tier=standard → opus (brief)')
+  })
+
+  test('no header and no caller model: the classifier picks, logged as classified', async ($, on) => {
+    const w = world(on, { classify: 'frontier' })
+    await $.agent.spawn(spawnInput({ prompt: 'Work out why the race happens.' }))
+    expect(w.spawns[0]?.model).toBe('opus')
+    expect(w.notices).toContain('tier=frontier → opus (classified)')
+    expect(((w.store.get('delegation.adhoc') ?? []) as Record<string, unknown>[])[0]).toMatchObject({ task: 'adhoc-ABCDEFGH', tier: 'frontier', alias: 'opus', source: 'classified' })
+  })
+
+  test('the caller model beats the classifier; fable is rewritten to opus; a fork is untouched', async ($, on) => {
+    const w = world(on, { classify: 'economy' })
+    await $.agent.spawn(spawnInput({ prompt: 'x', model: 'claude-sonnet-5-5' }))
+    expect(w.spawns[0]?.model).toBe('sonnet')
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-3 tier=premium]]', tool_use_id: 'toolu_02' }))
+    expect(w.spawns[1]?.model).toBe('opus')
+    await $.agent.spawn(spawnInput({ prompt: 'fork me', fork: true, model: undefined, tool_use_id: 'toolu_03' }))
+    expect(w.spawns[2]?.model).toBeUndefined()
+    expect(w.runs).toEqual([])
+  })
+
+  test('a cardless attempt recorded under the task (GH-1 item 2) does not count against a later dispatch budget or escalation', async ($, on) => {
+    const adhocRec = (n: number) => ({ task: 'T-2', subtask: 'main', attempt: n, kind: 'spawn', lineage: n, tier: 'standard', alias: 'sonnet', verdict: 'refuted', at: n, adhoc: true })
+    const w = world(on, { store: { 'delegation.tasks.T-2': [adhocRec(1), adhocRec(2)] } })
+    const r = await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-2 subtask=main tier=standard budget=2-attempts]]' }))
+    expect(r.deny).toBeUndefined()
+    expect(w.spawns).toHaveLength(1)
+    // no escalation from the refuted cardless attempts: the header's tier stands
+    expect(w.notices.at(-1)).toBe('tier=standard → sonnet (brief)')
+  })
+
+  test('a spawn past budget is denied', async ($, on) => {
+    const rec = (n: number) => ({ task: 'T-2', subtask: 'main', attempt: n, kind: n === 1 ? 'spawn' : 'resume', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'refuted', at: n })
+    const w = world(on, { store: { 'delegation.tasks.T-2': [rec(1), rec(2)] } })
+    const r = await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-2 subtask=main tier=standard budget=2-attempts]]' }))
+    expect(r.deny).toBe("budget exhausted for T-2 (2 attempts); raise budget= in the task's brief to continue (the ladder resumes from attempt 2, the brief is re-read)")
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('GH-3: raising budget= in the brief file lifts the refusal on resume and respawn; the record is not rewritten', async ($, on) => {
+    const BRIEF = `${ROOT}/.delegation/briefs/T-9.brief.md`
+    const hdr = (n: number) => `[[brief v=1 task=T-9 subtask=main tier=standard budget=${n}-attempts]]\nDo it.`
+    const rec = (n: number) => ({ task: 'T-9', subtask: 'main', attempt: n, kind: n === 1 ? 'spawn' : 'resume', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'refuted', at: n })
+    const spawn = { key: 'k9', task: 'T-9', subtask: 'main', adhoc: false, attempt: 2, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 2, purpose: 'build', briefPath: BRIEF, prompt: 'x', description: 'd', subagentType: 'general-purpose', agentId: 'agent-9', verdictAttempt: 2, lastFailed: true }
+    const w = world(on, {
+      files: { [BRIEF]: hdr(2) },
+      store: { 'delegation.tasks.T-9': [rec(1), rec(2)], 'delegation.spawn.k9': spawn, 'delegation.agent.agent-9': 'k9' },
+    })
+    const send = () => $.session.send({ to: 'agent-9', text: 'fix it', origin: { kind: 'model' } } as never)
+    const first = (await send()) as { isDelivered?: boolean; reason?: string }
+    expect(first.isDelivered).toBe(false)
+    expect(first.reason).toContain(BRIEF)
+    expect(first.reason).toContain('budget=')
+    expect(first.reason).not.toContain('Ben')
+    w.files.set(BRIEF, hdr(4))
+    const second = (await send()) as { isDelivered?: boolean }
+    expect(second.isDelivered).toBe(true)
+    expect((w.store.get('delegation.spawn.k9') as { budget: number }).budget).toBe(2)
+    // a respawn reads the same file
+    w.files.set(BRIEF, hdr(2))
+    const denied = await $.agent.spawn(spawnInput({ prompt: `${BRIEF}\n${hdr(9)}`, tool_use_id: 'toolu_09' }))
+    expect(denied.deny).toContain(BRIEF)
+  })
+
+  test('alias drift is toasted once and kept in the transcript', async ($, on) => {
+    const w = world(on, { store: { 'delegation.alias.sonnet': 'claude-sonnet-5' } })
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-5 tier=standard]]' }))
+    expect(w.toasts).toContain('sonnet now resolves to claude-sonnet-5-5 (was claude-sonnet-5)')
+    expect(w.toasts.filter(t => t.startsWith('sonnet now resolves'))).toHaveLength(1)
+    // the transcript notice goes through session.append (live only: the kit refuses a plugin's append)
+    expect(delivered(w)).toContain('sonnet now resolves to claude-sonnet-5-5')
+    expect(w.statuses.at(-1)).toBe('0 workers · $1.50 · ctx 12%')
+  })
+})
+
+describe('tool.call on Agent: report capture and verify', () => {
+  test('a result without a report gets verdict=no-report in context', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    world(on)
+    on('tool.call', { tool: 'Agent' }, () => agentResult('All done, everything passes.'))
+    const r = await $.tool.call({ tool: 'Agent', description: 'look', prompt: 'look around' })
+    const context = (r.context ?? []).join('\n')
+    expect(context).toContain('chassis-delegation: verdict=no-report')
+    expect(context).toContain('attempt=1/3 model=claude-sonnet-5-5 next=none') // default budget 3; no spawn seen, so no cost
+  })
+
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const REPORT = (sha: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass files=a/x.ts]]`
+  // 5A: the repo names its gate; the verifier re-runs it in the worker's own tree
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const GATE_ARGV = ['npx', 'prettier', '--check', `${SCRATCH}/T-4/files.txt`]
+  const RED = 'claim gate: failed — gate=pass claimed but the gate is RED at 1234abcd (exit 1)'
+  const verifierRun = nativeRun()
+  const verifyStarts = (w: { runs: { argv: string[] }[] }) => w.runs.filter(x => isVerifyStart(x.argv))
+
+  test('a refuted report on a foreground spawn: verify runs natively in the worker tree, context advises resume', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    on('tool.call', { tool: 'Agent' }, () => agentResult('Done.\n' + REPORT('1234abcd'), 'agent-4'))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}. Read it whole.`, tool_use_id: 'toolu_fg000001' }))
+    const r = await $.tool.call({ tool: 'Agent', description: 'T-4', prompt: `Your brief is the file ${BRIEF}. Read it whole.` })
+    const context = (r.context ?? []).join('\n')
+    expect(context).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below')
+    expect(context).toContain('claim branch: held — refs/heads/agent/frontend/T-4')
+    expect(context).toContain('claim files: held — files= matches the sha delta exactly')
+    expect(context).toContain(`${RED}\n  | a/x.ts: not formatted`)
+    // no chassis script: git reads and the gate, nothing else
+    expect(w.runs.every(x => x.argv[0] === 'git' || x.argv[0] === 'npx')).toBe(true)
+    const gate = w.runs.find(x => x.argv[0] === 'npx')
+    expect(gate?.argv).toEqual(GATE_ARGV)
+    expect(gate?.cwd).toBe(ROOT) // no worktree beside the root: the root itself
+    expect(w.files.get(`${SCRATCH}/T-4/files.txt`)).toBe('a/x.ts\n')
+    expect(records(w, 'T-4')[0]).toMatchObject({ attempt: 1, verdict: 'refuted', reportGate: 'pass', agentId: 'agent-4' })
+    expect(w.sent).toHaveLength(0)
+  })
+
+  test('5A: the worker worktree is verified, not the root; a dirty tree leaves the gate unchecked', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const wt = `${ROOT}-T-4`
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      dirs: { [wt]: [] },
+      agentId: 'agent-4',
+      run: argv => (argv[3] === 'status' ? { exitCode: 0, stdout: ' M a/x.ts\n' } : verifierRun(argv)),
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: wt }))
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    expect(verifyStarts(w)[0]?.argv.slice(0, 3)).toEqual(['git', '-C', wt])
+    expect(delivered(w)).toContain('claim gate: unchecked — tree not at sha: 1 uncommitted path in the worktree; the gate was not re-run')
+    expect(delivered(w)).toContain('chassis-delegation: verdict=unverified task=T-4')
+    expect(w.runs.some(x => x.argv[0] === 'npx')).toBe(false)
+  })
+
+  test('5A: one JSON line per judged attempt in .delegation/ledger.jsonl', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    const lines = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n')
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ task: 'T-4', subtask: 'main', attempt: 1, tier: 'standard', alias: 'sonnet', verdict: 'refuted', reportGate: 'pass', sessionId: 'sess-1' })
+  })
+
+  test('ledgerFile off: no ledger file', { options: { ...GM, ledgerFile: false } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    expect(w.files.has(`${ROOT}/.delegation/ledger.jsonl`)).toBe(false)
+  })
+
+  test('5B: the repo file gate map is used when /config names none', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ _comment: 'x', gateMap: { prettier: 'npx prettier --check {files}' } }) }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    expect(w.runs.find(x => x.argv[0] === 'npx')?.argv).toEqual(GATE_ARGV)
+    expect(delivered(w)).toContain(RED)
+  })
+
+  test('no gate map at all: the gate is named not re-run and the verdict is unverified', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    expect(delivered(w)).toContain('claim gate: unchecked — gate not re-run: prettier (not in gateMap)')
+    expect(delivered(w)).toContain('chassis-delegation: verdict=unverified task=T-4')
+  })
+
+  test('background worker, autoEscalate: first failure resumes it, the second respawns one tier up', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=resumed agent=agent-4 (autoEscalate)')
+    expect(w.sent).toHaveLength(1)
+    expect(w.sent[0]?.to).toBe('agent-4') // the engine spells { agentId } as the id
+    expect(w.sent[0]?.text).toContain(RED)
+    expect(records(w, 'T-4').map(r => [r.attempt, r.kind, r.lineage, r.verdict])).toEqual([[1, 'spawn', 1, 'refuted'], [2, 'resume', 1, 'pending']])
+
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('5678abcd')))
+    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=2/3 usd=0.00 model=claude-sonnet-5-5 next=respawned at frontier')
+    expect(w.spawns[1]?.model).toBe('opus')
+    expect(records(w, 'T-4').map(r => [r.attempt, r.kind, r.lineage, r.tier, r.source])).toEqual([
+      [1, 'spawn', 1, 'standard', 'brief'],
+      [2, 'resume', 1, 'standard', 'resume'],
+      [3, 'spawn', 3, 'frontier', 'escalated'],
+    ])
+  })
+
+  const AMEND = '[[amend v=1 scope+=scripts/ci/owned-paths-selftest.sh reason=the selftest lives beside the script]]'
+  const AMENDED = 'amended: scope+=scripts/ci/owned-paths-selftest.sh (reason the selftest lives beside the script)'
+  // A background verdict row: the appended user row live, the transcript log line in the kit
+  // (it cannot answer a plugin's own session.append, so the mod's fallback logs the row).
+  const rows = (w: { appended: { type: string; text: string }[]; logs: string[] }) =>
+    [...w.appended.filter(a => a.type === 'user').map(a => ({ text: a.text })), ...w.logs.map(text => ({ text }))].filter(r => r.text.startsWith('chassis-delegation: verdict='))
+
+  test('a hand-back amend is appended to the brief before verify, once; the row says amended', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+    const atVerify: (string | undefined)[] = []
+    const run = nativeRun()
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      agentId: 'agent-4',
+      run: argv => {
+        if (isVerifyStart(argv)) atVerify.push(w.files.get(BRIEF))
+        return run(argv)
+      },
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    const handback = 'Done; the selftest needed one more file.\n' + AMEND + '\n' + REPORT('1234abcd')
+    await $.turn.complete(turnInput('agent-4', handback))
+    expect(atVerify[0]).toBe(HEADER + '\nbody\n' + AMEND + '\n') // on disk before the verifier read it
+    expect(w.runs.find(x => x.argv[0] === 'npx')?.argv).toEqual(GATE_ARGV)
+    expect(rows(w)[0]?.text.split('\n')[1]).toBe(AMENDED)
+    // the verifier discloses the amendment it applied
+    expect(rows(w)[0]?.text).toContain('amendment: #1 scope+=scripts/ci/owned-paths-selftest.sh')
+    // autoEscalate resumed it; the same hand-back on attempt 2 leaves the brief as it was
+    await $.turn.complete(turnInput('agent-4', handback))
+    expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody\n' + AMEND + '\n')
+    expect(verifyStarts(w)).toHaveLength(2)
+    expect(rows(w)).toHaveLength(2)
+    expect(rows(w)[1]?.text).not.toContain('amended:')
+  })
+
+  test('a scope+= block applies; a forbid-= block and a block carrying both wait for approval, and verify runs without them', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const FORBID_MINUS = '[[amend v=1 forbid-=b/** reason=the fixture lives under b]]'
+    const BOTH = '[[amend v=1 scope+=c/x.ts forbid-=b/** reason=both at once]]'
+    const atVerify: (string | undefined)[] = []
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      agentId: 'agent-4',
+      run: argv => {
+        if (isVerifyStart(argv)) atVerify.push(w.files.get(BRIEF))
+        return verifierRun(argv)
+      },
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', [AMEND, FORBID_MINUS, BOTH, REPORT('1234abcd')].join('\n')))
+    expect(atVerify).toEqual([HEADER + '\nbody\n' + AMEND + '\n']) // the verdict reflects the brief without the two
+    expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody\n' + AMEND + '\n')
+    const row = rows(w)[0]?.text.split('\n') ?? []
+    expect(row.slice(1, 4)).toEqual([
+      AMENDED,
+      `amend needs approval: ${FORBID_MINUS} — append it to ${BRIEF} and re-verify to accept it`,
+      `amend needs approval: ${BOTH} — append it to ${BRIEF} and re-verify to accept it`,
+    ])
+  })
+
+  test('a scope+= inside a forbid glob waits for approval and is not applied (GH-17)', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const INSIDE = '[[amend v=1 scope+=b/NOTES.md reason=the notes live under b]]'
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', [AMEND, INSIDE, REPORT('1234abcd')].join('\n')))
+    expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody\n' + AMEND + '\n')
+    const row = rows(w)[0]?.text.split('\n') ?? []
+    expect(row).toContain('amend needs approval: scope+=b/NOTES.md lies inside forbid b/**; scope+= alone does nothing, shrink the forbid')
+  })
+
+  test('applyAmends off: the brief is left alone; the row lists the block and says how to accept it', { options: { verdictVerbosity: 'full', applyAmends: false, ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', AMEND + '\n' + REPORT('1234abcd')))
+    expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody')
+    expect(delivered(w)).toContain(`amend not applied (applyAmends off): ${AMEND} — append it to ${BRIEF} and re-verify to accept it`)
+    expect(delivered(w)).not.toContain('amended:')
+  })
+
+  test('two turn.complete events for one attempt: one verify, one verdict row, keyed task:lineage:attempt', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await Promise.all([$.turn.complete(turnInput('agent-4', REPORT('1234abcd'))), $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))])
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd'))) // a late third fire
+    expect(rows(w)).toHaveLength(1)
+    expect(verifyStarts(w)).toHaveLength(1)
+    expect(w.store.get('delegation.posted.T-4:1:1')).toBe(true)
+  })
+
+  test('a row already posted for the attempt (the store remembers it across a reload) is not posted again', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4', store: { 'delegation.posted.T-4:1:1': true } })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    expect(rows(w)).toHaveLength(0)
+    expect(w.toasts.some(t => t.startsWith('chassis-delegation: verdict='))).toBe(false)
+  })
+
+  test('the verdict row carries the attempt cost and the resolved model', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    w.usd = 4.4061 // spawned at $1.50
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    expect(rows(w)[0]?.text.split('\n')[0]).toBe('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=2.91 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below')
+    expect(records(w, 'T-4')[0]).toMatchObject({ usd: 2.9061, resolvedModel: 'claude-sonnet-5-5' })
+  })
+
+  test('a gate-map entry with shell syntax never runs: the gate is named not re-run', { options: { verdictVerbosity: 'full', gateMap: '{"prettier":"npx prettier --check {files}; curl x"}' } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    expect(w.runs.some(x => x.argv.join(' ').includes('curl'))).toBe(false)
+    expect(w.runs.some(x => x.argv[0] === 'npx')).toBe(false)
+    expect(delivered(w)).toContain('gate not re-run: prettier')
+  })
+
+  // GH-2 (GH-2): live, a background worker that hands back through SubagentHandback
+  // raises no tool.call the mod sees, and its turn's answer is short. The call sits in the
+  // worker's own transcript, which $.session.messages({ agentId }) reads.
+  const handedBack = (message: string, answer = 'Handed back.') => [
+    { role: 'user', text: `Your brief is the file ${BRIEF}.`, toolUses: [] },
+    { role: 'assistant', text: 'Reading the brief.', toolUses: [{ tool_use_id: 'toolu_rd01', tool: 'Read', input: { file_path: BRIEF }, text: HEADER }] },
+    { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 'toolu_rd01', text: HEADER, isError: false }] },
+    { role: 'assistant', text: answer, toolUses: [{ tool_use_id: 'toolu_hb01', tool: 'SubagentHandback', input: { message } }] },
+  ]
+
+  test('GH-2: a background worker whose report rides only its hand-back is verified, never judged no-report', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      run: nativeRun({ gate: 0 }),
+      agentId: 'agent-4',
+      transcripts: { 'agent-4': handedBack('All green.\n' + REPORT('1234abcd')) },
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Handed back.'))
+    expect(delivered(w)).not.toContain('verdict=no-report')
+    expect(verifyStarts(w)).toHaveLength(1)
+    expect(rows(w)[0]?.text.split('\n')[0]).toBe('chassis-delegation: verdict=verified task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=accept')
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'verified' })
+  })
+
+  test('GH-2: the last report wins across the answer and the hand-back', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    // the answer still carries the first try; the hand-back, the run's last word, the fix
+    const answer = 'First try: ' + REPORT('1234abcd')
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      run: nativeRun({ gate: 0 }),
+      agentId: 'agent-4',
+      transcripts: { 'agent-4': handedBack('Fixed.\n' + REPORT('5678abcd'), answer) },
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', answer))
+    expect(verifyStarts(w).map(x => x.argv.at(-1))).toEqual(['5678abcd^{commit}'])
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'verified' })
+  })
+
+  test('GH-2: a resumed run that hands back nothing is not judged on the run before it', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+    const first = handedBack('Done.\n' + REPORT('1234abcd'))
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-4', transcripts: { 'agent-4': first } })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Handed back.'))
+    expect(rows(w)[0]?.text).toContain('verdict=refuted task=T-4 attempt=1/3') // the gate is red; autoEscalate resumes it
+    expect(w.sent).toHaveLength(1)
+    // the resume is the next prompt of the same transcript; this run ends on text alone
+    w.transcripts.set('agent-4', [...first, { role: 'user', text: String(w.sent[0]?.text), toolUses: [] }, { role: 'assistant', text: 'Still on it.', toolUses: [] }])
+    await $.turn.complete(turnInput('agent-4', 'Still on it.'))
+    expect(rows(w)[1]?.text).toContain('verdict=no-report task=T-4 attempt=2/3')
+    expect(verifyStarts(w)).toHaveLength(1)
+  })
+})
+
+describe('GH-20: the report names its red evidence (red=) and the verifier reads it in the worker tree', () => {
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** red_test="npx vitest run a/x.test.ts" gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const WT = `${ROOT}-T-4`
+  const RED_1 = '.delegation/T-4/red-1.txt'
+  const RED_2 = '.delegation/T-4/red-2.txt'
+  const RED_TEXT = 'FAIL a/x.test.ts\n  ✗ adds two numbers\n    AssertionError: expected 3 to be 4\n'
+  const REPORT = (sha: string, red?: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass${red ? ` red=${red}` : ''} files=a/x.ts]]`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const rows = (w: { appended: { type: string; text: string }[]; logs: string[] }) =>
+    [...w.appended.filter(a => a.type === 'user').map(a => a.text), ...w.logs].filter(t => t.startsWith('chassis-delegation: verdict='))
+  const MISSING = "claim red: unchecked — no red= evidence named; the brief asks for the red test's failing output"
+
+  test('a report with red= naming a non-empty file with a failure line holds; the row shows the claim, the record keeps path and hash', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', [`${WT}/${RED_1}`]: RED_TEXT }, dirs: { [WT]: [] }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd', RED_1)))
+    const row = rows(w)[0] ?? ''
+    expect(row.split('\n')[0]).toBe('chassis-delegation: verdict=verified task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=accept')
+    expect(row).toContain('claim red: held — .delegation/T-4/red-1.txt, 79 bytes, first failure line: FAIL a/x.test.ts')
+    const rec = records(w, 'T-4')[0] ?? {}
+    expect(rec).toMatchObject({ verdict: 'verified', red: RED_1 })
+    expect(String(rec.redHash)).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  test('the same report with no red= is unverified, naming the missing evidence', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', [`${WT}/${RED_1}`]: RED_TEXT }, dirs: { [WT]: [] }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    const row = rows(w)[0] ?? ''
+    expect(row.split('\n')[0]).toContain('chassis-delegation: verdict=unverified task=T-4 attempt=1/3')
+    expect(row).toContain(MISSING)
+    expect(records(w, 'T-4')[0]?.redHash).toBeUndefined()
+  })
+
+  test("a resume that re-uses attempt 1's bytes is refuted on red", { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+    let gate = 1
+    const repo = nativeRun({ gate: 0 })
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody', [`${WT}/${RED_1}`]: RED_TEXT },
+      dirs: { [WT]: [] },
+      run: argv => (argv[0] === 'npx' ? { exitCode: gate, stdout: gate ? 'a/x.ts: not formatted\n' : '' } : repo(argv)),
+      agentId: 'agent-4',
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd', RED_1)))
+    expect(rows(w)[0]).toContain('verdict=refuted task=T-4 attempt=1/3') // the gate is red; autoEscalate resumes it
+    expect(rows(w)[0]).toContain('claim red: held — .delegation/T-4/red-1.txt')
+    // attempt 2: the gate is green now, but its "new" red file is attempt 1's bytes again
+    gate = 0
+    w.files.set(`${WT}/${RED_2}`, RED_TEXT)
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('5678abcd', RED_2)))
+    expect(rows(w)[1]).toContain('verdict=refuted task=T-4 attempt=2/3')
+    expect(rows(w)[1]).toContain("claim red: failed — red evidence is attempt 1's file again (red=.delegation/T-4/red-2.txt is byte-identical to it)")
+    expect(records(w, 'T-4').map(r => [r.attempt, r.verdict, r.red])).toEqual([[1, 'refuted', RED_1], [2, 'refuted', RED_2], [3, 'pending', undefined]])
+  })
+
+  test('a brief with red_test=none yields no red claim', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const none = HEADER.replace(' red_test="npx vitest run a/x.test.ts"', ' red_test=none')
+    const w = world(on, { files: { [BRIEF]: none + '\nbody' }, dirs: { [WT]: [] }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    const row = rows(w)[0] ?? ''
+    expect(row.split('\n')[0]).toContain('verdict=verified task=T-4')
+    expect(row).not.toContain('claim red:')
+  })
+})
+
+describe('GH-6: an inline [[brief]] header and no brief file', () => {
+  const INLINE = '[[brief v=1 task=FE-232 subtask=e2e purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const BODY = 'Write the e2e test for the checkout flow.\nCommit and hold.'
+  const PROMPT = `${INLINE}\n\n${BODY}`
+  const WRITTEN = `${ROOT}/.delegation/briefs/FE-232.e2e.brief.md`
+  // the issue's sha: a real short sha padded out to 40 hex with invented digits
+  const PADDED = '1234abcd' + 'e'.repeat(32)
+  const REPORT = (sha: string) => `[[report v=1 task=FE-232 subtask=e2e branch=agent/frontend/FE-232 pr=none sha=${sha} gate=pass files=a/x.ts]]`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  /** A green worker repo where the sha resolves but is not an ancestor of the branch. */
+  const offBranch = () => {
+    const run = nativeRun({ gate: 0 })
+    return (argv: string[]): RunAnswer | undefined => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 1, stdout: '' } : run(argv))
+  }
+
+  test('a complete inline header is written to the brief folder and the hand-back is verified: a sha not on the branch is refuted', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { agentId: 'agent-6', run: offBranch() })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT }))
+    expect(w.files.get(WRITTEN)).toBe(`${INLINE}\n\n${BODY}\n`)
+    expect(records(w, 'FE-232')[0]).toMatchObject({ subtask: 'e2e', briefPath: WRITTEN, tier: 'standard', source: 'brief' })
+    expect(w.store.get('delegation.spawn.toolu_01ABCDEFGH')).toMatchObject({ briefPath: WRITTEN })
+    await $.turn.complete(turnInput('agent-6', 'Done.\n' + REPORT(PADDED)))
+    const row = delivered(w)
+    expect(row).not.toContain('no brief file named')
+    expect(row).toContain('chassis-delegation: verdict=refuted task=FE-232/e2e attempt=1/3')
+    expect(row).toContain(`claim sha: failed — sha ${PADDED} exists but is NOT reachable on agent/frontend/FE-232`)
+    expect(records(w, 'FE-232')[0]).toMatchObject({ verdict: 'refuted', reportGate: 'pass' })
+  })
+
+  test('a brief file already at that path is reused, never overwritten, and its amend blocks count', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const AMEND = '[[amend v=1 scope+=c/y.ts reason=the fixture lives in c]]'
+    const held = `${INLINE}\n\nan earlier attempt's body\n${AMEND}\n`
+    const w = world(on, { agentId: 'agent-6', files: { [WRITTEN]: held }, run: offBranch() })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT }))
+    expect(w.files.get(WRITTEN)).toBe(held)
+    await $.turn.complete(turnInput('agent-6', REPORT(PADDED)))
+    expect(w.files.get(WRITTEN)).toBe(held)
+    expect(delivered(w)).toContain('amendment: #1 scope+=c/y.ts — reason: the fixture lives in c')
+    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=FE-232/e2e')
+  })
+
+  test('a named brief file still wins over the inline header: nothing is written', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const named = `${SCRATCH}/briefs/FE-232.brief.md`
+    const w = world(on, { agentId: 'agent-6', files: { [named]: INLINE + '\nbody' }, run: offBranch() })
+    await $.agent.spawn(spawnInput({ prompt: `${INLINE}\nYour brief is the file ${named}.` }))
+    expect(w.files.has(WRITTEN)).toBe(false)
+    expect(records(w, 'FE-232')[0]).toMatchObject({ briefPath: named })
+  })
+
+  test('an incomplete inline header writes nothing; the unverified line names the missing field', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { agentId: 'agent-6', run: offBranch() })
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=FE-233 subtask=main tier=standard scope=a/**]]\nDo it.' }))
+    expect([...w.files.keys()].some(p => p.endsWith('.brief.md'))).toBe(false)
+    await $.turn.complete(turnInput('agent-6', REPORT(PADDED).replace(/FE-232/g, 'FE-233').replace('subtask=e2e', 'subtask=main')))
+    expect(delivered(w)).toContain('chassis-delegation: verdict=unverified task=FE-233')
+    expect(delivered(w)).toContain('note: no brief file named in the prompt; the inline header lacks gate= (or repo=none); verify skipped')
+    expect(w.runs.some(r => r.argv[0] === 'git')).toBe(false)
+  })
+
+  test('scope and gate both missing are both named; repo=none stands in for a gate', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { agentId: 'agent-6' })
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=FE-234 subtask=main tier=standard]]\nDo it.' }))
+    await $.turn.complete(turnInput('agent-6', '[[report v=1 task=FE-234 subtask=main branch=x pr=none sha=1234abcd gate=pass files=a/x.ts]]'))
+    expect(delivered(w)).toContain('note: no brief file named in the prompt; the inline header lacks scope= (or scope_globs=) and gate= (or repo=none); verify skipped')
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=FE-235 subtask=docs tier=standard scope_globs=/notes/** repo=none]]\nWrite the notes.', tool_use_id: 'toolu_02ABCDEFGH' }))
+    expect(w.files.get(`${ROOT}/.delegation/briefs/FE-235.docs.brief.md`)).toBe('[[brief v=1 task=FE-235 subtask=docs tier=standard scope_globs=/notes/** repo=none]]\n\nWrite the notes.\n')
+  })
+
+  test('a header without task= runs ad hoc; its line names task= instead of "no brief header"', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    const prompt = '[[brief v=1 tier=economy scope=a/** gate=node]]\nLook around.'
+    const w = world(on, { agentId: 'agent-7' })
+    on('tool.call', { tool: 'Agent' }, () => agentResult('Done.\n[[report v=1 branch=x pr=none sha=1234abcd gate=pass files=a/x.ts]]', 'agent-7'))
+    await $.agent.spawn(spawnInput({ prompt }))
+    const r = await $.tool.call({ tool: 'Agent', description: 'look', prompt })
+    expect((r.context ?? []).join('\n')).toContain('note: no brief file named in the prompt; the inline header lacks task=; verify skipped')
+    expect([...w.files.keys()].some(p => p.endsWith('.brief.md'))).toBe(false)
+  })
+})
+
+describe('5D: the git guard on Bash', () => {
+  const branchIs = (branch: string) => (argv: string[]) => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: `${branch}\n` } : undefined)
+  const bash = (command: string) => ({ tool: 'Bash', command }) as never
+  // the engine takes a tool.call hook's answer as { result } (the Bash record) or { deny }
+  const ran = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+
+  test('a commit on main is denied; on agent/ops/X it runs', async ($, on) => {
+    const w = world(on, { run: branchIs('main') })
+    on('tool.call', { tool: 'Bash' }, ran)
+    const r = await $.tool.call(bash('git add -A && git commit -m "x"'))
+    expect(r.deny).toBe('chassis-delegation: no commit on main; branch first (git checkout -b agent/<domain>/<id>)')
+    expect(w.runs.map(x => x.argv)).toEqual([['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD']])
+  })
+
+  test('on an agent branch the commit passes through', async ($, on) => {
+    world(on, { run: branchIs('agent/ops/X') })
+    on('tool.call', { tool: 'Bash' }, ran)
+    const r = await $.tool.call(bash('git commit -m "x"'))
+    expect(r.deny).toBeUndefined()
+  })
+
+  test('a push naming main is denied from any branch, without asking git', async ($, on) => {
+    const w = world(on, { run: branchIs('agent/ops/X') })
+    on('tool.call', { tool: 'Bash' }, ran)
+    const r = await $.tool.call(bash('git push origin main'))
+    expect(r.deny).toBe('chassis-delegation: no push on main; branch first (git checkout -b agent/<domain>/<id>)')
+    expect(w.runs).toEqual([])
+  })
+
+  test('the words inside a heredoc body never trigger it', async ($, on) => {
+    const w = world(on, { run: branchIs('main') })
+    on('tool.call', { tool: 'Bash' }, ran)
+    const r = await $.tool.call(bash("cat > notes.md <<'EOF'\nthen git commit -m x and git push origin main\nEOF"))
+    expect(r.deny).toBeUndefined()
+    expect(w.runs).toEqual([])
+  })
+
+  test('gitGuard off: nothing is checked', { options: { gitGuard: false } }, async ($, on) => {
+    const w = world(on, { run: branchIs('main') })
+    on('tool.call', { tool: 'Bash' }, ran)
+    const r = await $.tool.call(bash('git commit -m x'))
+    expect(r.deny).toBeUndefined()
+    expect(w.runs).toEqual([])
+  })
+})
+
+describe('5B: /delegation init and the init tool', () => {
+  const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+
+  test('init writes the four files and says so; a second init overwrites nothing', async ($, on) => {
+    const w = world(on, { files: { [`${ROOT}/.gitignore`]: 'node_modules/\n' } })
+    await $.session.start(sessionStart)
+    expect(w.commands).toContain('delegation')
+    expect(w.tools).toContain('init')
+    const out = await $.command.run(delegation('init'))
+    expect(out.text).toContain(`wrote ${ROOT}/agents/tasks/README.md`)
+    expect(out.text).toContain(`wrote ${ROOT}/agents/tasks/OPS-000-sample.md`)
+    expect(out.text).toContain(`wrote ${ROOT}/.chassis-delegation.json`)
+    expect(w.files.get(`${ROOT}/.gitignore`)).toBe('node_modules/\n.delegation/\n')
+    expect(w.files.get(`${ROOT}/agents/tasks/OPS-000-sample.md`)).toContain('status: template')
+    w.files.set(`${ROOT}/agents/tasks/README.md`, 'mine')
+    const again = await $.tool.call({ tool: 'mcp__chassis-delegation__init' } as never)
+    expect(resultText(again)).toContain(`left ${ROOT}/agents/tasks/README.md (exists; never overwritten)`)
+    expect(w.files.get(`${ROOT}/agents/tasks/README.md`)).toBe('mine')
+    expect(w.files.get(`${ROOT}/.gitignore`)).toBe('node_modules/\n.delegation/\n')
+  })
+
+  test('/delegation with no argument prints the state and where the config came from', async ($, on) => {
+    world(on)
+    await $.session.start(sessionStart)
+    const out = await $.command.run(delegation(''))
+    expect(out.text).toContain('Delegation state (chassis-delegation): nothing running, queued or owed.')
+    expect(out.text).toContain(`config: no .chassis-delegation.json in ${ROOT}`)
+    expect(out.text).toContain('git guard on (main, master)')
+  })
+})
+
+describe('turn.complete', () => {
+  test('a background ad hoc agent finishing adds nothing to the conversation', async ($, on) => {
+    const w = world(on, { classify: 'standard' })
+    await $.agent.spawn(spawnInput({ prompt: 'Find where the brief is rendered.' }))
+    await $.turn.complete(turnInput('agent-1', 'It is in dealStrategyBrief.js.'))
+    expect(delivered(w)).not.toContain('verdict=')
+    expect(w.runs.some(r => r.argv[0] === 'git')).toBe(false)
+  })
+})
+
+describe('/dispatch', () => {
+  const files = (): Record<string, string> => ({
+    [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: FIXTURE_CARD,
+  })
+  const dirs = { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME, 'BE-1010-other.md', 'FE-1-x.md'] }
+  const run = (_argv: string[]): RunAnswer | undefined => undefined
+  // the subagent types the session offers (noted from $.agent.list and agent.offer)
+  const offered = { 'delegation.agentTypes': ['general-purpose', 'backend', 'frontend'] }
+
+  test('--dry-run reads the card, writes the brief and prints the header', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run })
+    await $.session.start(sessionStart)
+    expect(w.commands).toContain('dispatch')
+    const out = await $.command.run(commandInput('BE-101 --dry-run'))
+    expect(out.text).toContain(FIXTURE_HEADER)
+    const brief = w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? ''
+    expect(brief.startsWith(FIXTURE_HEADER + '\n\nWork in ' + ROOT + '-BE-101 on agent/backend/BE-101;')).toBe(true)
+    expect(brief.endsWith(FIXTURE_CARD.slice(FIXTURE_CARD.indexOf('## Why')))).toBe(true)
+    expect(w.runs.find(r => r.argv[0] === 'git')).toBeUndefined()
+    expect(w.spawns).toHaveLength(0)
+    expect(w.runs).toEqual([])
+    // no --scope: the prose scope is written as the card has it, and flagged
+    expect(out.text).toContain('the card scope reads as prose')
+  })
+
+  test('--scope and --forbid replace the card prose in the header', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --dry-run --scope app/billing/Rate*.ts,docs/architecture/rate-provider-ladder.md --forbid app/ui/**,vendor/**'))
+    const header = FIXTURE_HEADER.replace(/ scope=.* red_test=/, ' scope=app/billing/Rate*.ts,docs/architecture/rate-provider-ladder.md forbid=app/ui/**,vendor/** red_test=')
+    expect(out.text).toContain(header)
+    expect(out.text).not.toContain('the card scope reads as prose')
+    expect((w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').startsWith(header + '\n\n')).toBe(true)
+  })
+
+  test('a scope entry inside a forbid glob is named once in the dispatch output (GH-17)', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    world(on, { files: files(), dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --dry-run --scope docs/a.md,src/**/x.ts --forbid docs/**'))
+    const warning = 'warning: scope entry docs/a.md is inside forbid docs/** and can never be touched; shrink the forbid (forbid-=) to allow it'
+    expect(String(out.text).split(warning)).toHaveLength(2)
+    expect(String(out.text)).not.toContain('scope entry src/')
+  })
+
+  test('--replay reads the card at the base commit and works in the -replay worktree', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const f = files()
+    // the working tree has the card merged; the base commit still has it queued
+    f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', 'status: merged')
+    const replayRun = (argv: string[]) => {
+      if (argv[3] === 'ls-tree') return { exitCode: 0, stdout: `agents/tasks/${FIXTURE_CARD_NAME}\nagents/tasks/BE-1010-other.md\n` }
+      if (argv[3] === 'show') return { exitCode: 0, stdout: FIXTURE_CARD }
+      return run(argv)
+    }
+    const w = world(on, { files: f, dirs, run: replayRun, agentId: 'agent-r' })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --replay --base 96014e3b --scope app/billing/Rate*.ts'))
+    expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
+      ['git', '-C', ROOT, 'ls-tree', '--name-only', '96014e3b', 'agents/tasks/'],
+      ['git', '-C', ROOT, 'show', `96014e3b:agents/tasks/${FIXTURE_CARD_NAME}`],
+      ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
+      ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101-replay', `${ROOT}-BE-101-replay`, '96014e3b'],
+    ])
+    const brief = w.files.get(`${SCRATCH}/briefs/BE-101.replay.brief.md`) ?? ''
+    expect(brief).toContain(' scope=app/billing/Rate*.ts forbid=')
+    expect(brief).toContain(`Work in ${ROOT}-BE-101-replay on agent/backend/BE-101-replay; card ${ROOT}-BE-101-replay/agents/tasks/${FIXTURE_CARD_NAME}.`)
+    expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(false)
+    expect(w.spawns[0]).toMatchObject({ prompt: `Your brief is the file ${SCRATCH}/briefs/BE-101.replay.brief.md. Read it whole, then follow it exactly.`, cwd: `${ROOT}-BE-101-replay`, model: 'opus' })
+    expect(records(w, 'BE-101')[0]).toMatchObject({ task: 'BE-101', attempt: 1, kind: 'spawn', replay: true, base: '96014e3b' })
+    expect(out.text).toContain('replay of BE-101 at 96014e3b')
+  })
+
+  test('--replay refuses a card that is not queued at the base commit', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, {
+      files: files(), dirs,
+      run: argv => (argv[3] === 'ls-tree' ? { exitCode: 0, stdout: `agents/tasks/${FIXTURE_CARD_NAME}\n` } : argv[3] === 'show' ? { exitCode: 0, stdout: FIXTURE_CARD.replace('status: queued', 'status: merged') } : run(argv)),
+    })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --replay --base 96014e3b'))
+    expect(out.text).toContain('BE-101 is status merged')
+    expect(w.spawns).toHaveLength(0)
+    expect(argvs(w).some(a => a[3] === 'worktree')).toBe(false)
+  })
+
+  test('--replay without --base is refused before anything runs', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --replay'))
+    expect(out.text).toContain('refused --replay without --base <sha>')
+    expect(w.runs).toHaveLength(0)
+  })
+
+  test('a dispatcher card dispatches: its domain stays in the branch; with no type of its name it runs on general-purpose', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const f = files()
+    f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('domain: backend', 'domain: dispatcher')
+    const w = world(on, { files: f, dirs, run, store: offered })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101'))
+    expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
+      ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
+      ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/dispatcher/BE-101', `${ROOT}-BE-101`, 'origin/main'],
+    ])
+    expect(w.spawns[0]?.subagentType ?? w.spawns[0]?.subagent_type).toBe('general-purpose')
+    expect(out.text).toContain('4. spawned general-purpose agent')
+  })
+
+  test('5B: the repo file agentTypes, domains and worktreeRoot steer the dispatch', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const f = files()
+    f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('domain: backend', 'domain: web')
+    f[`${ROOT}/.chassis-delegation.json`] = JSON.stringify({ agentTypes: { web: 'frontend' }, domains: ['web', 'api'], worktreeRoot: '/trees' })
+    const w = world(on, { files: f, dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101'))
+    expect(argvs(w).filter(a => a[0] === 'git')).toContainEqual(['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/web/BE-101', '/trees/acme-app-BE-101', 'origin/main'])
+    expect(w.spawns[0]?.subagentType ?? w.spawns[0]?.subagent_type).toBe('frontend')
+    expect(w.spawns[0]).toMatchObject({ cwd: '/trees/acme-app-BE-101' })
+    expect(out.text).toContain('4. spawned frontend agent')
+  })
+
+  test('briefDir unset: the brief goes to <root>/.delegation/briefs/', async ($, on) => {
+    const w = world(on, { files: files(), dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --dry-run'))
+    expect(out.text).toContain(`2. brief ${ROOT}/.delegation/briefs/BE-101.brief.md written`)
+    expect(w.files.has(`${ROOT}/.delegation/briefs/BE-101.brief.md`)).toBe(true)
+  })
+
+  test('briefDir unset and the root not writable: the session scratchpad is the fallback', async ($, on) => {
+    const pad = '/private/tmp/claude-501/-repo-acme-app/sess-9/scratchpad'
+    const w = world(on, { files: files(), dirs: { ...dirs, [pad]: [] }, run, sessionId: 'sess-9', skip: ['fs.write'] })
+    on('fs.write', (_$, e) => {
+      if (e.path.startsWith(`${ROOT}/`)) throw new Error(`EACCES: ${e.path}`)
+      w.files.set(e.path, e.text)
+      return { value: undefined } as never
+    })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --dry-run'))
+    expect(out.text).toContain(`2. brief ${pad}/briefs/BE-101.brief.md written`)
+    expect(w.files.has(`${pad}/briefs/BE-101.brief.md`)).toBe(true)
+  })
+
+  test('the full run adds the worktree from a sha base and spawns with model omitted', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run, agentId: 'agent-318', store: offered })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --base 96014e3b'))
+    expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
+      ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
+      ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101', `${ROOT}-BE-101`, '96014e3b'],
+    ])
+    expect(w.spawns[0]).toMatchObject({
+      prompt: `Your brief is the file ${SCRATCH}/briefs/BE-101.brief.md. Read it whole, then follow it exactly.`,
+      cwd: `${ROOT}-BE-101`,
+      model: 'opus',
+    })
+    // the kit hands a plugin's spawn on in the Agent tool's own spelling (subagent_type);
+    // no map entry, so the domain's own type, which the session offers
+    expect(w.spawns[0]?.subagentType ?? w.spawns[0]?.subagent_type).toBe('backend')
+    expect(out.text).toContain('4. spawned backend agent')
+    expect(out.text).toContain('tier=frontier → opus')
+    expect(argvs(w).some(a => a[0] === 'bash')).toBe(false)
+  })
+
+  test('refuses a card that is not queued or claimed; nothing else runs', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const f = files()
+    f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', 'status: merged')
+    const w = world(on, { files: f, dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101'))
+    expect(out.text).toContain('BE-101 is status merged; /dispatch takes a queued or claimed card')
+    expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(false)
+    expect(w.runs).toHaveLength(0)
+  })
+
+  test('a non-sha --base is refused before anything runs', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --base HEAD~3'))
+    expect(out.text).toContain('refused --base HEAD~3')
+    expect(w.runs).toHaveLength(0)
+  })
+
+  // GH-16: repo=here, the main-checkout mode
+  const onMain = (argv: string[]): RunAnswer | undefined => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined)
+
+  test('GH-16: --here writes a repo=here brief, cuts no worktree, runs no fetch, and spawns in the root', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: onMain, agentId: 'agent-h', store: offered })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --here --scope app/billing/Rate*.ts'))
+    const brief = w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? ''
+    const header = brief.split('\n')[0] ?? ''
+    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/** budget=3-attempts report=chassis.report.v1]]')
+    expect(header).not.toContain(' base=')
+    // no worktree, no fetch: the only git the dispatch runs reads the current branch
+    expect(argvs(w).filter(a => a[0] === 'git')).toEqual([['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD']])
+    expect(w.spawns[0]).toMatchObject({ prompt: `Your brief is the file ${SCRATCH}/briefs/BE-101.brief.md. Read it whole, then follow it exactly.`, cwd: ROOT, model: 'opus' })
+    expect(brief).toContain(`Work in ${ROOT} on main; card ${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}.`)
+    expect(out.text).toContain(`3. no worktree (repo=here): the worker shares ${ROOT}`)
+    expect(out.text).not.toContain('3. worktree')
+    expect(records(w, 'BE-101')[0]).toMatchObject({ attempt: 1, kind: 'spawn', here: ROOT })
+  })
+
+  /** Another repo=here card in flight in ROOT: a pending record marked here, its brief, and the files it claimed so far. */
+  const inFlight = (task: string, scope: string, o: { files?: string[]; verdict?: string; here?: string | null } = {}) => {
+    const path = `${ROOT}/.delegation/briefs/${task}.brief.md`
+    const here = o.here === null ? {} : { here: o.here ?? ROOT }
+    return {
+      store: { [`delegation.tasks.${task}`]: [{ task, subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: o.verdict ?? 'pending', at: 1, briefPath: path, ...here, ...(o.files ? { files: o.files } : {}) }] },
+      files: { [path]: `[[brief v=1 task=${task} subtask=main tier=standard scope=${scope} forbid= gate=node repo=here]]\nbody` },
+    }
+  }
+  const LLM = 'app/billing/Rate*.ts'
+
+  test('GH-16: a card that says repo: here dispatches the same way; baseRef HEAD is pinned to its sha; ignore= adds the files in-flight cards claimed', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const HEAD_SHA = 'c'.repeat(40)
+    const gh19 = inFlight('GH-19', 'src/**', { files: ['src/b.ts'] })
+    const f = { ...files(), ...gh19.files }
+    f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', 'status: queued\nrepo: here')
+    f[`${ROOT}/.chassis-delegation.json`] = JSON.stringify({ baseRef: 'HEAD', ignore: ['.delegation/**', 'traces/**'] })
+    const run = (argv: string[]): RunAnswer | undefined => (argv[3] === 'rev-parse' && argv[4] === 'HEAD' ? { exitCode: 0, stdout: `${HEAD_SHA}\n` } : onMain(argv))
+    const w = world(on, { files: f, dirs, run, store: { ...offered, ...gh19.store } })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput(`BE-101 --scope ${LLM}`))
+    const header = (w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0] ?? ''
+    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,src/b.ts budget=3-attempts`)
+    expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
+      ['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD'],
+      ['git', '-C', ROOT, 'rev-parse', 'HEAD'],
+    ])
+    expect(out.text).toContain(`   repo=here: base=${HEAD_SHA} · ignore=.delegation/**,traces/**,src/b.ts`)
+    expect(out.text).toContain(`3. no worktree (repo=here): the worker shares ${ROOT}`)
+    expect(out.text).toContain(`brief ${SCRATCH}/briefs/BE-101.brief.md · repo=here in ${ROOT} · branch main · agent agent-1`)
+    expect(w.spawns[0]).toMatchObject({ cwd: ROOT })
+  })
+
+  test('GH-16: a scope overlapping an in-flight repo=here card is refused, naming both cards and globs; --force-overlap dispatches with a warning', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const gh19 = inFlight('GH-19', 'app/**')
+    const w = world(on, { files: { ...files(), ...gh19.files }, dirs, run: onMain, store: { ...offered, ...gh19.store } })
+    await $.session.start(sessionStart)
+    const refused = await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))
+    expect(refused.text).toContain(`/dispatch BE-101: refused — BE-101 scope ${LLM} overlaps in-flight GH-19 scope app/** in the shared checkout; both would claim the same paths (pass --force-overlap to dispatch anyway)`)
+    expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(false)
+    expect(w.spawns).toHaveLength(0)
+    const forced = await $.command.run(commandInput(`BE-101 --here --force-overlap --scope ${LLM}`))
+    expect(forced.text).toContain(`   warning: BE-101 scope ${LLM} overlaps in-flight GH-19 scope app/** in the shared checkout (--force-overlap: dispatched anyway)`)
+    expect(forced.text).toContain(`3. no worktree (repo=here): the worker shares ${ROOT}`)
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test('GH-16: not in flight here: a card with a verdict, a worktree card, a card in another checkout', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const done = inFlight('GH-19', 'app/**', { verdict: 'verified' })
+    const tree = inFlight('GH-20', 'app/**', { here: null })
+    const away = inFlight('GH-21', 'app/**', { here: '/repo/elsewhere' })
+    const w = world(on, { files: { ...files(), ...done.files, ...tree.files, ...away.files }, dirs, run: onMain, store: { ...offered, ...done.store, ...tree.store, ...away.store } })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))
+    expect(out.text).not.toContain('refused')
+    expect(out.text).not.toContain('overlaps')
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test('GH-16: a repo=here hand-back is verified in the root: the dirty tree less ignore= and the files another in-flight card claimed', { options: { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full', gateMap: '{"G2":"npx g2","G8p":"npx g8p"}' } }, async ($, on) => {
+    const gh19 = inFlight('GH-19', 'src/**')
+    const PORCELAIN = [' M app/billing/RateA.ts', '?? .delegation/briefs/BE-101.brief.md', ' M src/b.ts', ''].join('\0')
+    const run = (argv: string[]): RunAnswer | undefined => {
+      if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+      if (argv[3] === 'status') return { exitCode: 0, stdout: PORCELAIN }
+      return onMain(argv)
+    }
+    // GH-20: the brief has a red test, so the report names its red file, read in the shared checkout
+    const RED_HERE = { [`${ROOT}/.delegation/BE-101/red-1.txt`]: 'npx vitest run\nFAIL RateA.test.ts: expected 1 got 0\n' }
+    const w = world(on, { files: { ...files(), ...gh19.files, ...RED_HERE }, dirs, run, agentId: 'agent-h', store: { ...offered, ...gh19.store } })
+    await $.session.start(sessionStart)
+    await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))
+    // meanwhile GH-19 handed back: its record now claims src/b.ts
+    w.store.set('delegation.tasks.GH-19', [{ ...records(w, 'GH-19')[0], files: ['src/b.ts'] }])
+    const AMEND = '[[amend v=1 ignore+=src/** reason=hide it]]'
+    const REPORT = `[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=app/billing/RateA.ts]]`
+    await $.turn.complete(turnInput('agent-h', `Done.\n${AMEND}\n${REPORT}`))
+    const row = delivered(w)
+    expect(row).toContain('chassis-delegation: verdict=verified task=BE-101 attempt=1/3')
+    expect(row).toContain('claim branch: held — main is the current branch of ' + ROOT)
+    expect(row).toContain('ignored: 1 path by ignore= (.delegation/briefs/BE-101.brief.md), 1 path belonging to GH-19 (src/b.ts)')
+    expect(row).toContain('claim files: held — files= matches the dirty-tree delta exactly')
+    expect(row).toContain('claim red: held — .delegation/BE-101/red-1.txt')
+    expect(row).toContain(`claim gate: held — gate green in the shared checkout ${ROOT} (gate=pass confirmed; repo=here: the dirty tree is allowed, the clean-tree rule does not apply)`)
+    // ignore+= hides paths from the check: it waits for approval, never applied on the worker's word
+    expect(row).toContain(`amend needs approval: ${AMEND} — append it to ${SCRATCH}/briefs/BE-101.brief.md and re-verify to accept it`)
+    expect(w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').not.toContain('[[amend')
+    expect(w.runs.filter(x => x.argv[0] === 'npx').map(x => x.cwd)).toEqual([ROOT, ROOT])
+    expect(argvs(w).some(a => a.includes('worktree') || a.includes('fetch'))).toBe(false)
+    expect(records(w, 'BE-101')[0]).toMatchObject({ here: ROOT, files: ['app/billing/RateA.ts'], verdict: 'verified' })
+  })
+})
+
+describe('GH-16: a nested child repo is its own root', () => {
+  test("the parent's .chassis-delegation.json is never consulted when the session root is the child", async ($, on) => {
+    const PARENT = ROOT.slice(0, ROOT.lastIndexOf('/'))
+    const reads: string[] = []
+    const w = world(on, { files: { [`${PARENT}/.chassis-delegation.json`]: JSON.stringify({ tierMap: { standard: 'opus' }, baseRef: 'develop' }) }, skip: ['fs.read'] })
+    on('fs.read', (_$, e) => {
+      reads.push(e.path)
+      const text = w.files.get(e.path)
+      if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
+      return { value: text } as never
+    })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-8 subtask=main tier=standard]]\nDo it.' }))
+    expect(w.spawns[0]?.model).toBe('sonnet') // not the parent's tierMap
+    const status = await $.command.run({ command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    expect(status.text).toContain(`config: no .chassis-delegation.json in ${ROOT}`)
+    expect(status.text).toContain('base: origin/main → main → origin/master → master · repo=here ignore: .delegation/**')
+    expect(reads).toContain(`${ROOT}/.chassis-delegation.json`)
+    expect(reads.some(p => p.startsWith(`${PARENT}/.chassis-delegation.json`))).toBe(false)
+  })
+})
+
+describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
+  const NO_BRIEF = 'no brief: no scope=/gate=/red_test= to check against'
+  const CARDLESS = (sha: string, task?: string) =>
+    `[[report v=1${task ? ` task=${task} subtask=main` : ''} branch=agent/mod/GH-77 pr=none sha=${sha} gate=pass files=a/x.ts]]`
+  /** A green worker repo where the sha resolves but is not an ancestor of the branch. */
+  const offBranch = () => {
+    const run = nativeRun({ gate: 0 })
+    return (argv: string[]): RunAnswer | undefined => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 1, stdout: '' } : run(argv))
+  }
+  const verdictRows = (w: { appended: { type: string; text: string }[]; logs: string[] }) =>
+    [...w.appended.filter(a => a.type === 'user').map(a => a.text), ...w.logs].filter(t => t.startsWith('chassis-delegation: verdict='))
+
+  test('item 2: a plain Agent spawn with no header whose report names a sha off the branch is refuted, not "no brief header"', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { classify: 'standard', agentId: 'agent-c', run: offBranch() })
+    on('tool.call', { tool: 'Agent' }, () => agentResult('Fixed the flake.\n' + CARDLESS('1234abcd', 'GH-77'), 'agent-c'))
+    await $.agent.spawn(spawnInput({ prompt: 'Fix the flaky date test.' }))
+    const r = await $.tool.call({ tool: 'Agent', description: 'fix', prompt: 'Fix the flaky date test.' })
+    const context = (r.context ?? []).join('\n')
+    expect(context).not.toContain('no brief header')
+    expect(context).toContain('chassis-delegation: verdict=refuted task=GH-77 attempt=1/3')
+    expect(context.split('\n')[0]).toMatch(/ next=check the diff$/)
+    expect(context).toContain('claim branch: held — refs/heads/agent/mod/GH-77')
+    expect(context).toContain('claim sha: failed — sha 1234abcd exists but is NOT reachable on agent/mod/GH-77')
+    expect(context).toContain(`claim scope: unchecked — ${NO_BRIEF}`)
+    expect(context).toContain('claim files: held — files= matches the sha delta exactly')
+    expect(context).toContain(`claim gate: unchecked — ${NO_BRIEF}`)
+    expect(context).toContain(`claim red: unchecked — ${NO_BRIEF}`)
+    expect(context).toContain('claim pr: held — no PR claimed')
+    // the tree is the session root (the spawn named no cwd); no gate runs without a brief
+    expect(w.runs.filter(x => isVerifyStart(x.argv))[0]?.argv.slice(0, 3)).toEqual(['git', '-C', ROOT])
+    expect(w.runs.some(x => x.argv[0] === 'npx')).toBe(false)
+    expect(records(w, 'GH-77')[0]).toMatchObject({ task: 'GH-77', subtask: 'main', attempt: 1, verdict: 'refuted', reportGate: 'pass', adhoc: true, agentId: 'agent-c' })
+    const ledger = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n')
+    expect(ledger).toHaveLength(1)
+    expect(JSON.parse(ledger[0] ?? '{}')).toMatchObject({ task: 'GH-77', attempt: 1, verdict: 'refuted', next: 'check the diff' })
+    expect(w.sent).toHaveLength(0)
+  })
+
+  test('item 2: a background ad hoc hand-back with a report and no task= is verified in the spawn cwd, recorded under adhoc-<key>, and posted', { options: { verdictVerbosity: 'full', autoEscalate: true } }, async ($, on) => {
+    const WT = '/work/tidy'
+    const w = world(on, { classify: 'standard', agentId: 'agent-c', dirs: { [WT]: [] }, run: nativeRun({ gate: 0 }) })
+    await $.agent.spawn(spawnInput({ prompt: 'Tidy the README.', cwd: WT }))
+    await $.turn.complete(turnInput('agent-c', 'Done.\n' + CARDLESS('1234abcd')))
+    const row = verdictRows(w)[0] ?? ''
+    expect(row.split('\n')[0]).toMatch(/^chassis-delegation: verdict=unverified task=adhoc-ABCDEFGH attempt=1\/3 .*next=check the diff$/)
+    expect(row).toContain('claim sha: held')
+    expect(w.runs.filter(x => isVerifyStart(x.argv))[0]?.argv.slice(0, 3)).toEqual(['git', '-C', WT])
+    expect(records(w, 'adhoc-ABCDEFGH')[0]).toMatchObject({ attempt: 1, verdict: 'unverified', adhoc: true })
+    // never a resume or a respawn: there is no brief to resume against
+    expect(w.sent).toHaveLength(0)
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  const BRIEF = `${SCRATCH}/briefs/T-5.brief.md`
+  const HEADER = (budget = 3) => `[[brief v=1 task=T-5 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=${budget}-attempts report=chassis.report.v1]]`
+  const REPORT = '[[report v=1 task=T-5 subtask=main branch=agent/frontend/T-5 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
+  const PROVE = 'resume agent=agent-5 — prove: gate (gate not re-run: prettier (not in gateMap))'
+
+  test('item 5: an unverified verdict advises a resume naming the unchecked claims; the resume counts against the budget', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER() + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-5' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-5', REPORT))
+    const row = verdictRows(w)[0] ?? ''
+    expect(row.split('\n')[0]).toBe(`chassis-delegation: verdict=unverified task=T-5 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=${PROVE}`)
+    expect(row).not.toContain('check by hand')
+    const sent = (await $.session.send({ to: 'agent-5', text: 'prove the gate', origin: { kind: 'model' } } as never)) as { isDelivered?: boolean }
+    expect(sent.isDelivered).toBe(true)
+    expect(records(w, 'T-5').map(r => [r.attempt, r.kind, r.lineage, r.verdict])).toEqual([[1, 'spawn', 1, 'unverified'], [2, 'resume', 1, 'pending']])
+  })
+
+  test('item 5: autoEscalate performs that resume, sending the unchecked claim lines', { options: { verdictVerbosity: 'full', autoEscalate: true } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER() + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-5' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-5', REPORT))
+    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=resumed agent=agent-5 (autoEscalate)')
+    expect(w.sent).toHaveLength(1)
+    expect(w.sent[0]?.text).toContain('claim gate: unchecked — gate not re-run: prettier (not in gateMap)')
+    expect(w.sent[0]?.text).not.toContain('claim branch: held')
+    expect(records(w, 'T-5').map(r => [r.attempt, r.kind, r.verdict])).toEqual([[1, 'spawn', 'unverified'], [2, 'resume', 'pending']])
+  })
+
+  test('item 5: past the budget an unverified verdict keeps "check by hand"', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER(1) + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-5' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-5', REPORT))
+    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/1 usd=0.00 model=claude-sonnet-5-5 next=check by hand — unverified is not a pass')
+  })
+
+  const WARN = 'warning: budget "frontier-60m" is not <n>-attempts; using the default 3'
+
+  test('item 6: a card budget of frontier-60m warns once in the /dispatch output; the brief takes the default budget and the card tier', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: { [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: FIXTURE_CARD }, dirs: { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME] } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('BE-101 --dry-run'))).text)
+    expect(out.split(WARN)).toHaveLength(2)
+    const header = (w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0] ?? ''
+    expect(header).toContain(' tier=frontier model=opus ')
+    expect(header).toContain(' budget=3-attempts ')
+  })
+
+  test("item 6: the spawn hook logs the same line to debug when a header's budget= is malformed", async ($, on) => {
+    const w = world(on)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-6 subtask=main tier=standard budget=frontier-60m]]\nDo it.' }))
+    expect(w.debugLogs).toContain(`chassis-delegation: T-6: ${WARN}`)
+    expect(w.store.get('delegation.spawn.toolu_01ABCDEFGH')).toMatchObject({ budget: 3, tier: 'standard' })
+    expect(w.spawns[0]?.model).toBe('sonnet')
+  })
+
+  test('item 8: a header tier or a caller model makes no classify call; the debug line names the source', async ($, on) => {
+    let calls = 0
+    const w = world(on, { skip: ['model.classify'] })
+    on('model.classify', () => {
+      calls += 1
+      return { value: 'frontier' } as never
+    })
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-7 subtask=main tier=economy]]\nDo it.' }))
+    expect(calls).toBe(0)
+    expect(w.debugLogs).toContain("chassis-delegation: T-7: tier=economy picked by the brief header's tier= (no classify call)")
+    await $.agent.spawn(spawnInput({ prompt: 'Look around.', model: 'haiku', tool_use_id: 'toolu_0200000002' }))
+    expect(calls).toBe(0)
+    expect(w.debugLogs).toContain("chassis-delegation: adhoc-00000002: tier=economy picked by the caller's model hint (haiku) (no classify call)")
+    await $.agent.spawn(spawnInput({ prompt: 'Work out why the race happens.', tool_use_id: 'toolu_0300000003' }))
+    expect(calls).toBe(1)
+    expect(w.debugLogs).toContain('chassis-delegation: adhoc-00000003: tier=frontier picked by the classifier (classify called)')
+  })
+
+  const FABLE = 'tier=frontier → opus (fable requested; fable is never spawned by the mod)'
+
+  test('item 8: a brief naming model=fable (or tier=premium) spawns opus, says so in the notice, and the record keeps requestedAlias', async ($, on) => {
+    const w = world(on)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-8 subtask=main tier=frontier model=fable]]\nDo it.' }))
+    expect(w.spawns[0]?.model).toBe('opus')
+    expect(w.notices.at(-1)).toBe(FABLE)
+    expect(records(w, 'T-8')[0]).toMatchObject({ tier: 'frontier', alias: 'opus', requestedAlias: 'fable' })
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-9 subtask=main tier=premium model=fable]]\nDo it.', tool_use_id: 'toolu_0200000002' }))
+    expect(w.spawns[1]?.model).toBe('opus')
+    expect(w.notices.at(-1)).toBe(FABLE)
+    expect(records(w, 'T-9')[0]).toMatchObject({ tier: 'frontier', alias: 'opus', requestedAlias: 'fable' })
+    // the caller naming fable
+    await $.agent.spawn(spawnInput({ prompt: 'Review this.', model: 'claude-fable-1', tool_use_id: 'toolu_0300000003' }))
+    expect(w.spawns[2]?.model).toBe('opus')
+    expect(w.notices.at(-1)).toBe(FABLE)
+    expect(((w.store.get('delegation.adhoc') ?? []) as Record<string, unknown>[]).at(-1)).toMatchObject({ tier: 'frontier', alias: 'opus', requestedAlias: 'fable' })
+    // a brief that never names fable keeps its plain notice and no requestedAlias
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-10 subtask=main tier=frontier]]\nDo it.', tool_use_id: 'toolu_0400000004' }))
+    expect(w.notices.at(-1)).toBe('tier=frontier → opus (brief)')
+    expect(records(w, 'T-10')[0]?.requestedAlias).toBeUndefined()
+  })
+})

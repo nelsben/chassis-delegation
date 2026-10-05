@@ -1,0 +1,44 @@
+{
+  "_comment": "chassis-delegation per-repo config. Every key is optional. Precedence: built-in defaults < this file < /config settings (maps merge per key). Keys starting with _ are comments and are ignored.",
+  "_gateMap": "Brief gate= id -> the command the verifier re-runs in the worker's own worktree, by argv (no shell). {files} is the changed-files list (one path a line); chain with ' && '. Example: {\"test\": \"npm test\", \"lint\": \"npx eslint --max-warnings 0 {files}\"}. An id the map lacks is reported 'gate not re-run' (unverified), never run raw.",
+  "gateMap": {
+    "validate": "claude plugin validate {worktree}",
+    "node": "node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs",
+    "test": "claude plugin test {worktree}"
+  },
+  "_agentTypes": "Card domain -> the subagent type /dispatch spawns (the Agent tool subagent_type). A domain not named here runs on a subagent type of its own name when the session offers one, else general-purpose. Example: {\"ops\": \"general-purpose\", \"web\": \"frontend\"}.",
+  "agentTypes": {
+    "mod": "general-purpose"
+  },
+  "_tierMap": "Card tier -> model alias (haiku, sonnet, opus; fable is rewritten to opus). Always an alias, so model releases move the ladder.",
+  "tierMap": {
+    "economy": "haiku",
+    "standard": "sonnet",
+    "frontier": "opus",
+    "premium": "fable"
+  },
+  "_domains": "The card domains /dispatch accepts; the branch is agent/<domain>/<id>.",
+  "domains": [
+    "mod",
+    "frontend",
+    "backend",
+    "ops",
+    "dispatcher",
+    "cross",
+    "shared"
+  ],
+  "_maxWorkers": "Briefed workers at once; a briefed spawn past it waits in a queue.",
+  "maxWorkers": 2,
+  "_worktreeRoot": "Folder for the workers' worktrees; empty = sibling folders <repo>-<id>.",
+  "worktreeRoot": "",
+  "_briefTemplate": "A brief body template file (absolute path); empty = the mod's templates/brief.md.",
+  "briefTemplate": "",
+  "_briefExtra": "Repo-specific lines added to every brief (setup steps, conventions, things never to do).",
+  "briefExtra": "This repo IS the chassis-delegation mod. Gates (gate map ids validate, node, test) run in your worktree: `claude plugin validate <worktree>` (manifest + hooks), `node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs` (the pure suite, must stay all green), `claude plugin test <worktree>` (the engine suite; if it refuses with 'rollout switch served off', retry twice over a minute, then record 'suite owed' and rely on validate + the node suite). Type-check with tsc 5.x if one is on PATH; there is no package.json. Red first: add the failing test under tests/ (engine) or tests/node/ (pure) before the fix. Hooks stay thin: pure logic in hooks/lib/, every $ call in hooks/register.ts. Never edit .claude-plugin/types/ (the engine writes it). Never touch ~/.claude or any other repo.",
+  "_evalCommand": "What a background eval runner runs once per new origin/main sha when the session is idle; empty = no eval. Needs autoEval true here or in /config.",
+  "evalCommand": "",
+  "evalLiveCommand": "",
+  "autoEval": false,
+  "_cardDir": "This repo is itself a plugin: the engine reads agents/*.md as subagent definitions, so the cards live under delegation/tasks/ (GH-12).",
+  "cardDir": "delegation/tasks"
+}
