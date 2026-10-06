@@ -1,5 +1,7 @@
 # chassis-delegation
 
+![chassis-delegation: the brain writes the task card; dispatch spawns a worker at the opus, sonnet or haiku tier; the verified hand-back comes back](docs/chassis-delegation.png)
+
 Brain-seat delegation for Claude Code. The main model (the "brain") hands a
 task card to a worker subagent with one tool call, `dispatch`. The mod does the
 rest. It writes the brief, cuts a git worktree and picks the model tier. It
