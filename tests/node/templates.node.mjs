@@ -7,15 +7,15 @@ import { fileURLToPath } from 'node:url'
 
 const read = rel => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8')
 
-describe('5C: templates/brief.md is repo-neutral', () => {
+describe('5C: hooks/templates/brief.md is repo-neutral', () => {
   test('no product-specific line survives', () => {
-    const t = read('templates/brief.md')
+    const t = read('hooks/templates/brief.md')
     for (const gone of ['npm ci`', 'keychain', 'vite build', 'chassis protocol', 'post statuses']) {
       expect(t.includes(gone)).toBe(false)
     }
   })
   test('it says: the worktree only, the install step, red first, the gate, commit and hold, never push, the report and amend lines', () => {
-    const t = read('templates/brief.md')
+    const t = read('hooks/templates/brief.md')
     for (const want of ['{{worktree}}', '{{branch}}', '{{install}}', '{{extra}}', '{{redTest}}', '{{gate}}', '{{body}}', 'never push', '[[report v=1 task={{id}}', '[[amend v=1 scope+=']) {
       expect(t.includes(want)).toBe(true)
     }
@@ -23,7 +23,7 @@ describe('5C: templates/brief.md is repo-neutral', () => {
     expect(t.split('\n').some(l => l.trim().startsWith('[[amend'))).toBe(false)
   })
   test('GH-20: it says to save the red output before any source change, a NEW file per attempt, and to name it red= in the report', () => {
-    const t = read('templates/brief.md')
+    const t = read('hooks/templates/brief.md')
     for (const want of ['before you change any source', '.delegation/{{id}}/red-<attempt>.txt', 'make the folder', 'gitignored', 'the verifier reads the tree, not git', 'NEW file', 'red=<path>']) {
       expect(t.includes(want)).toBe(true)
     }
@@ -33,7 +33,7 @@ describe('5C: templates/brief.md is repo-neutral', () => {
 
   test('GH-16: a repo=here section says the checkout is shared, touch only your scope, commit only if the card says, report sha=HEAD', async () => {
     const { renderSections } = await import('../../hooks/lib/dispatch.ts')
-    const t = read('templates/brief.md')
+    const t = read('hooks/templates/brief.md')
     const here = renderSections(t, true)
     for (const want of ['repo=here: no worktree', 'You share this checkout with the brain and maybe other workers', 'touch only your scope', 'Do not commit unless the card says so', 'never push', 'branch={{branch}} pr=none sha=HEAD', 'else the short sha you committed']) {
       expect(here.includes(want)).toBe(true)
@@ -46,9 +46,9 @@ describe('5C: templates/brief.md is repo-neutral', () => {
   })
 })
 
-describe('5E: templates/debrief.md, the built-in debrief', () => {
+describe('5E: hooks/templates/debrief.md, the built-in debrief', () => {
   test('the harness schema, and where it writes', () => {
-    const t = read('templates/debrief.md')
+    const t = read('hooks/templates/debrief.md')
     for (const key of ['"session_id"', '"date"', '"summary"', '"outcomes"', '"corrections"', '"tool_denials"', '"stale_memory"', '"proposed_harness_changes"', '"harness_wins"', '"harness_gaps"']) {
       expect(t.includes(key)).toBe(true)
     }

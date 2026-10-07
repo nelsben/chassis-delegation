@@ -8,7 +8,7 @@ import { DEFAULT_AGENT_TYPES, DEFAULT_CARD_DIR, DEFAULT_DOMAINS, DEFAULT_MAX_WOR
 export const GITIGNORE_LINE = '.delegation/'
 /** GH-12: a repo holding this file is itself a plugin, and the engine reads its agents/*.md as subagents. */
 export const PLUGIN_MANIFEST = '.claude-plugin/plugin.json'
-export const PLUGIN_CARD_DIR = 'delegation/tasks'
+export const PLUGIN_CARD_DIR = 'docs/cards'
 export const INIT_FILES = ['agents/tasks/README.md', 'agents/tasks/OPS-000-sample.md', REPO_CONFIG_FILE, '.gitignore'] as const
 
 export const tasksReadme = (dir: string): string => TASKS_README.split('agents/tasks').join(dir)
@@ -116,7 +116,7 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
     worktreeRoot: '',
     _cardDir: "The folder the task cards live in, relative to the repo root. In a repo that is itself a plugin keep it out of agents/: the engine reads agents/*.md as subagents.",
     cardDir: DEFAULT_CARD_DIR,
-    _briefTemplate: "A brief body template file (absolute path); empty = the mod's templates/brief.md.",
+    _briefTemplate: "A brief body template file (absolute path); empty = the mod's hooks/templates/brief.md.",
     briefTemplate: '',
     _briefExtra: 'Repo-specific lines added to every brief (setup steps, conventions, things never to do).',
     briefExtra: '',

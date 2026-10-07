@@ -7,7 +7,7 @@
 // close handler.
 import type { Elements, RenderNode } from 'claude-code'
 
-import type { DashboardBlock } from '../../types'
+import type { DashboardBlock } from '../types'
 import { sparkCells, sparkSvg, sparkValues } from './dashboard'
 
 /** The surface's table, narrowed: the terminal draws a Raster, the rest an Svg. */

@@ -41,13 +41,13 @@ harness, no network. Version 0.4.0, MIT.
    dispatching; init itself needs no re-run.
 
    In a repo that is itself a plugin (it holds `.claude-plugin/plugin.json`),
-   init puts the cards under `delegation/tasks/` instead and writes
-   `"cardDir": "delegation/tasks"` into the config, because the engine reads
+   init puts the cards under `docs/cards/` instead and writes
+   `"cardDir": "docs/cards"` into the config, because the engine reads
    every `agents/*.md` of a plugin as a subagent definition. `--replay` still
    reads cards from `agents/tasks/` at the base commit (the allowlist's git
    shapes name that folder).
 
-To check the folder on the new machine, run `scripts/selfcheck.sh`. It runs
+To check the folder on the new machine, run `tests/selfcheck.sh`. It runs
 `claude plugin validate` and `claude plugin test`, then prints the
 `--plugin-dir` line to use.
 
@@ -150,7 +150,7 @@ starts with one header line:
 
     [[brief v=1 task=<ID> subtask=main purpose=build tier=<tier> model=<alias> scope=<globs> forbid=<globs> red_test="<cmd>" gate=<ids> budget=<n>-attempts report=chassis.report.v1]]
 
-The body comes from `templates/brief.md`. It tells the worker to:
+The body comes from `hooks/templates/brief.md`. It tells the worker to:
 
 - work only in its worktree;
 - install first, by the lockfile at the repo root:
@@ -433,8 +433,8 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `domains` | array | comma string | `frontend, backend, ops, dispatcher, cross, shared` | the domains a card may name |
 | `maxWorkers` | number | number (0 = unset) | `2` | briefed workers at once; the next one waits in a queue |
 | `worktreeRoot` | string | string | `""` (siblings: `<root>-<id>`) | worktrees go to `<worktreeRoot>/<repo name>-<id>` |
-| `cardDir` | string | string | `agents/tasks` | the folder the task cards live in, relative to the repo root (no leading `/`, no `..`); `/dispatch` and the dispatch tool read cards from it. `init` writes `delegation/tasks` in a plugin repo. `--replay` stays on `agents/tasks/` |
-| `briefTemplate` | string | string | `templates/brief.md` | the brief body template file |
+| `cardDir` | string | string | `agents/tasks` | the folder the task cards live in, relative to the repo root (no leading `/`, no `..`); `/dispatch` and the dispatch tool read cards from it. `init` writes `docs/cards` in a plugin repo. `--replay` stays on `agents/tasks/` |
+| `briefTemplate` | string | string | `hooks/templates/brief.md` | the brief body template file |
 | `briefExtra` | string | string | `""` | repo-specific lines added to every brief |
 | `evalCommand` | string | string | `""` | what the T1 eval runner runs; no command means no eval |
 | `evalLiveCommand` | string | string | `""` | what the T2 (live, paid) runner runs |
@@ -469,7 +469,7 @@ Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `s
 | `candidateIds` | `""` | comma-separated model ids to probe |
 
 **The debrief.** When `~/.claude/commands/debrief.md` exists, the mod runs it.
-Otherwise it runs the built-in `templates/debrief.md`. That template writes
+Otherwise it runs the built-in `hooks/templates/debrief.md`. That template writes
 `<root>/.delegation/debriefs/YYYY-MM-DD-<slug>.json` and adds one line to
 `<root>/.delegation/ledger.md`. The friction signal also has two sources:
 
@@ -549,7 +549,7 @@ opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5.
 - **Function-hook plugins need the engine's rollout switch.** Where it serves
   off, the mod does not load. `claude plugin test` then refuses with "hooks
   modules are turned off in this process: the rollout switch served off".
-  `scripts/selfcheck.sh` says so instead of failing. The pure tests also run
+  `tests/selfcheck.sh` says so instead of failing. The pure tests also run
   under plain node (see Developing).
 - **A gate runs in the worker's worktree, as the worker left it.** If a tool
   the gate needs is missing there, the gate exits 127, which reads as
@@ -579,7 +579,7 @@ opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5.
   - `delegation.friction.<session>`;
   - `delegation.evals`.
 - **`$.state`** holds `chassis-delegation.workers`, `.status`, `.lastVerdict`
-  and `.queue`, declared in `types/index.d.ts`.
+  and `.queue`, declared in `hooks/types/index.d.ts`.
 
 ## Developing
 

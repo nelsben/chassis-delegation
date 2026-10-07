@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # chassis-delegation selfcheck for a new machine: validate the plugin, run its
 # tests, and print the line that loads it. Run from anywhere:
-#   bash scripts/selfcheck.sh
+#   bash tests/selfcheck.sh
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 status=0

@@ -85,11 +85,11 @@ describe('the background debrief agent', () => {
 describe('5E: the debrief without the harness', () => {
   test('the user skill wins when it exists; else the built-in template', () => {
     expect(debriefSource('/home/u', '/mods/cd', true)).toEqual({ path: '/home/u/.claude/commands/debrief.md', builtIn: false })
-    expect(debriefSource('/home/u', '/mods/cd', false)).toEqual({ path: '/mods/cd/templates/debrief.md', builtIn: true })
+    expect(debriefSource('/home/u', '/mods/cd', false)).toEqual({ path: '/mods/cd/hooks/templates/debrief.md', builtIn: true })
   })
   test('the built-in prompt names the template, the root, the session and the facts', () => {
-    const p = builtInDebriefPrompt('/mods/cd/templates/debrief.md', 'sess-1', '/w/app', ['correction: no, use the other file', 'refuted: OPS-1 attempt 1 refuted on scope'])
-    expect(p).toContain('Run the debrief exactly as written in /mods/cd/templates/debrief.md.')
+    const p = builtInDebriefPrompt('/mods/cd/hooks/templates/debrief.md', 'sess-1', '/w/app', ['correction: no, use the other file', 'refuted: OPS-1 attempt 1 refuted on scope'])
+    expect(p).toContain('Run the debrief exactly as written in /mods/cd/hooks/templates/debrief.md.')
     expect(p).toContain('Session id sess-1. Repo root /w/app.')
     expect(p).toContain('- correction: no, use the other file')
     expect(p).toContain('Write only what it allows.')

@@ -24,7 +24,7 @@ export const BUILTIN_TIER_MAP: Readonly<Record<Tier, Alias>> = {
 
 /**
  * The classifier's label guide, from chassis/core/dispatch.md's tier table.
- * Exported so the classifier eval (eval/classifier-cases.jsonl) runs against
+ * Exported so the classifier eval (tests/eval/classifier-cases.jsonl) runs against
  * exactly the text the mod sends.
  */
 export const TIER_LABEL_GUIDE = [
