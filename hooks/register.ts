@@ -13,6 +13,8 @@ import { checkArgv, refusedLine, type AllowConfig } from './lib/allow'
 import {
   attemptsFor,
   escalationSource,
+  holdSource,
+  judgedShas,
   laneFields,
   lineageResumes,
   nextAttempt,
@@ -130,7 +132,7 @@ import { handbackMessages, workerSaid } from './lib/handback'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
-import { mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
+import { isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
 import { alreadyQueuedDeny, alreadyQueuedPart, enqueue, hasSlot, isQueuedDeny, promptKey, queuedDeny, queuedIndex, queuedText, startingOthers, waitedMinutes } from './lib/scheduler'
 import {
   CLASSIFIER_LABELS,
@@ -152,17 +154,27 @@ import {
   amendedLine,
   amendMalformedLine,
   amendPendingLine,
+  branchDelta,
   budgetDenyMessage,
   contextBlock,
   filesPathFor,
   isFailing,
   isProveResume,
+  isWorkPresentDeny,
+  newestRed,
+  probeWork,
   resumeText,
   scratchFor,
+  syntheticReport,
   verdictLine,
+  verifyAdvice,
+  workPresentDeny,
+  workPresentLine,
+  type Advice,
   type Verdict,
+  type WorkPresent,
 } from './lib/verify'
-import { briefContract, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
+import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { driftMessage, newAgentTypes, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 
 type Host = EngineInterface
@@ -212,7 +224,7 @@ const EVAL_STALE_MS = 3 * HOUR_MS
 const EVALS_CAP = 100
 const GATE_TIMEOUT_MS = 9 * 60 * 1000
 /** The advice kinds that leave something for the brain (or the person) to do. */
-const OWED_KINDS = ['resume', 'respawn', 'exhausted', 'check', 'fix-brief']
+const OWED_KINDS = ['resume', 'respawn', 'verify', 'exhausted', 'check', 'fix-brief']
 const LEDGER_FILE = '.delegation/ledger.jsonl'
 
 /** `delegation.debrief.<session>`: the background debrief (2C, 5E). */
@@ -715,6 +727,8 @@ async function drainQueue($: Host, exclude?: string): Promise<void> {
     const label = taskLabel(head.task, head.subtask ?? 'main')
     if (res.deny !== undefined) {
       $.ui.toast(`queued ${label} not started: ${res.deny}`)
+      // GH-104: the brain reads work present as a row, not only as a toast
+      if (isWorkPresentDeny(res.deny)) await appendRow($, res.deny)
       return
     }
     $.ui.toast(`started queued ${label} (waited ${waitedMinutes(head.at, await now($))} min)`)
@@ -1142,11 +1156,87 @@ async function readRed($: Host, path: string): Promise<RedEvidence> {
 }
 
 /** The worker's own worktree: the header's repo=, else the spawn's cwd, else the sibling worktree, else the root. */
-async function workerRepo($: Host, spawn: SpawnRecord, headerRepo: string | undefined, root: string): Promise<string> {
+async function workerRepo($: Host, spawn: Pick<SpawnRecord, 'cwd' | 'task' | 'replay'>, headerRepo: string | undefined, root: string): Promise<string> {
   if (headerRepo) return headerRepo
   if (spawn.cwd && (await exists($, spawn.cwd))) return spawn.cwd
   const sibling = worktreePath(root, spawn.task, spawn.replay, cfg.worktreeRoot)
   return (await exists($, sibling)) ? sibling : root
+}
+
+// ---- GH-104: look before you respawn ------------------------------------------------------
+/** What the look at a worker's worktree needs of the task: who, where it ran, a replay's base, repo=here. */
+type LookFor = { task: string; subtask: string; cwd?: string; replay?: boolean; base?: string; here?: string }
+
+/**
+ * GH-104: before a respawn or an auto-resume of a briefed task, the worker's
+ * own worktree is read with allowlisted git reads. Work is present when HEAD
+ * is not a sha the verifier already judged, the tree is clean, and HEAD has
+ * commits ahead of the base (a replay's, the brief's base=, baseRef, else the
+ * origin/main chain). Skipped for repo=here and repo=none, and for a worker
+ * with no worktree of its own (its tree would be the session root).
+ */
+async function workInWorktree($: Host, s: LookFor, header: BriefHeader | undefined, records: readonly AttemptRecord[], lane: Lane | undefined): Promise<WorkPresent | undefined> {
+  if (s.here || header?.repo === 'here' || header?.repo === 'none') return undefined
+  let root: string
+  try {
+    root = (await $.session.root()).replace(/\/+$/, '')
+  } catch {
+    return undefined
+  }
+  const repo = (await workerRepo($, s, header?.repo, root)).replace(/\/+$/, '')
+  if (repo === root) return undefined
+  const briefBase = (header?.fields.base ?? '').trim()
+  const base = s.base || (briefBase && isGitRef(briefBase) ? briefBase : '') || cfg.baseRef || undefined
+  const label = taskLabel(s.task, s.subtask)
+  const seen = await probeWork({ repo, ...(base ? { base } : {}), judged: judgedShas(records, s.subtask, lane) }, (argv, init) => run($, [...argv], init))
+  if (!seen.present) {
+    debug($, `${label}: no work present in ${repo} (${seen.why})`)
+    return undefined
+  }
+  debug($, `${label}: ${workPresentLine(seen)} (${seen.ahead} commit${seen.ahead === 1 ? '' : 's'} ahead)`)
+  return { sha: seen.sha, branch: seen.branch, ahead: seen.ahead }
+}
+
+/**
+ * GH-104: the attempt that did not spawn, recorded as `work-present` (kind
+ * `verify`, the branch head as its sha) for `/dispatch <id> --verify` to
+ * judge. A work-present attempt already last in line moves to the new head
+ * instead of doubling. Returns its attempt number.
+ */
+async function recordWorkPresent(
+  $: Host,
+  s: { task: string; subtask: string; tier: Tier; alias: string; purpose: string; briefPath?: string; agentId?: string },
+  w: WorkPresent,
+  lane: Lane | undefined,
+): Promise<number> {
+  const all = await loadAttempts($, s.task)
+  const ladder = all.filter(r => (r as HereRecord).adhoc !== true)
+  const last = attemptsFor(ladder, s.subtask, lane).at(-1)
+  if (last?.verdict === 'work-present') {
+    if (last.sha !== w.sha) await storeSet($, K.tasks(s.task), all.map(r => (r === last ? { ...r, sha: w.sha } : r)))
+    return last.attempt
+  }
+  const attempt = nextAttempt(ladder, s.subtask, lane)
+  const agentId = s.agentId ?? last?.agentId
+  const briefPath = s.briefPath ?? last?.briefPath
+  const rec: HereRecord = {
+    task: s.task,
+    subtask: s.subtask,
+    attempt,
+    kind: 'verify',
+    lineage: last?.lineage ?? attempt,
+    tier: last?.tier ?? s.tier,
+    alias: last?.alias ?? s.alias,
+    verdict: 'work-present',
+    sha: w.sha,
+    at: await now($),
+    ...(agentId ? { agentId } : {}),
+    ...(briefPath ? { briefPath } : {}),
+    purpose: s.purpose,
+    ...laneFields(lane),
+  }
+  await storeSet($, K.tasks(s.task), [...all, rec])
+  return attempt
 }
 
 async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<Verified> {
@@ -1361,7 +1451,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   const usd = usdNow !== undefined && spawn.usdAtStart !== undefined ? Math.round((usdNow - spawn.usdAtStart) * 10000) / 10000 : undefined
   const label = taskLabel(spawn.task, spawn.subtask)
   let model = measured.model ?? spawn.resolvedModel
-  let advice
+  let advice: Advice
   let judged: AttemptRecord | undefined
   // what the row, the recent list and the ledger name: a cardless attempt goes under its report's task=
   let shownLabel = spawn.adhoc ? spawn.task : label
@@ -1416,6 +1506,8 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
       {
         verdict,
         reportGate: report?.gate,
+        // GH-104: the sha the report named, so a later look at the worktree knows it is judged
+        ...(report?.sha ? { sha: report.sha.trim() } : {}),
         verdictAt: t,
         ...(usd !== undefined ? { usd } : {}),
         ...(tokens !== undefined ? { tokens } : {}),
@@ -1439,6 +1531,17 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
       adhoc: false,
       lines,
     })
+  }
+  // GH-104: a resume or a respawn looks at the worker's worktree first: finished work there is verified, not redone
+  let work: WorkPresent | undefined
+  if (!spawn.adhoc && spawn.briefPath && (advice.kind === 'resume' || advice.kind === 'respawn')) {
+    const lane = laneOf(spawn)
+    const briefText = await readText($, spawn.briefPath)
+    work = await workInWorktree($, spawn, briefText !== undefined ? parseHeader(briefText) : undefined, await loadAttempts($, spawn.task), lane)
+    if (work) {
+      await recordWorkPresent($, spawn, work, lane)
+      advice = verifyAdvice(work)
+    }
   }
   // a prove resume (GH-1 item 5) counts against the budget as a failing verdict's resume does
   const prove = advice.kind === 'resume' && isProveResume(verdict, report?.gate)
@@ -1481,8 +1584,11 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   }
 
   const shownVerdict = noRepo ? `${verdict} (no repo)` : verdict
-  const full = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, model, next }), lines)
-  const line = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, ...(usd !== undefined ? { usd } : {}), next, lines })
+  // GH-104: work present rides under the verdict line in both forms
+  const workLine = work ? workPresentLine(work) : undefined
+  const full = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, model, next }), workLine ? [workLine, ...lines] : lines)
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, ...(usd !== undefined ? { usd } : {}), next, lines })
+  const line = workLine ? `${quiet}\n${workLine}` : quiet
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
   await setWorkers($, list => list.map(w => (w.task === spawn.task && w.subtask === spawn.subtask && w.attempt === spawn.attempt ? { ...w, verdict } : w)))
@@ -1490,7 +1596,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   // a cardless hand-back is posted, kept and ledgered like any other (GH-1 item 2)
   if (!spawn.adhoc || cardless) {
     const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${shownLabel}: ${shortNext(next)}` : undefined
-    await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}) })
+    await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line: quiet, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}) })
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
     await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, next: shortNext(next), sessionId: await sessionIdOf($) })
   }
@@ -1667,6 +1773,7 @@ async function runDispatch($: Host, parsed: DispatchArgs): Promise<string> {
 
 async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (parsed.error !== undefined) return parsed.error
+  if (parsed.verify !== undefined) return runVerifyDispatch($, parsed.id, parsed.verify)
   await loadRepoConfig($)
   const { id, dryRun, base, scope, forbid } = parsed
   const replay = parsed.replay === true
@@ -1829,9 +1936,122 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   }
   if (res.deny !== undefined) return [...out, `4. spawn refused: ${res.deny}`].join('\n')
   const decided = await spawnByAgent($, res.agentId)
-  out.push(`4. spawned ${subagentType} agent ${res.agentId ?? '(id pending)'} on ${res.model ?? '(model pending)'}`)
+  // GH-104: the line says what the spawn spends: the model and the attempt of the budget
+  out.push(`4. spawned ${subagentType} agent ${res.agentId ?? '(id pending)'} on ${res.model ?? '(model pending)'}${decided ? ` · attempt ${decided.attempt}/${decided.budget}` : ''}`)
   out.push(`brief ${briefPath} · ${place} · branch ${branch} · agent ${res.agentId ?? '(id pending)'} · tier=${decided?.tier ?? tier} → ${decided?.alias ?? alias}`)
   return out.join('\n')
+}
+
+/**
+ * GH-104: `/dispatch <ID> --verify <sha>` (the tool's `verify`): no spawn. The
+ * native verifier runs on the task's own tree (its worktree, or the root for
+ * repo=here) at the sha, against the task's existing brief, with a synthetic
+ * report naming the delta (merge-base(base, sha)..sha), gate=pass and the
+ * newest red file when the brief asks for one. The verdict lands on the
+ * work-present attempt when that is the last one, else on a new `verify`
+ * attempt, and the advice follows as for any hand-back.
+ */
+async function runVerifyDispatch($: Host, id: string, sha: string): Promise<string> {
+  await loadRepoConfig($)
+  const head = `/dispatch ${id} --verify ${sha}`
+  const root = await $.session.root()
+  const tasksDir = cardDirPath(root, cfg.cardDir)
+  const found = await cardsInTree($, tasksDir, id)
+  if (typeof found === 'string') return found
+  if (found.length !== 1) {
+    return found.length === 0
+      ? `${head}: no card under ${tasksDir} (looked for ${id}-*.md with id: ${id})`
+      : `${head}: ${found.length} cards claim ${id} (${found.map(f => f.name).join(', ')}); fix the board first`
+  }
+  const { card } = found[0] as { name: string; card: Card }
+  const refusal = checkDomain(card, cfg.domains)
+  if (refusal) return `${head}: ${refusal}`
+  const briefPath = await existingBrief($, root, briefFileName(id))
+  if (!briefPath) return `${head}: no brief for ${id} under ${briefDirFor(root, cfg.briefDir)} (dispatch it first; --verify judges a dispatched task's work)`
+  const briefText = (await readText($, briefPath)) ?? ''
+  const header = parseHeader(briefText)
+  if (header?.repo === 'none') return `${head}: the brief ${briefPath} says repo=none; there is no branch to verify`
+  const here = header?.repo === 'here'
+  const subtask = header?.subtask ?? 'main'
+  const label = taskLabel(id, subtask)
+  const repo = here ? root : header?.repo || worktreePath(root, id, false, cfg.worktreeRoot)
+  if (!here && !(await exists($, repo))) return `${head}: no worktree at ${repo}`
+  let branch = branchName(card.domain, id)
+  if (here) {
+    const current = await run($, currentBranchArgv(root), { cwd: root, timeoutMs: 10000 })
+    branch = current.ok && current.exitCode === 0 && current.stdout.trim() ? current.stdout.trim() : branch
+  }
+  const all = await loadAttempts($, id)
+  const ladder = all.filter(r => (r as HereRecord).adhoc !== true)
+  const last = attemptsFor(ladder, subtask).at(-1)
+  // a worker still running owns the tree; a pending attempt whose agent is gone is not waited on
+  const running = last?.verdict === 'pending' && last.agentId !== undefined && (await agentList($)).some(a => a.id === last.agentId && a.status === 'running')
+  if (running) return `${head}: attempt ${last?.attempt} of ${label} is still running (agent ${last?.agentId}); --verify judges finished work`
+
+  // the synthetic report: the delta the verifier will take, and the newest red file when the brief asks for one
+  const contract = briefContract(briefText)
+  const base = (contract.ok ? contract.base : undefined) || cfg.baseRef || undefined
+  const delta = await branchDelta({ repo, sha, ...(base ? { base } : {}) }, (argv, init) => run($, [...argv], init))
+  if ('why' in delta) return `${head}: ${delta.why}`
+  let red: string | undefined
+  if (contract.ok && briefWantsRed(contract.redTest)) {
+    try {
+      const name = newestRed((await $.fs.list(`${repo}/.delegation/${id}`)).map(e => e.name))
+      red = name ? `.delegation/${id}/${name}` : undefined
+    } catch {
+      red = undefined
+    }
+  }
+  const report = syntheticReport({ task: id, subtask, branch, sha, files: delta.files, ...(red ? { red } : {}) })
+
+  // the attempt it judges: the work-present one when it is last, else a new verify attempt
+  const t = await now($)
+  const briefTier: Tier = isTier(header?.tier) ? (header?.tier as Tier) : 'standard'
+  let attempt: number
+  if (last?.verdict === 'work-present') attempt = last.attempt
+  else {
+    attempt = nextAttempt(ladder, subtask)
+    const rec: HereRecord = {
+      task: id,
+      subtask,
+      attempt,
+      kind: 'verify',
+      lineage: last?.lineage ?? attempt,
+      tier: last?.tier ?? briefTier,
+      alias: last?.alias ?? cfg.tierMap[briefTier],
+      verdict: 'pending',
+      sha,
+      at: t,
+      ...(last?.agentId ? { agentId: last.agentId } : {}),
+      briefPath,
+      purpose: header?.purpose ?? 'build',
+      ...(here ? { here: root } : {}),
+    }
+    await storeSet($, K.tasks(id), [...all, rec])
+  }
+  const rec = attemptsFor(await loadAttempts($, id), subtask).find(r => r.attempt === attempt && (r as HereRecord).adhoc !== true)
+  const spawn: SpawnRecord = {
+    key: `verify-${id}-${subtask}-${attempt}`,
+    task: id,
+    subtask,
+    adhoc: false,
+    attempt,
+    lineage: rec?.lineage ?? attempt,
+    tier: rec?.tier ?? briefTier,
+    alias: rec?.alias ?? cfg.tierMap[briefTier],
+    budget: parseBudget(header?.budget, cfg.defaultBudget),
+    purpose: header?.purpose ?? 'build',
+    briefPath,
+    prompt: spawnPrompt(briefPath),
+    description: spawnDescription(id, card.title),
+    subagentType: agentTypeFor(card.domain, cfg.agentTypes, (await storeGet<string[]>($, K.agentTypes)) ?? []),
+    cwd: repo,
+    ...(rec?.agentId ? { agentId: rec.agentId } : {}),
+    at: t,
+    ...(here ? { here: root } : {}),
+  }
+  const rendered = await finalize($, spawn, report)
+  return [`${head}: no spawn — the verifier ran on ${here ? `the shared checkout ${root}` : `worktree ${repo}`} at ${sha.slice(0, 7)} (base ${delta.base})`, `synthetic report: ${report}`, rendered.full].join('\n')
 }
 
 // ---- part 5B: /delegation init and the init tool ----------------------------------------
@@ -1930,6 +2150,20 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
     const prior = attemptsFor(records, subtask, lane).length
     if (!adhoc && prior >= budget) return { deny: budgetDenyMessage(taskLabel(task, subtask), prior, named) }
 
+    // GH-104: a respawn (an earlier attempt exists) looks at the worker's worktree first; finished work there is verified, not redone
+    if (!adhoc && prior > 0) {
+      const fileHeader = briefText !== undefined ? parseHeader(briefText) : undefined
+      const look: LookFor = { task, subtask, ...(e.cwd ? { cwd: e.cwd } : {}), ...(lane ? { replay: true, ...(lane.base ? { base: lane.base } : {}) } : {}) }
+      const work = await workInWorktree($, look, fileHeader ?? header, records, lane)
+      if (work) {
+        const last = attemptsFor(records, subtask, lane).at(-1)
+        await recordWorkPresent($, { task, subtask, tier: last?.tier ?? 'standard', alias: last?.alias ?? cfg.tierMap.standard, purpose: header?.purpose ?? 'build', ...(named ? { briefPath: named } : {}) }, work, lane)
+        const deny = workPresentDeny(taskLabel(task, subtask), task, work)
+        debug($, deny)
+        return { deny }
+      }
+    }
+
     // 2F: a briefed spawn takes a worker slot or waits in the queue; an ad hoc one never waits.
     if (!adhoc && token === undefined) {
       const slot = await claimSlot(
@@ -1971,13 +2205,17 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
       headerTier: header?.tier,
       callerModel: e.model,
       classified,
+      // GH-104: one tier up only after a refuted attempt (or a confirmed gate=fail); a no-report holds the tier
       escalateFrom: adhoc ? undefined : escalationSource(records, subtask, lane),
+      holdAt: adhoc ? undefined : holdSource(records, subtask, lane),
     })
     const { alias, fableRewritten } = aliasFor(pick)
     const tier: Tier = fableRewritten ? 'frontier' : pick.tier
     // GH-1 item 8: fable asked for (tier map, caller, or the brief's model=) and opus spawned is said out loud
     const fableAsked = fableRequested(alias, fableRewritten, header?.model)
-    const notice = noticeText(pick, alias, fableAsked)
+    const attempt = adhoc ? 1 : nextAttempt(records, subtask, lane)
+    // GH-104: a briefed spawn's notice says which attempt it is spending
+    const notice = noticeText(pick, alias, fableAsked, adhoc ? undefined : { attempt, budget })
     try {
       $.ui.notice(e.tool_use_id, notice)
     } catch {
@@ -2006,7 +2244,6 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
       await started(res.agentId)
     }
 
-    const attempt = adhoc ? 1 : nextAttempt(records, subtask, lane)
     const rec: HereRecord = {
       task,
       subtask,
@@ -2344,7 +2581,7 @@ export const register: Register = (on, opts) => {
       await $.command.register({
         name: 'dispatch',
         description: 'Brief, worktree and spawn a worker for a task card',
-        argumentHint: '<TASK-ID> [--dry-run] [--base <sha>] [--replay] [--scope <globs>] [--forbid <globs>] [--here] [--force-overlap]',
+        argumentHint: '<TASK-ID> [--dry-run] [--base <sha>] [--replay] [--scope <globs>] [--forbid <globs>] [--here] [--force-overlap] | <TASK-ID> --verify <sha>',
       })
     } catch (err) {
       debug($, `/dispatch not registered: ${String(err)}`)

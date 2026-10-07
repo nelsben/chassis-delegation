@@ -3,8 +3,15 @@
 // data source. Pure: no `$`.
 import type { Tier, TierSource } from './tier'
 
-export type AttemptVerdict = 'pending' | 'verified' | 'unverified' | 'refuted' | 'no-report' | 'refused'
-export type AttemptKind = 'spawn' | 'resume'
+/**
+ * `work-present` (GH-104): a respawn or an auto-resume found finished work in
+ * the worker's worktree (commits ahead of the base, a clean tree) and did not
+ * spawn; `/dispatch <id> --verify <sha>` judges it, and the record takes that
+ * verdict.
+ */
+export type AttemptVerdict = 'pending' | 'verified' | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present'
+/** `verify` (GH-104): no worker ran; the attempt is the work found in the worktree, judged by `--verify`. */
+export type AttemptKind = 'spawn' | 'resume' | 'verify'
 
 export type AttemptRecord = {
   task: string
@@ -21,6 +28,12 @@ export type AttemptRecord = {
   verdict: AttemptVerdict
   /** The report's own `gate=` claim. */
   reportGate?: string
+  /**
+   * GH-104: the sha the attempt's report named (as written), or a
+   * `work-present` / `verify` attempt's branch head. A judged one is not new
+   * work: a respawn past it is not stopped by the look at the worktree.
+   */
+  sha?: string
   /** The red evidence the report named (`red=`, as written) and read in the worker's tree (GH-20). */
   red?: string
   /** sha-256 of that file's bytes: a later attempt naming the same bytes is refuted on red. */
@@ -59,11 +72,31 @@ export const lineageResumes = (records: readonly AttemptRecord[], subtask: strin
 
 export const recordFailed = (r: AttemptRecord): boolean => FAILING.includes(r.verdict) || r.reportGate === 'fail'
 
-/** The tier a respawn escalates from: the last attempt's, when that attempt failed. */
+/**
+ * GH-104: what earns a respawn the next tier: a refuted report, or a
+ * `gate=fail` the verifier confirmed (the verdict held it: verified). A
+ * no-report is a reporting defect, not a capability one, and never escalates.
+ */
+export const escalatesOn = (verdict: string, reportGate?: string): boolean => verdict === 'refuted' || (verdict === 'verified' && reportGate === 'fail')
+
+/** The tier a respawn escalates from: the last attempt's, when that attempt was refuted or confirmed gate=fail (GH-104). */
 export function escalationSource(records: readonly AttemptRecord[], subtask: string, lane?: Lane): Tier | undefined {
   const last = attemptsFor(records, subtask, lane).at(-1)
-  return last && last.verdict !== 'pending' && recordFailed(last) ? last.tier : undefined
+  return last && escalatesOn(last.verdict, last.reportGate) ? last.tier : undefined
 }
+
+/**
+ * GH-104: the tier a respawn after a no-report is held at: that attempt's
+ * own, never one up (and never below it, should the brief's tier be lower).
+ */
+export function holdSource(records: readonly AttemptRecord[], subtask: string, lane?: Lane): Tier | undefined {
+  const last = attemptsFor(records, subtask, lane).at(-1)
+  return last && last.verdict === 'no-report' ? last.tier : undefined
+}
+
+/** GH-104: the shas the verifier already judged for this task + subtask (pending and work-present attempts are not judged). */
+export const judgedShas = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): string[] =>
+  attemptsFor(records, subtask, lane).flatMap(r => (r.sha && r.verdict !== 'pending' && r.verdict !== 'work-present' ? [r.sha] : []))
 
 /** The red hashes of the attempts before `attempt` (same subtask and lane): what a fresh red file must differ from. */
 export const priorRedHashes = (records: readonly AttemptRecord[], subtask: string, attempt: number, lane?: Lane): { attempt: number; hash: string }[] =>

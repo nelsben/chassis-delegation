@@ -41,6 +41,14 @@ describe('precedence', () => {
     expect(nextTier('frontier')).toBe('frontier')
     expect(nextTier('economy')).toBe('standard')
   })
+  test('GH-104: a respawn after a no-report is held at that attempt tier, never one up and never below it', () => {
+    expect(pickTier({ hadHeader: true, headerTier: 'standard', holdAt: 'standard' })).toEqual({ tier: 'standard', source: 'brief' })
+    // the no-report came from an attempt already escalated to frontier: the respawn stays there
+    expect(pickTier({ hadHeader: true, headerTier: 'standard', holdAt: 'frontier' })).toEqual({ tier: 'frontier', source: 'held' })
+    expect(tierPickLine('T-4', 'frontier', { tier: 'frontier', source: 'held' }, undefined, false)).toBe(
+      "T-4: tier=frontier picked by the last attempt's tier (a respawn after a no-report is held there, never escalated) (no classify call)",
+    )
+  })
 })
 
 describe('alias mapping', () => {
@@ -67,6 +75,10 @@ describe('alias mapping', () => {
     expect(noticeText({ tier: 'premium', source: 'brief' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod)')
     expect(noticeText({ tier: 'premium', source: 'caller', callerAlias: 'fable' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod)')
     expect(noticeText({ tier: 'economy', source: 'classified' }, 'haiku', false)).toBe('tier=economy → haiku (classified)')
+  })
+  test('GH-104: a briefed spawn notice ends with its attempt of the budget', () => {
+    expect(noticeText({ tier: 'standard', source: 'brief' }, 'sonnet', false, { attempt: 2, budget: 3 })).toBe('tier=standard → sonnet (brief) · attempt 2/3')
+    expect(noticeText({ tier: 'premium', source: 'brief' }, 'opus', true, { attempt: 1, budget: 2 })).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod) · attempt 1/2')
   })
 })
 
