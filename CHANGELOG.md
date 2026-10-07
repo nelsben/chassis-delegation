@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **A dispatch's `--base` reaches the verifier (GH-105, closes public #14).**
+  A card stacked on an unpushed sibling was cut from the sibling's sha, the
+  worker changed only its own files, and the verdict was `refuted on scope`
+  on a file from the base commit: the brief never said `base=`, so the
+  verifier diffed against `origin/main`.
+  - `/dispatch <ID> --base <sha>` (and the tool's `base`) now writes
+    `base=<sha>` into the header whenever the base is not `origin/main`,
+    worktree mode and repo=here alike. A reused brief is not rewritten; when
+    it has no `base=` the dispatch output says so.
+  - The scope line names the base: `claim scope: held — every changed path
+    since <base> is within …`. `--verify <sha>` takes its delta from the
+    same `base=`.
+
 - **A refused drain keeps the queue head (GH-107, closes public #16).** The
   drain used to remove the head before spawning it, so a spawn the hook
   refused lost its place and the brain, which never reads toasts, saw nothing.

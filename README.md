@@ -190,7 +190,7 @@ Only a brief with no `scope=` at all is refused. Other header fields are optiona
 
 - `repo=none` marks a task with no git repo, and `repo=<dir>` names the folder to verify;
 - `repo=here` marks a task worked in the session's own checkout, no worktree (see [repo=here](#repohere-the-main-checkout));
-- `base=<ref>` names where the delta starts when the worker commits (GH-10): a branch, `HEAD~2`, a sha. It beats `baseRef` and the `origin/main` chain. A value that is not a git ref (one starting with `-`, or a `a..b` range) makes the brief **refused**;
+- `base=<ref>` names where the delta starts when the worker commits (GH-10): a branch, `HEAD~2`, a sha. It beats `baseRef` and the `origin/main` chain. A value that is not a git ref (one starting with `-`, or a `a..b` range) makes the brief **refused**. `/dispatch <ID> --base <sha>` (and the tool's `base`) writes it whenever the base is not the default `origin/main`, in worktree mode and repo=here alike (GH-105): a card stacked on an unpushed sibling is cut from that sha and judged on what the worker added to it, not on the sibling's files. A reused brief keeps its own header; when it has no `base=` the dispatch says so (`note: the reused brief has no base=; …`) rather than rewriting it. `--verify <sha>` takes its delta from the same `base=`. The verdict's scope line names the base it diffed from (`every changed path since <base> is within …`);
 - `ignore=<globs>` (repo=here only) names paths taken off the delta before scope and files are checked.
 
 A repo=here brief's body comes from the template's `{{#here}}` sections
