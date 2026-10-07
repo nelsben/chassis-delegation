@@ -1861,13 +1861,19 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     }
     const ignore = hereIgnore(cfg.ignore, inflight.flatMap(c => c.files))
     header = renderHeader({ card, tier, alias, budget, ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore })
-  } else header = renderHeader({ card, tier, alias, budget, ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}) })
+  } else {
+    // GH-105: a base that is not the default is written, so the verifier diffs from the commit the worktree was cut from
+    header = renderHeader({ card, tier, alias, budget, ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), ...(base !== 'origin/main' ? { base } : {}) })
+  }
   let briefPath: string
   let shown = header
   if (reuse) {
     briefPath = reuse
     shown = reusedHeader?.raw ?? header
     out.push(`2. brief ${briefPath} exists — reused, not overwritten${scope || forbid ? ' (--scope/--forbid not applied to it)' : ''}`)
+    if (base !== 'origin/main' && !reusedHeader?.fields.base) {
+      out.push(`   note: the reused brief has no base=; the verifier diffs against ${cfg.baseRef || 'origin/main → main → origin/master → master'}`)
+    }
     if (here !== wantHere && !replay) out.push(`   note: the reused brief is ${here ? 'repo=here' : 'a worktree brief'}, so it decides the mode (remove it to re-render)`)
   } else {
     let template: string

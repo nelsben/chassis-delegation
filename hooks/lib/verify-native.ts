@@ -476,6 +476,8 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   let delta: string[] | undefined
   let renamedFrom: string[] = []
   let noDelta = 'could not establish the branch delta (sha/base missing)'
+  // GH-105: the base the delta was taken from, named on the scope line (a sha as its short form)
+  let sinceBase = ''
   if (treeSha) {
     const status = await out(...STATUS_ARGS)
     if (status !== undefined) delta = porcelainPaths(status)
@@ -493,6 +495,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     let mb = base ? firstLine(await out('merge-base', base, full)) : ''
     if (!mb && base && (await out('rev-parse', '--verify', '--quiet', base)) !== undefined) mb = base
     if (mb) {
+      if (base) sinceBase = /^[0-9a-f]{40}$/i.test(base) ? base.slice(0, 7) : base
       const diff = await out('diff', '--name-status', '-M', mb, full)
       if (diff !== undefined) {
         const d = nameStatusDelta(diff)
@@ -534,7 +537,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     if (bad) claim('scope', 'failed', bad)
     else {
       const amended = contract.amendments > 0 ? ` (effective scope: the brief header ± ${contract.amendments} disclosed amendment(s) above)` : ''
-      claim('scope', 'held', `every changed path is within scope=[${contract.scope.join(',')}], forbid=[${contract.forbid.join(',')}] untouched${amended}`)
+      claim('scope', 'held', `every changed path${sinceBase ? ` since ${sinceBase}` : ''} is within scope=[${contract.scope.join(',')}], forbid=[${contract.forbid.join(',')}] untouched${amended}`)
     }
   }
 

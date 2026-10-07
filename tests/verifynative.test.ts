@@ -141,7 +141,7 @@ describe('5A: verifyNative against a repo answered from a table', () => {
     expect(r.lines).toEqual([
       'claim branch: held — refs/heads/agent/ops/T-1',
       'claim sha: held — a1b2c3d4e reachable on agent/ops/T-1',
-      'claim scope: held — every changed path is within scope=[src/**,docs/], forbid=[src/secret/**] untouched',
+      'claim scope: held — every changed path since origin/main is within scope=[src/**,docs/], forbid=[src/secret/**] untouched',
       'claim files: held — files= matches the sha delta exactly',
       'claim gate: held — gate green at a1b2c3d (gate=pass confirmed)',
       'claim red: held — .delegation/T-1/red-1.txt, 70 bytes, first failure line: (fail) sums > adds two numbers',

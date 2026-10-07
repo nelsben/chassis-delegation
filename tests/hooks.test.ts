@@ -1451,3 +1451,62 @@ describe('GH-107: a drained spawn that is refused keeps its place at the head of
     expect(posted[0]).toContain('the engine is busy; it keeps its place (position 1)')
   })
 })
+
+describe('GH-105: a dispatch given --base <sha> writes base= into the brief, and the verifier diffs from it', () => {
+  const CARD_NAME = 'T-4-the-thing.md'
+  const CARD = '---\nid: T-4\ntitle: The thing\ndomain: frontend\ntier: standard\nstatus: queued\nscope: [a/**]\nforbid: [b/**]\nred_test: none\ngate: prettier\nbudget: 3-attempts\n---\n## Why\nA card stacked on an unpushed sibling.\n'
+  const BASE = 'd'.repeat(40)
+  const HEAD = 'abcdef1' + '2'.repeat(33)
+  const BRANCH = 'agent/frontend/T-4'
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const files = () => ({ [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD })
+  const dirs = { [`${ROOT}/agents/tasks`]: [CARD_NAME] }
+  // The worktree is cut from BASE, which itself changed b/y.ts. The branch adds a/x.ts on top of it.
+  // Diffed from BASE the delta is a/x.ts; diffed from origin/main it would also hold the base's b/y.ts.
+  const stacked = (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'fetch' || sub[0] === 'worktree') return { exitCode: 0, stdout: '' }
+    if (sub[0] === 'rev-parse' && sub[1] === '--abbrev-ref') return { exitCode: 0, stdout: `${BRANCH}\n` }
+    if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${sub[1] === BASE ? BASE : MB}\n` }
+    if (sub[0] === 'diff') {
+      const fromBase = sub.includes(BASE)
+      const rows = fromBase ? ['A\ta/x.ts'] : ['A\ta/x.ts', 'A\tb/y.ts']
+      return { exitCode: 0, stdout: (sub.includes('--name-status') ? rows : rows.map(r => r.split('\t')[1])).join('\n') + '\n' }
+    }
+    if (sub[0] === 'status') return { exitCode: 0, stdout: '' }
+    return undefined
+  }
+
+  test('the header carries base=<sha>, and a hand-back on top of a base that changed a forbidden path is verified, the scope line naming the base', { options: { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: stacked, agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput(`T-4 --base ${BASE} --scope a/**`))).text)
+    const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
+    expect(header).toContain(` gate=prettier base=${BASE} budget=3-attempts`)
+    expect(out).toContain(`3. worktree ${ROOT}-T-4 on ${BRANCH} from ${BASE}`)
+    const REPORT = `[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=a/x.ts]]`
+    await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
+    const row = delivered(w)
+    expect(row).toContain('chassis-delegation: verdict=verified task=T-4 attempt=1/3')
+    expect(row).toContain(`claim scope: held — every changed path since ${BASE.slice(0, 7)} is within scope=[a/**], forbid=[b/**] untouched`)
+    expect(row).toContain('claim files: held — files= matches the sha delta exactly')
+  })
+
+  test('a dispatch with no --base writes no base=; a reused brief without base= is told so, not rewritten', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: stacked, agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.command.run(commandInput('T-4 --scope a/**'))
+    const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
+    expect(header).not.toContain(' base=')
+    const again = String((await $.command.run(commandInput(`T-4 --base ${BASE}`))).text)
+    expect(again).toContain('note: the reused brief has no base=; the verifier diffs against origin/main → main → origin/master → master')
+    expect((w.files.get(BRIEF) ?? '').split('\n')[0]).not.toContain(' base=')
+  })
+})
