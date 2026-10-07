@@ -1,12 +1,12 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { DISPATCH_TOOL, DISPATCH_TOOL_NAME, HERE_NO_REPLAY, parseDispatchArgs, parseDispatchTool, REPLAY_NEEDS_BASE } from '../hooks/lib/dispatch'
+import { DISPATCH_TOOL, DISPATCH_TOOL_NAME, HERE_NO_REPLAY, parseDispatchArgs, parseDispatchTool, REPLAY_NEEDS_BASE, VERIFY_ALONE, verifyShaRefusal } from '../hooks/lib/dispatch'
 
 describe('the dispatch tool (2A)', () => {
   test('is declared as dispatch, listed as mcp__chassis-delegation__dispatch, with the spec schema and description', () => {
     expect(DISPATCH_TOOL.name).toBe('dispatch')
     expect(DISPATCH_TOOL_NAME).toBe('mcp__chassis-delegation__dispatch')
     expect(DISPATCH_TOOL.description).toBe(
-      "Dispatch a chassis task card to a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout), picks the tier and spawns. Pass scope/forbid globs when the card's are prose.",
+      "Dispatch a chassis task card to a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout), picks the tier and spawns. Pass scope/forbid globs when the card's are prose. With verify (a sha), spawns nothing: runs the verifier on the work already in the task's worktree.",
     )
     expect(DISPATCH_TOOL.inputSchema).toEqual({
       type: 'object',
@@ -19,6 +19,7 @@ describe('the dispatch tool (2A)', () => {
         dryRun: { type: 'boolean', description: 'Write the brief and print its header; no worktree, no spawn' },
         here: { type: 'boolean', description: "repo=here: no worktree and no fetch; the worker shares the session's own checkout" },
         forceOverlap: { type: 'boolean', description: "repo=here: dispatch even when the card's scope overlaps an in-flight card's" },
+        verify: { type: 'string', description: "A 7-40 hex sha, the branch head: run the verifier on the work in the task's worktree with a synthetic report naming the delta; no spawn. Takes no other option" },
       },
       required: ['task'],
       additionalProperties: false,
@@ -34,6 +35,8 @@ describe('the dispatch tool (2A)', () => {
     // GH-16
     expect(parseDispatchTool({ task: 'BE-101', here: true, forceOverlap: true })).toEqual(parseDispatchArgs('BE-101 --here --force-overlap'))
     expect(parseDispatchTool({ task: 'BE-101', here: true })).toEqual({ id: 'BE-101', dryRun: false, base: 'origin/main', here: true })
+    // GH-104
+    expect(parseDispatchTool({ task: 'T-4', verify: 'abcdef12' })).toEqual(parseDispatchArgs('T-4 --verify abcdef12'))
   })
 
   test('refuses what the command refuses', () => {
@@ -47,5 +50,10 @@ describe('the dispatch tool (2A)', () => {
     expect(parseDispatchTool({ task: 'BE-101', dryRun: 'yes' })).toEqual({ error: 'dispatch: dryRun must be a boolean' })
     expect(parseDispatchTool({ task: 'BE-101', here: 'yes' })).toEqual({ error: 'dispatch: here must be a boolean' })
     expect(parseDispatchTool({ task: 'BE-101', here: true, replay: true, base: '96014e3b' })).toEqual({ error: HERE_NO_REPLAY })
+    // GH-104: verify takes a sha and no other option
+    expect(parseDispatchTool({ task: 'T-4', verify: 'HEAD' })).toEqual({ error: verifyShaRefusal('HEAD') })
+    expect(parseDispatchTool({ task: 'T-4', verify: 7 })).toEqual({ error: 'dispatch: verify must be a string' })
+    expect(parseDispatchTool({ task: 'T-4', verify: 'abcdef12', here: true })).toEqual({ error: VERIFY_ALONE })
+    expect(parseDispatchTool({ task: 'T-4', verify: 'abcdef12', dryRun: false })).toEqual(parseDispatchArgs('T-4 --verify abcdef12'))
   })
 })

@@ -3,12 +3,13 @@
 // Precedence (SPEC part 1): the brief header's `tier=` (the contract; `model=`
 // there is advisory) > the caller's explicit `model` > the classifier. A
 // header without `tier=` floors at standard (the chassis default) and never
-// asks the classifier. A respawn after a failed attempt is escalated one tier
-// above that attempt (never below the brief's own tier).
+// asks the classifier. A respawn after a refuted attempt (or a confirmed
+// gate=fail) is escalated one tier above that attempt (never below the brief's
+// own tier); a respawn after a no-report is held at that attempt's tier (GH-104).
 
 export type Tier = 'economy' | 'standard' | 'frontier' | 'premium'
 export type Alias = 'haiku' | 'sonnet' | 'opus' | 'fable'
-export type TierSource = 'brief' | 'caller' | 'classified' | 'floor' | 'escalated' | 'resume'
+export type TierSource = 'brief' | 'caller' | 'classified' | 'floor' | 'escalated' | 'held' | 'resume'
 export type TierPick = { tier: Tier; source: TierSource; callerAlias?: Alias }
 
 export const TIERS: readonly Tier[] = ['economy', 'standard', 'frontier', 'premium']
@@ -63,6 +64,8 @@ export type PickInput = {
   callerModel?: string
   classified?: string
   escalateFrom?: Tier
+  /** GH-104: a respawn after a no-report runs at least at this tier (that attempt's), never one up. */
+  holdAt?: Tier
 }
 
 /**
@@ -86,6 +89,7 @@ export function pickTier(input: PickInput): TierPick {
     const up = nextTier(input.escalateFrom)
     if (RANK[up] > RANK[pick.tier]) pick = { tier: up, source: 'escalated' }
   }
+  if (input.holdAt && RANK[input.holdAt] > RANK[pick.tier]) pick = { tier: input.holdAt, source: 'held' }
   return pick
 }
 
@@ -108,14 +112,20 @@ export function finalAlias(pick: TierPick, mappedTo: string | undefined): { alia
 export const fableRequested = (alias: Alias, fableRewritten: boolean, headerModel?: string): boolean =>
   alias === 'opus' && (fableRewritten || aliasOf(headerModel) === 'fable')
 
+/** A briefed spawn's place on its budget (GH-104): `attempt` of `budget`. */
+export type AttemptOf = { attempt: number; budget: number }
+
 /**
  * The notice under the spawn. When fable was requested and opus spawns, it
  * says so at the tier the spawn runs at (GH-1 item 8), so the rewrite
- * never hides a tier: `tier=frontier → opus (fable requested; …)`.
+ * never hides a tier: `tier=frontier → opus (fable requested; …)`. A briefed
+ * spawn's notice ends with its attempt (GH-104), so a spend is never a
+ * surprise: `tier=standard → sonnet (brief) · attempt 2/3`.
  */
-export function noticeText(pick: TierPick, alias: Alias, fableAsked: boolean): string {
-  if (fableAsked && alias === 'opus') return `tier=${pick.tier === 'premium' ? 'frontier' : pick.tier} → ${alias} (fable requested; fable is never spawned by the mod)`
-  return `tier=${pick.tier} → ${alias} (${pick.source})`
+export function noticeText(pick: TierPick, alias: Alias, fableAsked: boolean, at?: AttemptOf): string {
+  const tail = at ? ` · attempt ${at.attempt}/${at.budget}` : ''
+  if (fableAsked && alias === 'opus') return `tier=${pick.tier === 'premium' ? 'frontier' : pick.tier} → ${alias} (fable requested; fable is never spawned by the mod)${tail}`
+  return `tier=${pick.tier} → ${alias} (${pick.source})${tail}`
 }
 
 const PICKED_BY: Readonly<Record<TierSource, string>> = {
@@ -123,7 +133,8 @@ const PICKED_BY: Readonly<Record<TierSource, string>> = {
   caller: "the caller's model hint",
   classified: 'the classifier',
   floor: 'the standard floor',
-  escalated: 'escalation one tier above the last failed attempt',
+  escalated: 'escalation one tier above the last refuted attempt',
+  held: "the last attempt's tier (a respawn after a no-report is held there, never escalated)",
   resume: 'the resumed spawn',
 }
 

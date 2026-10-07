@@ -58,6 +58,7 @@ To check the folder on the new machine, run `tests/selfcheck.sh`. It runs
 | `/delegation` | you type it | shows the delegation state and where the config came from |
 | `/delegation init` | you type it | scaffolds the repo (step 4 above) |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card; the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
+| `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
 
@@ -76,7 +77,7 @@ A user skill or command named `delegation` or `dispatch` under
        1. card …/agents/tasks/OPS-1-fix-the-thing.md (status queued, domain ops)
        2. brief …/.delegation/briefs/OPS-1.brief.md written (tier=standard, model=sonnet, budget=2-attempts)
        3. worktree …-OPS-1 on agent/ops/OPS-1 from origin/main
-       4. spawned general-purpose agent agent-7 on claude-sonnet-…
+       4. spawned general-purpose agent agent-7 on claude-sonnet-… · attempt 1/2
 
 3. **The worker hands back.** The brain's conversation gains one row:
 
@@ -94,8 +95,10 @@ A user skill or command named `delegation` or `dispatch` under
 
 The brain does the typing. You see:
 
-- the tier decision under each spawn, such as `tier=standard → sonnet (brief)`.
-  The tier comes from the brief header's `tier=`, else the caller's `model`,
+- the tier decision under each spawn, such as
+  `tier=standard → sonnet (brief) · attempt 1/2`. A briefed spawn's notice
+  ends with its attempt of the budget, so a retry's spend is never a
+  surprise. The tier comes from the brief header's `tier=`, else the caller's `model`,
   else the classifier. The classifier is called only when there is no header
   and no caller model, and the debug log names the source:
   `T-7: tier=economy picked by the brief header's tier= (no classify call)`;
@@ -388,10 +391,16 @@ with `--here`, or with worktrees if the child has an `origin`.
 
 **Escalation.** A failing verdict while the budget lasts is handled in two
 steps. The first failure advises `next=resume agent=<id>`, which means
-SendMessage the worker the claim lines. A later one advises
-`next=respawn at <next tier>`, the same brief one tier up. With `autoEscalate`
-the mod does either one itself. The budget counts spawns and resumes per task.
-Past it the next spawn is denied.
+SendMessage the worker the claim lines. A later one advises a respawn with the
+same brief. After a refuted report, or a `gate=fail` the verifier confirmed
+(the verdict is verified), that is `next=respawn at <next tier>`, one tier up.
+After a no-report it is `next=respawn at <same tier>`: a missing report line
+is a reporting defect, not a reason to pay for a bigger model, so a no-report
+never moves the tier up (a respawn after an attempt that was already
+escalated keeps that attempt's tier, and the debug line says it was picked by
+the last attempt's tier). With
+`autoEscalate` the mod does either one itself. The budget counts spawns,
+resumes and verify attempts per task. Past it the next spawn is denied.
 
 Unverified is actionable too. While the budget lasts, an unverified verdict
 advises a resume naming each unchecked claim and its reason (cut to 160
@@ -400,6 +409,37 @@ characters):
 That resume counts against the budget like a failing verdict's, and
 `autoEscalate` performs it, sending the unchecked claim lines. Past the budget,
 or with no agent id, the advice stays `check by hand — unverified is not a pass`.
+
+**Look before you respawn.** Before a respawn (the mod's own, a by-hand Agent
+spawn of the same brief, or one the queue starts) and before it advises or
+performs a resume, the mod reads the worker's worktree with allowlisted git reads only: `rev-parse HEAD`,
+`status --porcelain` and `log --format=%H <base>..HEAD` (`<base>` as the
+verifier takes it). Work is present when HEAD has commits ahead of the base,
+the tree is clean, and the verifier has not judged that sha yet. Then nothing
+is spawned or resumed, the attempt is recorded as `work-present` (kind
+`verify`, the head as its `sha`), and the row says:
+
+    chassis-delegation: T-4 attempt 1/3 no-report · sonnet · $0.41 · next=verify sha=<sha>
+    work present at abcdef1 on agent/frontend/T-4: verify it (next=verify sha=<sha>)
+
+A respawn by hand is refused with the same line. A repo=here or repo=none
+task, and a worker with no worktree of its own, are not looked at. A refuted
+attempt whose HEAD is still the sha it reported is not new work, so its resume
+or respawn goes ahead as before.
+
+**`/dispatch <ID> --verify <sha>`** (the tool's `verify`) judges that work with no
+spawn. It reads the task's existing brief and runs the verifier in the task's
+worktree (the root for repo=here) at the sha, with a synthetic report:
+
+    [[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=<sha> gate=pass files=<the delta>]]
+
+`files=` is the delta `merge-base(<base>, sha)..sha`; `gate=pass` means the
+gate is re-run, so a red one refutes; `red=` names the newest
+`.delegation/<ID>/red-<n>.txt` in the tree when the brief has a red test. The
+verdict lands on the work-present attempt (else on a new `verify` attempt), and
+the advice follows as for any hand-back: `accept`, or a resume of the worker
+that did the work. `--verify` takes no other option, and it is refused while
+a worker of the task is still running.
 
 **The git guard (Bash).** It covers the write verbs `commit`, `merge`,
 `cherry-pick`, `rebase` and `push`. A command that runs one on a branch in
@@ -499,7 +539,9 @@ says `chassis-delegation: refused argv [...] (<reason>)`. The list, verbatim:
 
     git [-C <dir>] diff|merge-base|rev-parse|status|log …   (no --output, --ext-diff, --textconv;
                                         repo=here reads status --porcelain=v1 --untracked-files=all -z
-                                        and rev-parse --abbrev-ref HEAD through this line)
+                                        and rev-parse --abbrev-ref HEAD through this line; the look
+                                        before a respawn reads rev-parse HEAD, status --porcelain and
+                                        log --format=%H <base>..HEAD through it)
     git [-C <dir>] worktree list [--porcelain|-v|--verbose|-z]
     git [-C <dir>] fetch [-q] origin main                    (exact)
     git -C <root> worktree add -q -b agent/<domain>/<id>[-replay] <worktree> <origin/main|7-40 hex sha>
@@ -592,7 +634,7 @@ opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5.
   holding the attempt fields plus `verdict`, `next` and `sessionId`.
 - **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`, with
   these keys:
-  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`);
+  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named; a `work-present` attempt, kind `verify`, carries the branch head it found);
   - `delegation.recent.<session>`: the verdict lines;
   - `delegation.debrief.<session>`;
   - `delegation.friction.<session>`;

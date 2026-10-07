@@ -1,8 +1,12 @@
 // files.txt's place, the verdict and the escalation advice, and the lines the
 // mod hands back. The verifier itself is ./verify-native.ts (part 5A); the gate
-// map's rules are ./gates.ts. Pure: no `$`.
+// map's rules are ./gates.ts. GH-104: the look at a worker's worktree before a
+// respawn or an auto-resume, and the synthetic report `--verify` judges. Pure:
+// no `$` (git runs through an injected `exec`).
+import { escalatesOn } from './attempts'
 import { parseClaimLine, type ClaimLine } from './quiet'
 import { nextTier, type Tier } from './tier'
+import { BASE_REFS, type ExecOut } from './verify-native'
 
 export type Verdict = 'verified' | 'unverified' | 'refuted' | 'no-report' | 'refused'
 
@@ -17,7 +21,7 @@ export const filesPathFor = (scratch: string, task: string): string => `${scratc
 export const isFailing = (verdict: Verdict, reportGate?: string): boolean =>
   verdict === 'refuted' || verdict === 'no-report' || reportGate === 'fail'
 
-export type AdviceKind = 'accept' | 'check' | 'fix-brief' | 'resume' | 'respawn' | 'exhausted' | 'none'
+export type AdviceKind = 'accept' | 'check' | 'fix-brief' | 'resume' | 'respawn' | 'verify' | 'exhausted' | 'none'
 export type Advice = { kind: AdviceKind; next: string; tier?: Tier }
 
 export type AdviseInput = {
@@ -60,8 +64,10 @@ export const budgetDenyMessage = (label: string, attempts: number, briefPath?: s
 
 /**
  * Resume-first escalation (SPEC amendment 1 B): the first failing verdict of
- * a spawn lineage resumes the same worker; the next one respawns one tier up
- * with the same brief; a task at its budget stops. An unverified verdict with
+ * a spawn lineage resumes the same worker; the next one respawns with the
+ * same brief, one tier up after a refuted report or a confirmed gate=fail, at
+ * the SAME tier after a no-report (GH-104: a reporting defect, not a
+ * capability one); a task at its budget stops. An unverified verdict with
  * unchecked claims, an agent and budget left resumes the worker to prove them
  * (GH-1 item 5); a cardless hand-back is never resumed or respawned.
  */
@@ -81,9 +87,117 @@ export function advise(input: AdviseInput): Advice {
   if (input.lineageResumes === 0 && input.agentId) {
     return { kind: 'resume', next: `resume agent=${input.agentId} — SendMessage it the verifier lines below` }
   }
-  const tier = nextTier(input.tier)
+  const tier = escalatesOn(input.verdict, input.reportGate) ? nextTier(input.tier) : input.tier
   const brief = input.briefPath ? `same brief ${input.briefPath}` : 'same prompt'
   return { kind: 'respawn', tier, next: `respawn at ${tier} — ${brief}, model omitted so the mod picks` }
+}
+
+// ---- GH-104: look before you respawn ---------------------------------------------
+
+/** Finished work in a worker's worktree: its branch head, the branch, and the commits it is ahead of the base. */
+export type WorkPresent = { sha: string; branch: string; ahead: number }
+export type WorkProbe = ({ present: true } & WorkPresent) | { present: false; why: string }
+export type GitExec = (argv: readonly string[], init?: { cwd?: string; timeoutMs?: number }) => Promise<ExecOut>
+
+const GIT_READ_MS = 15 * 1000
+const HEX_SHA = /^[0-9a-f]{7,64}$/i
+
+/** Two spellings of one commit: one a prefix (7 hex at least) of the other. */
+export function sameCommit(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase()
+  const y = b.trim().toLowerCase()
+  if (!HEX_SHA.test(x) || !HEX_SHA.test(y)) return false
+  return x.length <= y.length ? y.startsWith(x) : x.startsWith(y)
+}
+
+/** `work present at <short sha> on <branch>: verify it (next=verify sha=<sha>)`: the line the row and the refusal carry. */
+export const workPresentLine = (w: Pick<WorkPresent, 'sha' | 'branch'>): string => `work present at ${w.sha.slice(0, 7)} on ${w.branch}: verify it (next=verify sha=${w.sha})`
+
+/** The advice when work is present: judge it, spawn nothing. */
+export const verifyAdvice = (w: Pick<WorkPresent, 'sha'>): Advice => ({ kind: 'verify', next: `verify sha=${w.sha}` })
+
+/** A respawn refused because work is present (the spawn hook's deny). */
+export const workPresentDeny = (label: string, task: string, w: Pick<WorkPresent, 'sha' | 'branch'>): string =>
+  `chassis-delegation: ${label} not spawned — ${workPresentLine(w)}; /dispatch ${task} --verify ${w.sha} runs the verifier on it (no spawn)`
+
+/** True for that deny (the scheduler's drain posts it as a row). */
+export const isWorkPresentDeny = (deny: string): boolean => / not spawned — work present at [0-9a-f]+ on /.test(deny)
+
+/** The delta's base: `preferred` (a replay's base, the brief's base=, the config's baseRef), else the first of BASE_REFS that resolves. */
+async function resolveBase(out: (...args: string[]) => Promise<string | undefined>, preferred?: string): Promise<string | undefined> {
+  if (preferred && preferred.trim()) return preferred.trim()
+  for (const ref of BASE_REFS) if ((await out('rev-parse', '--verify', '--quiet', ref)) !== undefined) return ref
+  return undefined
+}
+
+const gitIn = (repo: string, exec: GitExec) => async (...args: string[]): Promise<string | undefined> => {
+  const r = await exec(['git', '-C', repo, ...args], { cwd: repo, timeoutMs: GIT_READ_MS })
+  return r.ok && r.exitCode === 0 ? r.stdout : undefined
+}
+const firstLineOf = (s: string | undefined): string => (s ?? '').split('\n')[0]?.trim() ?? ''
+
+/**
+ * GH-104: before a respawn or an auto-resume, the worker's worktree is read
+ * with allowlisted git reads only (rev-parse, status, log). Work is present
+ * when HEAD is not a sha the verifier already judged (`judged`), the tree is
+ * clean, and HEAD has commits ahead of the base.
+ */
+export async function probeWork(input: { repo: string; base?: string; judged?: readonly string[] }, exec: GitExec): Promise<WorkProbe> {
+  const out = gitIn(input.repo, exec)
+  const head = firstLineOf(await out('rev-parse', 'HEAD'))
+  if (!HEX_SHA.test(head)) return { present: false, why: `could not read HEAD in ${input.repo}` }
+  if ((input.judged ?? []).some(j => sameCommit(j, head))) return { present: false, why: `HEAD ${head.slice(0, 7)} is a sha already judged` }
+  const status = await out('status', '--porcelain')
+  if (status === undefined) return { present: false, why: `git status failed in ${input.repo}` }
+  const dirty = status.split('\n').filter(l => l.trim() !== '').length
+  if (dirty > 0) return { present: false, why: `${dirty} uncommitted path${dirty === 1 ? '' : 's'} in the worktree` }
+  const base = await resolveBase(out, input.base)
+  if (!base) return { present: false, why: 'no base to count commits from' }
+  const log = await out('log', '--format=%H', `${base}..HEAD`)
+  if (log === undefined) return { present: false, why: `git log ${base}..HEAD failed in ${input.repo}` }
+  const ahead = log.split('\n').filter(l => l.trim() !== '').length
+  if (ahead === 0) return { present: false, why: `no commits ahead of ${base}` }
+  const ref = firstLineOf(await out('rev-parse', '--abbrev-ref', 'HEAD'))
+  return { present: true, sha: head, branch: ref && ref !== 'HEAD' ? ref : '(detached HEAD)', ahead }
+}
+
+/**
+ * GH-104, `--verify`: the paths changed between merge-base(base, sha) and the
+ * sha, as the verifier takes the delta (the same base chain).
+ */
+export async function branchDelta(input: { repo: string; sha: string; base?: string }, exec: GitExec): Promise<{ files: string[]; base: string } | { why: string }> {
+  const out = gitIn(input.repo, exec)
+  if ((await out('rev-parse', '--verify', '--quiet', `${input.sha}^{commit}`)) === undefined) return { why: `sha ${input.sha} does not resolve in ${input.repo}` }
+  const base = await resolveBase(out, input.base)
+  if (!base) return { why: `no base to take the delta from in ${input.repo}` }
+  let mb = firstLineOf(await out('merge-base', base, input.sha))
+  if (!mb && (await out('rev-parse', '--verify', '--quiet', base)) !== undefined) mb = base
+  if (!mb) return { why: `no merge-base of ${base} and ${input.sha} in ${input.repo}` }
+  const diff = await out('diff', '--no-renames', '--name-only', mb, input.sha)
+  if (diff === undefined) return { why: `git diff ${mb.slice(0, 9)} ${input.sha} failed in ${input.repo}` }
+  return { files: diff.split('\n').map(l => l.trim()).filter(Boolean), base }
+}
+
+/** The newest red file among a folder's names (`red-<n>.txt`, the highest n), or undefined. */
+export function newestRed(names: readonly string[]): string | undefined {
+  let best: { n: number; name: string } | undefined
+  for (const name of names) {
+    const m = /^red-(\d+)\.txt$/.exec(name)
+    if (m && (!best || Number(m[1]) > best.n)) best = { n: Number(m[1]), name }
+  }
+  return best?.name
+}
+
+/**
+ * GH-104: the report `--verify` hands the verifier for work no report came
+ * with: the branch head, its delta as files=, gate=pass (the verifier re-runs
+ * the gate, so a red one refutes), and the newest red file when there is one.
+ */
+export function syntheticReport(r: { task: string; subtask: string; branch: string; sha: string; files: readonly string[]; red?: string }): string {
+  return (
+    `[[report v=1 task=${r.task} subtask=${r.subtask} branch=${r.branch} pr=none sha=${r.sha} gate=pass` +
+    `${r.red ? ` red=${r.red}` : ''} files=${r.files.length > 0 ? r.files.join(',') : 'none'}]]`
+  )
 }
 
 /**

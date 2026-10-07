@@ -36,6 +36,8 @@ import {
   overlapWarning,
   currentBranchArgv,
   headShaArgv,
+  VERIFY_ALONE,
+  verifyShaRefusal,
 } from '../hooks/lib/dispatch'
 import { checkArgv } from '../hooks/lib/allow'
 
@@ -143,7 +145,7 @@ describe('command arguments', () => {
   })
   test('refusals', () => {
     expect(parseDispatchArgs('BE-101 --base HEAD~3').error).toBe('refused --base HEAD~3: use origin/main or a 7-40 character hex sha')
-    expect(parseDispatchArgs('').error).toBe('usage: /dispatch <TASK-ID> [--dry-run] [--base <origin/main|sha>] [--replay --base <sha>] [--scope <globs>] [--forbid <globs>] [--here] [--force-overlap]')
+    expect(parseDispatchArgs('').error).toBe('usage: /dispatch <TASK-ID> [--dry-run] [--base <origin/main|sha>] [--replay --base <sha>] [--scope <globs>] [--forbid <globs>] [--here] [--force-overlap] | /dispatch <TASK-ID> --verify <sha>')
     expect(parseDispatchArgs('../etc').error).toBe('refused task id ../etc')
     expect(parseDispatchArgs('BE-101 --force').error).toBe('unknown option --force')
   })
@@ -269,6 +271,19 @@ describe('GH-6: the brief file of an inline header', () => {
     // text above the header follows it; a header alone is the whole file
     expect(inlineBriefText(`You are a worker.\n${H}\nWrite the test.`, H)).toBe(`${H}\n\nYou are a worker.\n\nWrite the test.\n`)
     expect(inlineBriefText(`${H}\n`, H)).toBe(`${H}\n`)
+  })
+})
+
+describe('GH-104: --verify <sha> judges the work in the worktree, no spawn', () => {
+  test('--verify takes a 7-40 hex sha and nothing else', () => {
+    expect(parseDispatchArgs('T-4 --verify abcdef12')).toEqual({ id: 'T-4', dryRun: false, base: 'origin/main', verify: 'abcdef12' })
+    expect(parseDispatchArgs('T-4 --verify=abcdef1')).toEqual({ id: 'T-4', dryRun: false, base: 'origin/main', verify: 'abcdef1' })
+    expect(parseDispatchArgs('T-4 --verify HEAD').error).toBe(verifyShaRefusal('HEAD'))
+    expect(parseDispatchArgs('T-4 --verify').error).toBe('refused --verify (empty): name the branch head as a 7-40 character hex sha')
+    expect(parseDispatchArgs('T-4 --verify abcdef12 --dry-run').error).toBe(VERIFY_ALONE)
+    expect(parseDispatchArgs('T-4 --here --verify abcdef12').error).toBe(VERIFY_ALONE)
+    expect(parseDispatchArgs('T-4 --replay --base 96014e3b --verify abcdef12').error).toBe(VERIFY_ALONE)
+    expect(parseDispatchArgs('nope --verify abcdef12').error).toBe('refused task id nope')
   })
 })
 

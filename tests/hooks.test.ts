@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, agentResult, sessionStart, commandInput, ROOT, SCRATCH, type RunAnswer } from './harness'
+import { world, spawnInput, turnInput, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER } from './fixtures/sample-card'
 
 const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task}`) ?? []) as Record<string, unknown>[]
@@ -42,7 +42,7 @@ describe('agent.spawn: tier selection, ledger, store', () => {
     const r = await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-1 subtask=main purpose=build tier=standard model=opus]]\nDo it.' }))
     expect(w.spawns[0]?.model).toBe('sonnet')
     expect(r.model).toBe('claude-sonnet-5-5')
-    expect(w.notices).toContain('tier=standard → sonnet (brief)')
+    expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/3') // GH-104: a briefed spawn names its attempt
     expect(w.runs).toEqual([]) // 5A: no ledger script, no which-model; the store is the ledger
     expect(records(w, 'T-1')[0]).toMatchObject({ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', resolvedModel: 'claude-sonnet-5-5', verdict: 'pending', source: 'brief' })
     expect(w.store.get('delegation.alias.sonnet')).toBe('claude-sonnet-5-5')
@@ -62,7 +62,7 @@ describe('agent.spawn: tier selection, ledger, store', () => {
     await $.session.start(sessionStart)
     await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-8 subtask=main tier=standard]]\nDo it.' }))
     expect(w.spawns[0]?.model).toBe('opus')
-    expect(w.notices).toContain('tier=standard → opus (brief)')
+    expect(w.notices).toContain('tier=standard → opus (brief) · attempt 1/3')
   })
 
   test('no header and no caller model: the classifier picks, logged as classified', async ($, on) => {
@@ -90,8 +90,8 @@ describe('agent.spawn: tier selection, ledger, store', () => {
     const r = await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-2 subtask=main tier=standard budget=2-attempts]]' }))
     expect(r.deny).toBeUndefined()
     expect(w.spawns).toHaveLength(1)
-    // no escalation from the refuted cardless attempts: the header's tier stands
-    expect(w.notices.at(-1)).toBe('tier=standard → sonnet (brief)')
+    // no escalation from the refuted cardless attempts: the header's tier stands, and it is attempt 1
+    expect(w.notices.at(-1)).toBe('tier=standard → sonnet (brief) · attempt 1/2')
   })
 
   test('a spawn past budget is denied', async ($, on) => {
@@ -1112,11 +1112,11 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     const w = world(on)
     await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-8 subtask=main tier=frontier model=fable]]\nDo it.' }))
     expect(w.spawns[0]?.model).toBe('opus')
-    expect(w.notices.at(-1)).toBe(FABLE)
+    expect(w.notices.at(-1)).toBe(`${FABLE} · attempt 1/3`)
     expect(records(w, 'T-8')[0]).toMatchObject({ tier: 'frontier', alias: 'opus', requestedAlias: 'fable' })
     await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-9 subtask=main tier=premium model=fable]]\nDo it.', tool_use_id: 'toolu_0200000002' }))
     expect(w.spawns[1]?.model).toBe('opus')
-    expect(w.notices.at(-1)).toBe(FABLE)
+    expect(w.notices.at(-1)).toBe(`${FABLE} · attempt 1/3`)
     expect(records(w, 'T-9')[0]).toMatchObject({ tier: 'frontier', alias: 'opus', requestedAlias: 'fable' })
     // the caller naming fable
     await $.agent.spawn(spawnInput({ prompt: 'Review this.', model: 'claude-fable-1', tool_use_id: 'toolu_0300000003' }))
@@ -1125,7 +1125,7 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     expect(((w.store.get('delegation.adhoc') ?? []) as Record<string, unknown>[]).at(-1)).toMatchObject({ tier: 'frontier', alias: 'opus', requestedAlias: 'fable' })
     // a brief that never names fable keeps its plain notice and no requestedAlias
     await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-10 subtask=main tier=frontier]]\nDo it.', tool_use_id: 'toolu_0400000004' }))
-    expect(w.notices.at(-1)).toBe('tier=frontier → opus (brief)')
+    expect(w.notices.at(-1)).toBe('tier=frontier → opus (brief) · attempt 1/3')
     expect(records(w, 'T-10')[0]?.requestedAlias).toBeUndefined()
   })
 })
@@ -1189,5 +1189,193 @@ describe('GH-101: the queue never holds a phantom', () => {
     const res = await $.agent.spawn(spawnInput({ prompt: brief('BE-314'), tool_use_id: 'toolu_B0000002' }))
     expect(res.deny).toBe('queued by chassis-delegation: BE-314 starts when a worker slot frees (1 live: BE-310; 1 queued: BE-314)')
     expect(w.spawns).toHaveLength(1)
+  })
+})
+
+describe('GH-104: spend guards', () => {
+  const BRIEF = `${ROOT}/.delegation/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const CARD_NAME = 'T-4-the-thing.md'
+  const CARD = '---\nid: T-4\ntitle: The thing\ndomain: frontend\ntier: standard\nstatus: queued\nscope: [a/**]\nforbid: [b/**]\nred_test: none\ngate: prettier\nbudget: 3-attempts\n---\n## Why\nA card for the spend guards.\n'
+  const WT = `${ROOT}-T-4`
+  const BRANCH = 'agent/frontend/T-4'
+  const HEAD = 'abcdef1' + '2'.repeat(33)
+  const SHORT = HEAD.slice(0, 7)
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const PROMPT = `Your brief is the file ${BRIEF}. Read it whole, then follow it exactly.`
+  const WORK_PRESENT = `work present at ${SHORT} on ${BRANCH}: verify it (next=verify sha=${HEAD})`
+  /**
+   * The worker's worktree, answered from memory: HEAD is HEAD on BRANCH, `ahead`
+   * commits past origin/main (the base), the tree clean unless `dirty`, the delta
+   * a/x.ts, the gate (npx …) red unless `gate` says otherwise.
+   */
+  const worker = (o: { ahead?: number; dirty?: boolean; gate?: number } = {}) => (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npx') return { exitCode: o.gate ?? 1, stdout: 'a/x.ts: not formatted\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'rev-parse' && sub[1] === '--abbrev-ref') return { exitCode: 0, stdout: `${BRANCH}\n` }
+    if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: 'a/x.ts\n' }
+    if (sub[0] === 'log') return { exitCode: 0, stdout: Array.from({ length: o.ahead ?? 2 }, (_, i) => `${i + 3}`.repeat(40)).join('\n') + (o.ahead === 0 ? '' : '\n') }
+    if (sub[0] === 'status') return { exitCode: 0, stdout: o.dirty ? ' M a/x.ts\n' : '' }
+    return undefined
+  }
+  // The rows that reached the conversation (the kit logs a plugin's refused append), never the debug log.
+  const posted = (w: { logs: string[]; debugLogs: string[]; appended: { type: string; text: string }[] }) => {
+    const debug = new Set(w.debugLogs)
+    return [...w.appended.filter(a => a.type === 'user').map(a => a.text), ...w.logs.filter(l => !debug.has(l) && l.startsWith('chassis-delegation: '))]
+  }
+  const files = () => ({ [BRIEF]: HEADER + '\nbody', [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD })
+  const dirs = { [WT]: [], [`${ROOT}/agents/tasks`]: [CARD_NAME] }
+
+  test('(a, c) a no-report then a respawn stays at the brief tier; the notice names the model and the attempt', async ($, on) => {
+    const w = world(on, { files: files(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT }))
+    expect(w.notices.at(-1)).toBe('tier=standard → sonnet (brief) · attempt 1/3')
+    await $.turn.complete(turnInput('agent-4', 'I ran out of road.'))
+    expect(records(w, 'T-4')[0]).toMatchObject({ attempt: 1, verdict: 'no-report' })
+    // the brain respawns by hand: a no-report is a reporting defect, not a reason to go one tier up
+    const r = await $.agent.spawn(spawnInput({ prompt: PROMPT, tool_use_id: 'toolu_02RESPAWN' }))
+    expect(r.deny).toBeUndefined()
+    expect(w.spawns[1]?.model).toBe('sonnet')
+    expect(w.notices.at(-1)).toBe('tier=standard → sonnet (brief) · attempt 2/3')
+    expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.tier, x.source])).toEqual([
+      [1, 'spawn', 'standard', 'brief'],
+      [2, 'spawn', 'standard', 'brief'],
+    ])
+    // the debug line keeps the tier source
+    expect(w.debugLogs).toContain("chassis-delegation: T-4: tier=standard picked by the brief header's tier= (no classify call)")
+  })
+
+  test('(a) autoEscalate: no-report resumes, a second no-report respawns at the SAME tier', { options: { verdictVerbosity: 'full', autoEscalate: true } }, async ($, on) => {
+    const w = world(on, { files: files(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT }))
+    await $.turn.complete(turnInput('agent-4', 'Working on it.'))
+    expect(w.sent).toHaveLength(1)
+    await $.turn.complete(turnInput('agent-4', 'Still working on it.'))
+    expect(posted(w)[1]?.split('\n')[0]).toBe('chassis-delegation: verdict=no-report task=T-4 attempt=2/3 usd=0.00 model=claude-sonnet-5-5 next=respawned at standard as agent-2 (autoEscalate)')
+    // the mod's own spawn has no dialog to carry a notice: the record says the tier and its source
+    expect(w.spawns[1]?.model).toBe('sonnet')
+    expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.tier, x.source, x.verdict])).toEqual([
+      [1, 'spawn', 'standard', 'brief', 'no-report'],
+      [2, 'resume', 'standard', 'resume', 'no-report'],
+      [3, 'spawn', 'standard', 'brief', 'pending'],
+    ])
+  })
+
+  test('(b) work present in the worktree (commits ahead of the base, a clean tree): no resume, no respawn; the row says verify it', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: worker(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT }))
+    // the worker finished, but its report line never reached the mod
+    await $.turn.complete(turnInput('agent-4', 'All done, the gate is green.'))
+    expect(w.sent).toHaveLength(0)
+    expect(w.spawns).toHaveLength(1)
+    const row = posted(w)[0] ?? ''
+    expect(row.split('\n')[0]).toBe(`chassis-delegation: T-4 attempt 1/3 no-report · sonnet · $0.00 · next=verify sha=${HEAD}`)
+    expect(row).toContain(WORK_PRESENT)
+    expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.verdict, x.sha ?? null])).toEqual([
+      [1, 'spawn', 'no-report', null],
+      [2, 'verify', 'work-present', HEAD],
+    ])
+    // only allowlisted git reads, in the worker's worktree
+    expect(w.runs.every(x => x.argv[0] === 'git' && x.argv[2] === WT && ['rev-parse', 'status', 'log'].includes(x.argv[3] ?? ''))).toBe(true)
+    // the delegation state says what is owed
+    const section = (await $.prompt.compose(composeInput(['Agent']))).sections.at(-1)?.text ?? ''
+    expect(section).toContain(`- owed: T-4: verify sha=${HEAD}`)
+    // a respawn by hand is not spawned either, and records nothing new
+    const again = await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT, tool_use_id: 'toolu_02AGAIN' }))
+    expect(again.deny).toContain(WORK_PRESENT)
+    expect(w.spawns).toHaveLength(1)
+    expect(records(w, 'T-4')).toHaveLength(2)
+  })
+
+  test('(b) /dispatch --verify <sha> runs the verifier on the branch head with a synthetic report, no spawn; the work-present attempt takes the verdict', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: worker({ gate: 0 }), agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'All done.'))
+    expect(records(w, 'T-4').at(-1)).toMatchObject({ attempt: 2, verdict: 'work-present' })
+    const out = String((await $.command.run(commandInput(`T-4 --verify ${HEAD}`))).text)
+    expect(out).toContain(`[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass files=a/x.ts]]`)
+    expect(out).toContain('chassis-delegation: verdict=verified task=T-4 attempt=2/3')
+    expect(out).toContain('next=accept')
+    expect(out).toContain('claim files: held — files= matches the sha delta exactly')
+    expect(w.runs.filter(x => x.argv[0] === 'npx').map(x => x.cwd)).toEqual([WT])
+    expect(w.spawns).toHaveLength(1)
+    expect(w.sent).toHaveLength(0)
+    expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.verdict])).toEqual([
+      [1, 'spawn', 'no-report'],
+      [2, 'verify', 'verified'],
+    ])
+  })
+
+  test('(b) --verify with no work-present attempt judges a new verify attempt; a red gate refutes it, nothing spawns', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: worker() })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput(`T-4 --verify ${SHORT}`))).text)
+    expect(out).toContain(`/dispatch T-4 --verify ${SHORT}: no spawn — the verifier ran on worktree ${WT} at ${SHORT} (base origin/main)`)
+    expect(out).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=1/3')
+    expect(out).toContain(`claim gate: failed — gate=pass claimed but the gate is RED at ${SHORT} (exit 1)`)
+    expect(out).toContain(`next=respawn at frontier — same brief ${BRIEF}`)
+    expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.verdict, x.sha])).toEqual([[1, 'verify', 'refuted', SHORT]])
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('(b) --verify waits for a worker still running in the tree; a bad sha or a missing brief is refused before any git runs', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: worker(), agentId: 'agent-4', listAgents: true })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT }))
+    const runs = w.runs.length
+    expect(String((await $.command.run(commandInput(`T-4 --verify ${SHORT}`))).text)).toBe(`/dispatch T-4 --verify ${SHORT}: attempt 1 of T-4 is still running (agent agent-4); --verify judges finished work`)
+    expect(String((await $.command.run(commandInput('T-4 --verify HEAD'))).text)).toBe('refused --verify HEAD: name the branch head as a 7-40 character hex sha')
+    w.files.delete(BRIEF)
+    expect(String((await $.command.run(commandInput(`T-4 --verify ${SHORT}`))).text)).toContain(`/dispatch T-4 --verify ${SHORT}: no brief for T-4 under ${ROOT}/.delegation/briefs`)
+    expect(w.runs.length).toBe(runs)
+    expect(records(w, 'T-4')).toHaveLength(1)
+  })
+
+  test('(b) the sha the verifier already judged is not work present: a refuted attempt is still resumed', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: worker(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', `Done.\n[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${SHORT} gate=pass files=a/x.ts]]`))
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'refuted', sha: SHORT })
+    expect(w.sent).toHaveLength(1)
+    expect(posted(w)[0]).not.toContain('work present')
+  })
+
+  test('(b) a dirty tree is not work present: resumed as before', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const dirty = world(on, { files: files(), dirs, run: worker({ dirty: true }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Half done.'))
+    expect(dirty.sent).toHaveLength(1)
+    expect(records(dirty, 'T-4').map(x => x.verdict)).toEqual(['no-report', 'pending'])
+  })
+
+  test('(b) no commits ahead of the base: resumed as before', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: worker({ ahead: 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Nothing yet.'))
+    expect(w.sent).toHaveLength(1)
+  })
+
+  test('(b) repo=here: no look at the worktree, the resume goes ahead', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const here = HEADER.replace(' budget=', ' repo=here budget=')
+    const w = world(on, { files: { ...files(), [BRIEF]: here + '\nbody' }, dirs, run: worker(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: ROOT }))
+    await $.turn.complete(turnInput('agent-4', 'All done.'))
+    expect(w.sent).toHaveLength(1)
+    expect(w.runs.some(x => x.argv[3] === 'log')).toBe(false)
+  })
+
+  test('(c) /dispatch line 4 names the model and the attempt', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD }, dirs: { [`${ROOT}/agents/tasks`]: [CARD_NAME] }, agentId: 'agent-7' })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('T-4'))).text)
+    expect(out).toMatch(/^4\. spawned general-purpose agent agent-7 on \S+ · attempt 1\/3$/m)
+    expect(w.spawns[0]?.model).toBe('sonnet')
   })
 })

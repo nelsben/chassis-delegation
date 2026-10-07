@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **Spend guards (GH-104, closes public #10).** One Sonnet-sized task cost an
+  adopter about $15: its first worker finished, the report was misread as
+  no-report, and the retry spawned one tier up on Opus as attempt 2.
+  - *No escalation on no-report.* A no-report is a reporting defect: the
+    first still advises a resume, the second a respawn at the SAME tier
+    (`next=respawn at standard`), and the spawn hook holds a respawn after a
+    no-report at that attempt's tier (`held` in the debug line when it is
+    above the brief's). Escalation stays for a refuted report and for a
+    `gate=fail` the verifier confirmed; an unconfirmed `gate=fail` no longer
+    moves the tier up.
+  - *Look before you respawn.* Before a respawn (the mod's, a by-hand Agent
+    spawn, a queued one) and before a resume it advises or performs, the mod
+    reads the worker's worktree with allowlisted git reads (`rev-parse HEAD`,
+    `status --porcelain`, `log --format=%H <base>..HEAD`). Commits ahead of
+    the base, a clean tree and a head the verifier has not judged mean the
+    work is there: nothing spawns, the attempt is recorded as `work-present`
+    (kind `verify`), and the row says `work present at <short sha> on
+    <branch>: verify it (next=verify sha=<sha>)`. A by-hand respawn is
+    refused with the same line. repo=here and repo=none are not looked at.
+    Judged attempts now keep the report's `sha`, so a refuted attempt's own
+    head is not mistaken for new work.
+  - *`/dispatch <ID> --verify <sha>`* (the tool's `verify`) runs the native
+    verifier on that branch head with a synthetic report naming the delta
+    (`gate=pass`, so the gate is re-run; the newest red file when the brief
+    has a red test), with no spawn. The verdict lands on the work-present
+    attempt, else on a new `verify` attempt.
+  - *The notice says what it spends.* A briefed spawn's notice ends with
+    ` · attempt <n>/<budget>` (`tier=standard → sonnet (brief) · attempt 2/3`),
+    and `/dispatch` line 4 reads `spawned <type> agent <id> on <model> ·
+    attempt <n>/<budget>`. The debug line still names the tier source.
+  - The queue dedupe the same report asked for is GH-101's, not this change.
+
 - **A moved file is listed once, at its new path (GH-102, closes public #6).**
   The verifier's delta used `git diff --no-renames --name-only`, so a `git mv`
   read as the old path omitted and the new path added, and a correct hand-back

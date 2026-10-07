@@ -29,9 +29,12 @@ export type Card = {
   fields: Record<string, FieldValue>
 }
 
-export const USAGE = 'usage: /dispatch <TASK-ID> [--dry-run] [--base <origin/main|sha>] [--replay --base <sha>] [--scope <globs>] [--forbid <globs>] [--here] [--force-overlap]'
+export const USAGE = 'usage: /dispatch <TASK-ID> [--dry-run] [--base <origin/main|sha>] [--replay --base <sha>] [--scope <globs>] [--forbid <globs>] [--here] [--force-overlap] | /dispatch <TASK-ID> --verify <sha>'
 export const REPLAY_NEEDS_BASE = 'refused --replay without --base <sha>: a replay reads the card at the commit where it was still queued'
 export const HERE_NO_REPLAY = 'refused --here with --replay: a replay works in its own worktree at the base commit'
+/** GH-104: `--verify <sha>` judges the work already in the task's tree; it takes no other option. */
+export const VERIFY_ALONE = 'refused --verify with another option: /dispatch <TASK-ID> --verify <sha> takes the task id and the sha alone'
+export const verifyShaRefusal = (sha: string): string => `refused --verify ${sha || '(empty)'}: name the branch head as a 7-40 character hex sha`
 
 /**
  * Part 5C: briefs go to `<root>/.delegation/briefs/` (gitignored by
@@ -267,7 +270,7 @@ export function renderBrief(template: string, v: { card: Card; worktree: string;
 }
 
 export type DispatchArgs =
-  | { id: string; dryRun: boolean; base: string; replay?: true; scope?: string[]; forbid?: string[]; here?: true; forceOverlap?: true; error?: undefined }
+  | { id: string; dryRun: boolean; base: string; replay?: true; scope?: string[]; forbid?: string[]; here?: true; forceOverlap?: true; verify?: string; error?: undefined }
   | { error: string; id?: undefined }
 
 /** `a/**,b.ts,` → ['a/**', 'b.ts']; an empty list, a quote or `]]` (which would break the header) is refused. */
@@ -291,8 +294,17 @@ export function parseDispatchArgs(args: string): DispatchArgs {
   let replay = false
   let here = false
   let forceOverlap = false
+  let verify: string | undefined
+  let others = 0
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i] as string
+    if (t === '--verify' || t.startsWith('--verify=')) {
+      const sha = t === '--verify' ? tokens[++i] ?? '' : t.slice('--verify='.length)
+      if (!isSha(sha)) return { error: verifyShaRefusal(sha) }
+      verify = sha
+      continue
+    }
+    if (t.startsWith('-')) others += 1
     if (t === '--dry-run') dryRun = true
     else if (t === '--replay') replay = true
     else if (t === '--here') here = true
@@ -314,6 +326,7 @@ export function parseDispatchArgs(args: string): DispatchArgs {
   }
   if (id === undefined) return { error: USAGE }
   if (!isTaskId(id)) return { error: `refused task id ${id}` }
+  if (verify !== undefined) return others > 0 ? { error: VERIFY_ALONE } : { id, dryRun: false, base: 'origin/main', verify }
   if (replay && !isSha(base)) return { error: REPLAY_NEEDS_BASE }
   if (replay && here) return { error: HERE_NO_REPLAY }
   return {
@@ -399,7 +412,7 @@ export const spawnDescription = (id: string, title: string): string => `${id}: $
 export const DISPATCH_TOOL = {
   name: 'dispatch',
   description:
-    "Dispatch a chassis task card to a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout), picks the tier and spawns. Pass scope/forbid globs when the card's are prose.",
+    "Dispatch a chassis task card to a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout), picks the tier and spawns. Pass scope/forbid globs when the card's are prose. With verify (a sha), spawns nothing: runs the verifier on the work already in the task's worktree.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -411,6 +424,7 @@ export const DISPATCH_TOOL = {
       dryRun: { type: 'boolean', description: 'Write the brief and print its header; no worktree, no spawn' },
       here: { type: 'boolean', description: "repo=here: no worktree and no fetch; the worker shares the session's own checkout" },
       forceOverlap: { type: 'boolean', description: "repo=here: dispatch even when the card's scope overlaps an in-flight card's" },
+      verify: { type: 'string', description: "A 7-40 hex sha, the branch head: run the verifier on the work in the task's worktree with a synthetic report naming the delta; no spawn. Takes no other option" },
     },
     required: ['task'],
     additionalProperties: false,
@@ -431,11 +445,17 @@ export function parseDispatchTool(input: Record<string, unknown>): DispatchArgs 
   for (const k of ['dryRun', 'replay', 'here', 'forceOverlap'] as const) {
     if (input[k] !== undefined && typeof input[k] !== 'boolean') return { error: `dispatch: ${k} must be a boolean` }
   }
-  for (const k of ['scope', 'forbid', 'base'] as const) {
+  for (const k of ['scope', 'forbid', 'base', 'verify'] as const) {
     if (input[k] !== undefined && typeof input[k] !== 'string') return { error: `dispatch: ${k} must be a string` }
   }
   const id = task.trim()
   if (!isTaskId(id)) return { error: `refused task id ${id}` }
+  if (input.verify !== undefined) {
+    const sha = (input.verify as string).trim()
+    if (!isSha(sha)) return { error: verifyShaRefusal(sha) }
+    const others = (['dryRun', 'replay', 'here', 'forceOverlap', 'scope', 'forbid', 'base'] as const).some(k => input[k] !== undefined && input[k] !== false)
+    return others ? { error: VERIFY_ALONE } : { id, dryRun: false, base: 'origin/main', verify: sha }
+  }
   let base = 'origin/main'
   if (typeof input.base === 'string' && input.base !== '') {
     if (!isBaseRef(input.base)) return { error: `refused --base ${input.base}: use origin/main or a 7-40 character hex sha` }

@@ -14,12 +14,25 @@ import {
   amendPendingLine,
   amendMalformedLine,
   amendApprovalLine,
+  branchDelta,
+  isWorkPresentDeny,
+  newestRed,
+  probeWork,
+  sameCommit,
+  syntheticReport,
+  verifyAdvice,
+  workPresentDeny,
+  workPresentLine,
+  type GitExec,
 } from '../hooks/lib/verify'
 import {
   nextAttempt,
   attemptsFor,
   lineageResumes,
+  escalatesOn,
   escalationSource,
+  holdSource,
+  judgedShas,
   patchRecord,
   priorRedHashes,
   type AttemptRecord,
@@ -48,10 +61,22 @@ describe('verdict, advice and budgets', () => {
     expect(a.next).toBe('resume agent=agent-7 — SendMessage it the verifier lines below')
   })
   test('second failing verdict: respawn at the next tier with the same brief', () => {
-    const a = advise({ ...base, verdict: 'no-report', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' })
+    const a = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' })
     expect(a.kind).toBe('respawn')
     expect(a.tier).toBe('frontier')
     expect(a.next).toBe('respawn at frontier — same brief /s/briefs/FE-1.brief.md, model omitted so the mod picks')
+  })
+  test('GH-104: a no-report is a reporting defect: the first resumes, the second respawns at the SAME tier', () => {
+    expect(advise({ ...base, verdict: 'no-report', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard' }).next).toBe('resume agent=agent-7 — SendMessage it the verifier lines below')
+    const a = advise({ ...base, verdict: 'no-report', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' })
+    expect(a).toEqual({ kind: 'respawn', tier: 'standard', next: 'respawn at standard — same brief /s/briefs/FE-1.brief.md, model omitted so the mod picks' })
+    // escalation stays for a confirmed gate=fail; an unconfirmed one (unverified) holds the tier
+    expect(advise({ ...base, verdict: 'verified', reportGate: 'fail', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' }).tier).toBe('frontier')
+    expect(advise({ ...base, verdict: 'unverified', reportGate: 'fail', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' }).tier).toBe('standard')
+    expect(escalatesOn('refuted')).toBe(true)
+    expect(escalatesOn('verified', 'fail')).toBe(true)
+    expect(escalatesOn('unverified', 'fail')).toBe(false)
+    expect(escalatesOn('no-report')).toBe(false)
   })
   test('attempts at budget: exhausted, with the deny wording', () => {
     const a = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 2, lineageResumes: 1, tier: 'standard' })
@@ -149,6 +174,20 @@ describe('attempt arithmetic', () => {
     expect(escalationSource(recs, 'retry')).toBeUndefined()
     expect(escalationSource([rec(1, 'spawn', 1, 'pending')], 'main')).toBeUndefined()
   })
+  test('GH-104: a no-report never escalates; the respawn after it is held at its tier', () => {
+    const noReport = [rec(1, 'spawn', 1, 'refuted'), { ...rec(2, 'spawn', 2, 'no-report'), tier: 'frontier' as const }]
+    expect(escalationSource(noReport, 'main')).toBeUndefined()
+    expect(holdSource(noReport, 'main')).toBe('frontier')
+    expect(holdSource(recs, 'main')).toBeUndefined()
+    // a confirmed gate=fail still escalates; a work-present attempt neither escalates nor holds
+    expect(escalationSource([{ ...rec(1, 'spawn', 1, 'verified'), reportGate: 'fail' }], 'main')).toBe('standard')
+    expect(escalationSource([rec(1, 'spawn', 1, 'work-present')], 'main')).toBeUndefined()
+    expect(holdSource([rec(1, 'spawn', 1, 'work-present')], 'main')).toBeUndefined()
+  })
+  test('GH-104: judged shas are the ones a verdict was given on; pending and work-present are not judged', () => {
+    const list = [{ ...rec(1, 'spawn', 1, 'refuted'), sha: '1234abcd' }, { ...rec(2, 'verify', 1, 'work-present'), sha: 'f'.repeat(40) }, rec(3, 'resume', 1, 'pending')]
+    expect(judgedShas(list, 'main')).toEqual(['1234abcd'])
+  })
   test('GH-20: the record keeps red= and its hash; a later attempt is checked against the earlier ones only', () => {
     const patched = patchRecord(recs, 'main', 1, { red: '.delegation/FE-1/red-1.txt', redHash: 'h1' })
     expect(patched[0]).toMatchObject({ attempt: 1, red: '.delegation/FE-1/red-1.txt', redHash: 'h1' })
@@ -157,5 +196,78 @@ describe('attempt arithmetic', () => {
     expect(priorRedHashes(two, 'main', 3)).toEqual([{ attempt: 1, hash: 'h1' }, { attempt: 2, hash: 'h2' }])
     expect(priorRedHashes(two, 'retry', 2)).toEqual([])
     expect(priorRedHashes(two, 'main', 1)).toEqual([])
+  })
+})
+
+describe('GH-104: look before you respawn', () => {
+  const REPO = '/w/app-T-4'
+  const HEAD = 'abcdef1' + '2'.repeat(33)
+  const MB = 'b'.repeat(40)
+  /** A git that answers from a table: `<sub> <args…>` → stdout (exit 0), or a non-zero exit; the argv is kept. */
+  const git = (answers: Record<string, string | number>) => {
+    const seen: string[][] = []
+    const exec: GitExec = async argv => {
+      seen.push([...argv])
+      const key = argv.slice(3).join(' ')
+      const a = answers[key]
+      if (a === undefined || typeof a === 'number') return { ok: true, exitCode: typeof a === 'number' ? a : 1, stdout: '', stderr: '' }
+      return { ok: true, exitCode: 0, stdout: a, stderr: '' }
+    }
+    return { exec, seen }
+  }
+  const tree = (o: { status?: string; log?: string } = {}) => ({
+    'rev-parse HEAD': `${HEAD}\n`,
+    'status --porcelain': o.status ?? '',
+    'rev-parse --verify --quiet origin/main': `${MB}\n`,
+    'log --format=%H origin/main..HEAD': o.log ?? `${'3'.repeat(40)}\n${'4'.repeat(40)}\n`,
+    'rev-parse --abbrev-ref HEAD': 'agent/frontend/T-4\n',
+  })
+
+  test('commits ahead of the base and a clean tree: work present, read with git reads only, in the worktree', async () => {
+    const g = git(tree())
+    expect(await probeWork({ repo: REPO }, g.exec)).toEqual({ present: true, sha: HEAD, branch: 'agent/frontend/T-4', ahead: 2 })
+    expect(g.seen.every(a => a[0] === 'git' && a[1] === '-C' && a[2] === REPO && ['rev-parse', 'status', 'log'].includes(a[3] ?? ''))).toBe(true)
+  })
+
+  test('a dirty tree, no commits ahead, an unreadable HEAD, or a sha already judged: no work present', async () => {
+    expect(await probeWork({ repo: REPO }, git(tree({ status: ' M a/x.ts\n?? b.ts\n' })).exec)).toEqual({ present: false, why: '2 uncommitted paths in the worktree' })
+    expect(await probeWork({ repo: REPO }, git(tree({ log: '' })).exec)).toEqual({ present: false, why: 'no commits ahead of origin/main' })
+    expect(await probeWork({ repo: REPO }, git({}).exec)).toEqual({ present: false, why: `could not read HEAD in ${REPO}` })
+    expect(await probeWork({ repo: REPO, judged: ['abcdef12'] }, git(tree()).exec)).toEqual({ present: false, why: 'HEAD abcdef1 is a sha already judged' })
+  })
+
+  test('the base: the one given (a replay base, base=, baseRef), else the first of the origin/main chain that resolves', async () => {
+    const given = git({ ...tree(), 'log --format=%H 96014e3b..HEAD': `${'3'.repeat(40)}\n` })
+    expect(await probeWork({ repo: REPO, base: '96014e3b' }, given.exec)).toMatchObject({ present: true, ahead: 1 })
+    expect(given.seen.some(a => a.includes('origin/main'))).toBe(false)
+    const local = tree()
+    delete (local as Record<string, string>)['rev-parse --verify --quiet origin/main']
+    const chain = git({ ...local, 'rev-parse --verify --quiet main': `${MB}\n`, 'log --format=%H main..HEAD': `${'3'.repeat(40)}\n` })
+    expect(await probeWork({ repo: REPO }, chain.exec)).toMatchObject({ present: true, ahead: 1 })
+  })
+
+  test('the lines: the row, the advice, the spawn hook refusal', () => {
+    const w = { sha: HEAD, branch: 'agent/frontend/T-4' }
+    expect(workPresentLine(w)).toBe(`work present at abcdef1 on agent/frontend/T-4: verify it (next=verify sha=${HEAD})`)
+    expect(verifyAdvice(w)).toEqual({ kind: 'verify', next: `verify sha=${HEAD}` })
+    const deny = workPresentDeny('T-4', 'T-4', w)
+    expect(deny).toBe(`chassis-delegation: T-4 not spawned — work present at abcdef1 on agent/frontend/T-4: verify it (next=verify sha=${HEAD}); /dispatch T-4 --verify ${HEAD} runs the verifier on it (no spawn)`)
+    expect(isWorkPresentDeny(deny)).toBe(true)
+    expect(isWorkPresentDeny('queued by chassis-delegation: T-4 starts when a worker slot frees (2 running: T-1, T-2)')).toBe(false)
+    expect(sameCommit('ABCDEF1', HEAD)).toBe(true)
+    expect(sameCommit('abcdef', HEAD)).toBe(false)
+    expect(sameCommit('HEAD', HEAD)).toBe(false)
+  })
+
+  test('--verify: the delta as the verifier takes it, the newest red file, the synthetic report', async () => {
+    const g = git({ [`rev-parse --verify --quiet ${HEAD}^{commit}`]: `${HEAD}\n`, 'rev-parse --verify --quiet origin/main': `${MB}\n`, [`merge-base origin/main ${HEAD}`]: `${MB}\n`, [`diff --no-renames --name-only ${MB} ${HEAD}`]: 'a/x.ts\na/y.ts\n' })
+    expect(await branchDelta({ repo: REPO, sha: HEAD }, g.exec)).toEqual({ files: ['a/x.ts', 'a/y.ts'], base: 'origin/main' })
+    expect(await branchDelta({ repo: REPO, sha: 'deadbeef' }, g.exec)).toEqual({ why: `sha deadbeef does not resolve in ${REPO}` })
+    expect(newestRed(['red-1.txt', 'notes.md', 'red-10.txt', 'red-2.txt'])).toBe('red-10.txt')
+    expect(newestRed(['files.txt'])).toBeUndefined()
+    expect(syntheticReport({ task: 'T-4', subtask: 'main', branch: 'agent/frontend/T-4', sha: HEAD, files: ['a/x.ts', 'a/y.ts'], red: '.delegation/T-4/red-2.txt' })).toBe(
+      `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${HEAD} gate=pass red=.delegation/T-4/red-2.txt files=a/x.ts,a/y.ts]]`,
+    )
+    expect(syntheticReport({ task: 'T-4', subtask: 'main', branch: 'b', sha: HEAD, files: [] })).toBe(`[[report v=1 task=T-4 subtask=main branch=b pr=none sha=${HEAD} gate=pass files=none]]`)
   })
 })
