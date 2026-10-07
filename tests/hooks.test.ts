@@ -31,7 +31,7 @@ const nativeRun = (o: { gate?: number; delta?: string } = {}) => {
     if (sub[0] === 'rev-parse' && sub[1] === '--verify') return { exitCode: 0, stdout: `${last === 'origin/main' ? MB : head}\n` }
     if (sub[0] === 'rev-parse' && last === 'HEAD' && sub[1] !== '--abbrev-ref') return { exitCode: 0, stdout: `${head}\n` }
     if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
-    if (sub[0] === 'diff') return { exitCode: 0, stdout: o.delta ?? 'a/x.ts\n' }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: o.delta ?? 'A\ta/x.ts\n' }
     return undefined
   }
 }

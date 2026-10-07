@@ -217,11 +217,14 @@ export function briefContract(briefText: string): BriefContract {
 /** The files claim: the report's files= against the sha's delta, as sets; a difference names each path.
  *  An entry ending in `/` stands for every delta path under that folder; a folder with none under it is an invented path.
  *  `what` names the delta in the held line (repo=here with sha=HEAD: the dirty-tree delta). */
-export function filesClaim(claimed: readonly string[], actual: readonly string[], what = 'the sha delta'): string {
+export function filesClaim(claimed: readonly string[], actual: readonly string[], what = 'the sha delta', renamedFrom: readonly string[] = []): string {
   const have = new Set(actual)
   const want = new Set<string>()
   let expanded = 0
+  let collapsed = 0
   for (const c of claimed) {
+    // GH-102: the old path of a detected rename is not in the delta; a worker that lists it too is not refuted
+    if (renamedFrom.includes(c) && !have.has(c)) { collapsed++; continue }
     if (!c.endsWith('/')) { want.add(c); continue }
     const under = actual.filter(p => p.startsWith(c))
     if (under.length === 0) { want.add(c); continue }
@@ -231,11 +234,33 @@ export function filesClaim(claimed: readonly string[], actual: readonly string[]
   const omits = [...have].filter(p => !want.has(p)).sort()
   const invents = [...want].filter(p => !have.has(p)).sort()
   if (omits.length === 0 && invents.length === 0) {
-    const note = expanded ? ` (${expanded} folder ${expanded === 1 ? 'entry' : 'entries'} expanded)` : ''
+    const notes = [
+      ...(expanded ? [`${expanded} folder ${expanded === 1 ? 'entry' : 'entries'} expanded`] : []),
+      ...(collapsed ? [`${collapsed} rename${collapsed === 1 ? '' : 's'} collapsed`] : []),
+    ]
+    const note = notes.length ? ` (${notes.join(', ')})` : ''
     return `claim files: held — files= matches ${what} exactly${note}`
   }
   const named = [...(omits.length ? [`omits ${omits.join(', ')}`] : []), ...(invents.length ? [`invents ${invents.join(', ')}`] : [])].join('; ')
   return `claim files: failed — files= does not match the actual delta (omits or invents a path): ${named}`
+}
+
+/**
+ * GH-102: the paths `git diff --name-status -M` names, each once, in its order. A
+ * rename (`R<score>\told\tnew`) is its new path; its old path is returned apart.
+ */
+export function nameStatusDelta(stdout: string): { paths: string[]; renamedFrom: string[] } {
+  const paths: string[] = []
+  const renamedFrom: string[] = []
+  for (const line of stdout.split('\n')) {
+    const cols = line.replace(/\r$/, '').split('\t')
+    if (cols.length < 2 || cols[0] === '') continue
+    const renamed = /^[RC]/.test(cols[0] as string) && cols.length >= 3
+    const path = (renamed ? cols[2] : cols[1]) as string
+    if (renamed) renamedFrom.push(cols[1] as string)
+    if (path.trim() !== '' && !paths.includes(path)) paths.push(path)
+  }
+  return { paths, renamedFrom }
 }
 
 /** GH-16: `git status` for a repo=here delta: staged, unstaged and every untracked file, NUL-separated. */
@@ -449,6 +474,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   // the delta: the working tree (repo=here, sha=HEAD), else merge-base(sha, base) .. sha, where
   // base = a replay's base, else the brief's base=, else the config's baseRef, else the first of BASE_REFS
   let delta: string[] | undefined
+  let renamedFrom: string[] = []
   let noDelta = 'could not establish the branch delta (sha/base missing)'
   if (treeSha) {
     const status = await out(...STATUS_ARGS)
@@ -467,8 +493,12 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     let mb = base ? firstLine(await out('merge-base', base, full)) : ''
     if (!mb && base && (await out('rev-parse', '--verify', '--quiet', base)) !== undefined) mb = base
     if (mb) {
-      const diff = await out('diff', '--no-renames', '--name-only', mb, full)
-      if (diff !== undefined) delta = diff.split('\n').map(l => l.trim()).filter(Boolean)
+      const diff = await out('diff', '--name-status', '-M', mb, full)
+      if (diff !== undefined) {
+        const d = nameStatusDelta(diff)
+        delta = d.paths
+        renamedFrom = d.renamedFrom
+      }
     }
   }
   // repo=here: the checkout is shared, so the brief's ignore= (± ignore+=), the config's ignore
@@ -511,7 +541,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   // 4. files= is the delta, exactly
   if (!delta) claim('files', 'unchecked', treeSha ? `no delta to compare against (${noDelta})` : 'no delta to compare against (sha/base missing)')
   else {
-    const line = filesClaim(csv(report.files).filter(f => f !== 'none'), delta, treeSha ? 'the dirty-tree delta' : 'the sha delta')
+    const line = filesClaim(csv(report.files).filter(f => f !== 'none'), delta, treeSha ? 'the dirty-tree delta' : 'the sha delta', renamedFrom)
     lines.push(line)
     if (line.startsWith('claim files: failed')) anyFailed = true
   }

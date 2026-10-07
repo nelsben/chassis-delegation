@@ -90,7 +90,7 @@ describe('2B: quiet verdicts', () => {
     if (argv[3] === 'rev-parse' && (last.endsWith('^{commit}') || last === 'HEAD' || last.startsWith('refs/'))) return { exitCode: 0, stdout: `${FULL}\n` }
     if (argv[3] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
     if (argv[3] === 'merge-base' && argv[4] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
-    if (argv[3] === 'diff') return { exitCode: 0, stdout: 'a/x.ts\n' }
+    if (argv[3] === 'diff') return { exitCode: 0, stdout: 'A\ta/x.ts\n' }
     return undefined
   }
   const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }

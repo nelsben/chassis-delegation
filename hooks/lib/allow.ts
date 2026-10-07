@@ -3,7 +3,7 @@
 // and a refused argv never runs. Pure: no `$`.
 //
 // Allowed, and nothing else (part 5A: no chassis script is on the list):
-//   git [-C <dir>] diff|merge-base|rev-parse|status|log …   (no --output, --ext-diff, --textconv)
+//   git [-C <dir>] diff|merge-base|rev-parse|status|log …   (no --output, --ext-diff, --textconv; the verifier's delta is `diff --name-status -M`)
 //   git [-C <dir>] worktree list [--porcelain|-v|--verbose|-z]
 //   git [-C <dir>] fetch [-q] origin main                    (exact)
 //   git -C <root> worktree add -q -b agent/<domain>/<id>[-replay] <worktree> <origin/main|7-40 hex sha>
