@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **The queue never holds a phantom (GH-101, closes public #4 and #7).** The
+  queue keeps one row per task and subtask: a second dispatch answers
+  `already queued since <HH:MM> (position <n>)` and spawns nothing. The queue
+  drains after every hand-back, after a dispatch that did not spawn, and at the
+  start of every dispatch, one toast per start: `started queued <task> (waited
+  <m> min)`. A by-hand Agent spawn with an inline header for a queued task
+  takes the queued place when a slot is free instead of being refused. The
+  refusal names live agents and queued rows apart: `(1 live: BE-310; 1 queued:
+  BE-314)`; `queuedDeny` takes both lists. Slots count live agents and other
+  tasks' starting spawns, never queue rows.
+
 - **A shorter repo root (GH-100).** The root held fifteen entries above the
   README; it now holds ten. `types/` is `hooks/types/`, `templates/` is
   `hooks/templates/` (so the default brief template is

@@ -100,7 +100,7 @@ The brain does the typing. You see:
   and no caller model, and the debug log names the source:
   `T-7: tier=economy picked by the brief header's tier= (no classify call)`;
 - the status line, `<n> workers · $<usd> · ctx <pct>%`;
-- toasts: `debrief running in the background`, `T1 63/63`, `started queued OPS-3`;
+- toasts: `debrief running in the background`, `T1 63/63`, `started queued OPS-3 (waited 4 min)`;
 - the verdict rows the brain answers.
 
 A compaction keeps the delegation loop's position. While anything runs or is
@@ -556,7 +556,15 @@ opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5.
   unchecked, not refuted. The brief tells the worker to install first.
 - **`usd` is approximate.** See the cost formula.
 - **Concurrent workers can starve the machine.** `maxWorkers` (2) caps briefed
-  workers. It does not count ad hoc agents.
+  workers. It does not count ad hoc agents. A briefed spawn past the cap waits
+  in a queue that holds one row per task and subtask: the refusal reads
+  `BE-314 starts when a worker slot frees (1 live: BE-310; 1 queued: BE-314)`,
+  a second dispatch of a queued task answers `already queued since 14:02
+  (position 1)` and spawns nothing, and a by-hand spawn of a queued task takes
+  its place once a slot is free. The queue drains after every hand-back, at the
+  start of every dispatch and after any dispatch that did not spawn; each
+  start toasts `started queued <task> (waited <m> min)`. Only live agents
+  and other tasks' starting spawns hold slots, never queue rows.
 - **The git guard reads the command text.** It cannot see a commit made inside
   a script, or a folder named through a variable.
 - **The background runners act on the session's permissions.** The built-in
