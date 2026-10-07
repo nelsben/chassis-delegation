@@ -1088,6 +1088,35 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     expect(w.spawns[0]?.model).toBe('sonnet')
   })
 
+  const TIER_WARN = 'warning: tier "deep" is not economy, standard, frontier or premium; dispatched at standard'
+  const cardAt = (tier: string) => FIXTURE_CARD.replace('tier: frontier', `tier: ${tier}`)
+
+  test('GH-108: a card tier the mod does not know is named once and dispatched at standard', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: { [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: cardAt('deep') }, dirs: { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME] } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('BE-101 --dry-run'))).text)
+    expect(out.split(TIER_WARN)).toHaveLength(2)
+    expect((w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0]).toContain(' tier=standard model=sonnet ')
+  })
+
+  test('GH-108: a card tier that is a model name dispatches at its tier, no warning', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: { [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: cardAt('opus') }, dirs: { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME] } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('BE-101 --dry-run'))).text)
+    expect(out).not.toContain('warning: tier')
+    expect((w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0]).toContain(' tier=frontier model=opus ')
+  })
+
+  test('GH-108: the spawn hook maps a header tier= of a model name and logs the warning for an unknown one', async ($, on) => {
+    const w = world(on)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-8 subtask=main tier=opus]]\nDo it.' }))
+    expect(w.spawns[0]?.model).toBe('opus')
+    expect(w.debugLogs.filter(l => l.includes('warning: tier'))).toEqual([])
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-9 subtask=main tier=deep]]\nDo it.', tool_use_id: 'toolu_0900000009' }))
+    expect(w.debugLogs).toContain(`chassis-delegation: T-9: ${TIER_WARN}`)
+    expect(w.spawns[1]?.model).toBe('sonnet')
+  })
+
   test('item 8: a header tier or a caller model makes no classify call; the debug line names the source', async ($, on) => {
     let calls = 0
     const w = world(on, { skip: ['model.classify'] })

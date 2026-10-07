@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A tier the mod does not know is named (GH-108).** A card `tier:` (or a
+  header `tier=`) that is not economy, standard, frontier or premium used to
+  dispatch at standard with no word; one adopter has 14 cards with
+  `tier: deep` and one with `tier: opus`. Now a model name (`haiku`, `sonnet`,
+  `opus`, `fable`, or a full id containing one; case-insensitive) is taken as
+  its tier, and anything else prints once in the `/dispatch` output
+  `warning: tier "deep" is not economy, standard, frontier or premium;
+  dispatched at standard` (the header carries `tier=standard`). The spawn hook
+  applies the same mapping to a header `tier=` and logs the warning to debug.
+
 - **A dispatch's `--base` reaches the verifier (GH-105, closes public #14).**
   A card stacked on an unpushed sibling was cut from the sibling's sha, the
   worker changed only its own files, and the verdict was `refuted on scope`
