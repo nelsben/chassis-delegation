@@ -1219,7 +1219,8 @@ describe('GH-104: spend guards', () => {
     if (sub[0] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
     if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${HEAD}\n` }
     if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
-    if (sub[0] === 'diff') return { exitCode: 0, stdout: 'a/x.ts\n' }
+    // the delta as either spelling asks for it: --name-only (this base), --name-status (a rename-aware verifier)
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: sub.includes('--name-status') ? 'M\ta/x.ts\n' : 'a/x.ts\n' }
     if (sub[0] === 'log') return { exitCode: 0, stdout: Array.from({ length: o.ahead ?? 2 }, (_, i) => `${i + 3}`.repeat(40)).join('\n') + (o.ahead === 0 ? '' : '\n') }
     if (sub[0] === 'status') return { exitCode: 0, stdout: o.dirty ? ' M a/x.ts\n' : '' }
     return undefined

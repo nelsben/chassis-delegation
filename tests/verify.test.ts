@@ -150,7 +150,7 @@ describe('verdict, advice and budgets', () => {
 })
 
 describe('attempt arithmetic', () => {
-  const rec = (n: number, kind: 'spawn' | 'resume', lineage: number, verdict: AttemptRecord['verdict'], subtask = 'main'): AttemptRecord => ({
+  const rec = (n: number, kind: AttemptRecord['kind'], lineage: number, verdict: AttemptRecord['verdict'], subtask = 'main'): AttemptRecord => ({
     task: 'FE-1', subtask, attempt: n, kind, lineage, tier: 'standard', alias: 'sonnet', verdict, at: n,
   })
   const recs = [rec(1, 'spawn', 1, 'refuted'), rec(2, 'resume', 1, 'refuted'), rec(1, 'spawn', 1, 'verified', 'retry')]
