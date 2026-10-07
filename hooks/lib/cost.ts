@@ -85,3 +85,40 @@ export function usdText(s: { usd: number | null } | undefined): string {
 }
 
 export const totalTokens = (t: Tokens): number => t.in + t.out + t.cacheRead + t.cacheWrite
+
+// ---- GH-106: the per-attempt spend ceiling ---------------------------------------
+
+/** Config `spendByTier` default: dollars one attempt may spend, per tier; 0 = no ceiling. */
+export const DEFAULT_SPEND_BY_TIER: Readonly<Record<'economy' | 'standard' | 'frontier', number>> = { economy: 2, standard: 6, frontier: 15 }
+
+/** The ceiling a tier gets when the card names none: the tier's entry, premium and unknown tiers the frontier's. */
+export const spendForTier = (tier: string, table: Readonly<Record<string, number>>): number =>
+  table[tier] ?? table.frontier ?? DEFAULT_SPEND_BY_TIER.frontier
+
+/** Dollars as the ceiling lines write them: `$2`, `$6.50`. */
+export const dollars = (n: number): string => `$${Number.isInteger(n) ? n : n.toFixed(2)}`
+
+/** Where a worker stands against its ceiling: under, at (warn once), or over twice it (stop). */
+export type CeilingState = 'under' | 'warn' | 'stop'
+export const ceilingState = (usd: number, spend: number): CeilingState => (usd >= 2 * spend ? 'stop' : usd >= spend ? 'warn' : 'under')
+
+/** The one message a worker gets when it first crosses its ceiling. */
+export const warnText = (usd: number, spend: number): string =>
+  `chassis-delegation: you have spent about $${usd.toFixed(2)} of a ${dollars(spend)} ceiling; wrap up now and hand back with the report line`
+
+/** `next=` of the over-spend row. */
+export const OVER_SPEND_NEXT = (task: string): string => `check the worktree (work may be present: /dispatch ${task} --verify <sha>)`
+
+/** The over-spend row: `chassis-delegation: T-1 attempt 1/3 over-spend · $4.20 of $2 · next=…`. */
+export const overSpendLine = (v: { label: string; task: string; attempt: number; budget: number; usd: number; spend: number }): string =>
+  `chassis-delegation: ${v.label} attempt ${v.attempt}/${v.budget} over-spend · $${v.usd.toFixed(2)} of ${dollars(v.spend)} · next=${OVER_SPEND_NEXT(v.task)}`
+
+/** `T-6 $3.10` — a live worker with its running cost (the label alone while nothing is measured). */
+export const liveWorker = (label: string, usd: number | null | undefined): string => (usd === undefined || usd === null ? label : `${label} $${usd.toFixed(2)}`)
+
+/** The ceiling /dispatch writes: the card's `spend:` when it is a number (0 = none), else the tier's. */
+export function spendCeiling(card: string | undefined, tier: string, table: Readonly<Record<string, number>>): number {
+  const v = card?.trim().replace(/^\$/, '')
+  if (v !== undefined && /^\d+(\.\d+)?$/.test(v)) return Number(v)
+  return spendForTier(tier, table)
+}

@@ -50,6 +50,8 @@ export type World = {
    * for a conversation it cannot read. A test may set or replace one mid-run.
    */
   transcripts: Map<string, unknown[]>
+  /** The turn ids the mod ended with `$.turn.abort` (GH-106). */
+  aborted: string[]
 }
 
 export type WorldOptions = {
@@ -101,6 +103,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     closed: [],
     invalidations: 0,
     transcripts: new Map(Object.entries(options.transcripts ?? {})),
+    aborted: [],
   }
   const dirs = new Map(Object.entries(options.dirs ?? {}))
   let spawnCount = 0
@@ -182,6 +185,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   hook('session.start', (e: { cwd: string }) => ({ cwd: e.cwd }))
   hook('turn.start', (e: { turnId: string }) => ({ turnId: e.turnId }))
+  hook('turn.abort', (e: { turnId: string }) => (w.aborted.push(e.turnId), undefined))
   // a subagent's turn ending ends its run: $.agent.list() then says completed
   hook('turn.complete', (e: { answer: string; agentId?: string }) => {
     const a = w.agents.find(x => x.id === e.agentId)

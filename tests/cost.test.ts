@@ -57,3 +57,41 @@ describe('3B: a worker cost is the sum of its turns', () => {
     expect(usdText(undefined)).toBe('$–')
   })
 })
+
+import { ceilingState, spendCeiling, overSpendLine, warnText } from '../hooks/lib/cost'
+import { parseHeader, spendOf } from '../hooks/lib/brief'
+import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
+
+describe('GH-106: the spend ceiling (pure)', () => {
+  test('the brief header carries spend=; off the grammar or 0 is no ceiling', () => {
+    expect(spendOf(parseHeader('[[brief v=1 task=T-1 tier=standard spend=2.5 budget=3-attempts]]'))).toBe(2.5)
+    expect(spendOf(parseHeader('[[brief v=1 task=T-1 spend=0 budget=3-attempts]]'))).toBeUndefined()
+    expect(spendOf(parseHeader('[[brief v=1 task=T-1 spend=lots]]'))).toBeUndefined()
+  })
+  test('under, at (warn), twice (stop)', () => {
+    expect(ceilingState(1.99, 2)).toBe('under')
+    expect(ceilingState(2, 2)).toBe('warn')
+    expect(ceilingState(3.99, 2)).toBe('warn')
+    expect(ceilingState(4, 2)).toBe('stop')
+  })
+  test('the card spend: wins, else the tier default (economy 2, standard 6, frontier 15); the card 0 is none', () => {
+    const t = mergeConfig({}, {}).spendByTier
+    expect(t).toEqual({ economy: 2, standard: 6, frontier: 15 })
+    expect(spendCeiling(undefined, 'standard', t)).toBe(6)
+    expect(spendCeiling('3', 'standard', t)).toBe(3)
+    expect(spendCeiling('0', 'standard', t)).toBe(0)
+    expect(spendCeiling(undefined, 'premium', t)).toBe(15)
+  })
+  test('spendByTier merges per tier: repo file, then /config (JSON string)', () => {
+    const repo = parseRepoConfig('{"spendByTier":{"standard":8,"bogus":1}}')
+    expect(repo.errors.join()).toContain('spendByTier.bogus')
+    const settings = settingsLayer({ spendByTier: '{"frontier":0}' })
+    expect(mergeConfig(repo.config, settings.config).spendByTier).toEqual({ economy: 2, standard: 8, frontier: 0 })
+  })
+  test('the lines', () => {
+    expect(warnText(2.2, 2)).toBe('chassis-delegation: you have spent about $2.20 of a $2 ceiling; wrap up now and hand back with the report line')
+    expect(overSpendLine({ label: 'T-1', task: 'T-1', attempt: 1, budget: 3, usd: 4.2, spend: 2 })).toBe(
+      'chassis-delegation: T-1 attempt 1/3 over-spend · $4.20 of $2 · next=check the worktree (work may be present: /dispatch T-1 --verify <sha>)',
+    )
+  })
+})

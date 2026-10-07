@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **A per-attempt spend ceiling (GH-106, closes public #15).** Fifteen
+  standard cards cost $1 to $4.55; two cost $21.79 and $32.48 because the
+  workers over-delivered, and nothing told the worker or the mod what one
+  attempt may spend.
+  - *The ceiling.* New brief field `spend=<usd>`; config key `spendByTier`
+    (repo file and `/config`; default economy 2, standard 6, frontier 15; `0`
+    means none). `/dispatch` writes the card's `spend:` if present, else the
+    tier default; the brief template's Rules gain a Spend line.
+  - *Per-worker cost.* `hooks/lib/cost.ts` is wired: each worker's spend is
+    summed from its own `turn.complete` usage. The verdict row's, the
+    record's and the ledger's `usd` use it; without usage they keep the
+    session delta, now marked `~` (so concurrent workers no longer inflate it
+    silently: a $2 card read $14.47).
+  - *The warning and the stop.* At the ceiling the worker gets one wrap-up
+    message (not a resume, not charged to the budget). At twice it the
+    attempt is recorded `over-spend` and a row says to check the worktree;
+    `over-spend` never escalates the tier. The engine's `turn.start` carries
+    no `agentId` for a subagent, so the turn is aborted only when it does;
+    otherwise the row alone is posted (README, Spend ceiling).
+  - *Visible mid-run.* The status line and the queued-spawn refusal show each
+    live worker's running cost.
+  The engine does not show a plugin the steps of a worker it spawned itself,
+  so for a dispatched worker the cost, the wrap-up and the over-spend check
+  come when its run ends; the brief's spend line is what limits it mid-run.
+
 - **A tier the mod does not know is named (GH-108).** A card `tier:` (or a
   header `tier=`) that is not economy, standard, frontier or premium used to
   dispatch at standard with no word; one adopter has 14 cards with

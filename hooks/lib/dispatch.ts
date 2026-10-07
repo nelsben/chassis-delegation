@@ -22,6 +22,8 @@ export type Card = {
   scope: string[]
   forbid: string[]
   budget?: string
+  /** GH-106: the card's `spend:` ceiling in dollars, as written. */
+  spend?: string
   /** GH-16: `repo: here` dispatches into the session's own checkout (no worktree). */
   repo?: string
   /** The card's markdown below the frontmatter, verbatim. */
@@ -147,6 +149,7 @@ export function parseCard(text: string): Card | { error: string } {
     scope: asList(f.scope),
     forbid: asList(f.forbid),
     budget: asText(f.budget).trim() || undefined,
+    spend: asText(f.spend).trim() || undefined,
     repo: asText(f.repo).trim() || undefined,
     body: fm.body,
     fields: f,
@@ -187,6 +190,8 @@ export function renderHeader(input: {
   tier: string
   alias: string
   budget: number
+  /** GH-106: the ceiling in dollars; 0 or absent writes no `spend=`. */
+  spend?: number
   scope?: readonly string[]
   forbid?: readonly string[]
   repo?: string
@@ -204,6 +209,7 @@ export function renderHeader(input: {
     `[[brief v=1 task=${c.id} subtask=main purpose=build tier=${input.tier} model=${input.alias}` +
     ` scope=${scope.map(oneLine).join(',')} forbid=${forbid.map(oneLine).join(',')}` +
     ` red_test="${oneLine(c.redTest).replace(/"/g, "'")}" gate=${c.gate.join(',')}${here}` +
+    (input.spend ? ` spend=${input.spend}` : '') +
     ` budget=${input.budget}-attempts report=chassis.report.v1]]`
   )
 }
@@ -219,6 +225,7 @@ export function renderSections(template: string, here: boolean): string {
   return template
     .replace(new RegExp(`\\{\\{#${off}\\}\\}[\\s\\S]*?\\{\\{/${off}\\}\\}\\n?`, 'g'), '')
     .replace(new RegExp(`\\{\\{[#/]${on}\\}\\}\\n?`, 'g'), '')
+    .replace(/\{\{[#/]spend\}\}\n?/g, '')
 }
 
 /**
@@ -252,10 +259,11 @@ export const overlapWarning = (id: string, mine: string, card: string, theirs: s
  * GH-16: `here` keeps the template's `{{#here}}` sections (`{{worktree}}` is
  * then the shared checkout) and drops its `{{#worktree}}` ones; else the reverse.
  */
-export function renderBrief(template: string, v: { card: Card; worktree: string; branch: string; cardPath: string; install?: string; extra?: string; here?: boolean }): string {
+export function renderBrief(template: string, v: { card: Card; worktree: string; branch: string; cardPath: string; install?: string; extra?: string; here?: boolean; spend?: number }): string {
   const values: Record<string, string> = {
     install: v.install ?? "the repo's own install step, if a lockfile is present",
     extra: v.extra ?? '',
+    spend: String(v.spend ?? 0),
     id: v.card.id,
     title: v.card.title,
     domain: v.card.domain,
@@ -266,7 +274,9 @@ export function renderBrief(template: string, v: { card: Card; worktree: string;
     gate: v.card.gateText,
     body: v.card.body,
   }
-  return renderSections(template, v.here === true).replace(/\{\{(\w+)\}\}/g, (whole, key: string) => (key in values ? (values[key] as string) : whole))
+  // GH-106: `{{#spend}}…{{/spend}}` is kept only when the brief carries a ceiling
+  const withSpend = template.replace(/\{\{#spend\}\}([\s\S]*?)\{\{\/spend\}\}\n?/g, (_, inner: string) => (v.spend && v.spend > 0 ? inner : ''))
+  return renderSections(withSpend, v.here === true).replace(/\{\{(\w+)\}\}/g, (whole, key: string) => (key in values ? (values[key] as string) : whole))
 }
 
 export type DispatchArgs =

@@ -10,7 +10,7 @@ import { globMatches } from './verify-native'
 
 export const BRIEF_FIELDS = [
   'v', 'task', 'subtask', 'purpose', 'tier', 'model', 'scope', 'forbid', 'scope_globs', 'forbid_globs',
-  'red_test', 'gate', 'budget', 'report', 'repo', 'base', 'ignore', 'context', 'note',
+  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'context', 'note',
 ] as const
 
 /** `red=` (GH-20): the red test's failing output, a path relative to the worker's tree, or `none`. */
@@ -27,6 +27,8 @@ export type BriefHeader = {
   model?: string
   gate?: string
   budget?: string
+  /** GH-106: the per-attempt spend ceiling in dollars, as written. */
+  spend?: string
   repo?: string
 }
 
@@ -91,6 +93,7 @@ export function parseHeader(text: string): BriefHeader | undefined {
     model: opt('model'),
     gate: opt('gate'),
     budget: opt('budget'),
+    spend: opt('spend'),
     repo: opt('repo'),
   }
 }
@@ -358,4 +361,12 @@ export function budgetWarning(value: string | undefined, fallback: number): stri
   const v = (value ?? '').trim()
   if (v === '' || parseBudget(v, 0) >= 1) return undefined
   return `warning: budget "${v}" is not <n>-attempts; using the default ${fallback}`
+}
+
+/** GH-106: `spend=<usd>` → dollars (0 or more); absent or off the grammar → undefined (no ceiling). */
+export function spendOf(h: Pick<BriefHeader, 'spend'> | undefined): number | undefined {
+  const v = h?.spend?.trim().replace(/^\$/, '')
+  if (v === undefined || !/^\d+(\.\d+)?$/.test(v)) return undefined
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : undefined
 }
