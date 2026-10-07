@@ -40,6 +40,7 @@ function makeRepo() {
   execFileSync('git', ['init', '-q', '-b', 'main', dir])
   write(dir, 'README.md', '# t\n')
   write(dir, 'gate.sh', 'test -f src/a.ts\n')
+  write(dir, 'src/old/x.md', 'a moved file with enough text to be detected as a rename\n')
   sh(dir, 'add', '-A')
   sh(dir, 'commit', '-q', '-m', 'base')
   sh(dir, 'checkout', '-q', '-b', 'other')
@@ -108,6 +109,24 @@ describe('5G: native verify against a real git repository', () => {
       // files.txt is the actual delta in git's order, not the report's
       expect(t.files['/x/.delegation/T-1/files.txt']).toBe('docs/x.md\nsrc/a.ts\n')
       expect(t.ran).toContain('bash gate.sh')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('GH-102: a worker commit that git mv-s a file lists it once, at the new path: held', async () => {
+    const { dir } = makeRepo()
+    try {
+      mkdirSync(join(dir, 'src/new'), { recursive: true })
+      sh(dir, 'mv', 'src/old/x.md', 'src/new/x.md')
+      sh(dir, 'commit', '-q', '-m', 'move')
+      const sha = sh(dir, 'rev-parse', '--short', 'HEAD')
+      const t = io()
+      const r = await verifyNative(input(dir, { sha, files: 'src/a.ts,docs/x.md,src/new/x.md' }), t)
+      expect(t.refused).toEqual([])
+      expect(r.lines).toContain('claim files: held — files= matches the sha delta exactly')
+      const both = await verifyNative(input(dir, { sha, files: 'src/a.ts,docs/x.md,src/old/x.md,src/new/x.md' }), io())
+      expect(both.lines).toContain('claim files: held — files= matches the sha delta exactly (1 rename collapsed)')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

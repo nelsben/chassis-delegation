@@ -18,6 +18,7 @@ describe('allowlist accepts', () => {
   })
   test('read-only git and gh', () => {
     ok(['git', '-C', R, 'diff', '--no-renames', '--name-only', 'abc', 'def'])
+    ok(['git', '-C', R, 'diff', '--name-status', '-M', 'abc', 'def'])
     ok(['git', '-C', R, 'merge-base', '--is-ancestor', 'abc', 'refs/heads/agent/ops/X'])
     ok(['git', '-C', R, 'rev-parse', '--verify', '--quiet', 'abc^{commit}'])
     ok(['git', '-C', R, 'rev-parse', '--abbrev-ref', 'HEAD'])

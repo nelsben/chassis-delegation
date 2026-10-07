@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A moved file is listed once, at its new path (GH-102, closes public #6).**
+  The verifier's delta used `git diff --no-renames --name-only`, so a `git mv`
+  read as the old path omitted and the new path added, and a correct hand-back
+  was refuted. The delta is now `git diff --name-status -M`, a rename is its new
+  path, and an old path a worker lists as well is dropped before comparing (the
+  held line says `(1 rename collapsed)`).
+
 - **A prose scope is caught at dispatch (GH-103, closes public #8).** When a
   card's `scope:` reads as prose and no `--scope` (tool `scope`) is given,
   `/dispatch` and the tool write the brief, print the header and the prose,
@@ -21,7 +28,6 @@
   refusal names live agents and queued rows apart: `(1 live: BE-310; 1 queued:
   BE-314)`; `queuedDeny` takes both lists. Slots count live agents and other
   tasks' starting spawns, never queue rows.
-
 - **A shorter repo root (GH-100).** The root held fifteen entries above the
   README; it now holds ten. `types/` is `hooks/types/`, `templates/` is
   `hooks/templates/` (so the default brief template is

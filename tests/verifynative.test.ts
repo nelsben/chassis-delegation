@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { parseReport } from '../hooks/lib/brief'
-import { BASE_REFS, briefContract, filesClaim, ignoredLine, NO_BRIEF_REASON, pathMatchesAny, porcelainPaths, prNumber, redClaim, subtractDelta, verifyCardless, verifyNative, type ExecOut, type RedEvidence } from '../hooks/lib/verify-native'
+import { BASE_REFS, briefContract, filesClaim, ignoredLine, nameStatusDelta, NO_BRIEF_REASON, pathMatchesAny, porcelainPaths, prNumber, redClaim, subtractDelta, verifyCardless, verifyNative, type ExecOut, type RedEvidence } from '../hooks/lib/verify-native'
 
 const REPO = '/w/repo-T-1'
 const FULL = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
@@ -31,7 +31,7 @@ function happy(over: Table = {}): Table {
     [git('merge-base', '--is-ancestor', FULL, 'refs/heads/agent/ops/T-1')]: ok(),
     [git('rev-parse', '--verify', '--quiet', 'origin/main')]: ok(MB + '\n'),
     [git('merge-base', 'origin/main', FULL)]: ok(MB + '\n'),
-    [git('diff', '--no-renames', '--name-only', MB, FULL)]: ok('src/a.ts\ndocs/x.md\n'),
+    [git('diff', '--name-status', '-M', MB, FULL)]: ok('A\tsrc/a.ts\nA\tdocs/x.md\n'),
     [git('rev-parse', 'HEAD')]: ok(FULL + '\n'),
     [git('status', '--porcelain')]: ok(''),
     'npm test': ok('all green\n'),
@@ -178,10 +178,26 @@ describe('5A: verifyNative against a repo answered from a table', () => {
     expect(r.verdict).toBe('refuted')
     expect(r.lines).toContain('claim files: failed — files= does not match the actual delta (omits or invents a path): omits docs/x.md')
   })
+  test('GH-102: a rename line in the diff is its new path, listed once; an old path in files= is dropped', async () => {
+    const diff = { [git('diff', '--name-status', '-M', MB, FULL)]: ok('R100\tdocs/old/x.md\tdocs/new/x.md\nA\tsrc/a.ts\n') }
+    const once = await verifyNative(input({ report: report({ files: 'src/a.ts,docs/new/x.md' }) }), io(happy(diff)))
+    expect(once.lines).toContain('claim files: held — files= matches the sha delta exactly')
+    const both = await verifyNative(input({ report: report({ files: 'src/a.ts,docs/old/x.md,docs/new/x.md' }) }), io(happy(diff)))
+    expect(both.lines).toContain('claim files: held — files= matches the sha delta exactly (1 rename collapsed)')
+    const missing = await verifyNative(input({ report: report({ files: 'src/a.ts' }) }), io(happy(diff)))
+    expect(missing.lines).toContain('claim files: failed — files= does not match the actual delta (omits or invents a path): omits docs/new/x.md')
+  })
+  test('GH-102: nameStatusDelta reads M, A, D, and R lines', () => {
+    expect(nameStatusDelta('M\ta.ts\nR087\tb/o.md\tb/n.md\nD\tc.ts\n')).toEqual({ paths: ['a.ts', 'b/n.md', 'c.ts'], renamedFrom: ['b/o.md'] })
+  })
+  test('GH-102: filesClaim drops an old path of a rename', () => {
+    expect(filesClaim(['n', 'o'], ['n'], 'the sha delta', ['o'])).toBe('claim files: held — files= matches the sha delta exactly (1 rename collapsed)')
+    expect(filesClaim(['n'], ['n'], 'the sha delta', ['o'])).toBe('claim files: held — files= matches the sha delta exactly')
+  })
   test('a path out of scope, or in a forbid: refuted on scope', async () => {
-    const out = await verifyNative(input({ report: report({ files: 'src/a.ts,README.md' }) }), io(happy({ [git('diff', '--no-renames', '--name-only', MB, FULL)]: ok('src/a.ts\nREADME.md\n') })))
+    const out = await verifyNative(input({ report: report({ files: 'src/a.ts,README.md' }) }), io(happy({ [git('diff', '--name-status', '-M', MB, FULL)]: ok('A\tsrc/a.ts\nA\tREADME.md\n') })))
     expect(out.lines).toContain('claim scope: failed — out-of-scope path: README.md')
-    const forb = await verifyNative(input({ report: report({ files: 'src/secret/k.ts' }) }), io(happy({ [git('diff', '--no-renames', '--name-only', MB, FULL)]: ok('src/secret/k.ts\n') })))
+    const forb = await verifyNative(input({ report: report({ files: 'src/secret/k.ts' }) }), io(happy({ [git('diff', '--name-status', '-M', MB, FULL)]: ok('A\tsrc/secret/k.ts\n') })))
     expect(forb.lines).toContain('claim scope: failed — touches forbid path: src/secret/k.ts')
   })
   test('a red gate under gate=pass: refuted, with the gate output tail under the claim', async () => {
@@ -389,7 +405,7 @@ describe('GH-16: repo=here, the shared checkout (no worktree)', () => {
     const t = io(hereTable({
       [hgit('rev-parse', '--verify', '--quiet', 'a1b2c3d^{commit}')]: ok(FULL + '\n'),
       [hgit('merge-base', 'main', FULL)]: ok(MB + '\n'),
-      [hgit('diff', '--no-renames', '--name-only', MB, FULL)]: ok('src/a.ts\n.delegation/notes.md\n'),
+      [hgit('diff', '--name-status', '-M', MB, FULL)]: ok('A\tsrc/a.ts\nA\t.delegation/notes.md\n'),
     }))
     const r = await verifyNative(hereInput({ briefText, report: hereReport({ sha: 'a1b2c3d', files: 'src/a.ts' }), others: [] }), t)
     expect(r.verdict).toBe('verified')
