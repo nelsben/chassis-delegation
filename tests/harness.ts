@@ -63,6 +63,8 @@ export type WorldOptions = {
   sessionId?: string
   /** Spawns list themselves in `$.agent.list()` as running (a test flips `status`). */
   listAgents?: boolean
+  /** A spawn the engine refuses: return a reason to answer `{ deny }` (GH-107: a transient refusal at the drain). */
+  spawnDeny?: (e: Record<string, unknown>) => string | undefined
   /** Agents' transcripts for `$.session.messages({ agentId })` (World.transcripts). */
   transcripts?: Record<string, unknown[]>
 }
@@ -169,6 +171,8 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   hook('session.send', (e: { to: unknown; text: string }) => (w.sent.push({ to: e.to, text: e.text }), { isDelivered: true }))
   hook('agent.spawn', (e: Record<string, unknown>) => {
+    const refused = options.spawnDeny?.(e)
+    if (refused !== undefined) return { deny: refused }
     w.spawns.push({ ...e })
     spawnCount += 1
     const alias = String(e.model ?? '')

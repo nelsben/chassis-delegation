@@ -1380,3 +1380,74 @@ describe('GH-104: spend guards', () => {
     expect(w.spawns[0]?.model).toBe('sonnet')
   })
 })
+
+describe('GH-107: a drained spawn that is refused keeps its place at the head of the queue', () => {
+  const brief = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard]]\nDo it.`
+  const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
+  const report = (task: string) => `[[report v=1 task=${task} subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]`
+  const rowsOf = (w: { appended: { type: string; text: string }[] }) => w.appended.filter(a => a.type === 'user').map(a => a.text)
+
+  test('(a) one worker hands back: A starts, B stays queued at position 1', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-8'), tool_use_id: 'toolu_C0000008' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_D0000009' }))
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-8', 'T-9'])
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    expect(w.spawns).toHaveLength(3)
+    expect(String(w.spawns[2]?.prompt)).toContain('task=T-8')
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-9'])
+  })
+
+  const BRIEF = `${ROOT}/.delegation/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const WT = `${ROOT}-T-4`
+  const BRANCH = 'agent/frontend/T-4'
+  const HEAD = 'abcdef1' + '2'.repeat(33)
+  const worker = (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npx') return { exitCode: 1, stdout: 'a/x.ts: not formatted\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'rev-parse' && sub[1] === '--abbrev-ref') return { exitCode: 0, stdout: `${BRANCH}\n` }
+    if (sub[0] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: sub.includes('--name-status') ? 'M\ta/x.ts\n' : 'a/x.ts\n' }
+    if (sub[0] === 'log') return { exitCode: 0, stdout: `${'3'.repeat(40)}\n${'4'.repeat(40)}\n` }
+    if (sub[0] === 'status') return { exitCode: 0, stdout: '' }
+    return undefined
+  }
+
+  test('(b) A is refused at the drain for work present: A leaves the queue with a row saying so, and B starts', { options: { gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
+    const w = world(on, { listAgents: true, run: worker, files: { [BRIEF]: HEADER + '\nbody' }, dirs: { [WT]: [] } })
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    const a = { prompt: `Your brief is the file ${BRIEF}. Read it whole, then follow it exactly.`, description: 'task', subagentType: 'general-purpose', cwd: WT, task: 'T-4', subtask: 'main', at: 1000 }
+    const b = { prompt: brief('T-9'), description: 'task', subagentType: 'general-purpose', task: 'T-9', subtask: 'main', at: 2000 }
+    w.state.set('chassis-delegation.queue', [a, b])
+    // T-4 already had an attempt: its worktree holds finished work
+    w.store.set('delegation.tasks.T-4', [{ attempt: 1, subtask: 'main', kind: 'spawn', tier: 'standard', alias: 'sonnet', verdict: 'no-report', source: 'brief', purpose: 'build', briefPath: BRIEF }])
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    expect(w.spawns).toHaveLength(3)
+    expect(queueOf(w)).toEqual([])
+    const row = rowsOf(w).concat(w.logs).find(r => r.startsWith('chassis-delegation: queued T-4 not started: ')) ?? ''
+    expect(row).toContain('work present at')
+    expect(row).toContain('; it is removed from the queue (retrying cannot succeed)')
+  })
+  test('(c) a transient refusal keeps A at the head and posts its row once, however often the drain runs', { options: { gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
+    const w = world(on, { listAgents: true, run: worker, spawnDeny: e => (String(e.prompt).includes('T-4') ? 'the engine is busy' : undefined) })
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    const a = { prompt: brief('T-4'), description: 'task', subagentType: 'general-purpose', task: 'T-4', subtask: 'main', at: 1000 }
+    const b = { prompt: brief('T-9'), description: 'task', subagentType: 'general-purpose', task: 'T-9', subtask: 'main', at: 2000 }
+    w.state.set('chassis-delegation.queue', [a, b])
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    await $.turn.complete(turnInput('agent-2', report('T-2')))
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-4', 'T-9'])
+    const posted = rowsOf(w).concat(w.logs).filter(r => r.startsWith('chassis-delegation: queued T-4 not started: '))
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toContain('the engine is busy; it keeps its place (position 1)')
+  })
+})

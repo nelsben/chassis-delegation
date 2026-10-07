@@ -133,7 +133,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
-import { alreadyQueuedDeny, alreadyQueuedPart, enqueue, hasSlot, isQueuedDeny, promptKey, queuedDeny, queuedIndex, queuedText, startingOthers, waitedMinutes } from './lib/scheduler'
+import { alreadyQueuedDeny, alreadyQueuedPart, drainRefusalRow, enqueue, hasSlot, isFinalDeny, isQueuedDeny, promptKey, queuedDeny, queuedIndex, queuedText, startingOthers, waitedMinutes } from './lib/scheduler'
 import {
   CLASSIFIER_LABELS,
   classifierText,
@@ -422,6 +422,8 @@ let evalBusy = false
 let slotSeq = 0
 const starting = new Map<number, string>() // slot token → the task label of a spawn holding a slot before $.agent.list shows it
 const drainReserved = new Map<string, number>() // promptKey → the slot token the drain reserved for that spawn
+/** GH-107: the last refusal posted for a queued task that keeps its place; the same refusal is not posted again on every drain. */
+const drainRefusalSeen = new Map<string, string>()
 // promptKey → what to record once the spawn hook sees the agent id of a debrief or eval runner the mod started
 const runnerStarted = new Map<string, (agentId: string) => Promise<void>>()
 const selfDecided = new Set<string>() // promptKeys of spawns spawnSelf has decided: the hook passes them through
@@ -705,7 +707,6 @@ async function drainQueue($: Host, exclude?: string): Promise<void> {
       if (!head) return undefined
       const live = await liveState($, exclude)
       if (!hasSlot(live.workers.length, starting.size, cfg.maxWorkers)) return undefined
-      await writeQueue($, queue.slice(1))
       slotSeq += 1
       const token = slotSeq
       starting.set(token, taskLabel(head.task, head.subtask ?? 'main'))
@@ -726,11 +727,27 @@ async function drainQueue($: Host, exclude?: string): Promise<void> {
     starting.delete(token)
     const label = taskLabel(head.task, head.subtask ?? 'main')
     if (res.deny !== undefined) {
-      $.ui.toast(`queued ${label} not started: ${res.deny}`)
-      // GH-104: the brain reads work present as a row, not only as a toast
-      if (isWorkPresentDeny(res.deny)) await appendRow($, res.deny)
+      const deny = res.deny
+      // work present is final too: the work needs --verify, and a respawn would be refused on every drain (the status timer runs one a minute)
+      const dropped = isFinalDeny(deny) || isWorkPresentDeny(deny)
+      $.ui.toast(`queued ${label} not started: ${deny}`)
+      if (dropped) {
+        drainRefusalSeen.delete(label)
+        await appendRow($, drainRefusalRow(label, deny, true))
+        await withLock(async () => writeQueue($, (await readQueue($)).filter(q => !(q.task === head.task && (q.subtask ?? 'main') === (head.subtask ?? 'main')))))
+        // the row behind it may start
+        continue
+      }
+      // GH-107: the head keeps its place (position 1); the brain reads a row, not a toast, but the same refusal only once
+      if (drainRefusalSeen.get(label) !== deny) {
+        drainRefusalSeen.set(label, deny)
+        await appendRow($, drainRefusalRow(label, deny, false))
+      }
       return
     }
+    drainRefusalSeen.delete(label)
+    // the head leaves the queue only now that its spawn has succeeded
+    await withLock(async () => writeQueue($, (await readQueue($)).filter(q => !(q.task === head.task && (q.subtask ?? 'main') === (head.subtask ?? 'main')))))
     $.ui.toast(`started queued ${label} (waited ${waitedMinutes(head.at, await now($))} min)`)
   }
 }

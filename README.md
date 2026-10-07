@@ -617,7 +617,13 @@ opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5.
   its place once a slot is free. The queue drains after every hand-back, at the
   start of every dispatch and after any dispatch that did not spawn; each
   start toasts `started queued <task> (waited <m> min)`. Only live agents
-  and other tasks' starting spawns hold slots, never queue rows.
+  and other tasks' starting spawns hold slots, never queue rows. A queued
+  row leaves the queue only once its spawn succeeds: if the spawn hook refuses
+  the head (work present, say), the head keeps its place and `at`, nothing
+  behind it jumps ahead, and a session row says `queued <task> not started:
+  <reason>; it keeps its place (position 1)`. A refusal retrying cannot cure
+  (budget exhausted, a brief that cannot be read) removes the row, with a row
+  saying so.
 - **The git guard reads the command text.** It cannot see a commit made inside
   a script, or a folder named through a variable.
 - **The background runners act on the session's permissions.** The built-in
