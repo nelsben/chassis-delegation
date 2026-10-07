@@ -156,7 +156,7 @@ describe('GH-12: the card folder is cardDir', () => {
   test('the card lookup honours cardDir, defaulting to agents/tasks', () => {
     expect(cardDirPath(R, '')).toBe(R + '/agents/tasks')
     expect(cardDirPath(R + '/', 'agents/tasks')).toBe(R + '/agents/tasks')
-    expect(cardDirPath(R, 'delegation/tasks')).toBe(R + '/delegation/tasks')
+    expect(cardDirPath(R, 'docs/cards')).toBe(R + '/docs/cards')
   })
 })
 

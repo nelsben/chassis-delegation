@@ -88,10 +88,10 @@ export const FRICTION_CAP = 100
 /**
  * The instructions the debrief agent follows: the person's own
  * `~/.claude/commands/debrief.md` when it exists, else the mod's built-in
- * `templates/debrief.md` (the same JSON schema; it writes under `<root>/.delegation/`).
+ * `hooks/templates/debrief.md` (the same JSON schema; it writes under `<root>/.delegation/`).
  */
 export const debriefSource = (home: string, pluginRoot: string, skillExists: boolean): { path: string; builtIn: boolean } =>
-  skillExists ? { path: debriefSkillPath(home), builtIn: false } : { path: `${pluginRoot.replace(/\/+$/, '')}/templates/debrief.md`, builtIn: true }
+  skillExists ? { path: debriefSkillPath(home), builtIn: false } : { path: `${pluginRoot.replace(/\/+$/, '')}/hooks/templates/debrief.md`, builtIn: true }
 
 export const builtInDebriefPrompt = (templatePath: string, sessionId: string, root: string, facts: readonly string[]): string =>
   [

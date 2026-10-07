@@ -43,10 +43,10 @@ describe('5B: the repo file .chassis-delegation.json', () => {
     ])
   })
   test('GH-12: cardDir is a relative folder, validated like worktreeRoot would be; default agents/tasks', () => {
-    expect(parseRepoConfig(JSON.stringify({ cardDir: 'delegation/tasks/' })).config).toEqual({ cardDir: 'delegation/tasks' })
+    expect(parseRepoConfig(JSON.stringify({ cardDir: 'docs/cards/' })).config).toEqual({ cardDir: 'docs/cards' })
     for (const bad of ['../x', '/abs', 'a/../b', 3]) expect(parseRepoConfig(JSON.stringify({ cardDir: bad })).errors[0]).toContain('cardDir')
     expect(mergeConfig({}, {}).cardDir).toBe('agents/tasks')
-    expect(mergeConfig({ cardDir: 'delegation/tasks' }, {}).cardDir).toBe('delegation/tasks')
+    expect(mergeConfig({ cardDir: 'docs/cards' }, {}).cardDir).toBe('docs/cards')
   })
   test('not JSON, or not an object: nothing, and one error', () => {
     expect(parseRepoConfig('{ nope').config).toEqual({})

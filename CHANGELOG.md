@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **A shorter repo root (GH-100).** The root held fifteen entries above the
+  README; it now holds ten. `types/` is `hooks/types/`, `templates/` is
+  `hooks/templates/` (so the default brief template is
+  `hooks/templates/brief.md`), `eval/` is `tests/eval/`, `scripts/selfcheck.sh`
+  is `tests/selfcheck.sh`, and this repo's cards moved from `delegation/tasks/`
+  to `docs/cards/`. `init` now picks `docs/cards` in a plugin repo (it picked
+  `delegation/tasks`), so a plugin repo that init'd earlier keeps its
+  `cardDir` setting. No behaviour changed; `--replay` still reads
+  `agents/tasks/` at the base commit.
+
 ## 0.4.0 — 2026-10-05
 
 The adopter reports, worked through: every entry below was a card under

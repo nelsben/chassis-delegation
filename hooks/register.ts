@@ -8,7 +8,7 @@
 // chassis scripts: the mod works in a repo that has only agents/tasks/ cards.
 import type { AgentSpawnResult, EngineInterface, PluginOptions, Register } from 'claude-code'
 
-import type { DelegationVerdict, DelegationWorker, QueuedSpawn } from '../types'
+import type { DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { checkArgv, refusedLine, type AllowConfig } from './lib/allow'
 import {
   attemptsFor,
@@ -829,7 +829,7 @@ function armIdle($: Host) {
  * friction signal is the harness breadcrumb file when it exists (lines past its
  * `.done` watermark), else the events the mod saw (corrections, denials,
  * refutes) since the last debrief. The instructions are the person's
- * `~/.claude/commands/debrief.md` when it exists, else templates/debrief.md.
+ * `~/.claude/commands/debrief.md` when it exists, else hooks/templates/debrief.md.
  */
 async function maybeDebrief($: Host) {
   if (debriefBusy || inTurn || !cfg.autoDebrief) return
@@ -1731,7 +1731,7 @@ async function runDispatch($: Host, parsed: DispatchArgs): Promise<string> {
   } else {
     let template: string
     try {
-      template = await $.fs.read(cfg.briefTemplate || `${$.plugin.root}/templates/brief.md`)
+      template = await $.fs.read(cfg.briefTemplate || `${$.plugin.root}/hooks/templates/brief.md`)
     } catch (err) {
       return [...out, `/dispatch ${id}: the brief template could not be read: ${String(err)}`].join('\n')
     }
@@ -2089,7 +2089,7 @@ async function spawnSelf($: Host, input: { prompt: string; description: string; 
 const INIT_TOOL = {
   name: 'init',
   description:
-    'Scaffold chassis-delegation in this repo: a card folder (agents/tasks/, or delegation/tasks/ in a plugin repo) with its README and a sample card, .chassis-delegation.json with its defaults, and .delegation/ in .gitignore. Never overwrites a file; says what it wrote.',
+    'Scaffold chassis-delegation in this repo: a card folder (agents/tasks/, or docs/cards/ in a plugin repo) with its README and a sample card, .chassis-delegation.json with its defaults, and .delegation/ in .gitignore. Never overwrites a file; says what it wrote.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
 } as const
 

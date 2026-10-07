@@ -5,7 +5,7 @@
   "author": {
     "name": "Ben Nelsen"
   },
-  "types": "./types/index.d.ts",
+  "types": "./hooks/types/index.d.ts",
   "userConfig": {
     "autoEscalate": {
       "type": "boolean",
@@ -52,7 +52,7 @@
     "briefTemplate": {
       "type": "string",
       "title": "Brief template",
-      "description": "A template file for the brief body; empty = the repo file's briefTemplate, else the mod's templates/brief.md",
+      "description": "A template file for the brief body; empty = the repo file's briefTemplate, else the mod's hooks/templates/brief.md",
       "default": ""
     },
     "agentTypes": {
@@ -105,7 +105,7 @@
     "autoDebrief": {
       "type": "boolean",
       "title": "Background debrief",
-      "description": "At a clean stop (idle, no worker, nothing pending or queued, enough friction, past the cooldown) a background agent writes a debrief: ~/.claude/commands/debrief.md when it exists, else the built-in templates/debrief.md into <root>/.delegation/debriefs/",
+      "description": "At a clean stop (idle, no worker, nothing pending or queued, enough friction, past the cooldown) a background agent writes a debrief: ~/.claude/commands/debrief.md when it exists, else the built-in hooks/templates/debrief.md into <root>/.delegation/debriefs/",
       "default": true
     },
     "debriefIdleMinutes": {

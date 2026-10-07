@@ -31,7 +31,7 @@
   "maxWorkers": 2,
   "_worktreeRoot": "Folder for the workers' worktrees; empty = sibling folders <repo>-<id>.",
   "worktreeRoot": "",
-  "_briefTemplate": "A brief body template file (absolute path); empty = the mod's templates/brief.md.",
+  "_briefTemplate": "A brief body template file (absolute path); empty = the mod's hooks/templates/brief.md.",
   "briefTemplate": "",
   "_briefExtra": "Repo-specific lines added to every brief (setup steps, conventions, things never to do).",
   "briefExtra": "This repo IS the chassis-delegation mod. Gates (gate map ids validate, node, test) run in your worktree: `claude plugin validate <worktree>` (manifest + hooks), `node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs` (the pure suite, must stay all green), `claude plugin test <worktree>` (the engine suite; if it refuses with 'rollout switch served off', retry twice over a minute, then record 'suite owed' and rely on validate + the node suite). Type-check with tsc 5.x if one is on PATH; there is no package.json. Red first: add the failing test under tests/ (engine) or tests/node/ (pure) before the fix. Hooks stay thin: pure logic in hooks/lib/, every $ call in hooks/register.ts. Never edit .claude-plugin/types/ (the engine writes it). Never touch ~/.claude or any other repo.",
@@ -39,6 +39,6 @@
   "evalCommand": "",
   "evalLiveCommand": "",
   "autoEval": false,
-  "_cardDir": "This repo is itself a plugin: the engine reads agents/*.md as subagent definitions, so the cards live under delegation/tasks/ (GH-12).",
-  "cardDir": "delegation/tasks"
+  "_cardDir": "This repo is itself a plugin: the engine reads agents/*.md as subagent definitions, so the cards live under docs/cards/ (GH-12, GH-100: docs/ keeps the repo root short).",
+  "cardDir": "docs/cards"
 }

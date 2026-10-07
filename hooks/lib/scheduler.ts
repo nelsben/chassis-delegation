@@ -1,7 +1,7 @@
 // The worker scheduler (SPEC part 2F): at most `maxWorkers` briefed workers
 // run at once; a briefed spawn past that is queued in $.state and started when
 // a worker's slot frees. Ad hoc spawns (no brief) are never queued. Pure: no `$`.
-import type { QueuedSpawn } from '../../types'
+import type { QueuedSpawn } from '../types'
 
 export const DEFAULT_MAX_WORKERS = 2
 export const QUEUED_PREFIX = 'queued by chassis-delegation: '

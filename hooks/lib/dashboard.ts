@@ -1,11 +1,11 @@
 // Part 4A/4B and 3D, the drawing's data: the band's lines, the pane's six
 // blocks and their sparklines, the open items, and the status tool's text.
 // The trees themselves are band.tsx and pane.tsx. Pure: no `$`.
-import type { BandItem, DashboardBlock } from '../../types'
+import type { BandItem, DashboardBlock } from '../types'
 import { usdText } from './cost'
 import { SERIES, type Metrics } from './metrics'
 
-export type { BandItem } from '../../types'
+export type { BandItem } from '../types'
 
 const ARROW = '▸'
 

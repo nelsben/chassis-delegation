@@ -30,21 +30,26 @@ describe('5B: /delegation init scaffolds a repo that lacks the files', () => {
     expect(initPlan(R, { [`${R}/.gitignore`]: 'x\n.delegation/\n' })[3]?.action).toBe('skip')
     expect(initPlan(R, { [`${R}/.gitignore`]: 'x\n/.delegation\n' })[3]?.action).toBe('skip')
   })
-  test('GH-12: in a repo that is itself a plugin, cards go under delegation/tasks and cardDir says so', () => {
+  test('GH-100: the default brief template the config comment names is hooks/templates/brief.md', () => {
+    const config = JSON.parse(initPlan(R, {})[2]?.text ?? '{}')
+    expect(config._briefTemplate).toContain('hooks/templates/brief.md')
+    expect(config._briefTemplate).not.toContain("mod's templates/")
+  })
+  test('GH-12: in a repo that is itself a plugin, cards go under docs/cards and cardDir says so', () => {
     const plan = initPlan(R, { [`${R}/.claude-plugin/plugin.json`]: '{}' })
     expect(plan.map(p => [p.path, p.action])).toEqual([
-      [`${R}/delegation/tasks/README.md`, 'write'],
-      [`${R}/delegation/tasks/OPS-000-sample.md`, 'write'],
+      [`${R}/docs/cards/README.md`, 'write'],
+      [`${R}/docs/cards/OPS-000-sample.md`, 'write'],
       [`${R}/.chassis-delegation.json`, 'write'],
       [`${R}/.gitignore`, 'write'],
     ])
     const config = JSON.parse(plan[2]?.text ?? '{}')
-    expect(config.cardDir).toBe('delegation/tasks')
+    expect(config.cardDir).toBe('docs/cards')
     expect(typeof config._cardDir).toBe('string')
-    expect(plan[0]?.text).toContain('delegation/tasks/<ID>-<slug>.md')
+    expect(plan[0]?.text).toContain('docs/cards/<ID>-<slug>.md')
     expect(plan[0]?.text).not.toContain('agents/tasks')
     expect(plan[1]?.text).not.toContain('agents/tasks')
-    expect(initText(R, plan)).toContain('cards go under delegation/tasks/ (this repo is a plugin: agents/ is the engine\'s subagent folder)')
+    expect(initText(R, plan)).toContain('cards go under docs/cards/ (this repo is a plugin: agents/ is the engine\'s subagent folder)')
     // not a plugin: the default stays
     const plain = initPlan(R, {})
     expect(JSON.parse(plain[2]?.text ?? '{}').cardDir).toBe('agents/tasks')

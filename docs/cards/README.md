@@ -1,6 +1,6 @@
 # Task cards
 
-One file per task: `delegation/tasks/<ID>-<slug>.md`, YAML frontmatter, then the spec
+One file per task: `docs/cards/<ID>-<slug>.md`, YAML frontmatter, then the spec
 in markdown. `<ID>` is `<PREFIX>-<number>[letter]`: OPS-12, BE-101, FE-7b. The
 brain (the main model) dispatches a card with the `dispatch` tool, or you do
 with `/dispatch <ID>`; chassis-delegation writes the brief, cuts the worktree,
