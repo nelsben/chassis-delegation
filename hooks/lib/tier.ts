@@ -47,6 +47,25 @@ export function aliasOf(model: string | undefined): Alias | undefined {
   return m ? (m[1] as Alias) : undefined
 }
 
+/**
+ * GH-108: what a card's `tier:` or a header's `tier=` means. The four tiers as
+ * themselves; a model family (or a full id containing one) as its tier; anything
+ * else undefined. Case-insensitive.
+ */
+export function tierOf(value: string | undefined): Tier | undefined {
+  const v = (value ?? '').trim().toLowerCase()
+  if (isTier(v)) return v
+  const alias = aliasOf(v)
+  return alias ? tierOfAlias(alias) : undefined
+}
+
+/** GH-108: the line for a tier written but unknown, which the mod runs at standard; undefined when absent or known. */
+export function tierWarning(value: string | undefined): string | undefined {
+  const v = (value ?? '').trim()
+  if (v === '' || tierOf(v) !== undefined) return undefined
+  return `warning: tier "${v}" is not economy, standard, frontier or premium; dispatched at standard`
+}
+
 export function tierOfAlias(alias: Alias): Tier {
   return alias === 'haiku' ? 'economy' : alias === 'sonnet' ? 'standard' : alias === 'opus' ? 'frontier' : 'premium'
 }
@@ -74,11 +93,12 @@ export type PickInput = {
  * caller-model hint (GH-1 item 8: a call per delegation otherwise).
  */
 export const needsClassifier = (input: Pick<PickInput, 'hadHeader' | 'headerTier' | 'callerModel'>): boolean =>
-  !input.hadHeader && !isTier(input.headerTier) && !input.callerModel
+  !input.hadHeader && tierOf(input.headerTier) === undefined && !input.callerModel
 
 export function pickTier(input: PickInput): TierPick {
   let pick: TierPick
-  if (isTier(input.headerTier)) pick = { tier: input.headerTier, source: 'brief' }
+  const headerTier = tierOf(input.headerTier)
+  if (headerTier) pick = { tier: headerTier, source: 'brief' }
   else if (input.callerModel) {
     const callerAlias = aliasOf(input.callerModel)
     pick = callerAlias ? { tier: tierOfAlias(callerAlias), source: 'caller', callerAlias } : { tier: 'standard', source: 'floor' }

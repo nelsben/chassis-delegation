@@ -139,7 +139,8 @@ import {
   classifierText,
   fableRequested,
   finalAlias,
-  isTier,
+  tierOf,
+  tierWarning,
   needsClassifier,
   noticeText,
   pickTier,
@@ -1846,7 +1847,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     for (const o of overlaps) out.push(`   ${overlapWarning(id, o.mine, o.card, o.theirs)}`)
   }
 
-  const tier: Tier = isTier(card.tier) ? card.tier : 'standard'
+  const tier: Tier = tierOf(card.tier) ?? 'standard'
   const alias = finalAlias({ tier, source: 'brief' }, cfg.tierMap[tier]).alias
   const budget = budgetAttempts(card.budget, cfg.defaultBudget)
   let header: string
@@ -1897,6 +1898,9 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   // GH-1 item 6: the budget the spawn will use, off the grammar, falls back to the default; say so once
   const budgetWarn = budgetWarning(reuse ? reusedHeader?.budget : card.budget, cfg.defaultBudget)
   if (budgetWarn) out.push(`   ${budgetWarn}`)
+  // GH-108: a card tier the mod does not know runs at standard, and says so once
+  const tierWarn = tierWarning(reuse ? reusedHeader?.tier : card.tier)
+  if (tierWarn) out.push(`   ${tierWarn}`)
   if (!scope && scopeLooksProse(card.scope)) {
     out.push('   note: the card scope reads as prose; the verifier leaves a prose scope unchecked unless the brief gains scope_globs= — pass scope globs')
   }
@@ -2029,7 +2033,7 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
 
   // the attempt it judges: the work-present one when it is last, else a new verify attempt
   const t = await now($)
-  const briefTier: Tier = isTier(header?.tier) ? (header?.tier as Tier) : 'standard'
+  const briefTier: Tier = tierOf(header?.tier) ?? 'standard'
   let attempt: number
   if (last?.verdict === 'work-present') attempt = last.attempt
   else {
@@ -2165,6 +2169,8 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
     // GH-1 item 6: a budget off the grammar falls back, and says so
     const budgetWarn = budgetWarning(fileBudget ?? header?.budget, cfg.defaultBudget)
     if (budgetWarn) debug($, `${taskLabel(task, subtask)}: ${budgetWarn}`)
+    const tierWarn = tierWarning(header?.tier)
+    if (tierWarn) debug($, `${taskLabel(task, subtask)}: ${tierWarn}`)
     // A /dispatch --replay brief is named <id>.replay.brief.md; its base commit is in the store.
     const replay = !adhoc && named !== undefined && named.endsWith('.replay.brief.md')
     const lane: Lane | undefined = replay && named ? { replay: true, ...(await replayBase($, named)) } : undefined

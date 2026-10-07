@@ -4,6 +4,8 @@ import {
   needsClassifier,
   finalAlias,
   aliasOf,
+  tierOf,
+  tierWarning,
   nextTier,
   noticeText,
   fableRequested,
@@ -113,5 +115,28 @@ describe('GH-1 item 8: the tier source and the fable rewrite, said out loud', ()
     expect(fableRequested('haiku', false, 'fable')).toBe(false)
     expect(noticeText({ tier: 'frontier', source: 'brief' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod)')
     expect(noticeText({ tier: 'frontier', source: 'brief' }, 'opus', false)).toBe('tier=frontier → opus (brief)')
+  })
+})
+
+describe('tierOf (GH-108)', () => {
+  test('the four tiers as themselves, the model families as their tiers, anything else undefined', () => {
+    for (const t of ['economy', 'standard', 'frontier', 'premium'] as const) expect(tierOf(t)).toBe(t)
+    expect(tierOf('haiku')).toBe('economy')
+    expect(tierOf('sonnet')).toBe('standard')
+    expect(tierOf('opus')).toBe('frontier')
+    expect(tierOf('fable')).toBe('premium')
+    expect(tierOf('Claude-Opus-4-1')).toBe('frontier')
+    expect(tierOf(' OPUS ')).toBe('frontier')
+    expect(tierOf('Frontier')).toBe('frontier')
+    expect(tierOf('deep')).toBeUndefined()
+    expect(tierOf('')).toBeUndefined()
+    expect(tierOf(undefined)).toBeUndefined()
+  })
+  test('the warning names the value and the fallback; none for a known tier, a model name or no tier', () => {
+    expect(tierWarning('deep')).toBe('warning: tier "deep" is not economy, standard, frontier or premium; dispatched at standard')
+    expect(tierWarning('opus')).toBeUndefined()
+    expect(tierWarning('standard')).toBeUndefined()
+    expect(tierWarning(undefined)).toBeUndefined()
+    expect(tierWarning('  ')).toBeUndefined()
   })
 })

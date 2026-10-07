@@ -120,7 +120,7 @@ the spec in markdown. `<ID>` is `<PREFIX>-<number>[letter]`, for example
     id: OPS-12
     title: One line that says what done looks like
     domain: ops                 # one of `domains`; the branch is agent/<domain>/<id>
-    tier: standard              # economy | standard | frontier → haiku | sonnet | opus (tierMap)
+    tier: standard              # economy | standard | frontier | premium, or a model name (haiku | sonnet | opus | fable) as its tier; anything else runs at standard with a warning
     status: queued              # /dispatch takes queued or claimed; template, merged … are refused
     scope: [src/feature/**, docs/feature.md]
     forbid: [src/secrets/**]
