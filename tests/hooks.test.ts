@@ -673,6 +673,23 @@ describe('/dispatch', () => {
     expect(out.text).toContain('the card scope reads as prose')
   })
 
+  test('GH-103: a prose card scope and no --scope stops at dispatch: the brief and the prose are shown, no worktree, no spawn; the second dispatch with --scope reuses the brief', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run, store: offered })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101'))
+    expect(out.text).toContain(`2. brief ${SCRATCH}/briefs/BE-101.brief.md written`)
+    expect(out.text).toContain(FIXTURE_HEADER)
+    expect(out.text).toContain('app/billing/RateCatalog.ts, RateProviderHttp.ts')
+    expect(out.text).toContain('stopped: the card scope is prose; pass --scope <globs> (or scope on the tool) and dispatch again')
+    expect(w.spawns).toHaveLength(0)
+    expect(w.runs).toEqual([])
+    expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(true)
+    const again = await $.command.run(commandInput('BE-101 --scope app/billing/**'))
+    expect(again.text).toContain('exists — reused, not overwritten')
+    expect(again.text).not.toContain('stopped:')
+    expect(w.spawns).toHaveLength(1)
+  })
+
   test('--scope and --forbid replace the card prose in the header', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, run })
     await $.session.start(sessionStart)
@@ -744,7 +761,7 @@ describe('/dispatch', () => {
     f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('domain: backend', 'domain: dispatcher')
     const w = world(on, { files: f, dirs, run, store: offered })
     await $.session.start(sessionStart)
-    const out = await $.command.run(commandInput('BE-101'))
+    const out = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/dispatcher/BE-101', `${ROOT}-BE-101`, 'origin/main'],
@@ -759,7 +776,7 @@ describe('/dispatch', () => {
     f[`${ROOT}/.chassis-delegation.json`] = JSON.stringify({ agentTypes: { web: 'frontend' }, domains: ['web', 'api'], worktreeRoot: '/trees' })
     const w = world(on, { files: f, dirs, run })
     await $.session.start(sessionStart)
-    const out = await $.command.run(commandInput('BE-101'))
+    const out = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(argvs(w).filter(a => a[0] === 'git')).toContainEqual(['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/web/BE-101', '/trees/acme-app-BE-101', 'origin/main'])
     expect(w.spawns[0]?.subagentType ?? w.spawns[0]?.subagent_type).toBe('frontend')
     expect(w.spawns[0]).toMatchObject({ cwd: '/trees/acme-app-BE-101' })
@@ -791,7 +808,7 @@ describe('/dispatch', () => {
   test('the full run adds the worktree from a sha base and spawns with model omitted', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, run, agentId: 'agent-318', store: offered })
     await $.session.start(sessionStart)
-    const out = await $.command.run(commandInput('BE-101 --base 96014e3b'))
+    const out = await $.command.run(commandInput('BE-101 --scope app/** --base 96014e3b'))
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101', `${ROOT}-BE-101`, '96014e3b'],
@@ -814,7 +831,7 @@ describe('/dispatch', () => {
     f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', 'status: merged')
     const w = world(on, { files: f, dirs, run })
     await $.session.start(sessionStart)
-    const out = await $.command.run(commandInput('BE-101'))
+    const out = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(out.text).toContain('BE-101 is status merged; /dispatch takes a queued or claimed card')
     expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(false)
     expect(w.runs).toHaveLength(0)
@@ -1141,11 +1158,11 @@ describe('GH-101: the queue never holds a phantom', () => {
     await $.session.start(sessionStart)
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
-    const first = await $.command.run(commandInput('BE-101'))
+    const first = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(first.text).toContain('queued (position 1)')
-    const again = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101' } as never))
+    const again = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
     expect(again).toMatch(/already queued since \d\d:\d\d \(position 1\)/)
-    const viaCommand = await $.command.run(commandInput('BE-101'))
+    const viaCommand = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(viaCommand.text).toMatch(/already queued since \d\d:\d\d \(position 1\)/)
     expect(queueOf(w)).toHaveLength(1)
     expect(w.spawns).toHaveLength(2)

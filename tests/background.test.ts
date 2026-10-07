@@ -52,7 +52,7 @@ describe('2A: the dispatch tool', () => {
   test('the full run through the tool: worktree, spawn with model omitted, the spawn hook picks the tier and records the attempt', BRIEFS, async ($, on) => {
     const w = world(on, { files: cardFiles(), dirs: cardDirs, run: whichOpus, agentId: 'agent-318', store: offered })
     await $.session.start(sessionStart)
-    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101' } as never))
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101', `${ROOT}-BE-101`, 'origin/main'],
@@ -205,10 +205,10 @@ describe('2F: the worker scheduler', () => {
     await $.session.start(sessionStart)
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
-    const viaCommand = await $.command.run(commandInput('BE-101'))
+    const viaCommand = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(viaCommand.text).toContain('4. queued (position 1) — queued by chassis-delegation: BE-101 starts when a worker slot frees (2 live: T-1, T-2; 1 queued: BE-101)')
     expect(viaCommand.text).toContain(`brief ${SCRATCH}/briefs/BE-101.brief.md · worktree ${ROOT}-BE-101 · branch agent/backend/BE-101 · queued (position 1)`)
-    const viaTool = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101' } as never))
+    const viaTool = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
     expect(viaTool).toMatch(/4\. already queued since \d\d:\d\d \(position 1\)/)
     const queue = w.state.get('chassis-delegation.queue') as Record<string, unknown>[]
     expect(queue.map(q => q.task)).toEqual(['BE-101'])

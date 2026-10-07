@@ -135,7 +135,15 @@ Glob rules for `scope` and `forbid`:
 - `?` is one character;
 - a trailing `/` means everything under the folder.
 
-A card whose scope is prose can still be dispatched with `--scope <globs>`.
+A card whose scope is prose is caught at dispatch (GH-103). `/dispatch` and the
+tool write the brief, print its header and the prose scope, and stop before the
+worktree and the spawn:
+
+    stopped: the card scope is prose; pass --scope <globs> (or scope on the tool) and dispatch again
+
+Dispatch again with `--scope <globs>` (the tool's `scope`, which must be globs
+and replaces the card's scope in the header); the brief written the first time
+is reused. `--dry-run` behaves as before.
 
 A `budget` that is not `<n>-attempts`, such as a chassis `frontier-60m`, falls
 back to `defaultBudget`, and `/dispatch` says so once:
@@ -172,7 +180,10 @@ The repo file's `briefExtra` adds lines for the repo. An existing brief is
 reused, never overwritten (and it decides the mode: a reused `repo=here`
 brief dispatches with no worktree, whatever the flags say). Two more fields
 are optional: `scope_globs=` and `forbid_globs=` replace a prose scope or
-forbid. Other header fields are optional too:
+forbid. A brief whose `scope=` is prose and that has no `scope_globs=` is not
+refused: the verifier marks the scope claim `unchecked` (add `scope_globs=` to
+check it), checks every other claim, and the verdict is `unverified` at worst.
+Only a brief with no `scope=` at all is refused. Other header fields are optional too:
 
 - `repo=none` marks a task with no git repo, and `repo=<dir>` names the folder to verify;
 - `repo=here` marks a task worked in the session's own checkout, no worktree (see [repo=here](#repohere-the-main-checkout));

@@ -98,6 +98,7 @@ import {
   renderBrief,
   renderHeader,
   scopeLooksProse,
+  PROSE_SCOPE_STOP,
   scratchpadFor,
   showCardArgv,
   spawnDescription,
@@ -1202,6 +1203,8 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
 async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string): Promise<Verified> {
   const contract = briefContract(briefText)
   if (!contract.ok) return { verdict: 'refused', lines: [...amendLines, contract.line], noRepo: true }
+  // GH-103: a prose scope= gives no root to check files under; the work stands, unverified
+  if (contract.scopeProse) return { verdict: 'unverified', lines: [...amendLines, ...contract.lines, 'claim scope: unchecked — scope= reads as prose; add scope_globs= to the brief to check it'], noRepo: true }
   const first = contract.scope[0]
   const scopeRoot = first ? (first.startsWith('/') ? globRoot(first) : `${root}/${globRoot(first)}`.replace(/\/+$/, '')) : root
   const sc = scopeCheck({ files: reportFiles(report.files), root: scopeRoot, scope: globList(contract.scope.join(',')), forbid: globList(contract.forbid.join(',')) })
@@ -1765,7 +1768,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const budgetWarn = budgetWarning(reuse ? reusedHeader?.budget : card.budget, cfg.defaultBudget)
   if (budgetWarn) out.push(`   ${budgetWarn}`)
   if (!scope && scopeLooksProse(card.scope)) {
-    out.push('   note: the card scope reads as prose; the verifier refuses a prose scope (BRIEF-SCOPE-PROSE) unless the brief gains scope_globs= — pass scope globs')
+    out.push('   note: the card scope reads as prose; the verifier leaves a prose scope unchecked unless the brief gains scope_globs= — pass scope globs')
   }
   const shownHeader = parseHeader(shown)
   const shownForbid = (shownHeader?.fields.forbid ?? '').split(',').filter(Boolean)
@@ -1777,6 +1780,12 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     out.push(`   repo=here: base=${f.base || 'the chain (origin/main, main, origin/master, master)'} · ignore=${f.ignore || '(none)'}`)
   }
   if (dryRun) return [...out, '', shown].join('\n')
+
+  // GH-103: a prose scope with no globs is caught here, before the worktree and the spawn
+  const shownScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
+  if (!scope && !shownHeader?.fields.scope_globs && scopeLooksProse(shownScope)) {
+    return [...out, '', shown, '', `scope: ${shownScope.join(', ')}`, '', PROSE_SCOPE_STOP].join('\n')
+  }
 
   if (here) out.push(`3. no worktree (repo=here): the worker shares ${root}`)
   else if (await exists($, worktree)) out.push(`3. worktree ${worktree} exists — reused`)
