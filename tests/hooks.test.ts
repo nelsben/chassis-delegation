@@ -1112,3 +1112,65 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     expect(records(w, 'T-10')[0]?.requestedAlias).toBeUndefined()
   })
 })
+
+describe('GH-101: the queue never holds a phantom', () => {
+  const brief = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard]]\nDo it.`
+  const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
+  const BRIEFS = { options: { briefDir: `${SCRATCH}/briefs` } }
+  const cardFiles = { [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: FIXTURE_CARD }
+  const cardDirs = { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME] }
+  const offered = { 'delegation.agentTypes': ['general-purpose', 'backend', 'frontend'] }
+  const TOOL = 'mcp__chassis-delegation__dispatch'
+
+  test('(a) both workers hand back: the queued task starts before the turn ends, with a toast naming it', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    const queued = await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_C0000009' }))
+    expect(queued.deny).toContain('T-9 starts when a worker slot frees')
+    await $.turn.complete(turnInput('agent-1', '[[report v=1 task=T-1 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]'))
+    await $.turn.complete(turnInput('agent-2', '[[report v=1 task=T-2 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]'))
+    expect(w.spawns).toHaveLength(3)
+    expect(String(w.spawns[2]?.prompt)).toContain('task=T-9')
+    expect(queueOf(w)).toEqual([])
+    expect(w.toasts.some(t => /^started queued T-9 \(waited \d+ min\)$/.test(t))).toBe(true)
+  })
+
+  test('(b) a second dispatch of a queued task says already queued and queues nothing more', BRIEFS, async ($, on) => {
+    const w = world(on, { files: cardFiles, dirs: cardDirs, listAgents: true, store: offered })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    const first = await $.command.run(commandInput('BE-101'))
+    expect(first.text).toContain('queued (position 1)')
+    const again = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101' } as never))
+    expect(again).toMatch(/already queued since \d\d:\d\d \(position 1\)/)
+    const viaCommand = await $.command.run(commandInput('BE-101'))
+    expect(viaCommand.text).toMatch(/already queued since \d\d:\d\d \(position 1\)/)
+    expect(queueOf(w)).toHaveLength(1)
+    expect(w.spawns).toHaveLength(2)
+  })
+
+  test('(c) a by-hand spawn of a queued task takes its queued place', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_C0000009' }))
+    expect(queueOf(w)).toHaveLength(1)
+    // a worker dies with no turn.complete: the slot is free, nothing has drained yet
+    const dead = w.agents.find(a => a.id === 'agent-1')
+    if (dead) dead.status = 'completed'
+    const res = await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_D0000009' }))
+    expect(res.deny).toBeUndefined()
+    expect(w.spawns).toHaveLength(3)
+    expect(queueOf(w)).toEqual([])
+  })
+
+  test('(d) the queued refusal names live agents and queued rows apart', { options: { maxWorkers: 1 } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.agent.spawn(spawnInput({ prompt: brief('BE-310'), tool_use_id: 'toolu_A0000001' }))
+    const res = await $.agent.spawn(spawnInput({ prompt: brief('BE-314'), tool_use_id: 'toolu_B0000002' }))
+    expect(res.deny).toBe('queued by chassis-delegation: BE-314 starts when a worker slot frees (1 live: BE-310; 1 queued: BE-314)')
+    expect(w.spawns).toHaveLength(1)
+  })
+})

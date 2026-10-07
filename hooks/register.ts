@@ -130,7 +130,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
-import { enqueue, hasSlot, isQueuedDeny, promptKey, queuedDeny, queuedText, startingOthers } from './lib/scheduler'
+import { alreadyQueuedDeny, alreadyQueuedPart, enqueue, hasSlot, isQueuedDeny, promptKey, queuedDeny, queuedIndex, queuedText, startingOthers, waitedMinutes } from './lib/scheduler'
 import {
   CLASSIFIER_LABELS,
   classifierText,
@@ -666,14 +666,20 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string): Promise<{ t
     // the token the dispatch path already holds for this very task is not another worker (GH-5)
     const others = startingOthers(starting.values(), label)
     const holders = [...live.workers.map(w => w.label), ...others]
+    const queue = await readQueue($)
+    const held = queuedIndex(queue, item.task, item.subtask ?? 'main')
     if (hasSlot(live.workers.length, others.length, cfg.maxWorkers)) {
+      // a spawn of a task that is queued takes the queued place (GH-101)
+      if (held >= 0) await writeQueue($, queue.filter((_, i) => i !== held))
       slotSeq += 1
       starting.set(slotSeq, label)
       return { token: slotSeq }
     }
-    await writeQueue($, enqueue(await readQueue($), item).queue)
+    const entered = enqueue(queue, item)
+    if (entered.existing) return { deny: alreadyQueuedDeny(label, entered.existing.at, entered.existing.position) }
+    await writeQueue($, entered.queue)
     debug($, `queued ${label}: ${holders.length} workers hold the ${cfg.maxWorkers} slots`)
-    return { deny: queuedDeny(label, holders) }
+    return { deny: queuedDeny(label, holders, entered.queue.map(q => taskLabel(q.task, q.subtask ?? 'main'))) }
   })
 }
 
@@ -710,7 +716,7 @@ async function drainQueue($: Host, exclude?: string): Promise<void> {
       $.ui.toast(`queued ${label} not started: ${res.deny}`)
       return
     }
-    $.ui.toast(`started queued ${label}`)
+    $.ui.toast(`started queued ${label} (waited ${waitedMinutes(head.at, await now($))} min)`)
   }
 }
 
@@ -1649,6 +1655,14 @@ async function inlineBrief($: Host, prompt: string, header: BriefHeader): Promis
  * card's is refused unless `--force-overlap`.
  */
 async function runDispatch($: Host, parsed: DispatchArgs): Promise<string> {
+  // a slot that freed with no hand-back is found here, before this dispatch counts (GH-101)
+  await drainQueue($)
+  const text = await dispatchOnce($, parsed)
+  if (!text.includes('\n4. spawned ')) await drainQueue($)
+  return text
+}
+
+async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (parsed.error !== undefined) return parsed.error
   await loadRepoConfig($)
   const { id, dryRun, base, scope, forbid } = parsed
@@ -1793,6 +1807,8 @@ async function runDispatch($: Host, parsed: DispatchArgs): Promise<string> {
   } catch (err) {
     res = { deny: String(err) }
   }
+  const already = res.deny !== undefined ? alreadyQueuedPart(res.deny) : undefined
+  if (already) return [...out, `4. ${already}`, `brief ${briefPath} · ${place} · branch ${branch} · ${already}`].join('\n')
   if (res.deny !== undefined && isQueuedDeny(res.deny)) {
     // the scheduler (2F) holds it until a worker slot frees
     const queue = await readQueue($)

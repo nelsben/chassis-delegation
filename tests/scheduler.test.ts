@@ -21,11 +21,19 @@ describe('the worker scheduler', () => {
   })
 
   test('the deny names the task and the workers holding the slots', () => {
-    const deny = queuedDeny('BE-101', ['OPS-1', 'OPS-2'])
-    expect(deny).toBe('queued by chassis-delegation: BE-101 starts when a worker slot frees (2 running: OPS-1, OPS-2)')
+    const deny = queuedDeny('BE-101', ['OPS-1', 'OPS-2'], ['BE-101'])
+    expect(deny).toBe('queued by chassis-delegation: BE-101 starts when a worker slot frees (2 live: OPS-1, OPS-2; 1 queued: BE-101)')
     expect(isQueuedDeny(deny)).toBe(true)
     expect(isQueuedDeny("budget exhausted for T-2 (2 attempts); raise budget= in the task's brief to continue (the ladder resumes from attempt 2, the brief is re-read)")).toBe(false)
     expect(queuedText(2)).toBe('queued (position 2)')
+  })
+
+  test('a task and subtask already queued is never entered twice', () => {
+    const one = enqueue([], { ...item('A'), at: 5 })
+    const again = enqueue(one.queue, item('A'))
+    expect(again.queue).toHaveLength(1)
+    expect(again.existing).toEqual({ at: 5, position: 1 })
+    expect(enqueue(one.queue, { ...item('A'), subtask: 'other' }).queue).toHaveLength(2)
   })
 
   test('first in, first out; the position is 1-based', () => {
@@ -58,6 +66,6 @@ describe('GH-5: a dispatch does not count its own starting token', () => {
     expect(hasSlot(1, startingOthers(['FE-232', 'BE-9'], 'FE-232').length, 2)).toBe(false)
     // two live: queued, and the line names only them
     expect(hasSlot(2, others.length, 2)).toBe(false)
-    expect(queuedDeny('FE-232', ['BE-320', 'BE-321', ...others])).toBe('queued by chassis-delegation: FE-232 starts when a worker slot frees (2 running: BE-320, BE-321)')
+    expect(queuedDeny('FE-232', ['BE-320', 'BE-321', ...others], ['FE-232'])).toBe('queued by chassis-delegation: FE-232 starts when a worker slot frees (2 live: BE-320, BE-321; 1 queued: FE-232)')
   })
 })
