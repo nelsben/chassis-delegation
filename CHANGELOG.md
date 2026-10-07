@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A refused drain keeps the queue head (GH-107, closes public #16).** The
+  drain used to remove the head before spawning it, so a spawn the hook
+  refused lost its place and the brain, which never reads toasts, saw nothing.
+  The head now leaves the queue only after its spawn succeeds. On a refusal it
+  keeps position 1 and its `at`, the drain stops for that pass, and a session
+  row reads `queued <task> not started: <reason>; it keeps its place (position
+  1)`. A budget-exhausted or unreadable-brief refusal removes the row instead,
+  with a row saying so.
 - **Spend guards (GH-104, closes public #10).** One Sonnet-sized task cost an
   adopter about $15: its first worker finished, the report was misread as
   no-report, and the retry spawned one tier up on Opus as attempt 2.
@@ -33,6 +41,9 @@
     and `/dispatch` line 4 reads `spawned <type> agent <id> on <model> ·
     attempt <n>/<budget>`. The debug line still names the tier source.
   - The queue dedupe the same report asked for is GH-101's, not this change.
+  A refusal for work already present in the worktree also removes the row
+  (it needs `--verify`, not a respawn), and a refusal that keeps the head is
+  posted once, not on every drain.
 
 - **A moved file is listed once, at its new path (GH-102, closes public #6).**
   The verifier's delta used `git diff --no-renames --name-only`, so a `git mv`

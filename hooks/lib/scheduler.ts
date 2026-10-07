@@ -61,3 +61,10 @@ export function dequeue(queue: readonly QueuedSpawn[]): { head?: QueuedSpawn; re
 
 /** What a spawn is known by between the scheduler and the spawn hook: its prompt and folder. */
 export const promptKey = (s: { prompt: string; cwd?: string }): string => `${s.cwd ?? ''}\u0000${s.prompt}`
+
+/** GH-107: a refusal retrying cannot cure (the budget is spent, the brief cannot be read): the row leaves the queue. */
+export const isFinalDeny = (deny: string): boolean => /^budget exhausted\b/.test(deny) || /\bbrief\b.*(cannot be read|could not be read|unreadable|not readable|ENOENT)/i.test(deny)
+
+/** GH-107: the session row for a drained spawn that was refused; the brain reads rows, not toasts. */
+export const drainRefusalRow = (task: string, reason: string, dropped: boolean): string =>
+  `chassis-delegation: queued ${task} not started: ${reason}; ${dropped ? 'it is removed from the queue (retrying cannot succeed)' : 'it keeps its place (position 1)'}`
