@@ -95,8 +95,8 @@ describe('2B: quiet verdicts', () => {
   }
   const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
   const RED = 'claim gate: failed — gate=pass claimed but the gate is RED at 1234abcd (exit 1)'
-  const ROW = 'chassis-delegation: T-4 attempt 1/3 refuted on gate (gate=pass claimed but the gate is RED at 1234abcd (exit 1)) · sonnet · $0.00 · next=resume agent=agent-4'
-  const FULL_FIRST = 'chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below'
+  const ROW = 'chassis-delegation: T-4 attempt 1/3 refuted on gate (gate=pass claimed but the gate is RED at 1234abcd (exit 1)) · sonnet · ~$0.00 · next=resume agent=agent-4'
+  const FULL_FIRST = 'chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below'
 
   test('line, the default: a background verdict is one row; the claim lines go to the debug log and $.state', { options: GM }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })

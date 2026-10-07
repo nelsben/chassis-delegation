@@ -9,7 +9,12 @@ import type { Tier, TierSource } from './tier'
  * spawn; `/dispatch <id> --verify <sha>` judges it, and the record takes that
  * verdict.
  */
-export type AttemptVerdict = 'pending' | 'verified' | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present'
+/**
+ * `over-spend` (GH-106): the worker's own cost reached twice its brief's
+ * `spend=` before it handed back; work may be present in its worktree. Not a
+ * failing verdict: it never escalates the tier.
+ */
+export type AttemptVerdict = 'pending' | 'verified' | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present' | 'over-spend'
 /** `verify` (GH-104): no worker ran; the attempt is the work found in the worktree, judged by `--verify`. */
 export type AttemptKind = 'spawn' | 'resume' | 'verify'
 
@@ -38,8 +43,10 @@ export type AttemptRecord = {
   red?: string
   /** sha-256 of that file's bytes: a later attempt naming the same bytes is refuted on red. */
   redHash?: string
-  /** Approximate: the session's cost growth between spawn (or resume) and verdict. */
+  /** The worker's own cost from its turn usage (GH-106); else the session's cost growth between spawn (or resume) and verdict, marked by `usdApprox`. */
   usd?: number
+  /** True when `usd` is the session delta, not the worker's own cost. */
+  usdApprox?: true
   tokens?: number
   /** ms since the epoch at spawn (or resume). */
   at: number

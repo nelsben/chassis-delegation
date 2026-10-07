@@ -6,7 +6,7 @@
 // debrief). The hooks stay thin: every decision is a pure function in ./lib,
 // and every host command passes ./lib/allow.ts first. Nothing here calls the
 // chassis scripts: the mod works in a repo that has only agents/tasks/ cards.
-import type { AgentSpawnResult, EngineInterface, PluginOptions, Register } from 'claude-code'
+import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUsage } from 'claude-code'
 
 import type { DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { checkArgv, refusedLine, type AllowConfig } from './lib/allow'
@@ -46,8 +46,10 @@ import {
   parseHeader,
   parseReport,
   scopeOverlap,
+  spendOf,
   type BriefHeader,
 } from './lib/brief'
+import { addTurn, ceilingState, liveWorker, overSpendLine, round4, spendCeiling, warnText, OVER_SPEND_NEXT, type Spend } from './lib/cost'
 import {
   addFriction,
   breadcrumbPath,
@@ -196,6 +198,8 @@ const K = {
   agentTypes: 'delegation.agentTypes',
   answered: 'delegation.models.answered',
   replay: (briefPath: string) => `delegation.replay.${briefPath}`,
+  /** A worker's own spend this attempt, from its turn usage (GH-106). */
+  cost: (agentId: string) => `delegation.cost.${agentId}`,
   /** Set once an attempt's verdict row is posted to the conversation. */
   posted: (attemptKey: string) => `delegation.posted.${attemptKey}`,
   /** This session's verdict lines, for the compaction block and the system prompt section (2E). */
@@ -277,6 +281,8 @@ type SpawnRecord = {
   /** The model id the alias resolved to at spawn; a resume keeps it. */
   resolvedModel?: string
   usdAtStart?: number
+  /** GH-106: the brief's `spend=` ceiling in dollars (absent: none). */
+  spend?: number
   verdictAttempt?: number
   verdictBlock?: string
   lastFailed?: boolean
@@ -340,6 +346,8 @@ type Config = {
   baseRef: string
   /** GH-16: globs always subtracted from a repo=here delta. */
   ignore: string[]
+  /** GH-106: dollars one attempt may spend, per tier; 0 = no ceiling. */
+  spendByTier: Record<'economy' | 'standard' | 'frontier', number>
 }
 
 function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: string[] } {
@@ -390,6 +398,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       cardDir: eff.cardDir,
       baseRef: eff.baseRef,
       ignore: eff.ignore,
+      spendByTier: eff.spendByTier,
     },
   }
 }
@@ -407,6 +416,8 @@ const posted = new Set<string>() // attempt keys whose verdict row went to the c
 const offered = new Set<string>()
 let seedingTypes = false
 let delegated = false
+/** GH-106: the turn id a subagent's `turn.start` carried (the engine gives none today), by agentId. */
+const turnOf = new Map<string, string>()
 let lastUsd: number | undefined
 let lastCostChangeAt = 0
 let statusTimer: { cancel: () => void } | undefined
@@ -573,7 +584,8 @@ async function refreshStatus($: Host) {
     }
     return
   }
-  const text = statusText({ running, usd, pct })
+  const liveNow = (await liveState($)).workers
+  const text = statusText({ running, usd, pct }) + (liveNow.length > 0 ? ` · (${liveNow.length} live: ${(await liveLabels($, liveNow)).join(', ')})` : '')
   $.ui.status(text)
   try {
     await $.state.set(STATUS, text)
@@ -681,7 +693,7 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string): Promise<{ t
     const live = await liveState($)
     // the token the dispatch path already holds for this very task is not another worker (GH-5)
     const others = startingOthers(starting.values(), label)
-    const holders = [...live.workers.map(w => w.label), ...others]
+    const holders = [...(await liveLabels($, live.workers)), ...others]
     const queue = await readQueue($)
     const held = queuedIndex(queue, item.task, item.subtask ?? 'main')
     if (hasSlot(live.workers.length, others.length, cfg.maxWorkers)) {
@@ -780,6 +792,89 @@ async function noteRecent($: Host, entry: RecentVerdict) {
   if (!sid) return
   const list = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
   await storeSet($, K.recent(sid), [...list, entry].slice(-RECENT_CAP))
+}
+
+// ---- GH-106: what each worker spends ----------------------------------------------------
+/** A worker's own spend this attempt: the sum of its turns' usage; reset when the attempt moves on (a resume). */
+type CostRecord = { attempt: number; spend: Spend; warned?: true; stopped?: true }
+
+async function workerCost($: Host, agentId: string, attempt: number): Promise<Spend | undefined> {
+  const rec = await storeGet<CostRecord>($, K.cost(agentId))
+  return rec && rec.attempt === attempt ? rec.spend : undefined
+}
+
+/** `BE-310 $3.10` for each live worker: its own running cost, the label alone while none is measured. */
+async function liveLabels($: Host, workers: readonly { label: string; agentId: string; spawn: SpawnRecord }[]): Promise<string[]> {
+  const out: string[] = []
+  for (const w of workers) out.push(liveWorker(w.label, (await workerCost($, w.agentId, w.spawn.attempt))?.usd))
+  return out
+}
+
+/**
+ * A worker's turn ended: add its usage to the attempt's own cost, then hold it
+ * to its brief's ceiling: one wrap-up message when the cost first reaches
+ * `spend=`, and at twice it the over-spend verdict (and the turn ended, if the
+ * engine gave us its id). A turn that hands back a report is left to the verifier.
+ * True when the wrap-up message went out: the worker carries on, so this turn's end is not judged.
+ */
+async function trackSpend($: Host, spawn: SpawnRecord, e: { agentId: string; usage?: TurnUsage; answer: string }): Promise<boolean> {
+  if (!e.usage) return false
+  const prior = await storeGet<CostRecord>($, K.cost(e.agentId))
+  const rec: CostRecord = prior && prior.attempt === spawn.attempt ? prior : { attempt: spawn.attempt, spend: undefined as unknown as Spend }
+  const spend = addTurn(rec.spend, { ...e.usage, model: e.usage.model || spawn.resolvedModel })
+  const next: CostRecord = { ...rec, spend }
+  await storeSet($, K.cost(e.agentId), next)
+  const ceiling = spawn.spend
+  if (spawn.adhoc || ceiling === undefined || ceiling <= 0 || spend.usd === null) return false
+  if (spawn.verdictAttempt === spawn.attempt || extractReport(e.answer) !== undefined) return false
+  const state = ceilingState(spend.usd, ceiling)
+  if (state === 'stop' && !next.stopped) {
+    await storeSet($, K.cost(e.agentId), { ...next, stopped: true })
+    await overSpend($, spawn, spend.usd, ceiling)
+    return false
+  } else if (state === 'warn' && !next.warned) {
+    await storeSet($, K.cost(e.agentId), { ...next, warned: true })
+    try {
+      const sent = await $.session.send({ to: { agentId: e.agentId }, text: warnText(spend.usd, ceiling) })
+      if (!sent.isDelivered) debug($, `${taskLabel(spawn.task, spawn.subtask)}: spend warning not delivered: ${sent.reason}`)
+      return sent.isDelivered
+    } catch (err) {
+      debug($, `${taskLabel(spawn.task, spawn.subtask)}: spend warning not sent: ${String(err)}`)
+    }
+  }
+  return false
+}
+
+/** Twice the ceiling: the attempt's verdict is over-spend; the row says where to look; no escalation (never a failing verdict). */
+async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: number): Promise<void> {
+  const t = await now($)
+  const label = taskLabel(spawnIn.task, spawnIn.subtask)
+  const own = round4(usd)
+  let judged: AttemptRecord | undefined
+  if (!spawnIn.adhoc) {
+    const lane = laneOf(spawnIn)
+    const records = patchRecord(await loadAttempts($, spawnIn.task), spawnIn.subtask, spawnIn.attempt, { verdict: 'over-spend', usd: own, verdictAt: t }, lane)
+    await storeSet($, K.tasks(spawnIn.task), records)
+    judged = attemptsFor(records, spawnIn.subtask, lane).find(r => r.attempt === spawnIn.attempt)
+  }
+  const row = overSpendLine({ label, task: spawnIn.task, attempt: spawnIn.attempt, budget: spawnIn.budget, usd: own, spend: ceiling })
+  const latest = (await storeGet<SpawnRecord>($, K.spawn(spawnIn.key))) ?? spawnIn
+  await storeSet($, K.spawn(spawnIn.key), { ...latest, verdictAttempt: spawnIn.attempt, lastFailed: false, verdictBlock: row, verdictLine: row })
+  await setWorkers($, list => list.map(w => (w.task === spawnIn.task && w.subtask === spawnIn.subtask && w.attempt === spawnIn.attempt ? { ...w, verdict: 'over-spend' } : w)))
+  const next = OVER_SPEND_NEXT(spawnIn.task)
+  await setLastVerdict($, { task: label, attempt: spawnIn.attempt, verdict: 'over-spend', next, at: t, text: row })
+  await noteRecent($, { task: label, attempt: spawnIn.attempt, verdict: 'over-spend', line: row, at: t, owed: `${label}: ${next}` })
+  await appendLedger($, { ...(judged ?? { task: spawnIn.task, subtask: spawnIn.subtask, attempt: spawnIn.attempt }), verdict: 'over-spend', usd: own, next, sessionId: await sessionIdOf($) })
+  await appendRow($, row)
+  // the worker's running turn, when the engine gave us its id (a subagent's turn.start carries none today)
+  const turnId = spawnIn.agentId ? turnOf.get(spawnIn.agentId) : undefined
+  if (turnId) {
+    try {
+      await $.turn.abort({ turnId })
+    } catch (err) {
+      debug($, `${label}: turn ${turnId} not aborted: ${String(err)}`)
+    }
+  }
 }
 
 // ---- part 5E: friction the mod can see -------------------------------------------------
@@ -1465,8 +1560,11 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   }
 
   const t = await now($)
-  const usdNow = await sessionUsd($)
-  const usd = usdNow !== undefined && spawn.usdAtStart !== undefined ? Math.round((usdNow - spawn.usdAtStart) * 10000) / 10000 : undefined
+  // GH-106: the worker's own cost from its turn usage; else the session's growth, marked ~ (other workers inflate it)
+  const own = spawn.agentId ? await workerCost($, spawn.agentId, spawn.attempt) : undefined
+  const usdNow = own && own.usd !== null ? undefined : await sessionUsd($)
+  const usdApprox = !(own && own.usd !== null) && usdNow !== undefined && spawn.usdAtStart !== undefined
+  const usd = own && own.usd !== null ? round4(own.usd) : usdNow !== undefined && spawn.usdAtStart !== undefined ? round4(usdNow - spawn.usdAtStart) : undefined
   const label = taskLabel(spawn.task, spawn.subtask)
   let model = measured.model ?? spawn.resolvedModel
   let advice: Advice
@@ -1492,6 +1590,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
       ...(report?.gate ? { reportGate: report.gate } : {}),
       verdictAt: t,
       ...(usd !== undefined ? { usd } : {}),
+      ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
       ...(tokens !== undefined ? { tokens } : {}),
       ...(model !== undefined ? { resolvedModel: model } : {}),
       at: spawn.at ?? t,
@@ -1528,6 +1627,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
         ...(report?.sha ? { sha: report.sha.trim() } : {}),
         verdictAt: t,
         ...(usd !== undefined ? { usd } : {}),
+      ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
         ...(tokens !== undefined ? { tokens } : {}),
         ...(model !== undefined ? { resolvedModel: model } : {}),
         ...red,
@@ -1604,8 +1704,8 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   const shownVerdict = noRepo ? `${verdict} (no repo)` : verdict
   // GH-104: work present rides under the verdict line in both forms
   const workLine = work ? workPresentLine(work) : undefined
-  const full = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, model, next }), workLine ? [workLine, ...lines] : lines)
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, ...(usd !== undefined ? { usd } : {}), next, lines })
+  const full = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }), workLine ? [workLine, ...lines] : lines)
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines })
   const line = workLine ? `${quiet}\n${workLine}` : quiet
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
@@ -1850,6 +1950,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const tier: Tier = tierOf(card.tier) ?? 'standard'
   const alias = finalAlias({ tier, source: 'brief' }, cfg.tierMap[tier]).alias
   const budget = budgetAttempts(card.budget, cfg.defaultBudget)
+  // GH-106: the card's spend: wins, else the tier's default; 0 is no ceiling
+  const spend = spendCeiling(card.spend, tier, cfg.spendByTier)
   let header: string
   if (here && !reuse) {
     // base=: a sha --base, else baseRef (HEAD pinned to the sha it is at now), else none (the verifier's chain)
@@ -1861,10 +1963,10 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       else out.push('   note: baseRef HEAD could not be pinned (git rev-parse HEAD failed); the brief says base=HEAD')
     }
     const ignore = hereIgnore(cfg.ignore, inflight.flatMap(c => c.files))
-    header = renderHeader({ card, tier, alias, budget, ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore })
+    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore })
   } else {
     // GH-105: a base that is not the default is written, so the verifier diffs from the commit the worktree was cut from
-    header = renderHeader({ card, tier, alias, budget, ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), ...(base !== 'origin/main' ? { base } : {}) })
+    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), ...(base !== 'origin/main' ? { base } : {}) })
   }
   let briefPath: string
   let shown = header
@@ -1889,7 +1991,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     } catch {
       rootNames = []
     }
-    const body = renderBrief(template, { card, worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, here })
+    const body = renderBrief(template, { card, worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, here, spend })
     const written = await writeBrief($, root, fileName, `${header}\n\n${body}`)
     if ('error' in written) return [...out, `/dispatch ${id}: ${written.error}`].join('\n')
     briefPath = written.path
@@ -2166,6 +2268,8 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
     // GH-3: the brief file is where the budget is amended, so it wins over the prompt's copy.
     const fileBudget = briefText !== undefined ? parseHeader(briefText)?.budget : undefined
     const budget = parseBudget(fileBudget ?? header?.budget, cfg.defaultBudget)
+    // GH-106: the same for the spend ceiling
+    const spend = spendOf((briefText !== undefined ? parseHeader(briefText) : undefined) ?? header)
     // GH-1 item 6: a budget off the grammar falls back, and says so
     const budgetWarn = budgetWarning(fileBudget ?? header?.budget, cfg.defaultBudget)
     if (budgetWarn) debug($, `${taskLabel(task, subtask)}: ${budgetWarn}`)
@@ -2315,6 +2419,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
       ...(res.agentId ? { agentId: res.agentId } : {}),
       ...(res.model ? { resolvedModel: res.model } : {}),
       ...(usdAtStart !== undefined ? { usdAtStart } : {}),
+      ...(spend !== undefined && !adhoc ? { spend } : {}),
       ...(lane ? { replay: true, ...(lane.base ? { base: lane.base } : {}) } : {}),
       at: t,
       ...(here ? { here } : {}),
@@ -2503,14 +2608,20 @@ export const register: Register = (on, opts) => {
     const out = await next(e)
     if (e.agentId) {
       const agentId = e.agentId
+      // GH-106: this worker's own cost, and its ceiling
+      const costed = await spawnByAgent($, agentId)
+      const warned = costed ? await trackSpend($, costed, { agentId, ...(e.usage ? { usage: e.usage } : {}), answer: e.answer }) : false
+      turnOf.delete(agentId)
       // the answer plus the hand-back (GH-2), read once and only for an agent the mod judges
       let said: Promise<string> | undefined
       const saidOnce = () => (said ??= workerText($, agentId, e.answer))
       const spawn = await spawnByAgent($, agentId)
+      // a worker just told to wrap up is going on: this turn's end is not its hand-back
+      if (warned) debug($, `${taskLabel(spawn?.task ?? '', spawn?.subtask ?? 'main')}: wrap-up sent; its next turn is the hand-back`)
       // An ad hoc background agent is judged into the brain's conversation only
       // when it has no header and no brief and hands back a report (GH-1
       // item 2: cardless); a foreground one gets its line from the tool.call hook.
-      if (spawn && spawn.verdictAttempt !== spawn.attempt && (!spawn.adhoc || isCardless(spawn))) {
+      if (!warned && spawn && spawn.verdictAttempt !== spawn.attempt && (!spawn.adhoc || isCardless(spawn))) {
         const text = await saidOnce()
         const foreground = waiting.has(spawn.key)
         // A foreground worker's verdict lands in its Agent result's context; one
@@ -2542,6 +2653,12 @@ export const register: Register = (on, opts) => {
 
   // ---- turn.start: the main loop is busy; nothing runs in the background meanwhile ---
   on('turn.start', async ($, e, next) => {
+    // GH-106: a subagent's turn id, when the engine says whose it is (it carries none today)
+    const owner = (e as { agentId?: string }).agentId
+    if (owner) {
+      turnOf.set(owner, e.turnId)
+      return next(e)
+    }
     inTurn = true
     cancelIdle()
     return next(e)

@@ -27,6 +27,9 @@ Domain: {{domain}}.
 - Gate: {{gate}} green in this checkout before you report. The verifier re-runs it here on the tree as it stands (uncommitted changes included) and checks files= against `git status`, less the brief's ignore= and the files other in-flight cards claimed.
 - Do not commit unless the card says so; never push, never open a PR, never merge.
 {{/here}}
+{{#spend}}
+- Spend: about ${{spend}} for this attempt. Do what the card asks and no more; when you are near it, stop and hand back what you have with the report line.
+{{/spend}}
 - Keep any single foreground wait under 5 minutes; kill anything hung and say so.
 {{extra}}
 

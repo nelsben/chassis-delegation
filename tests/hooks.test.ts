@@ -1,6 +1,8 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, type RunAnswer } from './harness'
-import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER } from './fixtures/sample-card'
+import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, type RunAnswer } from './harness'
+import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
+// GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
+const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=15 budget=')
 
 const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task}`) ?? []) as Record<string, unknown>[]
 const argvs = (w: { runs: { argv: string[] }[] }) => w.runs.map(r => r.argv)
@@ -164,7 +166,7 @@ describe('tool.call on Agent: report capture and verify', () => {
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}. Read it whole.`, tool_use_id: 'toolu_fg000001' }))
     const r = await $.tool.call({ tool: 'Agent', description: 'T-4', prompt: `Your brief is the file ${BRIEF}. Read it whole.` })
     const context = (r.context ?? []).join('\n')
-    expect(context).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below')
+    expect(context).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below')
     expect(context).toContain('claim branch: held — refs/heads/agent/frontend/T-4')
     expect(context).toContain('claim files: held — files= matches the sha delta exactly')
     expect(context).toContain(`${RED}\n  | a/x.ts: not formatted`)
@@ -230,14 +232,14 @@ describe('tool.call on Agent: report capture and verify', () => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
-    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=resumed agent=agent-4 (autoEscalate)')
+    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=resumed agent=agent-4 (autoEscalate)')
     expect(w.sent).toHaveLength(1)
     expect(w.sent[0]?.to).toBe('agent-4') // the engine spells { agentId } as the id
     expect(w.sent[0]?.text).toContain(RED)
     expect(records(w, 'T-4').map(r => [r.attempt, r.kind, r.lineage, r.verdict])).toEqual([[1, 'spawn', 1, 'refuted'], [2, 'resume', 1, 'pending']])
 
     await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('5678abcd')))
-    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=2/3 usd=0.00 model=claude-sonnet-5-5 next=respawned at frontier')
+    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=2/3 usd=~0.00 model=claude-sonnet-5-5 next=respawned at frontier')
     expect(w.spawns[1]?.model).toBe('opus')
     expect(records(w, 'T-4').map(r => [r.attempt, r.kind, r.lineage, r.tier, r.source])).toEqual([
       [1, 'spawn', 1, 'standard', 'brief'],
@@ -346,7 +348,7 @@ describe('tool.call on Agent: report capture and verify', () => {
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     w.usd = 4.4061 // spawned at $1.50
     await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
-    expect(rows(w)[0]?.text.split('\n')[0]).toBe('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=2.91 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below')
+    expect(rows(w)[0]?.text.split('\n')[0]).toBe('chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=~2.91 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below')
     expect(records(w, 'T-4')[0]).toMatchObject({ usd: 2.9061, resolvedModel: 'claude-sonnet-5-5' })
   })
 
@@ -380,7 +382,7 @@ describe('tool.call on Agent: report capture and verify', () => {
     await $.turn.complete(turnInput('agent-4', 'Handed back.'))
     expect(delivered(w)).not.toContain('verdict=no-report')
     expect(verifyStarts(w)).toHaveLength(1)
-    expect(rows(w)[0]?.text.split('\n')[0]).toBe('chassis-delegation: verdict=verified task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=accept')
+    expect(rows(w)[0]?.text.split('\n')[0]).toBe('chassis-delegation: verdict=verified task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=accept')
     expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'verified' })
   })
 
@@ -432,7 +434,7 @@ describe('GH-20: the report names its red evidence (red=) and the verifier reads
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd', RED_1)))
     const row = rows(w)[0] ?? ''
-    expect(row.split('\n')[0]).toBe('chassis-delegation: verdict=verified task=T-4 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=accept')
+    expect(row.split('\n')[0]).toBe('chassis-delegation: verdict=verified task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=accept')
     expect(row).toContain('claim red: held — .delegation/T-4/red-1.txt, 79 bytes, first failure line: FAIL a/x.test.ts')
     const rec = records(w, 'T-4')[0] ?? {}
     expect(rec).toMatchObject({ verdict: 'verified', red: RED_1 })
@@ -854,7 +856,7 @@ describe('/dispatch', () => {
     const out = await $.command.run(commandInput('BE-101 --here --scope app/billing/Rate*.ts'))
     const brief = w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? ''
     const header = brief.split('\n')[0] ?? ''
-    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/** budget=3-attempts report=chassis.report.v1]]')
+    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/** spend=15 budget=3-attempts report=chassis.report.v1]]')
     expect(header).not.toContain(' base=')
     // no worktree, no fetch: the only git the dispatch runs reads the current branch
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD']])
@@ -887,7 +889,7 @@ describe('/dispatch', () => {
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput(`BE-101 --scope ${LLM}`))
     const header = (w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0] ?? ''
-    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,src/b.ts budget=3-attempts`)
+    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,src/b.ts spend=15 budget=3-attempts`)
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD'],
       ['git', '-C', ROOT, 'rev-parse', 'HEAD'],
@@ -1043,7 +1045,7 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-5', REPORT))
     const row = verdictRows(w)[0] ?? ''
-    expect(row.split('\n')[0]).toBe(`chassis-delegation: verdict=unverified task=T-5 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=${PROVE}`)
+    expect(row.split('\n')[0]).toBe(`chassis-delegation: verdict=unverified task=T-5 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=${PROVE}`)
     expect(row).not.toContain('check by hand')
     const sent = (await $.session.send({ to: 'agent-5', text: 'prove the gate', origin: { kind: 'model' } } as never)) as { isDelivered?: boolean }
     expect(sent.isDelivered).toBe(true)
@@ -1054,7 +1056,7 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     const w = world(on, { files: { [BRIEF]: HEADER() + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-5' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-5', REPORT))
-    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/3 usd=0.00 model=claude-sonnet-5-5 next=resumed agent=agent-5 (autoEscalate)')
+    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=resumed agent=agent-5 (autoEscalate)')
     expect(w.sent).toHaveLength(1)
     expect(w.sent[0]?.text).toContain('claim gate: unchecked — gate not re-run: prettier (not in gateMap)')
     expect(w.sent[0]?.text).not.toContain('claim branch: held')
@@ -1065,7 +1067,7 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     const w = world(on, { files: { [BRIEF]: HEADER(1) + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-5' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-5', REPORT))
-    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/1 usd=0.00 model=claude-sonnet-5-5 next=check by hand — unverified is not a pass')
+    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/1 usd=~0.00 model=claude-sonnet-5-5 next=check by hand — unverified is not a pass')
   })
 
   const WARN = 'warning: budget "frontier-60m" is not <n>-attempts; using the default 3'
@@ -1287,7 +1289,7 @@ describe('GH-104: spend guards', () => {
     await $.turn.complete(turnInput('agent-4', 'Working on it.'))
     expect(w.sent).toHaveLength(1)
     await $.turn.complete(turnInput('agent-4', 'Still working on it.'))
-    expect(posted(w)[1]?.split('\n')[0]).toBe('chassis-delegation: verdict=no-report task=T-4 attempt=2/3 usd=0.00 model=claude-sonnet-5-5 next=respawned at standard as agent-2 (autoEscalate)')
+    expect(posted(w)[1]?.split('\n')[0]).toBe('chassis-delegation: verdict=no-report task=T-4 attempt=2/3 usd=~0.00 model=claude-sonnet-5-5 next=respawned at standard as agent-2 (autoEscalate)')
     // the mod's own spawn has no dialog to carry a notice: the record says the tier and its source
     expect(w.spawns[1]?.model).toBe('sonnet')
     expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.tier, x.source, x.verdict])).toEqual([
@@ -1305,7 +1307,7 @@ describe('GH-104: spend guards', () => {
     expect(w.sent).toHaveLength(0)
     expect(w.spawns).toHaveLength(1)
     const row = posted(w)[0] ?? ''
-    expect(row.split('\n')[0]).toBe(`chassis-delegation: T-4 attempt 1/3 no-report · sonnet · $0.00 · next=verify sha=${HEAD}`)
+    expect(row.split('\n')[0]).toBe(`chassis-delegation: T-4 attempt 1/3 no-report · sonnet · ~$0.00 · next=verify sha=${HEAD}`)
     expect(row).toContain(WORK_PRESENT)
     expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.verdict, x.sha ?? null])).toEqual([
       [1, 'spawn', 'no-report', null],
@@ -1518,7 +1520,7 @@ describe('GH-105: a dispatch given --base <sha> writes base= into the brief, and
     await $.session.start(sessionStart)
     const out = String((await $.command.run(commandInput(`T-4 --base ${BASE} --scope a/**`))).text)
     const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
-    expect(header).toContain(` gate=prettier base=${BASE} budget=3-attempts`)
+    expect(header).toContain(` gate=prettier base=${BASE} spend=6 budget=3-attempts`)
     expect(out).toContain(`3. worktree ${ROOT}-T-4 on ${BRANCH} from ${BASE}`)
     const REPORT = `[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=a/x.ts]]`
     await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
@@ -1537,5 +1539,81 @@ describe('GH-105: a dispatch given --base <sha> writes base= into the brief, and
     const again = String((await $.command.run(commandInput(`T-4 --base ${BASE}`))).text)
     expect(again).toContain('note: the reused brief has no base=; the verifier diffs against origin/main → main → origin/master → master')
     expect((w.files.get(BRIEF) ?? '').split('\n')[0]).not.toContain(' base=')
+  })
+})
+
+describe('GH-106: a per-attempt spend ceiling', () => {
+  const BRIEF = `${SCRATCH}/briefs/T-6.brief.md`
+  const HEADER = '[[brief v=1 task=T-6 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier spend=2 budget=3-attempts report=chassis.report.v1]]'
+  const REPORT = (sha: string) => `[[report v=1 task=T-6 subtask=main branch=agent/frontend/T-6 pr=none sha=${sha} gate=pass files=a/x.ts]]`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const SONNET = 'claude-sonnet-5-5' // $2 in, $10 out per million
+  const turnUsage = (inTok: number, outTok = 0) => usage(SONNET, inTok, outTok)
+  type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
+  const boot = async ($: Parameters<Body>[0], on: Parameters<Body>[1]) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-6' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    return w
+  }
+  const rows = (w: { appended: { type: string; text: string }[]; logs: string[] }) =>
+    [...w.appended.filter(a => a.type === 'user').map(a => ({ text: a.text })), ...w.logs.map(text => ({ text }))].filter(r => r.text.startsWith('chassis-delegation: verdict='))
+  const wrapUps = (w: { sent: { to: unknown; text: string }[] }) => w.sent.filter(m => m.text.includes('wrap up'))
+
+  test('(a) a worker crossing its spend= gets one wrap-up message, once', { options: { ...GM } }, async ($, on) => {
+    const w = await boot($, on)
+    await $.turn.complete(turnInput('agent-6', 'working', turnUsage(600_000, 100_000))) // $2.20
+    expect(wrapUps(w)).toHaveLength(1)
+    expect(wrapUps(w)[0]?.to).toBe('agent-6')
+    expect(wrapUps(w)[0]?.text).toBe('chassis-delegation: you have spent about $2.20 of a $2 ceiling; wrap up now and hand back with the report line')
+    expect(records(w, 'T-6')[0]).toMatchObject({ verdict: 'pending', attempt: 1 }) // not a resume, not charged, not judged: the worker carries on
+    await $.turn.complete(turnInput('agent-6', 'still working', turnUsage(100_000))) // $2.40
+    expect(wrapUps(w)).toHaveLength(1)
+    expect(records(w, 'T-6')[0]).toMatchObject({ attempt: 1, verdict: 'no-report' }) // its next turn is judged as ever
+  })
+
+  test('(b) twice the ceiling: the over-spend row, the attempt verdict over-spend, no escalation', { options: { ...GM } }, async ($, on) => {
+    const w = await boot($, on)
+    await $.turn.complete(turnInput('agent-6', 'working', turnUsage(600_000, 100_000)))
+    await $.turn.complete(turnInput('agent-6', 'still working', turnUsage(1_000_000))) // $4.20
+    expect(records(w, 'T-6')[0]).toMatchObject({ verdict: 'over-spend', usd: 4.2 })
+    expect(delivered(w)).toContain('T-6 attempt 1/3 over-spend · $4.20 of $2 · next=check the worktree (work may be present: /dispatch T-6 --verify <sha>)')
+    expect(w.aborted).toEqual([]) // the engine hands no turn id for a subagent
+    expect(wrapUps(w)).toHaveLength(1)
+    await $.turn.complete(turnInput('agent-6', 'more', turnUsage(1_000_000)))
+    expect(delivered(w).split('over-spend ·').length - 1).toBe(1) // once
+    expect(w.sent.filter(m => m.text.includes('resum'))).toHaveLength(0)
+  })
+
+  test('(b) a worker whose turn.start carried its agentId is aborted at twice the ceiling', { options: { ...GM } }, async ($, on) => {
+    const w = await boot($, on)
+    await $.turn.start({ text: '', turnId: 'turn-w6', agentId: 'agent-6' } as never)
+    await $.turn.complete(turnInput('agent-6', 'working', turnUsage(2_200_000))) // $4.40 at once
+    expect(w.aborted).toEqual(['turn-w6'])
+    expect(records(w, 'T-6')[0]).toMatchObject({ verdict: 'over-spend' })
+  })
+
+  test('(c) the verdict row and the ledger carry the worker own cost, not the session delta', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = await boot($, on)
+    w.usd = 16 // other workers moved the session: $14.50 of growth
+    await $.turn.complete(turnInput('agent-6', REPORT('1234abcd'), turnUsage(500_000, 50_000))) // $1.50
+    expect(rows(w)[0]?.text.split('\n')[0]).toContain('usd=1.50')
+    expect(rows(w)[0]?.text.split('\n')[0]).not.toContain('~')
+    expect(records(w, 'T-6')[0]).toMatchObject({ usd: 1.5 })
+  })
+
+  test('without a usage the row falls back to the session delta, marked ~', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = await boot($, on)
+    w.usd = 4.5
+    await $.turn.complete(turnInput('agent-6', REPORT('1234abcd')))
+    expect(rows(w)[0]?.text.split('\n')[0]).toContain('usd=~3.00')
+  })
+
+  test('the status line names each live worker with its running cost', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-6', listAgents: true })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-6', 'working', turnUsage(600_000, 100_000))) // $2.20: warned, carries on
+    w.agents[0]!.status = 'running'
+    await w.clock.advance(60_000) // the status line's tick
+    expect(w.statuses.at(-1)).toContain('(1 live: T-6 $2.20)')
   })
 })

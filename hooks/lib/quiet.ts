@@ -99,6 +99,8 @@ export type QuietInput = {
   reportGate?: string
   alias?: string
   usd?: number
+  /** GH-106: `usd` is the session delta, not the worker's own cost: shown `~$x`. */
+  usdApprox?: boolean
   next: string
   lines: readonly string[]
 }
@@ -114,7 +116,7 @@ export function quietLine(v: QuietInput): string {
   const label = v.noRepo ? ' (no repo)' : ''
   const parts = [`chassis-delegation: ${v.task} attempt ${v.attempt}/${v.budget} ${v.verdict}${label}${gateNote}${reason ? ` ${reason}` : ''}`]
   if (v.alias) parts.push(v.alias)
-  if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`$${v.usd.toFixed(2)}`)
+  if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
   parts.push(...amendClauses(v.lines))
   parts.push(`next=${shortNext(v.next)}`)
   return parts.join(' · ')

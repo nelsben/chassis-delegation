@@ -127,6 +127,7 @@ the spec in markdown. `<ID>` is `<PREFIX>-<number>[letter]`, for example
     red_test: npm test -- feature.test.ts
     gate: test                  # ids in gateMap, comma-separated
     budget: 2-attempts          # spawns + resumes before it comes back to you
+    spend: 4                    # optional: dollars one attempt may spend (else spendByTier; 0 = no ceiling)
     repo: here                  # optional: no worktree, the worker shares this checkout (see repo=here)
     ---
     ## Why … ## Done when …
@@ -159,7 +160,13 @@ spawn whose header carries such a budget logs the same line to debug. The
 **Brief.** `/dispatch` writes `<root>/.delegation/briefs/<ID>.brief.md`. It
 starts with one header line:
 
-    [[brief v=1 task=<ID> subtask=main purpose=build tier=<tier> model=<alias> scope=<globs> forbid=<globs> red_test="<cmd>" gate=<ids> budget=<n>-attempts report=chassis.report.v1]]
+    [[brief v=1 task=<ID> subtask=main purpose=build tier=<tier> model=<alias> scope=<globs> forbid=<globs> red_test="<cmd>" gate=<ids> spend=<usd> budget=<n>-attempts report=chassis.report.v1]]
+
+`spend=` is the per-attempt ceiling in dollars (GH-106): the card's `spend:`
+when it has one, else the tier's entry in `spendByTier`; `0` writes none. The
+body's Rules carry the line "Spend: about $<spend> for this attempt. Do what
+the card asks and no more; when you are near it, stop and hand back what you
+have with the report line." See Spend ceiling below.
 
 The body comes from `hooks/templates/brief.md`. It tells the worker to:
 
@@ -464,7 +471,7 @@ Three layers, in order of precedence:
 
     built-in defaults  <  <repo>/.chassis-delegation.json  <  /config (user settings)
 
-Settings win. Maps (`gateMap`, `agentTypes`, `tierMap`) merge key by key;
+Settings win. Maps (`gateMap`, `agentTypes`, `tierMap`, `spendByTier`) merge key by key;
 other keys are replaced whole. In `/config`, a shared key left empty (`""`,
 or `0` for `maxWorkers`) means "not set here", so the repo file speaks.
 
@@ -482,6 +489,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `agentTypes` | object | JSON string | `{}` | card domain → subagent type. A domain not named runs on a subagent type of the same name if the session offers one, else `general-purpose` |
 | `tierMap` | object | JSON string | `{economy: haiku, standard: sonnet, frontier: opus}` | tier → alias. `fable` is never spawned; it becomes opus, and when a brief, the caller or the map asks for fable the notice says so (`tier=frontier → opus (fable requested; fable is never spawned by the mod)`) and the attempt record keeps `requestedAlias: fable` |
 | `domains` | array | comma string | `frontend, backend, ops, dispatcher, cross, shared` | the domains a card may name |
+| `spendByTier` | object | JSON string | `{economy: 2, standard: 6, frontier: 15}` | dollars one attempt may spend, per tier (GH-106); `0` means no ceiling; merges per tier; `/dispatch` writes the tier's entry as `spend=` unless the card has its own `spend:` |
 | `maxWorkers` | number | number (0 = unset) | `2` | briefed workers at once; the next one waits in a queue |
 | `worktreeRoot` | string | string | `""` (siblings: `<root>-<id>`) | worktrees go to `<worktreeRoot>/<repo name>-<id>` |
 | `cardDir` | string | string | `agents/tasks` | the folder the task cards live in, relative to the repo root (no leading `/`, no `..`); `/dispatch` and the dispatch tool read cards from it. `init` writes `docs/cards` in a plugin repo. `--replay` stays on `agents/tasks/` |
@@ -581,21 +589,67 @@ so it is not found a gate run later.
 The mod never runs your eval, your tests or a deploy itself. The eval runner
 and the debrief are ordinary subagents, under the session's own permissions.
 
+## Spend ceiling
+
+An attempt has a ceiling in dollars: `spend=` in the brief header (above).
+The brief tells the worker its ceiling, and that line is the part that limits
+spend while a worker runs.
+
+**What the mod can see, and when.** The engine does not show a plugin the
+steps or tool calls of a subagent the plugin spawned itself
+(`$.agent.spawn`): its `turn.step` and `tool.call` hooks are skipped for that
+worker. A worker started by `/dispatch`, by the dispatch tool or from the queue
+is such a worker, so the mod learns its cost only from the `turn.complete` at
+the end of its run. The checks below therefore run when a run ends, not
+mid-run. A worker the brain spawned itself with the Agent tool is seen step by
+step, but the mod does not use that yet.
+
+What the mod does with each worker's own cost (the cost formula below):
+
+- **At the ceiling.** When a run ends with the worker's own spend past
+  `spend=` and no report line, the mod sends it one message through
+  `$.session.send` (the path a resume uses, but it is not a resume and does not
+  count against the budget):
+  `chassis-delegation: you have spent about $2.20 of a $2 ceiling; wrap up now and hand back with the report line`.
+  Once per attempt. The worker carries on, so that turn's end is not judged.
+- **At twice the ceiling.** The attempt's verdict is `over-spend`, and the mod
+  posts:
+
+      chassis-delegation: T-6 attempt 1/3 over-spend · $4.20 of $2 · next=check the worktree (work may be present: /dispatch T-6 --verify <sha>)
+
+  `over-spend` is not a failing verdict: it never escalates the tier, and the
+  mod does not resume or respawn on it. If the engine hands the mod the id of
+  the worker's running turn (`turn.start` carrying the subagent's `agentId`),
+  the mod also ends that turn with `$.turn.abort`. The engine's `turn.start`
+  carries no `agentId` today, so the mod cannot stop a subagent: it posts the
+  row and records the verdict without stopping the worker.
+- **A hand-back wins.** A turn whose answer carries the report line is left to
+  the verifier, whatever it cost.
+- **On the status line.** The status line and the queued-spawn refusal name
+  each live worker with its cost so far: `(2 live: BE-310 $3.10, BE-314
+  $1.20)`. For a dispatched worker that figure moves only when a run ends (a
+  resumed worker shows its earlier runs).
+
 ## The cost formula
 
-Each verdict row carries `usd`, the session's cost growth over the attempt:
-
-    usd = session cost at the verdict − session cost when the worker was spawned (or resumed)
-
-It is read from `$.session.usage().cost.usd`, kept to 4 places in the store
-and shown to 2. It includes whatever the main loop spent at the same time, so
-treat it as approximate. A per-turn, per-model price is built in
-`hooks/lib/cost.ts` but not wired in 0.2.0:
+Each worker's own cost is summed from the `usage` of its `turn.complete`
+events (keyed by the event's `agentId`, reset when a resume starts a new
+attempt), priced by the model the usage names (else the model the spawn
+resolved), with the built-in table in `hooks/lib/cost.ts`:
 
     usd = (in·P_in + out·P_out + cacheRead·P_in·0.1 + cacheWrite·P_in·1.25) / 1e6
 
 Prices are dollars per million tokens, from a small table: opus-5-5 4/20,
-opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5.
+opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5. The verdict row's
+`usd`, the attempt record's `usd` and the ledger's `usd` are that number, kept
+to 4 places in the store and shown to 2.
+
+When no usage was reported (or a model is not in the table), the row falls
+back to the session's cost growth over the attempt, `$.session.usage().cost.usd`
+at the verdict minus at the spawn (or resume), shown with a `~`
+(`usd=~2.91`, `~$2.91`; the attempt record has `usdApprox: true`). That delta
+includes whatever the main loop and the other workers spent at the same time,
+so it is approximate.
 
 ## Known issues
 
@@ -607,7 +661,7 @@ opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5.
 - **A gate runs in the worker's worktree, as the worker left it.** If a tool
   the gate needs is missing there, the gate exits 127, which reads as
   unchecked, not refuted. The brief tells the worker to install first.
-- **`usd` is approximate.** See the cost formula.
+- **`usd` is approximate when marked `~`.** It is then the session delta; see the cost formula.
 - **Concurrent workers can starve the machine.** `maxWorkers` (2) caps briefed
   workers. It does not count ad hoc agents. A briefed spawn past the cap waits
   in a queue that holds one row per task and subtask: the refusal reads

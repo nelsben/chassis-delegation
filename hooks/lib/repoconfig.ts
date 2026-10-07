@@ -3,13 +3,14 @@
 // `<root>/.chassis-delegation.json` (optional) carries what differs per repo.
 // The mod reads it at session.start and on each dispatch. Precedence, lowest
 // first: the built-in defaults < the repo file < the user's settings
-// (`/config`). Maps (gateMap, agentTypes, tierMap) merge per key across the
+// (`/config`). Maps (gateMap, agentTypes, tierMap, spendByTier) merge per key across the
 // three layers; every other key is replaced whole by the higher layer.
 //
 // A settings field is "unset" when it holds its manifest default: an empty
 // string, 0 for maxWorkers, false for autoEval. So settings can turn autoEval
 // on for every repo, but only the repo file (or removing evalCommand) turns a
 // repo's autoEval off.
+import { DEFAULT_SPEND_BY_TIER } from './cost'
 import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
 import type { Alias, Tier } from './tier'
 
@@ -50,6 +51,8 @@ export const isGitRef = (s: string): boolean => /^(?!-)[A-Za-z0-9._/@^~{}+-]+$/.
 /** An ignore glob the brief header can carry: no whitespace, quote or `]]`. */
 const IGNORE_GLOB = /^[^\s"]+$/
 
+export type SpendTier = 'economy' | 'standard' | 'frontier'
+
 export type RepoConfig = {
   gateMap?: Record<string, string>
   agentTypes?: Record<string, string>
@@ -68,9 +71,11 @@ export type RepoConfig = {
   baseRef?: string
   /** GH-16: globs always subtracted from a repo=here delta. */
   ignore?: string[]
+  /** GH-106: dollars one attempt may spend, per tier (economy, standard, frontier); 0 = no ceiling. */
+  spendByTier?: Partial<Record<SpendTier, number>>
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore'] as const
+export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -88,6 +93,7 @@ export type Effective = {
   autoEval: boolean
   baseRef: string
   ignore: string[]
+  spendByTier: Record<SpendTier, number>
   /** Which layer each key came from. */
   sources: Record<RepoKey, 'default' | 'repo' | 'settings'>
 }
@@ -167,6 +173,22 @@ function ignoreOf(v: unknown, errors: string[], where: string): string[] | undef
   return out
 }
 
+/** GH-106: `spendByTier` as tier → dollars (0 or more); a bad entry is named and dropped. */
+function spendByTierOf(v: unknown, errors: string[], where: string): Partial<Record<SpendTier, number>> | undefined {
+  if (!isObject(v)) {
+    errors.push(`spendByTier${where}: not an object (ignored)`)
+    return undefined
+  }
+  const out: Partial<Record<SpendTier, number>> = {}
+  for (const [k, x] of Object.entries(v)) {
+    if (k.startsWith('_')) continue
+    if (!(['economy', 'standard', 'frontier'] as readonly string[]).includes(k)) errors.push(`spendByTier.${k}${where}: not a tier (economy, standard, frontier) (ignored)`)
+    else if (typeof x !== 'number' || !Number.isFinite(x) || x < 0) errors.push(`spendByTier.${k}${where}: needs dollars, 0 or more (ignored)`)
+    else out[k as SpendTier] = x
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 /** One layer's values from a plain object (the repo file, or settings after JSON strings are parsed). */
 function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): Parsed {
   const errors: string[] = []
@@ -205,6 +227,11 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         if (typeof v === 'number' && Number.isInteger(v) && v >= 1) config.maxWorkers = v
         else if (!(v === 0 && !strict)) errors.push(`maxWorkers${where}: needs a whole number of 1 or more (ignored)`)
         break
+      case 'spendByTier': {
+        const m = spendByTierOf(v, errors, where)
+        if (m) config.spendByTier = m
+        break
+      }
       case 'domains': {
         const d = domainsOf(v, errors, where)
         if (d) config.domains = d
@@ -256,7 +283,7 @@ export function settingsLayer(options: Readonly<Record<string, unknown>>): Parse
   for (const key of REPO_KEYS) {
     const v = options[key]
     if (v === undefined || v === '' || v === 0 || v === false) continue
-    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap') && typeof v === 'string') {
+    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier') && typeof v === 'string') {
       try {
         obj[key] = JSON.parse(v)
       } catch {
@@ -288,6 +315,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig): Effective {
     autoEval: settings.autoEval === true || repo.autoEval === true,
     baseRef: pick('baseRef', ''),
     ignore: [...pick('ignore', [...DEFAULT_IGNORE])],
+    spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...settings.spendByTier },
     sources,
   }
 }
