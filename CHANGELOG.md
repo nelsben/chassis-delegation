@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A prose scope is caught at dispatch (GH-103, closes public #8).** When a
+  card's `scope:` reads as prose and no `--scope` (tool `scope`) is given,
+  `/dispatch` and the tool write the brief, print the header and the prose,
+  and stop before the worktree and the spawn; dispatch again with globs and the
+  brief is reused. A prose `scope=` that reaches the verifier is no longer a
+  refusal of the whole brief: the scope claim is `unchecked` and the rest is
+  checked, so the worker's finished work stands. `BRIEF-SCOPE-PROSE` is gone;
+  a brief with no `scope=` is still refused.
+
 - **The queue never holds a phantom (GH-101, closes public #4 and #7).** The
   queue keeps one row per task and subtask: a second dispatch answers
   `already queued since <HH:MM> (position <n>)` and spawns nothing. The queue

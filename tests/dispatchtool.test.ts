@@ -12,7 +12,7 @@ describe('the dispatch tool (2A)', () => {
       type: 'object',
       properties: {
         task: { type: 'string', description: 'The task id, e.g. BE-101' },
-        scope: { type: 'string', description: 'Comma-separated scope globs; replaces the card scope in the brief header' },
+        scope: { type: 'string', description: "Comma-separated scope globs (paths, not prose); replaces the card's scope in the brief header. Required when the card's scope is prose: dispatch stops until it is given" },
         forbid: { type: 'string', description: 'Comma-separated forbid globs; replaces the card forbid in the brief header' },
         replay: { type: 'boolean', description: 'Re-run a card already merged on main, read at base (needs a sha base)' },
         base: { type: 'string', description: 'origin/main (default) or a 7-40 hex sha to cut the worktree from' },

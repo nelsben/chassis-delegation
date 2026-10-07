@@ -91,10 +91,9 @@ describe('5A: the brief contract (scope, forbid, amendments, refusals)', () => {
     const c = briefContract(`[[brief v=1 task=T scope=the Rate classes scope_globs=a/**,b.ts forbid=x/** forbid_globs=y/** gate=g]]`)
     expect(c).toMatchObject({ ok: true, scope: ['a/**', 'b.ts'], forbid: ['y/**'] })
   })
-  test('a prose scope with no scope_globs= is refused (BRIEF-SCOPE-PROSE); no scope= at all is BRIEF-UNPARSEABLE', () => {
+  test('a prose scope with no scope_globs= is ok with scope [] and scopeProse (GH-103); no scope= at all is BRIEF-UNPARSEABLE', () => {
     const prose = briefContract('[[brief v=1 task=T scope=the provider classes and their tests gate=g]]')
-    expect(prose).toMatchObject({ ok: false })
-    expect(prose.ok ? '' : prose.line).toBe('refuse: BRIEF-SCOPE-PROSE — scope= reads as prose ("the provider classes and their tests"); give a comma-separated path list or add scope_globs=.')
+    expect(prose).toMatchObject({ ok: true, scope: [], scopeProse: true })
     const none = briefContract('[[brief v=1 task=T gate=g]]')
     expect(none.ok ? '' : none.line).toContain('refuse: BRIEF-UNPARSEABLE — the brief header carries no scope= field')
     const open = briefContract('no header here')
@@ -227,9 +226,18 @@ describe('5A: verifyNative against a repo answered from a table', () => {
     expect(gone.verdict).toBe('unverified')
     expect(gone.lines).toContain('claim pr: unchecked — gh could not resolve 932 (offline / auth / not found)')
   })
+  test('GH-103: a prose scope= with no scope_globs= leaves the scope claim unchecked and checks every other claim', async () => {
+    const prose = BRIEF.replace('scope=src/**,docs/', 'scope=the provider classes and their tests')
+    const r = await verifyNative(input({ briefText: prose }), io(happy()))
+    expect(r.verdict).toBe('unverified')
+    expect(r.lines).toContain('claim scope: unchecked — scope= reads as prose; add scope_globs= to the brief to check it')
+    expect(r.lines).toContain('claim files: held — files= matches the sha delta exactly')
+    expect(r.lines).toContain('claim gate: held — gate green at a1b2c3d (gate=pass confirmed)')
+    expect(r.lines.filter(l => l.startsWith('claim ') && !l.startsWith('claim scope:')).every(l => l.startsWith('claim ') && l.includes(': held'))).toBe(true)
+  })
   test('a refused brief runs nothing', async () => {
     const t = io(happy())
-    const r = await verifyNative(input({ briefText: '[[brief v=1 task=T-1 scope=all the things that matter gate=test]]' }), t)
+    const r = await verifyNative(input({ briefText: '[[brief v=1 task=T-1 gate=test]]' }), t)
     expect(r.verdict).toBe('refused')
     expect(t.calls).toHaveLength(0)
   })

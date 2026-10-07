@@ -6,7 +6,7 @@
 //   unverified — a claim could not be checked — NOT a pass
 //   refuted    — a claim was contradicted (a fabricated sha, an out-of-scope
 //                diff, gate=pass over a red gate)
-//   refused    — the brief itself is unusable (no scope=, a prose scope=);
+//   refused    — the brief itself is unusable (no scope= at all, a bad base=);
 //                nothing runs, and it is never charged to the worker
 //
 // The claims, in order: branch, sha, scope, files, gate, red, pr. The gate
@@ -148,7 +148,7 @@ export function globMatches(path: string, glob: string): boolean {
 export const pathMatchesAny = (path: string, globs: readonly string[]): boolean => globs.some(g => g !== '' && globMatches(path, g))
 
 export type BriefContract =
-  | { ok: true; scope: string[]; forbid: string[]; ignore: string[]; base?: string; gate?: string; redTest?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
+  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; base?: string; gate?: string; redTest?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
   | { ok: false; line: string }
 
 /** True when a scope= reads as prose: two or more words and no entry shaped like a path or glob. */
@@ -171,10 +171,9 @@ export function briefContract(briefText: string): BriefContract {
     return { ok: false, line: 'refuse: BRIEF-UNPARSEABLE — the brief header carries no scope= field; cannot determine scope=/forbid= — refusing rather than silently refuting every path.' }
   }
   const globs = csv(f.scope_globs)
-  if (globs.length === 0 && f.scope !== '' && scopeIsProse(f.scope)) {
-    return { ok: false, line: `refuse: BRIEF-SCOPE-PROSE — scope= reads as prose ("${f.scope.slice(0, 60)}"); give a comma-separated path list or add scope_globs=.` }
-  }
-  const scope = globs.length > 0 ? globs : csv(f.scope)
+  // GH-103: a prose scope degrades the scope claim to unchecked; the rest of the brief still verifies
+  const scopeProse = globs.length === 0 && f.scope !== '' && scopeIsProse(f.scope)
+  const scope = globs.length > 0 ? globs : scopeProse ? [] : csv(f.scope)
   const forbidGlobs = csv(f.forbid_globs)
   const forbid = forbidGlobs.length > 0 ? forbidGlobs : csv(f.forbid)
   const ignore = csv(f.ignore)
@@ -189,6 +188,7 @@ export function briefContract(briefText: string): BriefContract {
     return {
       ok: true,
       scope,
+      ...(scopeProse ? { scopeProse: true as const } : {}),
       forbid,
       ignore,
       ...(base ? { base } : {}),
@@ -203,6 +203,7 @@ export function briefContract(briefText: string): BriefContract {
   return {
     ok: true,
     scope: csv(effectiveList(scope.join(','), amends.amends, 'scope')),
+    ...(scopeProse ? { scopeProse: true as const } : {}),
     forbid: csv(effectiveList(forbid.join(','), amends.amends, 'forbid')),
     ignore: csv(effectiveList(ignore.join(','), amends.amends, 'ignore')),
     ...(base ? { base } : {}),
@@ -489,6 +490,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
 
   // 3. the diff stays inside scope, forbid untouched
   if (cardless) claim('scope', 'unchecked', NO_BRIEF_REASON)
+  else if (contract.scopeProse) claim('scope', 'unchecked', 'scope= reads as prose; add scope_globs= to the brief to check it')
   else if (contract.amendBad) {
     claim('scope', 'unchecked', `AMEND-MALFORMED: ${contract.amendWhy} — the EFFECTIVE scope is unknowable, so the diff is neither cleared nor refuted; fix the amend block and re-verify`)
   } else if (!delta) claim('scope', 'unchecked', noDelta)

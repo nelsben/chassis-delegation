@@ -165,7 +165,10 @@ export function checkDomain(card: Card, domains: readonly string[] = DEFAULT_DOM
 /** The card's `budget:` as attempts; a value off the grammar falls back, and `budgetWarning` says so in the /dispatch output (GH-1 item 6). */
 export const budgetAttempts = (budget: string | undefined, fallback: number): number => parseBudget(budget, fallback)
 
-/** True when a scope entry is prose, not a glob: the verifier refuses such a scope (BRIEF-SCOPE-PROSE) unless scope_globs= is added. */
+/** GH-103: what dispatch ends with when the card scope is prose and no globs were passed. */
+export const PROSE_SCOPE_STOP = 'stopped: the card scope is prose; pass --scope <globs> (or scope on the tool) and dispatch again'
+
+/** True when a scope entry is prose, not a glob: the verifier leaves such a scope unchecked unless scope_globs= is added. */
 export const scopeLooksProse = (scope: readonly string[]): boolean => scope.some(s => /\s/.test(s))
 
 const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
@@ -401,7 +404,7 @@ export const DISPATCH_TOOL = {
     type: 'object',
     properties: {
       task: { type: 'string', description: 'The task id, e.g. BE-101' },
-      scope: { type: 'string', description: 'Comma-separated scope globs; replaces the card scope in the brief header' },
+      scope: { type: 'string', description: "Comma-separated scope globs (paths, not prose); replaces the card's scope in the brief header. Required when the card's scope is prose: dispatch stops until it is given" },
       forbid: { type: 'string', description: 'Comma-separated forbid globs; replaces the card forbid in the brief header' },
       replay: { type: 'boolean', description: 'Re-run a card already merged on main, read at base (needs a sha base)' },
       base: { type: 'string', description: 'origin/main (default) or a 7-40 hex sha to cut the worktree from' },
