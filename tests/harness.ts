@@ -13,6 +13,8 @@ export type Run = { argv: string[]; cwd?: string; env?: Record<string, string>; 
 export type RunAnswer = { exitCode: number; stdout: string; stderr?: string }
 
 export type World = {
+  /** `$.store.keys()` calls (GH-112: the dashboard's records cache). */
+  storeKeyReads: number
   store: Map<string, unknown>
   files: Map<string, string>
   runs: Run[]
@@ -102,6 +104,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     opened: [],
     closed: [],
     invalidations: 0,
+    storeKeyReads: 0,
     transcripts: new Map(Object.entries(options.transcripts ?? {})),
     aborted: [],
   }
@@ -117,7 +120,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('store.get', (e: { key: string }) => ({ value: w.store.get(e.key) }))
   hook('store.set', (e: { key: string; value: unknown }) => (w.store.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }))
   hook('store.delete', (e: { key: string }) => (w.store.delete(e.key), { value: undefined }))
-  hook('store.keys', () => ({ value: [...w.store.keys()] }))
+  hook('store.keys', () => ((w.storeKeyReads += 1), { value: [...w.store.keys()] }))
   hook('session.root', () => ({ value: ROOT }))
   hook('session.cwd', () => ({ value: ROOT }))
   hook('session.id', () => ({ value: options.sessionId ?? 'sess-1' }))

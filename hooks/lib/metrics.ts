@@ -162,3 +162,27 @@ export const SERIES: readonly { key: string; value: (m: Metrics) => number | nul
   { key: 'compaction', value: m => m.compactions },
   { key: 'spend', value: m => m.usd },
 ]
+
+/**
+ * GH-112: this session's numbers read from its attempt records (the dashboard's
+ * "Across sessions" blocks draw the current session from what the store holds).
+ */
+export function metricsFromRecords(
+  records: readonly { task: string; subtask: string; alias: string; kind: string; verdict: string; usd?: number }[],
+  firstSeen: number,
+): Metrics {
+  const m = emptyMetrics(firstSeen)
+  m.dispatches = new Set(records.map(r => `${r.task}/${r.subtask}`)).size
+  for (const r of records) {
+    const a = tierKey(r.alias)
+    if (r.kind === 'spawn' && a) m.spawns[a] += 1
+    if (r.kind === 'resume') m.escalations.resume += 1
+    m.usd += r.usd ?? 0
+    if (r.verdict === 'verified') {
+      m.verdicts.verified += 1
+      if (a) m.verifiedBy[a] += 1
+    } else if (r.verdict === 'unverified') m.verdicts.unverified += 1
+    else if (r.verdict === 'refuted') m.verdicts.refuted += 1
+  }
+  return m
+}
