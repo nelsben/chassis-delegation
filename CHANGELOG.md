@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Setup's output reads right in VS Code and the desktop app (GH-110).**
+  The first card is printed inside a ```markdown fence (its `---` lines were
+  rendering as rules and the lines ran together). Setup no longer prints
+  init's "Next:" line or the restart note, so there is one set of next steps.
+  The card skeleton gains a `red_test:` line with an example taken from the
+  detected gate. A fresh config is followed by one `config:` line per key set.
+  When the scaffold leaves the tree dirty, the next steps start with committing
+  it. `/delegation init` text is unchanged.
 - **`/delegation setup` checks the repo and hands over the first card (GH-109).**
   A new project learned each requirement (a git repo with a first commit, a
   remote with `main` or `repo=here`, a passing test command, a lockfile, no

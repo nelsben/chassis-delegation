@@ -164,7 +164,7 @@ export function initPlan(root: string, existing: Readonly<Record<string, string 
 /** What init says it did. */
 export const RESTART_NOTE = 'If Claude Code says an update is pending, restart the session once before dispatching; init itself needs no re-run.'
 
-export function initText(root: string, plan: readonly InitStep[], failed: Readonly<Record<string, string>> = {}, updateNote = false): string {
+export function initText(root: string, plan: readonly InitStep[], failed: Readonly<Record<string, string>> = {}, updateNote = false, nextLine = true): string {
   const lines = plan.map(s => {
     if (failed[s.path]) return `could not write ${s.path}: ${failed[s.path]}`
     if (s.action === 'skip') return `left ${s.path} (exists; never overwritten)`
@@ -174,5 +174,5 @@ export function initText(root: string, plan: readonly InitStep[], failed: Readon
   const plugin = plan.some(s => s.path === `${root.replace(/\/+$/, '')}/${PLUGIN_CARD_DIR}/README.md`)
   const dir = plugin ? PLUGIN_CARD_DIR : DEFAULT_CARD_DIR
   const why = plugin ? [`- cards go under ${PLUGIN_CARD_DIR}/ (this repo is a plugin: agents/ is the engine's subagent folder)`] : []
-  return [`chassis-delegation init in ${root}:`, ...lines.map(l => `- ${l}`), ...why, `Next: write a card under ${dir}/ (copy OPS-000-sample.md), set status: queued, and ask the brain to dispatch it.`, ...(updateNote ? [RESTART_NOTE] : [])].join('\n')
+  return [`chassis-delegation init in ${root}:`, ...lines.map(l => `- ${l}`), ...why, ...(nextLine ? [`Next: write a card under ${dir}/ (copy OPS-000-sample.md), set status: queued, and ask the brain to dispatch it.`] : []), ...(updateNote ? [RESTART_NOTE] : [])].join('\n')
 }

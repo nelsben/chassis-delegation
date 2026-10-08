@@ -206,8 +206,24 @@ export function cardPrefix(domains: readonly string[]): { prefix: string; domain
 
 export const FIRST_CARD_SLUG = 'first-task'
 
+/** A test the red_test line can name, by stack: the shape of a command that runs one test. */
+export function redTestExample(gate: Gate | undefined): string {
+  if (!gate) return 'npm test -- x.test.js'
+  if (gate.stack === 'node') return gate.pm === 'pnpm' ? 'pnpm test x.test.js' : gate.pm === 'yarn' ? 'yarn test x.test.js' : 'npm test -- x.test.js'
+  if (gate.stack === 'python') return gate.runner === 'pytest' ? 'pytest tests/test_x.py' : 'python3 -m unittest tests.test_x'
+  if (gate.stack === 'rust') return 'cargo test x'
+  return 'go test ./... -run X'
+}
+
+/** One line per key setup set in a fresh config. */
+export function configLines(found: Found): string[] {
+  return [`config: gateMap.test = ${found.gate}`, ...(found.baseRef ? [`config: baseRef = ${found.baseRef}`] : []), ...(found.cardDir ? [`config: cardDir = ${found.cardDir}`] : [])]
+}
+
+export type CardOpts = { gate?: Gate; dirty?: boolean }
+
 /** The first card, ready to save as `<cardDir>/<PREFIX>-1-<slug>.md`. */
-export function firstCard(dir: string, domains: readonly string[], here: boolean): { path: string; id: string; text: string; next: string[] } {
+export function firstCard(dir: string, domains: readonly string[], here: boolean, opts: CardOpts = {}): { path: string; id: string; text: string; next: string[] } {
   const { prefix, domain } = cardPrefix(domains)
   const id = `${prefix}-1`
   const path = `${dir || DEFAULT_CARD_DIR}/${id}-${FIRST_CARD_SLUG}.md`
@@ -219,6 +235,7 @@ tier: standard
 status: queued
 scope: [REPLACE-ME/**]
 forbid: [REPLACE-ME-OFF-LIMITS/**]
+red_test: REPLACE ME: the test that fails now and passes after, e.g. ${redTestExample(opts.gate)}
 gate: test
 budget: 2-attempts
 ---
@@ -232,18 +249,22 @@ REPLACE ME: why this task, in two or three sentences.
 - The gate (test) is green in the worker's worktree.
 `
   const flag = here ? ' --here' : ''
+  const steps = `\`/dispatch ${id}${flag} --dry-run\` to see the brief, then \`/dispatch ${id}${flag}\``
+  const first = opts.dirty
+    ? here
+      ? `Commit the card (git add -A && git commit -m "chassis-delegation setup"; otherwise the card folder is in the worker's delta), write the task into it, then ${steps}.`
+      : `Commit the scaffold and the card (git add -A && git commit -m "chassis-delegation setup"), then write the task into the card, then ${steps}.`
+    : `Write the task into it, then ${steps}.`
   return {
     path,
     id,
     text,
-    next: [
-      `Write the task into it, then \`/dispatch ${id}${flag} --dry-run\` to see the brief, then \`/dispatch ${id}${flag}\`.`,
-      'Read the diff before you accept: a verified verdict means the report matches git, not that the work is right.',
-    ],
+    next: [first, 'Read the diff before you accept: a verified verdict means the report matches git, not that the work is right.'],
   }
 }
 
-export function handoverText(dir: string, domains: readonly string[], here: boolean): string {
-  const c = firstCard(dir, domains, here)
-  return [`First card: save this as ${c.path}`, '', c.text.trimEnd(), '', ...c.next].join('\n')
+/** The card goes in a markdown fence so a markdown-rendering host shows it verbatim and it copies whole. */
+export function handoverText(dir: string, domains: readonly string[], here: boolean, opts: CardOpts = {}): string {
+  const c = firstCard(dir, domains, here, opts)
+  return [`First card: save this as ${c.path}`, '', '```markdown', c.text.trimEnd(), '```', '', ...c.next].join('\n')
 }
