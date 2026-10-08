@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Say the task, get the dry run (GH-111).** A new model-callable tool,
+  `mcp__chassis-delegation__card` (pure logic in `hooks/lib/card.ts`): the
+  brain turns a sentence into the fields (title, why, done-when, scope globs,
+  red test, and optional tier, domain, gate, budget, spend) and the mod writes
+  the card (the next free `<PREFIX>-<n>` in the card folder, a slug from the
+  title, never overwriting), runs the same dry run as `/dispatch <ID>
+  --dry-run`, and returns `wrote <path>`, a one-line summary, the brief header
+  and `Say go and Claude dispatches <ID>.` With `dispatch: true` it dispatches
+  instead. Prose scope, a gate id missing from `gateMap`, a missing red test,
+  an unknown tier or domain are refused with the fix and write nothing.
+  `/delegation setup` now ends with `Set up. Tell Claude your first task in a
+  sentence, for example: "…"` (the example follows the detected gate) instead
+  of a card skeleton to edit; through its tool it adds `Ask the person for the
+  first task, then call the card tool.` Setup no longer writes
+  `OPS-000-sample.md` (bare `/delegation init` still does) and no longer tells
+  anyone to commit the card: a worktree dispatch reads it from the main
+  checkout, and in repo=here mode the card folder joins the always-applied
+  `ignore=` set. README: Setup, Sixty seconds, the commands table, the card
+  format.
 - **Setup's output reads right in VS Code and the desktop app (GH-110).**
   The first card is printed inside a ```markdown fence (its `---` lines were
   rendering as rules and the lines ran together). Setup no longer prints
@@ -28,6 +47,8 @@
   which needs nothing but `python3`. The README's install steps now lead with
   hot reload for a session already running (VS Code, the desktop app), and
   warn against pointing the global setting at a session's hot-reload folder.
+  The card tool works in the shared checkout (`repo: here` on the card) when
+  the repo has no `origin/main`; a `baseRef` alone does not change the mode.
 
 - **A per-attempt spend ceiling (GH-106, closes public #15).** Fifteen
   standard cards cost $1 to $4.55; two cost $21.79 and $32.48 because the

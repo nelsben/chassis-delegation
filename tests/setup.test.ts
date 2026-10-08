@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { allRequiredHold, configLines, detectGate, firstCard, foundOf, handoverText, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from '../hooks/lib/setup'
+import { allRequiredHold, BRAIN_HANDOVER, configLines, detectGate, foundOf, handoverText, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from '../hooks/lib/setup'
 import { CONFIG_TEMPLATE } from '../hooks/lib/init'
 import { parseCard } from '../hooks/lib/dispatch'
 import { parseRepoConfig } from '../hooks/lib/repoconfig'
@@ -149,52 +149,30 @@ describe('GH-109: the scaffold', () => {
   test('an existing config is described, not changed', () => {
     expect(wouldSet({ gate: 'pytest', baseRef: 'main' })).toBe('· .chassis-delegation.json exists and is left as it is; setup would have set "gateMap": {"test": "pytest"}, "baseRef": "main"')
   })
-  test('the first card parses as a queued standard card, with --here only in repo=here mode', () => {
-    const c = firstCard('agents/tasks', ['ops', 'web'], false)
-    expect(c.path).toBe('agents/tasks/OPS-1-first-task.md')
-    const card = parseCard(c.text)
-    expect('error' in card).toBe(false)
-    if (!('error' in card)) {
-      expect([card.id, card.domain, card.tier, card.status, card.gate, card.budget]).toEqual(['OPS-1', 'ops', 'standard', 'queued', ['test'], '2-attempts'])
-      expect(card.scope).toEqual(['REPLACE-ME/**'])
-    }
-    expect(c.next[0]).toBe('Write the task into it, then `/dispatch OPS-1 --dry-run` to see the brief, then `/dispatch OPS-1`.')
-    expect(c.next[1]).toBe('Read the diff before you accept: a verified verdict means the report matches git, not that the work is right.')
-    expect(firstCard('docs/cards', ['ops'], true).next[0]).toContain('`/dispatch OPS-1 --here --dry-run`')
-    expect(firstCard('agents/tasks', ['web', 'api'], false).id).toBe('WEB-1')
+})
+
+describe('GH-111: the handover asks for the first task', () => {
+  const go = ' Claude writes the card, shows you the brief, and dispatches when you say go.'
+  test('one sentence, with an example from the detected stack', () => {
+    const t = (p: SetupProbe): string => handoverText(detectGate(p))
+    const base = { packageJson: undefined, markers: [] as string[] }
+    expect(t(green())).toBe(`Set up. Tell Claude your first task in a sentence, for example: "add a function that reads a file header and returns its size, with a node --test test".${go}`)
+    expect(t(green({ ...base, pyTests: true, onPath: ['git', 'python3'] }))).toContain('"add a function that reads a file header and returns its size, with a unittest"')
+    expect(t(green({ ...base, markers: ['Cargo.toml'] }))).toContain('with a cargo test"')
+    expect(t(green({ ...base, markers: ['go.mod'] }))).toContain('with a go test"')
+    expect(handoverText(undefined)).toContain('with a test"')
+  })
+  test('no card skeleton, no commit step', () => {
+    const t = handoverText(detectGate(green()))
+    expect(t).not.toContain('REPLACE ME')
+    expect(t).not.toContain('save this as')
+    expect(t).not.toContain('git commit')
+    expect(BRAIN_HANDOVER).toBe('Ask the person for the first task, then call the card tool.')
   })
 })
 
-describe('GH-110: the handover reads right when rendered as markdown', () => {
-  test('the card sits in a markdown fence whose body starts at the opening ---; the card carries a red_test line', () => {
-    const t = handoverText('agents/tasks', ['ops'], false, { gate: detectGate(green()) })
-    const lines = t.split('\n')
-    const open = lines.indexOf('```markdown')
-    expect(open).toBeGreaterThan(0)
-    expect(lines[open + 1]).toBe('---')
-    expect(lines.indexOf('```', open + 1)).toBeGreaterThan(open + 2)
-    expect(lines[0]).toBe('First card: save this as agents/tasks/OPS-1-first-task.md')
-    expect(t).toContain('red_test: REPLACE ME: the test that fails now and passes after, e.g. npm test -- x.test.js')
-  })
-  test('the red_test example follows the detected gate', () => {
-    const ex = (p: SetupProbe): string => firstCard('agents/tasks', ['ops'], false, { gate: detectGate(p) }).text.split('\n').find(l => l.startsWith('red_test:')) ?? ''
-    const base = { packageJson: undefined, markers: [] as string[] }
-    expect(ex(green({ ...base, pyTests: true, onPath: ['git', 'python3'] }))).toContain('e.g. python3 -m unittest tests.test_x')
-    expect(ex(green({ ...base, markers: ['pytest.ini'], onPath: ['git', 'python3', 'pytest'] }))).toContain('e.g. pytest tests/test_x.py')
-    expect(ex(green({ ...base, markers: ['Cargo.toml'] }))).toContain('e.g. cargo test x')
-    expect(ex(green({ ...base, markers: ['go.mod'] }))).toContain('e.g. go test ./... -run X')
-    const card = parseCard(firstCard('agents/tasks', ['ops'], false, { gate: detectGate(green()) }).text)
-    expect('error' in card ? '' : card.redTest).toContain('REPLACE ME')
-  })
-  test('the next steps start with the commit when the tree is dirty', () => {
-    const w = firstCard('agents/tasks', ['ops'], false, { dirty: true }).next
-    expect(w[0]).toBe('Commit the scaffold and the card (git add -A && git commit -m "chassis-delegation setup"), then write the task into the card, then `/dispatch OPS-1 --dry-run` to see the brief, then `/dispatch OPS-1`.')
-    const h = firstCard('agents/tasks', ['ops'], true, { dirty: true }).next
-    expect(h[0]).toContain('Commit the card')
-    expect(h[0]).toContain('`/dispatch OPS-1 --here --dry-run`')
-    expect(firstCard('agents/tasks', ['ops'], false, { dirty: false }).next[0]).toContain('Write the task into it')
-  })
-  test('config lines: one per key set', () => {
+describe('GH-110: config lines', () => {
+  test('one per key set', () => {
     expect(configLines({ gate: 'pytest', baseRef: 'main', cardDir: 'docs/cards' })).toEqual(['config: gateMap.test = pytest', 'config: baseRef = main', 'config: cardDir = docs/cards'])
     expect(configLines({ gate: 'cargo test' })).toEqual(['config: gateMap.test = cargo test'])
   })

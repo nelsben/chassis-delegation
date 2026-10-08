@@ -645,7 +645,7 @@ describe('5B: /delegation init and the init tool', () => {
     expect(w.runs.every(r => r.argv[0] === 'git' && r.argv[1] === '-C')).toBe(true)
   })
 
-  test('GH-109: with the world made green setup writes the four init files and the gate map, and hands over the first card', async ($, on) => {
+  test('GH-109: with the world made green setup writes the four init files and the gate map, and asks for the first task', async ($, on) => {
     const answer = (argv: string[]): RunAnswer | undefined => {
       const rest = argv.slice(3).join(' ')
       if (rest === 'rev-parse --is-inside-work-tree') return { exitCode: 0, stdout: 'true\n' }
@@ -670,18 +670,11 @@ describe('5B: /delegation init and the init tool', () => {
     expect(out.text).toContain(`chassis-delegation setup in ${ROOT}: 6 of 6 required checks hold`)
     expect(out.text).toContain('· mode: repo=here (no origin/main); setup writes "baseRef": "main" and cards dispatch with --here')
     expect(out.text).toContain(`wrote ${ROOT}/agents/tasks/README.md`)
-    expect(out.text).toContain(`First card: save this as agents/tasks/OPS-1-first-task.md`)
-    expect(out.text).toContain('\n```markdown\n---\nid: OPS-1\n')
-    expect(out.text).toContain('red_test: REPLACE ME')
     expect(out.text).not.toContain('Next: write a card under')
     expect(out.text).not.toContain('update is pending')
     expect(out.text).toContain('config: gateMap.test = npm test')
     expect(out.text).toContain('config: baseRef = main')
-    expect(out.text).toContain('Commit the card')
-    expect(out.text).toContain('status: queued')
-    expect(out.text).toContain('`/dispatch OPS-1 --here --dry-run`')
-    expect(out.text).toContain('Read the diff before you accept')
-    for (const f of ['agents/tasks/README.md', 'agents/tasks/OPS-000-sample.md', '.chassis-delegation.json', '.gitignore']) expect(w.files.has(`${ROOT}/${f}`)).toBe(true)
+    for (const f of ['agents/tasks/README.md', '.chassis-delegation.json', '.gitignore']) expect(w.files.has(`${ROOT}/${f}`)).toBe(true)
     const cfgText = JSON.parse(w.files.get(`${ROOT}/.chassis-delegation.json`) ?? '{}')
     expect(cfgText.gateMap).toEqual({ test: 'npm test' })
     expect(cfgText.baseRef).toBe('main')
@@ -690,6 +683,33 @@ describe('5B: /delegation init and the init tool', () => {
     const again = await $.tool.call({ tool: 'mcp__chassis-delegation__setup' } as never)
     expect(resultText(again)).toContain('setup would have set "gateMap": {"test": "npm test"}, "baseRef": "main"')
     expect(w.files.get(`${ROOT}/.chassis-delegation.json`)).toBe('{"gateMap":{"test":"make test"}}')
+  })
+
+  test('GH-111: setup ends by asking for the first task: no card to save, no sample card, no commit step', async ($, on) => {
+    const answer = (argv: string[]): RunAnswer | undefined => {
+      const rest = argv.slice(3).join(' ')
+      if (rest === 'rev-parse --is-inside-work-tree') return { exitCode: 0, stdout: 'true\n' }
+      if (rest === 'rev-parse --show-toplevel') return { exitCode: 0, stdout: `${ROOT}\n` }
+      if (rest === 'rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n' }
+      if (rest === 'rev-parse --verify --quiet HEAD') return { exitCode: 0, stdout: 'abc1234\n' }
+      if (rest === 'rev-parse --verify --quiet origin/main') return { exitCode: 1, stdout: '' }
+      if (rest === 'status --porcelain') return { exitCode: 0, stdout: ' M x\n' }
+      return { exitCode: 0, stdout: '' }
+    }
+    const w = world(on, { run: answer, files: { [`${ROOT}/package.json`]: '{"scripts":{"test":"node --test"}}', '/usr/bin/git': '', '/usr/bin/node': '', '/usr/bin/npm': '' }, dirs: { [ROOT]: ['package.json'] } })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(delegation('setup'))
+    expect(out.text).not.toContain('First card: save this as')
+    expect(out.text).not.toContain('REPLACE ME')
+    expect(out.text).not.toContain('Commit the card')
+    expect(out.text).not.toContain('git add -A')
+    expect(out.text).not.toContain('Ask the person for the first task')
+    expect(String(out.text).trimEnd().split('\n').at(-1)).toBe('Set up. Tell Claude your first task in a sentence, for example: "add a function that reads a file header and returns its size, with a node --test test". Claude writes the card, shows you the brief, and dispatches when you say go.')
+    expect(w.files.has(`${ROOT}/agents/tasks/README.md`)).toBe(true)
+    expect(w.files.has(`${ROOT}/agents/tasks/OPS-000-sample.md`)).toBe(false)
+    const viaTool = resultText(await $.tool.call({ tool: 'mcp__chassis-delegation__setup' } as never))
+    expect(viaTool.trimEnd().split('\n').at(-1)).toBe('Ask the person for the first task, then call the card tool.')
+    expect(viaTool).toContain('Set up. Tell Claude your first task')
   })
 
   test('GH-109: /delegation with no config adds the not-set-up line', async ($, on) => {
@@ -925,7 +945,7 @@ describe('/dispatch', () => {
     const out = await $.command.run(commandInput('BE-101 --here --scope app/billing/Rate*.ts'))
     const brief = w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? ''
     const header = brief.split('\n')[0] ?? ''
-    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/** spend=15 budget=3-attempts report=chassis.report.v1]]')
+    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/**,agents/tasks/** spend=15 budget=3-attempts report=chassis.report.v1]]')
     expect(header).not.toContain(' base=')
     // no worktree, no fetch: the only git the dispatch runs reads the current branch
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD']])
@@ -958,12 +978,12 @@ describe('/dispatch', () => {
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput(`BE-101 --scope ${LLM}`))
     const header = (w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0] ?? ''
-    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,src/b.ts spend=15 budget=3-attempts`)
+    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,agents/tasks/**,src/b.ts spend=15 budget=3-attempts`)
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD'],
       ['git', '-C', ROOT, 'rev-parse', 'HEAD'],
     ])
-    expect(out.text).toContain(`   repo=here: base=${HEAD_SHA} · ignore=.delegation/**,traces/**,src/b.ts`)
+    expect(out.text).toContain(`   repo=here: base=${HEAD_SHA} · ignore=.delegation/**,traces/**,agents/tasks/**,src/b.ts`)
     expect(out.text).toContain(`3. no worktree (repo=here): the worker shares ${ROOT}`)
     expect(out.text).toContain(`brief ${SCRATCH}/briefs/BE-101.brief.md · repo=here in ${ROOT} · branch main · agent agent-1`)
     expect(w.spawns[0]).toMatchObject({ cwd: ROOT })
@@ -1684,5 +1704,88 @@ describe('GH-106: a per-attempt spend ceiling', () => {
     w.agents[0]!.status = 'running'
     await w.clock.advance(60_000) // the status line's tick
     expect(w.statuses.at(-1)).toContain('(1 live: T-6 $2.20)')
+  })
+})
+
+describe('GH-111: the card tool', () => {
+  const TOOL = 'mcp__chassis-delegation__card'
+  const cfgFile = JSON.stringify({ gateMap: { test: 'npm test' } })
+  const given = {
+    title: 'The rom reader returns the header size',
+    why: 'The decompiler cannot tell how big a header is.',
+    doneWhen: ['read_header(path) returns the size'],
+    scope: ['game_decompiler/**', 'tests/**'],
+    redTest: 'python3 -m unittest tests.test_rom',
+  }
+  const setup = (on: Parameters<typeof world>[0], files: Record<string, string> = {}) =>
+    world(on, { files: { [`${ROOT}/.chassis-delegation.json`]: cfgFile, ...files }, dirs: { [`${ROOT}/agents/tasks`]: ['README.md'] }, store: { 'delegation.agentTypes': ['general-purpose'] } })
+
+  test('writes the card, returns the dry-run header and the one-line summary, spawns nothing', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    expect(w.tools).toContain('card')
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
+    const path = `${ROOT}/agents/tasks/OPS-1-the-rom-reader-returns-the-header.md`
+    expect(w.files.get(path)).toContain('id: OPS-1\n')
+    expect(out).toContain(`wrote ${path}`)
+    expect(out).toContain('OPS-1 · standard → sonnet · scope game_decompiler/**, tests/** · gate test · red: python3 -m unittest tests.test_rom · 2 attempts · $6 ceiling')
+    expect(out).toContain('```\n[[brief v=1 task=OPS-1 subtask=main purpose=build tier=standard model=sonnet scope=game_decompiler/**,tests/** forbid= red_test="python3 -m unittest tests.test_rom" gate=test spend=6 budget=2-attempts report=chassis.report.v1]]\n```')
+    expect(out.trimEnd().endsWith('Say go and Claude dispatches OPS-1.')).toBe(true)
+    expect(w.files.has(`${SCRATCH}/briefs/OPS-1.brief.md`)).toBe(true)
+    expect(w.spawns).toHaveLength(0)
+    // a second task takes the next id, and the first card is never overwritten
+    const again = resultText(await $.tool.call({ tool: TOOL, ...given, title: 'Another thing' } as never))
+    expect(again).toContain(`wrote ${ROOT}/agents/tasks/OPS-2-another-thing.md`)
+    expect(w.files.get(path)).toContain('id: OPS-1\n')
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('a refusal writes nothing and says what to change', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const before = w.files.size
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given, scope: ['the decompiler'] } as never))
+    expect(out).toContain('scope must be globs, e.g. game_decompiler/**, tests/test_rom.py')
+    expect(resultText(await $.tool.call({ tool: TOOL, ...given, gate: 'nope' } as never))).toContain('gate nope is not in gateMap; the ids are test')
+    expect(w.files.size).toBe(before)
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('with dispatch: true it dispatches the card it wrote: one spawn', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given, dispatch: true } as never))
+    expect(out).toContain(`wrote ${ROOT}/agents/tasks/OPS-1-the-rom-reader-returns-the-header.md`)
+    expect(out).toContain('4. spawned')
+    expect(out).not.toContain('Say go and Claude dispatches')
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test('a baseRef alone does not mean repo=here: with origin/main the card is a worktree card', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, {
+      files: { [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ gateMap: { test: 'npm test' }, baseRef: 'develop' }) },
+      dirs: { [`${ROOT}/agents/tasks`]: [] },
+      store: { 'delegation.agentTypes': ['general-purpose'] },
+    })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
+    const card = w.files.get(`${ROOT}/agents/tasks/OPS-1-the-rom-reader-returns-the-header.md`) ?? ''
+    expect(card).not.toContain('repo: here')
+    expect(out).not.toContain(' repo=here')
+  })
+
+  test('repo=here: the card folder is in the brief ignore= and nothing about committing is said', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, {
+      files: { [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ gateMap: { test: 'npm test' }, baseRef: 'main' }) },
+      dirs: { [`${ROOT}/agents/tasks`]: [] },
+      // no remote: origin/main does not resolve, so the card tool works in the shared checkout
+      run: argv => (argv.join(' ').endsWith('rev-parse --abbrev-ref HEAD') ? { exitCode: 0, stdout: 'main\n' } : argv.join(' ').endsWith('rev-parse --verify --quiet origin/main') ? { exitCode: 1, stdout: '' } : undefined),
+      store: { 'delegation.agentTypes': ['general-purpose'] },
+    })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
+    expect(out).toContain('repo=here base=main ignore=.delegation/**,agents/tasks/** ')
+    expect(out).not.toMatch(/commit/i)
+    expect(w.spawns).toHaveLength(0)
   })
 })

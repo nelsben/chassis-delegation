@@ -46,11 +46,11 @@ harness, no network. Version 0.4.0, MIT.
    checks the repo and the tools the mod needs (see [Setup](#setup)), names the
    exact fix for each one that fails, and writes nothing until every required
    check holds. Run the fixes, then run it again. Once they hold it scaffolds
-   the repo and prints the first card to write. `/delegation init` is the bare
+   the repo and asks you for your first task in a sentence. `/delegation init` is the bare
    scaffold, with no checks. Either way it adds four things and prints what it
    wrote. It never overwrites a file:
    - `agents/tasks/README.md`, describing the card format;
-   - a sample card, `agents/tasks/OPS-000-sample.md`;
+   - a sample card, `agents/tasks/OPS-000-sample.md` (bare `/delegation init` only; setup does not write it);
    - `.chassis-delegation.json`, holding every key with its default and a `_comment` per key (setup also fills in `gateMap`, and `baseRef` or `cardDir` when it found the need);
    - a `.delegation/` line in `.gitignore`.
 
@@ -73,11 +73,12 @@ To check the folder on the new machine, run `tests/selfcheck.sh`. It runs
 | Name | Who calls it | What it does |
 | --- | --- | --- |
 | `/delegation` | you type it | shows the delegation state and where the config came from |
-| `/delegation setup` | you type it | checks the repo and tools, names the fixes, then scaffolds and hands over the first card (see [Setup](#setup)) |
+| `/delegation setup` | you type it | checks the repo and tools, names the fixes, then scaffolds and asks for your first task (see [Setup](#setup)) |
 | `/delegation init` | you type it | the bare scaffold, no checks (step 4 above) |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card; the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool |
+| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test; it writes the card, runs the dry run and returns the one-line summary and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
 | `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (no input) |
 
@@ -113,29 +114,44 @@ under `docs/cards/`); `gh` on PATH (a report's `pr=` claim is checked only with
 it); uncommitted changes in worktree mode (a worker's worktree lacks them); the
 background debrief spending an agent at a quiet stop.
 
-When every required check holds, setup runs the init scaffold, writes
-`.chassis-delegation.json` with `gateMap: {"test": "<detected>"}` (an existing
-config is left as it is and setup prints what it would have set), and prints a
-first card to save as `<cardDir>/OPS-1-first-task.md`, then the next steps:
-`/dispatch OPS-1 --dry-run`, then `/dispatch OPS-1`. A verified verdict means
-the report matches git, not that the work is right: read the diff.
-The card is printed inside a fenced `markdown` block, so VS Code and the
-desktop app show it verbatim and it copies whole; it carries a `red_test:` line
-whose example comes from the detected gate. Setup prints init's file lines but
-not init's own "Next:" line, one `config:` line per key it set in a fresh
-config (`gateMap.test`, and `baseRef` or `cardDir` when set), and, when the
-scaffold left the tree dirty, starts the next steps with committing the
-scaffold and the card (in `repo=here` mode, the card).
+When every required check holds, setup runs the init scaffold (the card
+folder's README, `.chassis-delegation.json`, the `.gitignore` line; no sample
+card), writes `.chassis-delegation.json` with `gateMap: {"test": "<detected>"}`
+(an existing config is left as it is and setup prints what it would have set),
+prints one `config:` line per key it set in a fresh config (`gateMap.test`, and
+`baseRef` or `cardDir` when set), and ends by asking for the first task:
+
+    Set up. Tell Claude your first task in a sentence, for example: "add a
+    function that reads a file header and returns its size, with a unittest".
+    Claude writes the card, shows you the brief, and dispatches when you say go.
+
+The example follows the detected gate. Through the `setup` tool the result adds
+`Ask the person for the first task, then call the card tool.` Setup prints
+init's file lines but not init's own "Next:" line. Nothing needs committing
+before a dispatch: a worktree dispatch reads the card from the main checkout,
+and in `repo=here` mode the card folder is in the always-applied `ignore=` set.
+A verified verdict means the report matches git, not that the work is right:
+read the diff.
 `/delegation` in a root with no config adds `not set up here: run /delegation setup`.
 
 ## Sixty seconds
 
-1. **Write a card.** Copy `agents/tasks/OPS-000-sample.md` to
-   `agents/tasks/OPS-1-fix-the-thing.md`. Give it a real id, title, scope,
-   red test and gate, and set `status: queued`.
-2. **Ask the brain.** Say "dispatch OPS-1". The brain calls the `dispatch`
-   tool; you can also type `/dispatch OPS-1` yourself. The tool reports what
-   it did, one line per step:
+1. **Set up, then say the task.** Run `/delegation setup` once. Then tell
+   Claude what you want in a sentence ("add a function that reads a file
+   header and returns its size, with a unittest"). Claude looks at the repo,
+   calls the `card` tool, and shows you the card's path, a one-line summary and
+   the brief header:
+
+       wrote …/agents/tasks/OPS-1-add-a-function-that-reads.md
+       OPS-1 · standard → sonnet · scope game_decompiler/**, tests/** · gate test · red: python3 -m unittest tests.test_rom · 2 attempts · $6 ceiling
+
+       [[brief v=1 task=OPS-1 subtask=main purpose=build tier=standard model=sonnet …]]
+
+       Say go and Claude dispatches OPS-1.
+
+2. **Say go.** Claude calls the `dispatch` tool (or the `card` tool again with
+   `dispatch: true`); you can also type `/dispatch OPS-1` yourself. The tool
+   reports what it did, one line per step:
 
        1. card …/agents/tasks/OPS-1-fix-the-thing.md (status queued, domain ops)
        2. brief …/.delegation/briefs/OPS-1.brief.md written (tier=standard, model=sonnet, budget=2-attempts)
@@ -176,7 +192,10 @@ lines.
 ## The card
 
 Each card is one file, `agents/tasks/<ID>-<slug>.md`: YAML frontmatter, then
-the spec in markdown. `<ID>` is `<PREFIX>-<number>[letter]`, for example
+the spec in markdown. The `card` tool writes cards from a sentence (the next
+free id for the domain's prefix, a slug from the title, scope given as globs,
+a gate id that exists in `gateMap`, a red test or `none`), and refuses with the
+fix when a field is wrong, writing nothing. You can still write one by hand. `<ID>` is `<PREFIX>-<number>[letter]`, for example
 `OPS-12`, `BE-101` or `FE-7b`.
 
     ---
@@ -402,7 +421,7 @@ is at when `baseRef` is `HEAD`. The steps say:
   `HEAD` is pinned to the sha HEAD is at when you dispatch, so a worker that
   commits is measured from where it started. With neither, the brief names no
   base and the verifier uses the chain.
-- **`ignore=`** is the config's `ignore` (default `.delegation/**`) plus the
+- **`ignore=`** is the config's `ignore` (default `.delegation/**`) plus the card folder (`<cardDir>/**`, GH-111, so a new card is never in the worker's delta) plus the
   files= already claimed by the other repo=here cards in flight in this
   checkout. A card is in flight while one of its store records
   (`delegation.tasks.<ID>`, marked with this root) has no verdict yet.
@@ -562,7 +581,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `evalLiveCommand` | string | string | `""` | what the T2 (live, paid) runner runs |
 | `autoEval` | boolean | boolean | `false` | run `evalCommand` once per new `origin/main` sha while idle (needs `evalCommand`) |
 | `baseRef` | string | string | `""` (the chain: `origin/main`, `main`, `origin/master`, `master`) | where the delta starts when a brief names no `base=`. Used as given (`main`, `develop`, `HEAD~2`); a repo=here dispatch writes it into the brief as `base=`, and pins `HEAD` to its sha |
-| `ignore` | array | comma string | `[".delegation/**"]` | globs always taken off a repo=here delta; `[]` in the repo file ignores nothing |
+| `ignore` | array | comma string | `[".delegation/**"]` | globs always taken off a repo=here delta (the card folder is always added to them); `[]` in the repo file ignores nothing |
 
 Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `settings.json`):
 

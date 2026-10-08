@@ -132,10 +132,11 @@ import { gateTemplatesOf, resolveGateRuns } from './lib/gates'
 import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
-import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, handoverText, isHereMode, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
+import { CARD_TOOL, cardFromFields, cardSummary, sayGo } from './lib/card'
+import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
-import { isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
+import { ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
 import { alreadyQueuedDeny, alreadyQueuedPart, drainRefusalRow, enqueue, hasSlot, isFinalDeny, isQueuedDeny, promptKey, queuedDeny, queuedIndex, queuedText, startingOthers, waitedMinutes } from './lib/scheduler'
 import {
   CLASSIFIER_LABELS,
@@ -1391,7 +1392,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
       priorRed,
       ...(spawn.replay && spawn.base ? { base: spawn.base } : {}),
       ...(cfg.baseRef ? { baseRef: cfg.baseRef } : {}),
-      ...(here ? { here: true, ignore: cfg.ignore, others } : {}),
+      ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),
     },
     { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path) },
   )
@@ -1963,7 +1964,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       if (/^[0-9a-f]{7,40}$/.test(sha)) hereBase = sha
       else out.push('   note: baseRef HEAD could not be pinned (git rev-parse HEAD failed); the brief says base=HEAD')
     }
-    const ignore = hereIgnore(cfg.ignore, inflight.flatMap(c => c.files))
+    const ignore = hereIgnore(ignoreWithCards(cfg.ignore, cfg.cardDir), inflight.flatMap(c => c.files))
     header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore })
   } else {
     // GH-105: a base that is not the default is written, so the verifier diffs from the commit the worktree was cut from
@@ -2282,7 +2283,7 @@ async function gatherSetup($: Host, root: string): Promise<SetupProbe> {
   }
 }
 
-async function runSetup($: Host): Promise<string> {
+async function runSetup($: Host, viaTool = false): Promise<string> {
   const root = (await $.session.root()).replace(/\/+$/, '')
   await loadRepoConfig($)
   const facts = await gatherSetup($, root)
@@ -2302,7 +2303,7 @@ async function runSetup($: Host): Promise<string> {
     existing[path] = text ?? ''
   }
   const found = foundOf(facts)
-  const plan = initPlan(root, existing).map(s => {
+  const plan = initPlan(root, existing, { sample: false }).map(s => {
     if (unreadable.has(s.path)) return { ...s, action: 'skip' as const }
     if (s.path === configPath && s.action === 'write') return { ...s, text: scaffoldConfig(s.text, found) }
     return s
@@ -2318,9 +2319,7 @@ async function runSetup($: Host): Promise<string> {
   }
   repoText = undefined
   await loadRepoConfig($)
-  const dir = cfg.cardDir
   const wroteConfig = plan.some(s => s.path === configPath && s.action === 'write' && !failed[s.path])
-  const dirty = facts.dirty || plan.some(s => s.action !== 'skip' && !failed[s.path])
   return [
     head,
     '',
@@ -2328,8 +2327,50 @@ async function runSetup($: Host): Promise<string> {
     ...(wroteConfig ? configLines(found) : []),
     ...(hadConfig ? [wouldSet(found)] : []),
     '',
-    handoverText(dir, cfg.domains, isHereMode(facts), { gate: detectGate(facts), dirty }),
+    handoverText(detectGate(facts)),
+    ...(viaTool ? [BRAIN_HANDOVER] : []),
   ].join('\n')
+}
+
+// ---- GH-111: the card tool -------------------------------------------------------------
+/**
+ * Writes the card the brain described, then runs the dry run for it (the code
+ * `/dispatch <ID> --dry-run` runs) and answers the card's path, a one-line
+ * summary, the brief header and "say go"; with `dispatch: true`, dispatches.
+ * A refusal writes nothing.
+ */
+async function runCard($: Host, input: Record<string, unknown>): Promise<string> {
+  if (input.dispatch !== undefined && typeof input.dispatch !== 'boolean') return 'card: dispatch must be true or false'
+  await loadRepoConfig($)
+  const root = await $.session.root()
+  const dir = cardDirPath(root, cfg.cardDir)
+  let names: string[] = []
+  try {
+    names = (await $.fs.list(dir)).map(e => e.name)
+  } catch {
+    names = []
+  }
+  // repo=here when the repo has no origin/main (worktree mode cuts from it); a baseRef alone says nothing about the mode
+  const originMain = await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', 'origin/main'])
+  const here = !(originMain.ok && originMain.exitCode === 0)
+  const made = cardFromFields(input, { domains: cfg.domains, gateIds: Object.keys(cfg.gateMap), names, spendByTier: cfg.spendByTier, here })
+  if ('error' in made) return `card refused: ${made.error}`
+  const path = `${dir}/${made.file}`
+  if (names.includes(made.file) || (await exists($, path))) return `card refused: ${path} exists; cards are never overwritten`
+  try {
+    await $.fs.write(path, made.text)
+  } catch (err) {
+    return `card not written: ${path}: ${String(err)}`
+  }
+  const wrote = `wrote ${path}`
+  if (input.dispatch === true) return [wrote, await runDispatch($, { id: made.id, dryRun: false, base: 'origin/main', ...(here ? { here: true as const } : {}) })].join('\n')
+  const dry = await runDispatch($, { id: made.id, dryRun: true, base: 'origin/main', ...(here ? { here: true as const } : {}) })
+  const lines = dry.split('\n')
+  const header = lines.at(-1) ?? ''
+  if (!header.startsWith('[[brief ')) return [wrote, dry].join('\n')
+  const alias = finalAlias({ tier: made.tier, source: 'brief' }, cfg.tierMap[made.tier]).alias
+  const notes = lines.filter(l => /^\s+(note|warning):/.test(l)).map(l => l.trim())
+  return [wrote, cardSummary(made, alias), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : []), '', sayGo(made.id)].join('\n')
 }
 
 /** `/delegation` with no argument: the delegation state and where the config came from. */
@@ -2345,7 +2386,7 @@ async function statusReport($: Host): Promise<string> {
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
     `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${cfg.maxWorkers} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
-    `base: ${cfg.baseRef || 'origin/main → main → origin/master → master'} · repo=here ignore: ${cfg.ignore.join(', ') || '(none)'}`,
+    `base: ${cfg.baseRef || 'origin/main → main → origin/master → master'} · repo=here ignore: ${ignoreWithCards(cfg.ignore, cfg.cardDir).join(', ') || '(none)'}`,
   ].join('\n')
 }
 
@@ -2871,6 +2912,11 @@ export const register: Register = (on, opts) => {
       debug($, `the dispatch tool was not registered: ${String(err)}`)
     }
     try {
+      await $.tool.register({ name: CARD_TOOL.name, description: CARD_TOOL.description, inputSchema: CARD_TOOL.inputSchema })
+    } catch (err) {
+      debug($, `the card tool was not registered: ${String(err)}`)
+    }
+    try {
       await $.tool.register({ name: INIT_TOOL.name, description: INIT_TOOL.description, inputSchema: INIT_TOOL.inputSchema })
     } catch (err) {
       debug($, `the init tool was not registered: ${String(err)}`)
@@ -2926,8 +2972,9 @@ export const register: Register = (on, opts) => {
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
     return { text: 'usage: /delegation [setup|init]' }
   })
+  on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async $ => ({ result: await runInit($) }))
-  on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async $ => ({ result: await runSetup($) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async $ => ({ result: await runSetup($, true) }))
 
   // ---- session.compact: keep the loop position (2E) ----------------------------------
   on('session.compact', async ($, e, next) => {
