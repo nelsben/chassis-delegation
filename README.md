@@ -19,22 +19,39 @@ harness, no network. Version 0.4.0, MIT.
 
        git clone https://github.com/nelsben/chassis-delegation.git ~/chassis-delegation
 
-2. **Load the plugin.** Pick one:
-   - `claude --plugin-dir ~/chassis-delegation` loads it for one session.
-     Repeat the flag to load several.
-   - `export CLAUDE_CODE_PLUGIN_DIRS=~/chassis-delegation` loads it in every
-     process that has the variable.
-   - In the desktop app or an SDK host, where no flag can be given, put
-     `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json`.
-3. **Start or restart Claude Code.** A running session does not see a plugin
-   added after it started: typing `/delegation` there gets Claude Code's own
-   "no command with that name" answer. Quit and start it again with the
-   plugin loaded.
-4. **Run `/delegation init`** inside Claude Code, in the repo you work on. It
-   adds four things and prints what it wrote. It never overwrites a file:
+2. **Load the plugin.** Pick the route that fits where you run Claude Code:
+   - **Terminal, one session:** start it with
+     `claude --plugin-dir ~/chassis-delegation`. Repeat the flag to load several.
+   - **Any session already running, including VS Code and the desktop app,
+     with no restart:** hot reload. Ask Claude to invoke the
+     `plugin-authoring` skill; the skill's first paragraph names this
+     session's hot-reload folder, `~/.claude/dev-mods/<session-id>/`. Clone the
+     mod into a child of it as a real copy (`git clone
+     https://github.com/nelsben/chassis-delegation.git
+     ~/.claude/dev-mods/<session-id>/chassis-delegation`; the watcher does not
+     follow a symlink). When the turn ends, Claude Code asks "Enable hot
+     reloading for this session?": answer **Enable for this session**. The mod
+     loads then, and reloads after each later change to that folder. This is
+     the way in for the VS Code extension, which takes no `--plugin-dir` flag.
+   - **Every session, permanently:** `CLAUDE_CODE_PLUGIN_DIRS` in your shell,
+     or in the `env` block of `~/.claude/settings.json`. It applies to every
+     project and every new process. Point it at a checkout of your own that
+     you update deliberately, never at a session's hot-reload folder, and not
+     while some session also hot-loads the mod, or that session loads it twice.
+3. **Start or restart Claude Code** if you chose the flag or the setting. A
+   running session does not see a plugin added that way after it started:
+   typing `/delegation` there gets Claude Code's own "no command with that
+   name" answer. Hot reload needs no restart.
+4. **Run `/delegation setup`** inside Claude Code, in the repo you work on. It
+   checks the repo and the tools the mod needs (see [Setup](#setup)), names the
+   exact fix for each one that fails, and writes nothing until every required
+   check holds. Run the fixes, then run it again. Once they hold it scaffolds
+   the repo and prints the first card to write. `/delegation init` is the bare
+   scaffold, with no checks. Either way it adds four things and prints what it
+   wrote. It never overwrites a file:
    - `agents/tasks/README.md`, describing the card format;
    - a sample card, `agents/tasks/OPS-000-sample.md`;
-   - `.chassis-delegation.json`, holding every key with its default and a `_comment` per key;
+   - `.chassis-delegation.json`, holding every key with its default and a `_comment` per key (setup also fills in `gateMap`, and `baseRef` or `cardDir` when it found the need);
    - a `.delegation/` line in `.gitignore`.
 
    If Claude Code says an update is pending, restart the session once before
@@ -56,14 +73,53 @@ To check the folder on the new machine, run `tests/selfcheck.sh`. It runs
 | Name | Who calls it | What it does |
 | --- | --- | --- |
 | `/delegation` | you type it | shows the delegation state and where the config came from |
-| `/delegation init` | you type it | scaffolds the repo (step 4 above) |
+| `/delegation setup` | you type it | checks the repo and tools, names the fixes, then scaffolds and hands over the first card (see [Setup](#setup)) |
+| `/delegation init` | you type it | the bare scaffold, no checks (step 4 above) |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card; the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
+| `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (no input) |
 
 A user skill or command named `delegation` or `dispatch` under
 `~/.claude/skills` or `~/.claude/commands` shadows the mod's commands; remove it.
+
+## Setup
+
+`/delegation setup` (or the `setup` tool) checks the repo and prints one line
+per check, `✓` or `✗` for the required ones and `·` for advice, with the fix on
+the line under a failing one. The mod cannot run the fixes itself (its
+[host-command allowlist](#the-host-command-allowlist) has no `git init`,
+commit, remote or install), so the brain or you run them, then run setup again.
+It is idempotent.
+
+Required:
+
+1. a git repo (`git init -b main`);
+2. the session root is the repo's top level;
+3. a first commit;
+4. a gate: `package.json` `scripts.test` (not npm's placeholder; `pnpm test` or
+   `yarn test` by lockfile), `pytest`, `cargo test` or `go test ./...`;
+5. the tools on PATH: `git`, and the stack's runner (`node` and its package
+   manager, `python3` and `pytest`, `cargo`, `go`);
+6. no `~/.claude/skills/{delegation,dispatch}` or
+   `~/.claude/commands/{delegation,dispatch}.md` shadowing the mod.
+
+Advice (never blocks): the mode (`origin/main` resolves: worktree mode; no
+remote: `repo=here`, setup writes `"baseRef"` and cards dispatch with
+`--here`); a lockfile for the brief's install step; a nested, gitignored child
+repo (start Claude Code inside it to delegate there); a plugin repo (cards
+under `docs/cards/`); `gh` on PATH (a report's `pr=` claim is checked only with
+it); uncommitted changes in worktree mode (a worker's worktree lacks them); the
+background debrief spending an agent at a quiet stop.
+
+When every required check holds, setup runs the init scaffold, writes
+`.chassis-delegation.json` with `gateMap: {"test": "<detected>"}` (an existing
+config is left as it is and setup prints what it would have set), and prints a
+first card to save as `<cardDir>/OPS-1-first-task.md`, then the next steps:
+`/dispatch OPS-1 --dry-run`, then `/dispatch OPS-1`. A verified verdict means
+the report matches git, not that the work is right: read the diff.
+`/delegation` in a root with no config adds `not set up here: run /delegation setup`.
 
 ## Sixty seconds
 

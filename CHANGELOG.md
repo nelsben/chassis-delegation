@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **`/delegation setup` checks the repo and hands over the first card (GH-109).**
+  A new project learned each requirement (a git repo with a first commit, a
+  remote with `main` or `repo=here`, a passing test command, a lockfile, no
+  shadowing skill) from a failure. `/delegation setup` and the
+  `mcp__chassis-delegation__setup` tool run one function: six required checks
+  and seven advice lines, each failing check with the exact fix to run (the
+  allowlist admits no `git init`, commit or install, so the mod checks and the
+  brain fixes). While any required check fails it writes nothing; when they
+  hold it runs the init scaffold, writes the config with the detected
+  `gateMap`, `baseRef` (no remote) and `cardDir` (plugin repo), and prints the
+  first card and the next `/dispatch` steps. Pure logic in `hooks/lib/setup.ts`.
+  `/delegation` with no config adds `not set up here: run /delegation setup`.
+  README: step 4 is now setup, a Setup section, the commands table.
+  A Python project runs `pytest` only when `pytest.ini` names it or it is
+  installed; otherwise the gate is `python3 -m unittest discover -s tests`,
+  which needs nothing but `python3`. The README's install steps now lead with
+  hot reload for a session already running (VS Code, the desktop app), and
+  warn against pointing the global setting at a session's hot-reload folder.
+
 - **A per-attempt spend ceiling (GH-106, closes public #15).** Fifteen
   standard cards cost $1 to $4.55; two cost $21.79 and $32.48 because the
   workers over-delivered, and nothing told the worker or the mod what one

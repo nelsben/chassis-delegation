@@ -132,6 +132,7 @@ import { gateTemplatesOf, resolveGateRuns } from './lib/gates'
 import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
+import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, foundOf, handoverText, isHereMode, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
@@ -2212,6 +2213,115 @@ async function runInit($: Host): Promise<string> {
   return initText(root, plan, failed, true)
 }
 
+// ---- GH-109: /delegation setup and the setup tool ----------------------------------------
+/** Gather the probe with allowlisted git reads and `$.fs`/`$.env` only. */
+async function gatherSetup($: Host, root: string): Promise<SetupProbe> {
+  const git = async (...args: string[]): Promise<string | undefined> => {
+    const r = await run($, ['git', '-C', root, ...args])
+    return r.ok && r.exitCode === 0 ? r.stdout.trim() : undefined
+  }
+  const inRepo = (await git('rev-parse', '--is-inside-work-tree')) === 'true'
+  const toplevel = inRepo ? await git('rev-parse', '--show-toplevel') : undefined
+  const branch = inRepo ? await git('rev-parse', '--abbrev-ref', 'HEAD') : undefined
+  const hasCommit = inRepo && (await git('rev-parse', '--verify', '--quiet', 'HEAD')) !== undefined
+  const hasOriginMain = inRepo && (await git('rev-parse', '--verify', '--quiet', 'origin/main')) !== undefined
+  const dirty = inRepo && ((await git('status', '--porcelain')) ?? '') !== ''
+  const markers: string[] = []
+  for (const m of ROOT_MARKERS) if (await exists($, `${root}/${m}`)) markers.push(m)
+  const packageJson = markers.includes('package.json') ? await readText($, `${root}/package.json`) : undefined
+  let pyTests = false
+  try {
+    pyTests = (await $.fs.list(`${root}/tests`)).some(e => /^test_.*\.py$/.test(e.name))
+  } catch {
+    pyTests = false
+  }
+  let path = ''
+  let home = ''
+  try {
+    path = (await $.env.get('PATH')) ?? ''
+    home = (await $.env.get('HOME')) ?? ''
+  } catch {
+    // an unreadable environment finds nothing on PATH, and the check says so
+  }
+  const dirs = path.split(':').filter(d => d !== '')
+  const onPath: string[] = []
+  for (const tool of PATH_TOOLS) {
+    for (const d of dirs) {
+      if (await exists($, `${d.replace(/\/+$/, '')}/${tool}`)) {
+        onPath.push(tool)
+        break
+      }
+    }
+  }
+  const shadows: string[] = []
+  if (home) for (const s of SHADOWS) if (await exists($, `${home.replace(/\/+$/, '')}/${s}`)) shadows.push(s)
+  const childRepos: string[] = []
+  try {
+    for (const e of await $.fs.list(root)) if (e.name !== '.git' && (await exists($, `${root}/${e.name}/.git`))) childRepos.push(e.name)
+  } catch {
+    // no listing, no nested repos named
+  }
+  const gitignore = await readText($, `${root}/.gitignore`)
+  return {
+    root,
+    home,
+    inRepo,
+    ...(toplevel ? { toplevel } : {}),
+    ...(branch ? { branch } : {}),
+    hasCommit,
+    hasOriginMain,
+    dirty,
+    markers,
+    ...(packageJson !== undefined ? { packageJson } : {}),
+    pyTests,
+    onPath,
+    shadows,
+    childRepos,
+    ...(gitignore !== undefined ? { gitignore } : {}),
+    autoDebrief: cfg.autoDebrief,
+  }
+}
+
+async function runSetup($: Host): Promise<string> {
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  await loadRepoConfig($)
+  const facts = await gatherSetup($, root)
+  const lines = setupChecks(facts)
+  const head = setupText(root, lines)
+  if (!allRequiredHold(lines)) return head
+  // phase 2: the init plan (never overwriting), the config from what was found, the first card
+  const configPath = `${root}/${REPO_CONFIG_FILE}`
+  const hadConfig = await exists($, configPath)
+  const existing: Record<string, string | undefined> = {}
+  const unreadable = new Set<string>()
+  for (const rel of [...INIT_FILES, PLUGIN_MANIFEST]) {
+    const path = `${root}/${rel}`
+    if (!(await exists($, path))) continue
+    const text = await readText($, path)
+    if (text === undefined) unreadable.add(path)
+    existing[path] = text ?? ''
+  }
+  const found = foundOf(facts)
+  const plan = initPlan(root, existing).map(s => {
+    if (unreadable.has(s.path)) return { ...s, action: 'skip' as const }
+    if (s.path === configPath && s.action === 'write') return { ...s, text: scaffoldConfig(s.text, found) }
+    return s
+  })
+  const failed: Record<string, string> = {}
+  for (const step of plan) {
+    if (step.action === 'skip') continue
+    try {
+      await $.fs.write(step.path, step.text)
+    } catch (err) {
+      failed[step.path] = String(err)
+    }
+  }
+  repoText = undefined
+  await loadRepoConfig($)
+  const dir = cfg.cardDir
+  return [head, '', initText(root, plan, failed, true), ...(hadConfig ? [wouldSet(found)] : []), '', handoverText(dir, cfg.domains, isHereMode(facts))].join('\n')
+}
+
 /** `/delegation` with no argument: the delegation state and where the config came from. */
 async function statusReport($: Host): Promise<string> {
   await loadRepoConfig($)
@@ -2222,6 +2332,7 @@ async function statusReport($: Host): Promise<string> {
     ...state,
     '',
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
+    ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
     `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${cfg.maxWorkers} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
     `base: ${cfg.baseRef || 'origin/main → main → origin/master → master'} · repo=here ignore: ${cfg.ignore.join(', ') || '(none)'}`,
@@ -2482,6 +2593,13 @@ async function spawnSelf($: Host, input: { prompt: string; description: string; 
 }
 
 /** The input schema of the `init` tool: none. */
+const SETUP_TOOL = {
+  name: 'setup',
+  description:
+    'Checks the repo for chassis-delegation and returns what to fix; run the fixes, then call it again. When every required check holds it scaffolds the config and returns the first card to write.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+} as const
+
 const INIT_TOOL = {
   name: 'init',
   description:
@@ -2733,7 +2851,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "init" scaffolds this repo for chassis-delegation', argumentHint: '[init]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup|init]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -2746,6 +2864,11 @@ export const register: Register = (on, opts) => {
       await $.tool.register({ name: INIT_TOOL.name, description: INIT_TOOL.description, inputSchema: INIT_TOOL.inputSchema })
     } catch (err) {
       debug($, `the init tool was not registered: ${String(err)}`)
+    }
+    try {
+      await $.tool.register({ name: SETUP_TOOL.name, description: SETUP_TOOL.description, inputSchema: SETUP_TOOL.inputSchema })
+    } catch (err) {
+      debug($, `the setup tool was not registered: ${String(err)}`)
     }
     await loadRepoConfig($)
     try {
@@ -2789,10 +2912,12 @@ export const register: Register = (on, opts) => {
   on('command.run', { command: 'delegation' }, async ($, e) => {
     const arg = e.args.trim()
     if (arg === 'init') return { text: await runInit($) }
+    if (arg === 'setup') return { text: await runSetup($) }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [init]' }
+    return { text: 'usage: /delegation [setup|init]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async $ => ({ result: await runInit($) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async $ => ({ result: await runSetup($) }))
 
   // ---- session.compact: keep the loop position (2E) ----------------------------------
   on('session.compact', async ($, e, next) => {
