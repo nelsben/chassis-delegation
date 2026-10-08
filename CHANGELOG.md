@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **A live delegation dashboard (GH-112).** A band above the prompt (drawn only
+  while a worker is live, queued or owed a verdict; hover it for a card, press
+  `[ details ]` for the pane) and a pane opened by `/delegation dashboard`:
+  tiles (live, queued, spend, verified first try), session spend over time with
+  spawn and verdict ticks, a worktree table (task, model chip, state, folder and
+  branch, tokens, cost, attempt), spend by model, then the six cross-session
+  blocks under "Across sessions". Pure model in `hooks/lib/live.ts`; the band and
+  pane in `band.tsx` and `pane.tsx`; the spend series (15 s live, 60 s idle, 240
+  points) lives in `$.state`. A new `/config` boolean, `dashboardBand`, turns the
+  band off. A worker's tokens and cost update when its run ends (public issue
+  #22), and the UI says so.
+  A redraw reads the store's attempt records at most once every 15 seconds;
+  the mod's own record writes show at once, other sessions' within 15 seconds.
+
 ## 0.5.0 — 2026-10-08
 
 Twelve cards from adopter reports and a first new project, each dispatched

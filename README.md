@@ -148,6 +148,47 @@ What to do:
 Clone again (step 2: the history changed), then read `CHANGELOG.md` from your
 version up.
 
+## Dashboard
+
+A live view of what delegation is doing and spending, in two places:
+
+- **The band above the prompt**, drawn only while a worker is live, a spawn is
+  queued or a verdict is owed (nothing otherwise):
+  `delegation · 2 live · 1 queued · $4.12 ·` a sparkline of the last 30
+  minutes of spend, and a `[ details ]` button that opens the pane. The whole
+  band is a hover scope: hover it and a card opens beneath the row with the
+  first three blocks below. Turn the band off with the `dashboardBand`
+  setting in `/config` (default on); `/delegation dashboard` still opens the pane.
+- **The pane**, opened by `/delegation dashboard` or the band's `[ details ]`
+  and never on its own. It draws all four blocks, then "Across sessions" (the
+  six cross-session sparklines over the last 14 sessions) and the open items.
+
+The four blocks:
+
+1. **Tiles**: live workers, queued, spend this session, and how many cards
+   verified on the first attempt (n of m).
+2. **Spend over time**: cumulative session dollars as one line with a light
+   area, in the surface's text colour (it is the total, not a model), with a
+   tick on the time axis for each spawn and verdict. On desktop, VS Code and
+   mobile it is an Svg with a crosshair tooltip (time, dollars so far, the
+   nearest event); the terminal draws the same as a grid of block glyphs.
+3. **Worktrees**: one row per task this session plus any worktree on disk
+   under the mod's naming (`<repo>-<ID>`, or under `worktreeRoot`): task, model
+   (a chip in the model's colour and its name), state (`live 04:12`,
+   `queued #2`, `verdict owed`, or the verdict with its icon), worktree folder
+   and branch, tokens, cost, and attempt over budget.
+4. **Spend by model**: a bar each for haiku, sonnet and opus (anything else is
+   "other"), labelled `sonnet · $3.10 · 412k tok · 4 verified`.
+
+What is live and what is not. The spend line samples the session's cost every
+15 seconds while a worker is live or queued and every 60 seconds otherwise
+(the last 240 points are kept, and survive a reload), and the live and queued
+counts and the `live mm:ss` clock follow the engine's agent list. A worker the
+mod spawns itself does not run the mod's per-step hooks (public issue #22), so
+**a worker's tokens and cost, and the by-model bars, update when its run ends**,
+not during it. The tokens column is the total the run reported; the dollar
+figure is the worker's own cost.
+
 ## Commands and tools
 
 | Name | Who calls it | What it does |
@@ -155,6 +196,7 @@ version up.
 | `/delegation` | you type it | shows the delegation state and where the config came from |
 | `/delegation setup` | you type it | checks the repo and tools, names the fixes, then scaffolds and asks for your first task (see [Setup](#setup)) |
 | `/delegation init` | you type it | the bare scaffold, no checks (step 4 above) |
+| `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card; the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool |
@@ -674,6 +716,7 @@ Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `s
 | `briefDir` | `""` | where briefs go; empty means `<root>/.delegation/briefs/`, and Claude Code's session scratchpad only when the root is not writable |
 | `ledgerFile` | `true` | append one JSON line per judged attempt to `<root>/.delegation/ledger.jsonl` |
 | `gitGuard` | `true` | the git guard on Bash |
+| `dashboardBand` | `true` | the band above the prompt while a worker is live, queued or owed a verdict (see [Dashboard](#dashboard)) |
 | `guardBranches` | `main,master` | the branches it holds |
 | `autoDebrief` | `true` | write a debrief in the background at a clean stop |
 | `debriefIdleMinutes` | `20` | minutes without a turn before the clean-stop check |
@@ -849,9 +892,10 @@ so it is approximate.
   debrief is told to write only under `<root>/.delegation/`; your own
   `~/.claude/commands/debrief.md` writes where it says. The eval is off until
   you set `evalCommand`.
-- **Not wired in 0.2.0.** The dashboard band and pane (`hooks/lib/dashboard.ts`,
-  `metrics.ts`) and the per-turn cost (`cost.ts`) are built and tested as
-  libraries, but not hooked up. `/delegation` prints the state as text.
+- **The dashboard shows run-end numbers for workers.** See [Dashboard](#dashboard):
+  a worker's tokens and cost update when its run ends, not per step. "Across
+  sessions" draws this session from the store's attempt records, so its
+  sparklines hold one point until a history of earlier sessions is kept.
 
 ## Store and ledger
 

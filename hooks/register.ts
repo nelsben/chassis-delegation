@@ -8,7 +8,12 @@
 // chassis scripts: the mod works in a repo that has only agents/tasks/ cards.
 import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUsage } from 'claude-code'
 
-import type { DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
+import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
+import { blocksFor, openItemLines } from './lib/dashboard'
+import { bandTree } from './lib/band'
+import { paneTree, type PaneTable } from './lib/pane'
+import { isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, type LiveView, type SpendPoint } from './lib/live'
+import { metricsFromRecords } from './lib/metrics'
 import { checkArgv, refusedLine, type AllowConfig } from './lib/allow'
 import {
   attemptsFor,
@@ -190,6 +195,9 @@ const WORKERS = { plugin: 'chassis-delegation', key: 'workers' } as const
 const STATUS = { plugin: 'chassis-delegation', key: 'status' } as const
 const LAST_VERDICT = { plugin: 'chassis-delegation', key: 'lastVerdict' } as const
 const QUEUE = { plugin: 'chassis-delegation', key: 'queue' } as const
+const SPEND = { plugin: 'chassis-delegation', key: 'spend' } as const
+/** GH-112: the pane `/delegation dashboard` and the band's `[ details ]` open. */
+const DASH_PANE = 'delegation-dash'
 
 const K = {
   tasks: (task: string) => `delegation.tasks.${task}`,
@@ -330,6 +338,8 @@ type Config = {
   evalAgent: string
   ledgerFile: boolean
   gitGuard: boolean
+  /** GH-112: the band above the prompt. */
+  dashboardBand: boolean
   guardBranches: string[]
   // defaults < .chassis-delegation.json < settings (5B)
   gateMap: Record<string, string>
@@ -386,6 +396,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       evalAgent: str('evalAgent') || DEFAULT_DEBRIEF_AGENT,
       ledgerFile: o.ledgerFile !== false,
       gitGuard: o.gitGuard !== false,
+      dashboardBand: o.dashboardBand !== false,
       guardBranches: parseGuardBranches(str('guardBranches')),
       gateMap: eff.gateMap,
       gateTemplates: gateTemplatesOf(eff.gateMap),
@@ -424,6 +435,12 @@ const turnOf = new Map<string, string>()
 let lastUsd: number | undefined
 let lastCostChangeAt = 0
 let statusTimer: { cancel: () => void } | undefined
+let sampleTimer: { cancel: () => void } | undefined
+/** GH-112: `git worktree list --porcelain`, kept for 15 s so a redraw does not run git. */
+let worktreeCache: { at: number; text: string } | undefined
+/** GH-112: every task's attempt records, kept 15 s so a redraw does not read the whole store; the mod's own record writes clear it at once. */
+let recordsCache: { at: number; records: AttemptRecord[] } | undefined
+const RECORDS_TTL_MS = 15_000
 let probeTimer: { cancel: () => void } | undefined
 let spawnSeq = 0
 // Part 2: the main loop's turn state, the idle timers, the scheduler's slots.
@@ -465,6 +482,8 @@ async function storeGet<T>($: Host, key: string): Promise<T | undefined> {
   }
 }
 async function storeSet($: Host, key: string, value: unknown): Promise<void> {
+  // a task's attempt records changed: the dashboard's copy is stale (GH-112)
+  if (key.startsWith(K.tasks(''))) recordsCache = undefined
   try {
     await $.store.set(key, value)
   } catch (err) {
@@ -543,12 +562,125 @@ async function setWorkers($: Host, fn: (list: DelegationWorker[]) => DelegationW
   } catch {
     // state is a view; the store is the record
   }
+  redraw($)
 }
 async function setLastVerdict($: Host, v: DelegationVerdict) {
   try {
     await $.state.set(LAST_VERDICT, v)
   } catch {
     // as above
+  }
+  redraw($)
+}
+
+// ---- GH-112: the live dashboard (the band above the prompt and the pane) -----------
+function redraw($: Host) {
+  try {
+    $.ui.invalidate('ui.render')
+  } catch {
+    // a view only
+  }
+}
+
+async function allRecords($: Host): Promise<AttemptRecord[]> {
+  // the store is shared with every session on the machine, so a write elsewhere shows within RECORDS_TTL_MS
+  const t = await now($)
+  if (recordsCache && t - recordsCache.at < RECORDS_TTL_MS) return recordsCache.records
+  let keys: string[]
+  try {
+    keys = await $.store.keys()
+  } catch {
+    return []
+  }
+  const out: AttemptRecord[] = []
+  for (const key of keys) {
+    if (!key.startsWith(K.tasks(''))) continue
+    const list = await storeGet<AttemptRecord[]>($, key)
+    if (Array.isArray(list)) out.push(...list)
+  }
+  recordsCache = { at: t, records: out }
+  return out
+}
+
+async function readSpend($: Host): Promise<SpendPoint[]> {
+  try {
+    const { value } = await $.state.get(SPEND)
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
+
+/** `git worktree list --porcelain`, from the cache while it is under 15 s old. */
+async function worktreeList($: Host, root: string, t: number): Promise<string> {
+  if (worktreeCache && t - worktreeCache.at < 15_000) return worktreeCache.text
+  const out = await run($, ['git', '-C', root, 'worktree', 'list', '--porcelain'])
+  const text = out.ok && out.exitCode === 0 ? out.stdout : ''
+  worktreeCache = { at: t, text }
+  return text
+}
+
+/** Everything the band and the pane draw: the session's facts gathered, the model made by live.ts. */
+async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number }[] }> {
+  const t = await now($)
+  const live = await liveState($)
+  const queue = await readQueue($)
+  let since = 0
+  let usd = 0
+  try {
+    const u = await $.session.usage()
+    since = u.startedAt ?? 0
+    usd = u.cost?.usd ?? 0
+  } catch {
+    // unknown: the series and the records still draw
+  }
+  let root = ''
+  try {
+    root = await $.session.root()
+  } catch {
+    // no repo: no worktree rows
+  }
+  const records = await allRecords($)
+  const liveAt: Record<string, number> = {}
+  for (const w of live.workers) liveAt[w.label] = w.spawn.at ?? t
+  const view = liveView({
+    root,
+    ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}),
+    porcelain: root ? await worktreeList($, root, t) : '',
+    records,
+    queue,
+    liveAt,
+    now: t,
+    budget: cfg.defaultBudget,
+    since,
+    usd,
+    series: await readSpend($),
+    owed: live.pending.length,
+  })
+  return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t })) }
+}
+
+/** One sample of the session's dollars; the next waits 15 s while a worker is live or queued, else 60 s. */
+async function sampleSpend($: Host): Promise<void> {
+  let active = false
+  try {
+    const t = await now($)
+    const live = await liveState($)
+    active = live.workers.length + live.pending.length + live.queued > 0
+    const usd = await sessionUsd($)
+    if (usd !== undefined) await $.state.set(SPEND, spendSeries(await readSpend($), { t, usd }))
+    redraw($)
+  } catch (err) {
+    debug($, `spend not sampled: ${String(err)}`)
+  }
+  scheduleSample($, sampleEvery(active))
+}
+function scheduleSample($: Host, ms: number) {
+  sampleTimer?.cancel()
+  try {
+    sampleTimer = $.clock.after(ms, () => void sampleSpend($))
+  } catch {
+    sampleTimer = undefined
   }
 }
 
@@ -2904,7 +3036,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup|init]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup|init|dashboard]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -2929,6 +3061,7 @@ export const register: Register = (on, opts) => {
       debug($, `the setup tool was not registered: ${String(err)}`)
     }
     await loadRepoConfig($)
+    void sampleSpend($)
     try {
       await noteAgentTypes($, (await $.agent.list()).map(a => a.type))
     } catch {
@@ -2971,12 +3104,50 @@ export const register: Register = (on, opts) => {
     const arg = e.args.trim()
     if (arg === 'init') return { text: await runInit($) }
     if (arg === 'setup') return { text: await runSetup($) }
+    if (arg === 'dashboard') {
+      try {
+        await $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })
+        return { text: 'Delegation dashboard opened.' }
+      } catch (err) {
+        return { text: `the dashboard did not open: ${String(err)}` }
+      }
+    }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init]' }
+    return { text: 'usage: /delegation [setup|init|dashboard]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async $ => ({ result: await runInit($) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async $ => ({ result: await runSetup($, true) }))
+
+  // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (!cfg.dashboardBand || e.props.hasSurvey) return next(e)
+    try {
+      const { view } = await liveModel($)
+      if (!isActive(view)) return next(e)
+      const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
+      return bandTree(p, view, pickScheme(e), e.props.bodyColumns, () => void $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })) as never
+    } catch (err) {
+      debug($, `band not drawn: ${String(err)}`)
+      return next(e)
+    }
+  })
+  on('ui.render', { component: 'Pane', requestId: DASH_PANE }, async ($, e, next) => {
+    try {
+      const { view, since, records, running } = await liveModel($)
+      const mine = sessionRecords(records, since)
+      const items: BandItem[] = [
+        ...running.map((r): BandItem => ({ kind: 'running', task: r.label, tier: r.tier, alias: r.alias, at: r.at, phase: 'building' })),
+        ...(await readQueue($)).map((q, i): BandItem => ({ kind: 'queued', task: taskLabel(q.task, q.subtask ?? 'main'), position: i + 1 })),
+      ]
+      const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
+      const blocks = blocksFor({ current: metricsFromRecords(mine, since), history: [metricsFromRecords(mine, since)] })
+      return paneTree(p, { blocks, open: openItemLines(items, view.now), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e) }, () => void $.ui.close({ id: DASH_PANE })) as never
+    } catch (err) {
+      debug($, `pane not drawn: ${String(err)}`)
+      return next(e)
+    }
+  })
 
   // ---- session.compact: keep the loop position (2E) ----------------------------------
   on('session.compact', async ($, e, next) => {

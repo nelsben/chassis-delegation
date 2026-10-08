@@ -16,6 +16,7 @@ import {
   type BandItem,
 } from '../hooks/lib/dashboard'
 import { emptyMetrics } from '../hooks/lib/metrics'
+import { world, NOW as WORLD_NOW } from './harness'
 
 const NOW = 10_000_000
 
@@ -183,3 +184,86 @@ function atobBytes(s: string): number[] {
   }
   return out
 }
+
+// ---- GH-112: the live dashboard, drawn through the engine ---------------------------------------
+const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { bodyRows: 18 }, view: {} } as never
+const PANE_PROPS = { title: 'Delegation', isFocused: false, bodyColumns: 100, placement: 'dock', scroll: { bodyRows: 30 }, view: {} } as never
+const worker = (w: ReturnType<typeof world>) => {
+  w.agents.push({ id: 'ag1', type: 'general-purpose', description: 'T-1', status: 'running' })
+  w.store.set('delegation.agent.ag1', 'k1')
+  w.store.set('delegation.spawn.k1', { key: 'k1', task: 'T-1', subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 3, purpose: 'build', prompt: '', description: '', subagentType: 'general-purpose', agentId: 'ag1', at: WORLD_NOW - 60_000 })
+  w.store.set('delegation.tasks.T-1', [{ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', resolvedModel: 'claude-sonnet-5-5', verdict: 'pending', at: WORLD_NOW - 60_000 }])
+}
+const drawnBand = async ($: any) => {
+  try {
+    const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+    return await ui.find({ key: 'dash-band' })
+  } catch {
+    return undefined
+  }
+}
+
+describe('GH-112: the band and the pane', () => {
+  test('the band draws nothing while no worker is live or queued', async ($, on) => {
+    world(on)
+    expect(await drawnBand($)).toBeUndefined()
+  })
+  test('the band draws while a worker is live', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    worker(w)
+    expect(await drawnBand($)).toBeDefined()
+  })
+  test('the band draws while a spawn is queued', async ($, on) => {
+    const w = world(on)
+    w.state.set('chassis-delegation.queue', [{ prompt: '', description: '', subagentType: 'general-purpose', task: 'T-3', at: WORLD_NOW }])
+    expect(await drawnBand($)).toBeDefined()
+  })
+  test('a redraw reads the store once per 15 s; a record the mod writes shows at once', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    worker(w)
+    await drawnBand($)
+    await drawnBand($)
+    await drawnBand($)
+    expect(w.storeKeyReads).toBe(1)
+    // the mod writes a task's records (a spawn): the next redraw reads them
+    await $.agent.spawn({ tool_use_id: 'toolu_C0000003', prompt: '[[brief v=1 task=T-7 subtask=main tier=standard]]\nDo it.', description: 'T-7', subagentType: 'general-purpose', provider: { kind: 'model' }, parentModel: 'claude-opus-5-5', background: true, fork: false } as never)
+    await drawnBand($)
+    expect(w.storeKeyReads).toBe(2)
+    // another session's write shows once the copy is 15 s old
+    await w.clock.advance(16_000)
+    await drawnBand($)
+    expect(w.storeKeyReads).toBeGreaterThanOrEqual(3)
+  })
+  test('the band is off with dashboardBand false', { options: { dashboardBand: false } }, async ($, on) => {
+    const w = world(on)
+    w.state.set('chassis-delegation.queue', [{ prompt: '', description: '', subagentType: 'general-purpose', task: 'T-3', at: WORLD_NOW }])
+    expect(await drawnBand($)).toBeUndefined()
+  })
+  test('/delegation dashboard opens the pane, whose tree holds the worktree table and the spend chart', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    worker(w)
+    await $.command.run({ command: 'delegation', args: 'dashboard', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    expect(w.opened).toContain('delegation-dash')
+    const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'Pane', requestId: 'delegation-dash', props: PANE_PROPS })
+    expect(await ui.find({ key: 'dash-worktrees' })).toBeDefined()
+    expect(await ui.find({ key: 'dash-spend' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /T-1/ })).toBeDefined()
+  })
+  test('nothing opens the pane unasked', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    worker(w)
+    await $.command.run({ command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    expect(w.opened).toEqual([])
+  })
+  test('on the desktop the spend chart is an Svg, on the terminal a Raster; the band hover scope reveals the card', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    worker(w)
+    w.state.set('chassis-delegation.spend', [{ t: WORLD_NOW - 60_000, usd: 0.5 }, { t: WORLD_NOW - 30_000, usd: 1 }, { t: WORLD_NOW, usd: 1.5 }])
+    const desk = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'desktop', component: 'Pane', requestId: 'delegation-dash', props: PANE_PROPS })
+    expect(await desk.find({ type: 'Svg' })).toBeDefined()
+    const term = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+    expect(await term.find({ type: 'Raster' })).toBeDefined()
+    expect(await term.find({ key: 'dash-card' })).toBeDefined()
+    expect(await term.find({ key: 'details' })).toBeDefined()
+  })
+})

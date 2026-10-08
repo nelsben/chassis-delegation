@@ -222,6 +222,12 @@
       "description": "Comma-separated globs subtracted from a repo=here dirty-tree delta before the files= and scope checks, each disclosed on the ignored: line. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in .delegation/**; a value here wins over both",
       "default": ""
     },
+    "dashboardBand": {
+      "type": "boolean",
+      "title": "Dashboard band",
+      "description": "Draw the delegation band above the prompt while a worker is live, queued or owed a verdict; hover it for the spend chart and worktrees, [ details ] opens the pane. Off hides the band; /delegation dashboard still opens the pane",
+      "default": true
+    },
     "cardDir": {
       "type": "string",
       "title": "Card folder",

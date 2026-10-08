@@ -90,6 +90,8 @@ declare module 'claude-code' {
       queue: QueuedSpawn[]
       band: BandItem[]
       dashboard: DashboardModel | null
+      /** GH-112: cumulative session dollars sampled every 15 s while a worker is live or queued, every 60 s otherwise; the last 240 points. */
+      spend: { t: number; usd: number }[]
     }
   }
 }
