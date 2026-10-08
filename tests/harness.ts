@@ -188,7 +188,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   hook('session.start', (e: { cwd: string }) => ({ cwd: e.cwd }))
   hook('turn.start', (e: { turnId: string }) => ({ turnId: e.turnId }))
-  hook('turn.abort', (e: { turnId: string }) => (w.aborted.push(e.turnId), undefined))
+  hook('turn.abort', (e: { turnId: string }) => (w.aborted.push(e.turnId), { value: undefined }))
   // a subagent's turn ending ends its run: $.agent.list() then says completed
   hook('turn.complete', (e: { answer: string; agentId?: string }) => {
     const a = w.agents.find(x => x.id === e.agentId)

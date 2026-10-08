@@ -726,6 +726,7 @@ describe('5B: /delegation init and the init tool', () => {
     expect(out.text).toContain('Delegation state (chassis-delegation): nothing running, queued or owed.')
     expect(out.text).toContain(`config: no .chassis-delegation.json in ${ROOT}`)
     expect(out.text).toContain('git guard on (main, master)')
+    expect(String(out.text)).toMatch(/^mod: chassis-delegation \d+\.\d+\.\d+ loaded from \S+/m)
   })
 })
 
