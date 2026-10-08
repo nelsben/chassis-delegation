@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { allRequiredHold, firstCard, foundOf, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from '../hooks/lib/setup'
+import { allRequiredHold, configLines, detectGate, firstCard, foundOf, handoverText, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from '../hooks/lib/setup'
 import { CONFIG_TEMPLATE } from '../hooks/lib/init'
 import { parseCard } from '../hooks/lib/dispatch'
 import { parseRepoConfig } from '../hooks/lib/repoconfig'
@@ -162,5 +162,40 @@ describe('GH-109: the scaffold', () => {
     expect(c.next[1]).toBe('Read the diff before you accept: a verified verdict means the report matches git, not that the work is right.')
     expect(firstCard('docs/cards', ['ops'], true).next[0]).toContain('`/dispatch OPS-1 --here --dry-run`')
     expect(firstCard('agents/tasks', ['web', 'api'], false).id).toBe('WEB-1')
+  })
+})
+
+describe('GH-110: the handover reads right when rendered as markdown', () => {
+  test('the card sits in a markdown fence whose body starts at the opening ---; the card carries a red_test line', () => {
+    const t = handoverText('agents/tasks', ['ops'], false, { gate: detectGate(green()) })
+    const lines = t.split('\n')
+    const open = lines.indexOf('```markdown')
+    expect(open).toBeGreaterThan(0)
+    expect(lines[open + 1]).toBe('---')
+    expect(lines.indexOf('```', open + 1)).toBeGreaterThan(open + 2)
+    expect(lines[0]).toBe('First card: save this as agents/tasks/OPS-1-first-task.md')
+    expect(t).toContain('red_test: REPLACE ME: the test that fails now and passes after, e.g. npm test -- x.test.js')
+  })
+  test('the red_test example follows the detected gate', () => {
+    const ex = (p: SetupProbe): string => firstCard('agents/tasks', ['ops'], false, { gate: detectGate(p) }).text.split('\n').find(l => l.startsWith('red_test:')) ?? ''
+    const base = { packageJson: undefined, markers: [] as string[] }
+    expect(ex(green({ ...base, pyTests: true, onPath: ['git', 'python3'] }))).toContain('e.g. python3 -m unittest tests.test_x')
+    expect(ex(green({ ...base, markers: ['pytest.ini'], onPath: ['git', 'python3', 'pytest'] }))).toContain('e.g. pytest tests/test_x.py')
+    expect(ex(green({ ...base, markers: ['Cargo.toml'] }))).toContain('e.g. cargo test x')
+    expect(ex(green({ ...base, markers: ['go.mod'] }))).toContain('e.g. go test ./... -run X')
+    const card = parseCard(firstCard('agents/tasks', ['ops'], false, { gate: detectGate(green()) }).text)
+    expect('error' in card ? '' : card.redTest).toContain('REPLACE ME')
+  })
+  test('the next steps start with the commit when the tree is dirty', () => {
+    const w = firstCard('agents/tasks', ['ops'], false, { dirty: true }).next
+    expect(w[0]).toBe('Commit the scaffold and the card (git add -A && git commit -m "chassis-delegation setup"), then write the task into the card, then `/dispatch OPS-1 --dry-run` to see the brief, then `/dispatch OPS-1`.')
+    const h = firstCard('agents/tasks', ['ops'], true, { dirty: true }).next
+    expect(h[0]).toContain('Commit the card')
+    expect(h[0]).toContain('`/dispatch OPS-1 --here --dry-run`')
+    expect(firstCard('agents/tasks', ['ops'], false, { dirty: false }).next[0]).toContain('Write the task into it')
+  })
+  test('config lines: one per key set', () => {
+    expect(configLines({ gate: 'pytest', baseRef: 'main', cardDir: 'docs/cards' })).toEqual(['config: gateMap.test = pytest', 'config: baseRef = main', 'config: cardDir = docs/cards'])
+    expect(configLines({ gate: 'cargo test' })).toEqual(['config: gateMap.test = cargo test'])
   })
 })

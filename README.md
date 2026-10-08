@@ -119,6 +119,13 @@ config is left as it is and setup prints what it would have set), and prints a
 first card to save as `<cardDir>/OPS-1-first-task.md`, then the next steps:
 `/dispatch OPS-1 --dry-run`, then `/dispatch OPS-1`. A verified verdict means
 the report matches git, not that the work is right: read the diff.
+The card is printed inside a fenced `markdown` block, so VS Code and the
+desktop app show it verbatim and it copies whole; it carries a `red_test:` line
+whose example comes from the detected gate. Setup prints init's file lines but
+not init's own "Next:" line, one `config:` line per key it set in a fresh
+config (`gateMap.test`, and `baseRef` or `cardDir` when set), and, when the
+scaffold left the tree dirty, starts the next steps with committing the
+scaffold and the card (in `repo=here` mode, the card).
 `/delegation` in a root with no config adds `not set up here: run /delegation setup`.
 
 ## Sixty seconds

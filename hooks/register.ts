@@ -132,7 +132,7 @@ import { gateTemplatesOf, resolveGateRuns } from './lib/gates'
 import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
-import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, foundOf, handoverText, isHereMode, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
+import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, handoverText, isHereMode, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
@@ -2319,7 +2319,17 @@ async function runSetup($: Host): Promise<string> {
   repoText = undefined
   await loadRepoConfig($)
   const dir = cfg.cardDir
-  return [head, '', initText(root, plan, failed, true), ...(hadConfig ? [wouldSet(found)] : []), '', handoverText(dir, cfg.domains, isHereMode(facts))].join('\n')
+  const wroteConfig = plan.some(s => s.path === configPath && s.action === 'write' && !failed[s.path])
+  const dirty = facts.dirty || plan.some(s => s.action !== 'skip' && !failed[s.path])
+  return [
+    head,
+    '',
+    initText(root, plan, failed, false, false),
+    ...(wroteConfig ? configLines(found) : []),
+    ...(hadConfig ? [wouldSet(found)] : []),
+    '',
+    handoverText(dir, cfg.domains, isHereMode(facts), { gate: detectGate(facts), dirty }),
+  ].join('\n')
 }
 
 /** `/delegation` with no argument: the delegation state and where the config came from. */
