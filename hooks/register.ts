@@ -181,6 +181,7 @@ import {
 } from './lib/verify'
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { driftMessage, newAgentTypes, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
+import { MOD_VERSION } from './lib/version'
 
 type Host = EngineInterface
 
@@ -2382,6 +2383,7 @@ async function statusReport($: Host): Promise<string> {
   return [
     ...state,
     '',
+    `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,

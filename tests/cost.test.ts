@@ -14,7 +14,7 @@ describe('3B: the price table', () => {
   test('per MTok in/out, matched by model id prefix, longest first', () => {
     const lengths = PRICES.map(([p]) => p.length)
     expect(lengths).toEqual([...lengths].sort((a, b) => b - a))
-    expect(PRICES.map(([p]) => p).sort()).toEqual(['haiku-4-5', 'opus-5', 'opus-5-5', 'sonnet-5', 'sonnet-5-5'])
+    expect(PRICES.map(([p]) => p).sort()).toEqual(['haiku-4-5', 'haiku-5-5', 'opus-5', 'opus-5-5', 'sonnet-5', 'sonnet-5-5'])
     expect(priceFor('claude-opus-5-5')).toEqual({ in: 4, out: 20 })
     expect(priceFor('claude-opus-5')).toEqual({ in: 5, out: 25 })
     expect(priceFor('claude-opus-5-20260101')).toEqual({ in: 5, out: 25 })
@@ -22,6 +22,8 @@ describe('3B: the price table', () => {
     expect(priceFor('claude-sonnet-5-5[1m]')).toEqual({ in: 2, out: 10 })
     expect(priceFor('claude-sonnet-5')).toEqual({ in: 3, out: 15 })
     expect(priceFor('claude-haiku-4-5')).toEqual({ in: 1, out: 5 })
+    expect(priceFor('claude-haiku-5-5')).toEqual({ in: 0.1, out: 0.5 })
+    expect(priceFor('us.anthropic.claude-haiku-5-5')).toEqual({ in: 0.1, out: 0.5 })
     expect(priceFor('us.anthropic.claude-haiku-4-5-v1:0')).toEqual({ in: 1, out: 5 })
     expect(priceFor('claude-fable-1')).toBeUndefined()
     expect(priceFor(undefined)).toBeUndefined()

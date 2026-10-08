@@ -16,6 +16,10 @@ const TABLE: readonly [string, Price][] = [
   ['opus-5', { in: 5, out: 25 }],
   ['sonnet-5-5', { in: 2, out: 10 }],
   ['sonnet-5', { in: 3, out: 15 }],
+  // Haiku 5.5 bills $0.50 / $2.50 for a request whose prompt passes 100K tokens. Usage
+  // arrives summed per turn (a worker's whole run), so that tier cannot be applied:
+  // for a long Haiku 5.5 run this figure is a floor.
+  ['haiku-5-5', { in: 0.1, out: 0.5 }],
   ['haiku-4-5', { in: 1, out: 5 }],
 ]
 

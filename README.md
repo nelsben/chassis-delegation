@@ -11,7 +11,7 @@ changed files, scope, gate, PR) and hands the brain one verdict line with what
 to do next. At a quiet stop it can write a debrief in the background, and it
 can run your eval when `origin/main` moves. It is a Claude Code mod (a plugin
 of function hooks). It needs nothing from any other repo: no scripts, no
-harness, no network. Version 0.4.0, MIT.
+harness, no network. Version 0.5.0, MIT.
 
 ## Install on a new machine
 
@@ -67,6 +67,86 @@ harness, no network. Version 0.4.0, MIT.
 To check the folder on the new machine, run `tests/selfcheck.sh`. It runs
 `claude plugin validate` and `claude plugin test`, then prints the
 `--plugin-dir` line to use.
+
+## Upgrading
+
+Upgrade between turns, with no worker running. These steps are written so the
+agent in the session that loads the mod can follow them.
+
+1. **Find the loaded copy.** Type `/delegation`. From 0.5.0 on, one line reads
+   `mod: chassis-delegation <version> loaded from <folder>`. An older version
+   has no such line: the folder is the session's hot-reload clone,
+   `~/.claude/dev-mods/<session-id>/chassis-delegation`, or the one named by
+   `--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`.
+2. **Update that folder.**
+
+       git -C <folder> pull --ff-only origin main
+
+   If the pull refuses with "unrelated histories", the clone was made before
+   2026-10-05, when this repository was republished with a fresh history.
+   Delete the folder and clone it again:
+
+       git clone https://github.com/nelsben/chassis-delegation.git <folder>
+
+   A folder that is a plain copy, not a git clone, is replaced the same way.
+3. **Load it.** A hot-reload folder reloads when the turn that changed it ends,
+   so run the pull from inside that session; a pull from a terminal between
+   turns may not be noticed. A `--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`
+   folder needs Claude Code restarted.
+4. **Check it.** `/delegation` names the new version. Then run
+   `/delegation setup` in the repo: in a repo already set up it changes no
+   file, checks the repo, and says what it would have set.
+5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.4.0 to 0.5.0
+
+What the brain will see:
+
+- **A prose scope stops the dispatch.** A card whose `scope:` reads as prose
+  stops before the worktree and the spawn; dispatch again with
+  `--scope <globs>`, or write globs on the card. Before, the worker ran and
+  the brief was refused afterwards.
+- **A spend ceiling.** New briefs carry `spend=<usd>` from `spendByTier`
+  (economy 2, standard 6, frontier 15 dollars), and the worker is told it. A
+  run that ends past it with no report gets one wrap-up message; at twice it
+  the attempt is `over-spend`. Set `spend:` on a card or `spendByTier` in the
+  repo file to change it; `0` means no ceiling.
+- **Rows show the worker's own cost**, priced from its own usage. A `~` marks
+  the old figure, the session's cost growth, when no usage came back.
+- **The queue reads differently.** Refusals say `(1 live: A; 1 queued: B)`; a
+  second dispatch of a queued task answers `already queued since HH:MM`; a
+  queued task that is refused keeps its place and the refusal is a row.
+- **No escalation on a missing report.** A `no-report` respawns at the same
+  tier. Finished work found in a worktree gives `next=verify sha=…`: run
+  `/dispatch <ID> --verify <sha>`.
+- **`--base <sha>` is written into the brief** as `base=`, and the verifier
+  diffs a stacked task against it.
+- **A moved file is listed once, at its new path.**
+- **Unknown card tiers are named**, and a model name is read as its tier
+  (`tier: opus` is frontier).
+- **New: `/delegation setup` and the `card` tool.** Say a task in a sentence;
+  Claude writes the card, shows the brief, and dispatches when you say go.
+- **`repo=here` leaves the card folder out of the delta**, so nothing needs
+  committing before a dispatch.
+- **Claude Haiku 5.5.** The economy tier maps to the alias `haiku`, which
+  Claude Code 2.1.294 and later resolves to Claude Haiku 5.5 on the Anthropic
+  API; on Bedrock, Vertex and Foundry it still resolves to Haiku 4.5. The mod
+  toasts the change once: `haiku now resolves to claude-haiku-5-5 (was …)`.
+
+What to do:
+
+- Nothing in `.chassis-delegation.json` has to change; a key you never set
+  takes its default.
+- A brief already written is reused and never rewritten, so a task whose brief
+  predates the upgrade dispatches without a spend ceiling. For a task not yet
+  started, delete `<root>/.delegation/briefs/<ID>.brief.md` before its next
+  dispatch to get one.
+- Give cards with a prose scope glob scopes, or pass `--scope`.
+
+### From 0.3.0 or earlier
+
+Clone again (step 2: the history changed), then read `CHANGELOG.md` from your
+version up.
 
 ## Commands and tools
 
@@ -722,7 +802,10 @@ resolved), with the built-in table in `hooks/lib/cost.ts`:
     usd = (in·P_in + out·P_out + cacheRead·P_in·0.1 + cacheWrite·P_in·1.25) / 1e6
 
 Prices are dollars per million tokens, from a small table: opus-5-5 4/20,
-opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-4-5 1/5. The verdict row's
+opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-5-5 0.10/0.50, haiku-4-5
+1/5. Haiku 5.5 bills 0.50/2.50 for a request whose prompt passes 100K tokens;
+usage arrives summed over a worker's run, so that rate cannot be applied, and
+for a long Haiku 5.5 run the figure is a floor. The verdict row's
 `usd`, the attempt record's `usd` and the ledger's `usd` are that number, kept
 to 4 places in the store and shown to 2.
 

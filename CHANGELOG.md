@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-10-08
+
+Twelve cards from adopter reports and a first new project, each dispatched
+through the mod and verified in its worktree: GH-100 to GH-111. See
+"Upgrading" in the README for what changes when you move from 0.4.0.
+
+- **Claude Haiku 5.5 is priced.** The cost table gains `haiku-5-5` at $0.10 /
+  $0.50 per million tokens. Its higher rate for prompts past 100K tokens is not
+  applied, because usage arrives summed over a run; a long Haiku 5.5 run's
+  figure is a floor. The economy tier needs no change: it maps to the alias
+  `haiku`, which Claude Code resolves to Haiku 5.5 on the Anthropic API.
+- **`/delegation` names the loaded version and folder**
+  (`mod: chassis-delegation 0.5.0 loaded from <folder>`), so an upgrade can be
+  checked from inside the session. A node test holds the version equal in the
+  manifest, the README, this file and `hooks/lib/version.ts`.
+- **The README gains an Upgrading section** an agent can follow.
 
 - **Say the task, get the dry run (GH-111).** A new model-callable tool,
   `mcp__chassis-delegation__card` (pure logic in `hooks/lib/card.ts`): the
