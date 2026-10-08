@@ -2,9 +2,9 @@
 // the tools the mod needs and names the exact fix for each failing check; the
 // mod cannot run those fixes (its host-command allowlist has no git init, commit,
 // remote or install). Phase 2, only when every required check holds, scaffolds
-// the config from what was found and hands over the first card. Pure: no `$`;
+// the config from what was found and hands over by asking for the first task (GH-111). Pure: no `$`;
 // register.ts gathers the probe with allowlisted reads and does the writes.
-import { DEFAULT_CARD_DIR, DEFAULT_DOMAINS, REPO_CONFIG_FILE } from './repoconfig'
+import { REPO_CONFIG_FILE } from './repoconfig'
 import { PLUGIN_CARD_DIR } from './init'
 
 /** The tool names register.ts looks for on PATH. */
@@ -196,75 +196,24 @@ export function wouldSet(found: Found): string {
   return `· ${REPO_CONFIG_FILE} exists and is left as it is; setup would have set ${parts.join(', ')}`
 }
 
-/** The card prefix: OPS unless the config's domains lack ops and name another. */
-export function cardPrefix(domains: readonly string[]): { prefix: string; domain: string } {
-  const ds = domains.length > 0 ? domains : DEFAULT_DOMAINS
-  if (ds.includes('ops')) return { prefix: 'OPS', domain: 'ops' }
-  const d = ds[0] ?? 'ops'
-  return { prefix: d.toUpperCase().replace(/[^A-Z0-9]/g, '') || 'OPS', domain: d }
-}
-
-export const FIRST_CARD_SLUG = 'first-task'
-
-/** A test the red_test line can name, by stack: the shape of a command that runs one test. */
-export function redTestExample(gate: Gate | undefined): string {
-  if (!gate) return 'npm test -- x.test.js'
-  if (gate.stack === 'node') return gate.pm === 'pnpm' ? 'pnpm test x.test.js' : gate.pm === 'yarn' ? 'yarn test x.test.js' : 'npm test -- x.test.js'
-  if (gate.stack === 'python') return gate.runner === 'pytest' ? 'pytest tests/test_x.py' : 'python3 -m unittest tests.test_x'
-  if (gate.stack === 'rust') return 'cargo test x'
-  return 'go test ./... -run X'
-}
-
 /** One line per key setup set in a fresh config. */
 export function configLines(found: Found): string[] {
   return [`config: gateMap.test = ${found.gate}`, ...(found.baseRef ? [`config: baseRef = ${found.baseRef}`] : []), ...(found.cardDir ? [`config: cardDir = ${found.cardDir}`] : [])]
 }
 
-export type CardOpts = { gate?: Gate; dirty?: boolean }
-
-/** The first card, ready to save as `<cardDir>/<PREFIX>-1-<slug>.md`. */
-export function firstCard(dir: string, domains: readonly string[], here: boolean, opts: CardOpts = {}): { path: string; id: string; text: string; next: string[] } {
-  const { prefix, domain } = cardPrefix(domains)
-  const id = `${prefix}-1`
-  const path = `${dir || DEFAULT_CARD_DIR}/${id}-${FIRST_CARD_SLUG}.md`
-  const text = `---
-id: ${id}
-title: REPLACE ME: one line that says what done looks like
-domain: ${domain}
-tier: standard
-status: queued
-scope: [REPLACE-ME/**]
-forbid: [REPLACE-ME-OFF-LIMITS/**]
-red_test: REPLACE ME: the test that fails now and passes after, e.g. ${redTestExample(opts.gate)}
-gate: test
-budget: 2-attempts
----
-## Why
-
-REPLACE ME: why this task, in two or three sentences.
-
-## Done when
-
-- REPLACE ME: what is true when it is done, so a colleague could check it.
-- The gate (test) is green in the worker's worktree.
-`
-  const flag = here ? ' --here' : ''
-  const steps = `\`/dispatch ${id}${flag} --dry-run\` to see the brief, then \`/dispatch ${id}${flag}\``
-  const first = opts.dirty
-    ? here
-      ? `Commit the card (git add -A && git commit -m "chassis-delegation setup"; otherwise the card folder is in the worker's delta), write the task into it, then ${steps}.`
-      : `Commit the scaffold and the card (git add -A && git commit -m "chassis-delegation setup"), then write the task into the card, then ${steps}.`
-    : `Write the task into it, then ${steps}.`
-  return {
-    path,
-    id,
-    text,
-    next: [first, 'Read the diff before you accept: a verified verdict means the report matches git, not that the work is right.'],
-  }
+/** A first task the person could say, by the detected stack. */
+export function firstTaskExample(gate: Gate | undefined): string {
+  const what = 'add a function that reads a file header and returns its size, with'
+  if (!gate) return `${what} a test`
+  if (gate.stack === 'python') return `${what} a unittest`
+  if (gate.stack === 'node') return `${what} a node --test test`
+  if (gate.stack === 'rust') return `${what} a cargo test`
+  return `${what} a go test`
 }
 
-/** The card goes in a markdown fence so a markdown-rendering host shows it verbatim and it copies whole. */
-export function handoverText(dir: string, domains: readonly string[], here: boolean, opts: CardOpts = {}): string {
-  const c = firstCard(dir, domains, here, opts)
-  return [`First card: save this as ${c.path}`, '', '```markdown', c.text.trimEnd(), '```', '', ...c.next].join('\n')
-}
+/** What setup ends with: ask for the first task in a sentence; the brain writes the card with the card tool. */
+export const handoverText = (gate: Gate | undefined): string =>
+  `Set up. Tell Claude your first task in a sentence, for example: "${firstTaskExample(gate)}". Claude writes the card, shows you the brief, and dispatches when you say go.`
+
+/** The extra line the setup tool (the brain) gets. */
+export const BRAIN_HANDOVER = 'Ask the person for the first task, then call the card tool.'

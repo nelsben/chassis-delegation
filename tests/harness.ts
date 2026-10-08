@@ -132,8 +132,11 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   hook('fs.write', (e: { path: string; text: string }) => (w.files.set(e.path, e.text), { value: undefined }))
   hook('fs.list', (e: { path: string }) => {
-    const names = dirs.get(e.path)
-    if (!names) throw new Error(`ENOENT: ${e.path}`)
+    const listed = dirs.get(e.path)
+    if (!listed) throw new Error(`ENOENT: ${e.path}`)
+    // a file written under a listed folder shows up in it (GH-111: the card tool writes, then dispatches)
+    const written = [...w.files.keys()].filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => k.slice(e.path.length + 1))
+    const names = [...new Set([...listed, ...written])]
     return { value: names.map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false })) }
   })
   hook('process.run', (e: { argv: string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string } }) => {

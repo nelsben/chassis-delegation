@@ -139,11 +139,11 @@ const hasIgnoreLine = (text: string): boolean =>
  * (absent = not there): write the missing ones, leave the present ones, and
  * append `.delegation/` to a .gitignore that lacks it.
  */
-export function initPlan(root: string, existing: Readonly<Record<string, string | undefined>>): InitStep[] {
+export function initPlan(root: string, existing: Readonly<Record<string, string | undefined>>, opts: { sample?: boolean } = {}): InitStep[] {
   const r = root.replace(/\/+$/, '')
   // GH-12: a plugin repo keeps its cards out of agents/, which the engine reads as subagents
   const dir = existing[`${r}/${PLUGIN_MANIFEST}`] !== undefined ? PLUGIN_CARD_DIR : DEFAULT_CARD_DIR
-  const rels = INIT_FILES.map(rel => (rel.startsWith('agents/tasks/') ? `${dir}/${rel.slice('agents/tasks/'.length)}` : rel))
+  const rels = INIT_FILES.filter(rel => opts.sample !== false || !rel.endsWith('OPS-000-sample.md')).map(rel => (rel.startsWith('agents/tasks/') ? `${dir}/${rel.slice('agents/tasks/'.length)}` : rel))
   const contents: Record<string, string> = {
     [`${dir}/README.md`]: tasksReadme(dir),
     [`${dir}/OPS-000-sample.md`]: sampleCard(dir),

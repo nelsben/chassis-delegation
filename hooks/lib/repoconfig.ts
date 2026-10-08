@@ -41,6 +41,12 @@ export const isCardDir = (s: string): boolean => /^[^\s"'\\]+$/.test(s) && !s.st
 
 export const DEFAULT_IGNORE: readonly string[] = ['.delegation/**']
 
+/** GH-111: the ignore set a repo=here delta always subtracts: the configured globs plus the card folder, so a new card is never in the worker's delta. */
+export const ignoreWithCards = (ignore: readonly string[], cardDir: string): string[] => {
+  const card = `${cardDir.replace(/^\/+|\/+$/g, '') || DEFAULT_CARD_DIR}/**`
+  return ignore.includes(card) ? [...ignore] : [...ignore, card]
+}
+
 /**
  * A ref git can take as one argv word: no leading `-` (never an option), no
  * `..` (a range, not a ref), no whitespace or shell syntax. `main`,
