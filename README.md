@@ -189,6 +189,10 @@ mod spawns itself does not run the mod's per-step hooks (public issue #22), so
 not during it. The tokens column is the total the run reported; the dollar
 figure is the worker's own cost.
 
+A screen that shows no mod panes (the VS Code extension today) answers
+`/delegation dashboard` with the same blocks as markdown text instead: the
+headline, the spend over the session, the worktree table and spend by model.
+
 ## Commands and tools
 
 | Name | Who calls it | What it does |

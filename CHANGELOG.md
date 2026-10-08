@@ -15,6 +15,10 @@
   #22), and the UI says so.
   A redraw reads the store's attempt records at most once every 15 seconds;
   the mod's own record writes show at once, other sessions' within 15 seconds.
+  `/delegation dashboard` reports whether the pane was placed. On a screen
+  that shows no mod panes (the VS Code extension today) it closes the waiting
+  pane and prints the dashboard as markdown: the headline, spend over the
+  session, the worktree table and spend by model.
 
 ## 0.5.0 — 2026-10-08
 

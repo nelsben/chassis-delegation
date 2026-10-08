@@ -1,6 +1,6 @@
 // GH-112: the live delegation model (pure): the spend series, the events, the worktree rows, spend by model.
 import { test, expect, describe } from 'claude-code/testing'
-import { events, familyOf, sampleEvery, spendByModel, spendSeries, SPEND_CAP, worktreeRows, type SpendPoint } from '../hooks/lib/live'
+import { events, familyOf, sampleEvery, spendByModel, spendSeries, SPEND_CAP, worktreeRows, type SpendPoint, sparkText } from '../hooks/lib/live'
 import type { AttemptRecord } from '../hooks/lib/attempts'
 
 const NOW = 10_000_000
@@ -109,5 +109,13 @@ describe('GH-112: the worktree rows', () => {
   test('a worktreeRoot names the folder the rows look under', () => {
     const rows = worktreeRows({ ...input, root: '/r/acme-app', worktreeRoot: '/wt', porcelain: 'worktree /wt/acme-app-T-5\nHEAD e\nbranch refs/heads/agent/mod/T-5\n', records: [], queue: [] })
     expect(rows.map(r => r.task)).toEqual(['T-5'])
+  })
+})
+
+describe('the dashboard as text', () => {
+  test('sparkText scales to eight glyphs; under two values it is empty', () => {
+    expect(sparkText([1])).toBe('')
+    expect(sparkText([0, 7])).toBe('▁█')
+    expect(sparkText([2, 2, 2])).toBe('▁▁▁')
   })
 })

@@ -69,6 +69,8 @@ export type WorldOptions = {
   listAgents?: boolean
   /** A spawn the engine refuses: return a reason to answer `{ deny }` (GH-107: a transient refusal at the drain). */
   spawnDeny?: (e: Record<string, unknown>) => string | undefined
+  /** `$.ui.open` answers `isPlaced: false` with this reason: a screen that places no panes. */
+  panesUnplaced?: string
   /** Agents' transcripts for `$.session.messages({ agentId })` (World.transcripts). */
   transcripts?: Record<string, unknown[]>
 }
@@ -158,7 +160,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('ui.notice', (e: { text?: string }) => (e.text !== undefined && w.notices.push(e.text), { value: undefined }))
   hook('ui.status', (e: { text?: string }) => (w.statuses.push(e.text), { value: undefined }))
   hook('ui.toast', (e: { text: string }) => (w.toasts.push(e.text), { value: undefined }))
-  hook('ui.open', (e: { id: string }) => (w.opened.push(e.id), { value: { isPlaced: true } }))
+  hook('ui.open', (e: { id: string }) => (w.opened.push(e.id), { value: options.panesUnplaced ? { isPlaced: false, reason: options.panesUnplaced } : { isPlaced: true } }))
   hook('ui.close', (e: { id: string }) => (w.closed.push(e.id), { value: undefined }))
   hook('ui.invalidate', () => ((w.invalidations += 1), { value: undefined }))
   hook('ui.log', (e: { text: string; to?: string }) => (w.logs.push(e.text), e.to === 'debug' && w.debugLogs.push(e.text), { value: undefined }))

@@ -318,6 +318,50 @@ export function tokText(n: number): string {
 /** `sonnet · $3.10 · 412k tok · 4 verified`. */
 export const modelLabel = (m: ModelSpend): string => `${m.family} · ${dollars(m.usd)} · ${tokText(m.tokens)} tok · ${m.verified} verified`
 
+// ---- the dashboard as text (a screen that shows no panes) --------------------------
+
+const BARS = '▁▂▃▄▅▆▇█'
+
+/** `▁▃▅█`: values scaled to eight glyph heights; empty under two values. */
+export function sparkText(values: readonly number[]): string {
+  if (values.length < 2) return ''
+  const lo = Math.min(...values)
+  const hi = Math.max(...values)
+  return values.map(v => BARS[hi === lo ? 0 : Math.round(((v - lo) / (hi - lo)) * 7)]).join('')
+}
+
+const cell = (s: string) => s.replace(/\|/g, '\\|')
+
+/**
+ * The dashboard as markdown, for a screen that shows no mod panes (the VS Code
+ * extension): the headline, the spend over the session, the worktree table and
+ * spend by model.
+ */
+export function dashboardText(v: LiveView): string {
+  const ft = v.firstTry.m > 0 ? ` · ${v.firstTry.n} of ${v.firstTry.m} verified on the first attempt` : ''
+  const lines = [`**Delegation** · ${v.live} live · ${v.queued} queued${v.owed > 0 ? ` · ${v.owed} owed` : ''} · ${dollars(v.usd)} this session${ft}`]
+  const series = v.series
+  if (series.length >= 2) {
+    const first = series[0] as SpendPoint
+    const mins = Math.max(1, Math.round((v.now - first.t) / 60_000))
+    lines.push(`Spend: ${dollars(first.usd)} → ${dollars(v.usd)} over the last ${mins} min ${sparkText(recentSpend(series, v.now, Number.MAX_SAFE_INTEGER, 24))}`)
+  }
+  lines.push('')
+  if (v.rows.length === 0) lines.push('No worktrees or tasks this session.')
+  else {
+    lines.push('| Task | Model | State | Worktree | Tokens | Cost | Attempt |', '| --- | --- | --- | --- | --- | --- | --- |')
+    for (const r of v.rows) {
+      const mark = r.verdict ? verdictMark(r.verdict) : undefined
+      const state = mark ? `${mark.icon} ${r.state}` : r.state
+      const where = r.folder === '–' ? '–' : `${r.folder}${r.branch ? ` · ${r.branch}` : ''}`
+      lines.push(`| ${cell(r.task)} | ${cell(r.family === 'other' ? r.model : `${r.family} (${r.model})`)} | ${cell(state)} | ${cell(where)} | ${r.tokens !== undefined ? tokText(r.tokens) : '–'} | ${r.usd !== undefined ? dollars(r.usd) : '–'} | ${r.attempt} |`)
+    }
+  }
+  if (v.byModel.length > 0) lines.push('', `By model: ${v.byModel.map(modelLabel).join('; ')}`)
+  lines.push('', 'Tokens and cost for a worker update when its run ends.')
+  return lines.join('\n')
+}
+
 // ---- the spend chart --------------------------------------------------------------
 
 type Geo = { t0: number; t1: number; max: number }

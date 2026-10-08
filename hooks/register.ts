@@ -12,7 +12,7 @@ import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from 
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { bandTree } from './lib/band'
 import { paneTree, type PaneTable } from './lib/pane'
-import { isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, type LiveView, type SpendPoint } from './lib/live'
+import { dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
 import { checkArgv, refusedLine, type AllowConfig } from './lib/allow'
 import {
@@ -3105,12 +3105,24 @@ export const register: Register = (on, opts) => {
     if (arg === 'init') return { text: await runInit($) }
     if (arg === 'setup') return { text: await runSetup($) }
     if (arg === 'dashboard') {
+      let placed = false
+      let why = ''
       try {
-        await $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })
-        return { text: 'Delegation dashboard opened.' }
+        const opened = await $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })
+        placed = opened.isPlaced
+        if (!opened.isPlaced) why = opened.reason
       } catch (err) {
-        return { text: `the dashboard did not open: ${String(err)}` }
+        why = String(err)
       }
+      if (placed) return { text: 'Delegation dashboard opened in a pane.' }
+      // a screen that places no mod panes (the VS Code extension): close the waiting pane and answer in text
+      try {
+        await $.ui.close({ id: DASH_PANE })
+      } catch {
+        // it never opened
+      }
+      const { view } = await liveModel($)
+      return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view)].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
     return { text: 'usage: /delegation [setup|init|dashboard]' }
