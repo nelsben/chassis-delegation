@@ -630,6 +630,68 @@ describe('5B: /delegation init and the init tool', () => {
     expect(w.files.get(`${ROOT}/.gitignore`)).toBe('node_modules/\n.delegation/\n')
   })
 
+  test('GH-109: /delegation setup in an empty folder lists the failing checks and writes nothing', async ($, on) => {
+    const w = world(on, { run: () => ({ exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' }) })
+    await $.session.start(sessionStart)
+    expect(w.commands).toContain('delegation')
+    expect(w.tools).toContain('setup')
+    const out = await $.command.run(delegation('setup'))
+    expect(out.text).toContain(`chassis-delegation setup in ${ROOT}: 1 of 6 required checks hold`)
+    expect(out.text).toContain('✗ a git repo: none here\n    fix: git init -b main')
+    expect(out.text).toContain('✗ a gate: no test command found')
+    expect(out.text).toContain('✗ the tools on PATH: missing git')
+    expect(out.text).not.toContain('First card')
+    expect(w.files.size).toBe(0)
+    expect(w.runs.every(r => r.argv[0] === 'git' && r.argv[1] === '-C')).toBe(true)
+  })
+
+  test('GH-109: with the world made green setup writes the four init files and the gate map, and hands over the first card', async ($, on) => {
+    const answer = (argv: string[]): RunAnswer | undefined => {
+      const rest = argv.slice(3).join(' ')
+      if (rest === 'rev-parse --is-inside-work-tree') return { exitCode: 0, stdout: 'true\n' }
+      if (rest === 'rev-parse --show-toplevel') return { exitCode: 0, stdout: `${ROOT}\n` }
+      if (rest === 'rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n' }
+      if (rest === 'rev-parse --verify --quiet HEAD') return { exitCode: 0, stdout: 'abc1234\n' }
+      if (rest === 'rev-parse --verify --quiet origin/main') return { exitCode: 1, stdout: '' }
+      return { exitCode: 0, stdout: '' }
+    }
+    const w = world(on, {
+      run: answer,
+      files: {
+        [`${ROOT}/package.json`]: '{"scripts":{"test":"node --test"}}',
+        '/usr/bin/git': '',
+        '/usr/bin/node': '',
+        '/usr/bin/npm': '',
+      },
+      dirs: { [ROOT]: ['package.json'] },
+    })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(delegation('setup'))
+    expect(out.text).toContain(`chassis-delegation setup in ${ROOT}: 6 of 6 required checks hold`)
+    expect(out.text).toContain('· mode: repo=here (no origin/main); setup writes "baseRef": "main" and cards dispatch with --here')
+    expect(out.text).toContain(`wrote ${ROOT}/agents/tasks/README.md`)
+    expect(out.text).toContain(`First card: save this as agents/tasks/OPS-1-first-task.md`)
+    expect(out.text).toContain('status: queued')
+    expect(out.text).toContain('`/dispatch OPS-1 --here --dry-run`')
+    expect(out.text).toContain('Read the diff before you accept')
+    for (const f of ['agents/tasks/README.md', 'agents/tasks/OPS-000-sample.md', '.chassis-delegation.json', '.gitignore']) expect(w.files.has(`${ROOT}/${f}`)).toBe(true)
+    const cfgText = JSON.parse(w.files.get(`${ROOT}/.chassis-delegation.json`) ?? '{}')
+    expect(cfgText.gateMap).toEqual({ test: 'npm test' })
+    expect(cfgText.baseRef).toBe('main')
+    // a second run changes nothing in the config and says what it would have set
+    w.files.set(`${ROOT}/.chassis-delegation.json`, '{"gateMap":{"test":"make test"}}')
+    const again = await $.tool.call({ tool: 'mcp__chassis-delegation__setup' } as never)
+    expect(resultText(again)).toContain('setup would have set "gateMap": {"test": "npm test"}, "baseRef": "main"')
+    expect(w.files.get(`${ROOT}/.chassis-delegation.json`)).toBe('{"gateMap":{"test":"make test"}}')
+  })
+
+  test('GH-109: /delegation with no config adds the not-set-up line', async ($, on) => {
+    world(on)
+    await $.session.start(sessionStart)
+    const out = await $.command.run(delegation(''))
+    expect(out.text).toContain('not set up here: run /delegation setup')
+  })
+
   test('/delegation with no argument prints the state and where the config came from', async ($, on) => {
     world(on)
     await $.session.start(sessionStart)

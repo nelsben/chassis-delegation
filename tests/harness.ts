@@ -113,7 +113,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   }
 
   w.clock = mock.clock(on, { now: NOW })
-  mock.env(on, { TMPDIR: TMP, HOME })
+  mock.env(on, { TMPDIR: TMP, HOME, PATH: '/usr/local/bin:/usr/bin' })
   hook('store.get', (e: { key: string }) => ({ value: w.store.get(e.key) }))
   hook('store.set', (e: { key: string; value: unknown }) => (w.store.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }))
   hook('store.delete', (e: { key: string }) => (w.store.delete(e.key), { value: undefined }))
