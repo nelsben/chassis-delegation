@@ -64,6 +64,7 @@ import {
   addFriction,
   breadcrumbPath,
   builtInDebriefPrompt,
+  splitModFindings,
   cleanStop,
   countLines,
   debriefPathOf,
@@ -86,6 +87,7 @@ import {
   watermarkPath,
   type FrictionEvent,
 } from './lib/cleanstop'
+import { checkDebrief, windowOf, type DebriefWindow } from './lib/debriefcheck'
 import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedRowsFrom, prsFrom, renderState, SECTION_ID, splitOwed, type RecentVerdict, type StateSnapshot } from './lib/compaction'
 import {
   agentTypeFor,
@@ -265,7 +267,7 @@ const OWED_KINDS = ['resume', 'respawn', 'verify', 'exhausted', 'check', 'fix-br
 const LEDGER_FILE = '.delegation/ledger.jsonl'
 
 /** `delegation.debrief.<session>`: the background debrief (2C, 5E). */
-type DebriefRecord = { lastAt: number; watermark: number; lines: number; sessionId: string; mode?: 'breadcrumbs' | 'events'; builtIn?: boolean; agentId?: string; finishedAt?: number; path?: string; denied?: string }
+type DebriefRecord = { lastAt: number; watermark: number; lines: number; sessionId: string; mode?: 'breadcrumbs' | 'events'; builtIn?: boolean; agentId?: string; finishedAt?: number; path?: string; denied?: string; window?: DebriefWindow; prior?: DebriefRecord | null }
 /** `delegation.friction.<session>`: every friction event's count, and the last 100. */
 type FrictionRecord = { total: number; events: FrictionEvent[] }
 /** `delegation.eval.inflight`: the eval runner that is out (2D). */
@@ -1334,7 +1336,7 @@ async function maybeDebrief($: Host) {
   }
 }
 
-type DebriefBasis = { sid: string; home: string; prev: DebriefRecord | undefined; mode: 'breadcrumbs' | 'events'; lines: number; watermark: number; friction: FrictionRecord; live: Live }
+type DebriefBasis = { sid: string; home: string; prev: DebriefRecord | undefined; mode: 'breadcrumbs' | 'events'; lines: number; watermark: number; friction: FrictionRecord; live: Live; window?: DebriefWindow }
 
 /** What both doors read before a debrief: the friction signal (breadcrumb lines past the watermark, else the events the mod saw) and the live state. */
 async function debriefBasis($: Host): Promise<DebriefBasis | undefined> {
@@ -1353,7 +1355,8 @@ async function debriefBasis($: Host): Promise<DebriefBasis | undefined> {
   const mode: 'breadcrumbs' | 'events' = crumbs !== undefined ? 'breadcrumbs' : 'events'
   const lines = mode === 'breadcrumbs' ? countLines(crumbs ?? '') : friction.total
   const watermark = mode === 'breadcrumbs' ? parseWatermark(await readText($, watermarkPath(home, sid))) : prev?.mode === 'events' ? prev.lines : 0
-  return { sid, home, prev, mode, lines, watermark, friction, live }
+  const window = mode === 'breadcrumbs' ? windowOf(crumbs ?? '', watermark) : undefined
+  return { sid, home, prev, mode, lines, watermark, friction, live, ...(window ? { window } : {}) }
 }
 
 /** The folder the debrief file lands in: the built-in writes under the repo, the person's skill under ~/.claude/harness. */
@@ -1361,15 +1364,17 @@ const debriefFolder = (builtIn: boolean, root: string, home: string): string => 
 
 /** The record claimed, the prompt built (the skill's or the built-in's, each asking for mod_findings), the agent spawned. `notes` are extra fact lines. */
 async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: string[]): Promise<{ agentId?: string; deny?: string; builtIn: boolean }> {
-  const { sid, home, prev, mode, lines, watermark, friction } = basis
+  const { sid, home, prev, mode, lines, watermark, friction, window } = basis
   const source = debriefSource(home, $.plugin.root, await exists($, debriefSkillPath(home)))
   // claimed before the spawn: never twice for this watermark, whatever the spawn does
-  const record: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn }
+  // MOD-10: the previous record is kept inside the claim; a debrief that fails its check puts it back
+  const prior = prev ? ((({ prior: _p, window: _w, ...rest }) => rest)(prev) as DebriefRecord) : null
+  const record: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn, ...(window ? { window } : {}), prior }
   await storeSet($, K.debrief(sid), record)
   const recent = ((await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []).filter(r => prev === undefined || r.at > prev.lastAt)
   const fresh = friction.events.slice(-Math.max(0, Math.min(friction.events.length, lines - watermark)))
   const facts = [...notes, ...frictionFacts(fresh), ...recent.map(r => `verdict: ${r.line}`)]
-  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), facts) : debriefPrompt(source.path, sid, facts)
+  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), facts, window) : debriefPrompt(source.path, sid, facts, window)
   const recordAgent = async (agentId: string) => storeSet($, K.debrief(sid), { ...record, agentId })
   runnerStarted.set(promptKey({ prompt }), recordAgent)
   let res: { agentId?: string; deny?: string }
@@ -1407,7 +1412,7 @@ async function runDebrief($: Host): Promise<string> {
     const res = await startDebrief($, basis, t, note ? [`note: ${note}`] : [])
     if (res.deny !== undefined) return `debrief not started: ${res.deny}`
     const root = await $.session.root()
-    return `debrief started: agent ${res.agentId ?? '(id not yet known)'} · mode ${basis.mode} · writes to ${debriefFolder(res.builtIn, root, basis.home)}/${note ? ` · ${note}` : ''}`
+    return `debrief started: agent ${res.agentId ?? '(id not yet known)'} · mode ${basis.mode}${basis.window ? ` · lines ${basis.window.firstLine} to ${basis.window.lastLine}` : ''} · writes to ${debriefFolder(res.builtIn, root, basis.home)}/${note ? ` · ${note}` : ''}`
   } finally {
     debriefBusy = false
   }
@@ -1442,7 +1447,10 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
     // reported below
   }
   const rawList = (Array.isArray(parsed.findings) ? parsed.findings : []).filter((r): r is Record<string, unknown> => r !== null && typeof r === 'object' && typeof (r as Record<string, unknown>).title === 'string' && ((r as Record<string, unknown>).title as string).trim() !== '')
-  if (rawList.length === 0) return `debrief post: ${path} holds no findings`
+  // MOD-10: the findings about the host are never listed or filed; the count is all post says of them
+  const setAside = Array.isArray(parsed.host_findings) ? parsed.host_findings.length : 0
+  const asideLine = setAside > 0 ? `${setAside} host_findings set aside (never posted)` : ''
+  if (rawList.length === 0) return [`debrief post: ${path} holds no findings`, ...(asideLine ? [asideLine] : [])].join('\n')
   const rules = await redactRules($)
   // scrubbed again, now: what the file says is not trusted to be clean
   const scrubbed = scrubbedFindings(JSON.stringify({ mod_findings: rawList }), rules) ?? []
@@ -1466,7 +1474,7 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
   const statusOf = (f: PostFinding): string => (f.issue !== undefined ? `posted as #${f.issue}` : trackerWhy !== '' ? `unchecked (${trackerWhy})` : (() => { const k = coveredBy(f, issues); return k === undefined ? 'new' : `covered by #${k}` })())
   const arg = argText.trim()
   if (arg === '') {
-    const out = [`debrief post: ${path} -> ${repo} (nothing is posted by this form; /delegation debrief post all|1,3 posts)`]
+    const out = [`debrief post: ${path} -> ${repo} (nothing is posted by this form; /delegation debrief post all|1,3 posts)`, ...(asideLine ? [asideLine] : [])]
     findings.forEach((f, i) => {
       const { title, body } = renderPost(f, MOD_VERSION)
       out.push('', `[${i + 1}] ${statusOf(f)}`, `title: ${title}`, '', body.trimEnd(), '------')
@@ -1517,6 +1525,7 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
     if (num !== undefined) (post[n - 1] as Record<string, unknown>).issue = num
     out.push(num !== undefined ? `#${num} ${r.stdout.trim().split('\n').pop()}` : `[${n}] posted: ${r.stdout.trim()} (no issue number found to record)`)
   }
+  if (asideLine) out.push(asideLine)
   try {
     await $.fs.write(path, JSON.stringify({ ...parsed, findings: post }, null, 2) + '\n')
   } catch (err) {
@@ -1553,24 +1562,49 @@ async function redactRules($: Host): Promise<RedactRules> {
 }
 
 /**
- * MOD-6: the debrief agent handed back. Read its JSON, scrub every string of mod_findings,
- * write <same folder>/<same name>.findings.json and print one line per finding.
+ * MOD-6 + MOD-10: the debrief agent handed back. Read its JSON and check it against its window
+ * (out-of-window entries stripped, kinds the window lacks flagged), set the host's findings aside,
+ * scrub every string of mod_findings, write <same folder>/<same name>.findings.json and print one
+ * line per finding. Returns false when the check stripped or flagged something: the record must not move.
  */
-async function writeFindings($: Host, debriefPath: string) {
+async function writeFindings($: Host, debriefPath: string, window: DebriefWindow | undefined): Promise<boolean> {
   try {
     const home = await homeOf($)
     const path = debriefPath.startsWith('~/') ? `${home.replace(/\/+$/, '')}${debriefPath.slice(1)}` : debriefPath
     const text = await readText($, path)
-    if (text === undefined) return await appendRow($, `findings: could not read ${path}; no findings file written`)
-    const findings = scrubbedFindings(text, await redactRules($))
-    if (findings === undefined) return await appendRow($, `findings: ${path} is not a JSON object; no findings file written`)
-    if (findings.length === 0) return await appendRow($, findingsLines(findings, '').join('\n'))
+    if (text === undefined) {
+      await appendRow($, `findings: could not read ${path}; no findings file written`)
+      return true
+    }
+    const check = checkDebrief(text, window)
+    if (!check.parsed) {
+      await appendRow($, `findings: ${path} is not a JSON object; no findings file written`)
+      return true
+    }
+    await appendRow($, check.lines.join('\n'))
+    let body = text
+    if (check.strippedCount > 0) {
+      body = JSON.stringify(check.debrief, null, 2) + '\n'
+      await $.fs.write(path, body)
+    }
+    if (!check.clean) {
+      await appendRow($, 'debrief record not moved: the previous record stands, so the next debrief covers this window again; the .done watermark is not to be marked')
+      return false
+    }
+    const findings = scrubbedFindings(body, await redactRules($))
+    if (findings === undefined) return true
+    const { mod, host } = splitModFindings(findings)
+    if (findings.length === 0) {
+      await appendRow($, findingsLines(findings, '').join('\n'))
+      return true
+    }
     const out = findingsPathOf(path)
-    await $.fs.write(out, JSON.stringify(findingsFile(path, MOD_VERSION, findings), null, 2) + '\n')
-    await appendRow($, findingsLines(findings, out).join('\n'))
+    await $.fs.write(out, JSON.stringify(findingsFile(path, MOD_VERSION, mod, host), null, 2) + '\n')
+    await appendRow($, findingsLines(mod, out, host.length).join('\n'))
   } catch (err) {
     debug($, `findings not written: ${String(err)}`)
   }
+  return true
 }
 
 /** The eval runner of this session still out (its agent not listed as finished). */
@@ -1676,9 +1710,12 @@ async function onRunnerComplete($: Host, agentId: string, said: () => Promise<st
     const answer = await said()
     handbacks.delete(agentId)
     const path = debriefPathOf(answer)
-    await storeSet($, K.debrief(sid), { ...debrief, finishedAt: t, ...(path ? { path } : {}) })
-    $.ui.toast(debriefToast(answer))
-    if (path) await writeFindings($, path)
+    const moved = path ? await writeFindings($, path, debrief.window) : true
+    if (moved) {
+      const { prior: _prior, window: _window, ...rest } = debrief
+      await storeSet($, K.debrief(sid), { ...rest, finishedAt: t, ...(path ? { path } : {}) })
+    } else await storeSet($, K.debrief(sid), debrief.prior ?? null)
+    $.ui.toast(moved ? debriefToast(answer) : 'debrief check failed: the debrief record was not moved')
     return
   }
   const inflight = await storeGet<EvalInflight>($, K.evalInflight)

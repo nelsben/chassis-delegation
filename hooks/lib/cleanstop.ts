@@ -3,6 +3,7 @@
 // Pure: no `$`.
 
 import { redact, type RedactRules } from './redact'
+import { MOD_SURFACES, windowAsk, splitFindings, type DebriefWindow } from './debriefcheck'
 
 const H = 60 * 60 * 1000
 
@@ -74,13 +75,14 @@ export function cleanStop(i: CleanStopInput): { ok: true } | { ok: false; why: s
 
 /** MOD-6: the one more top-level key both prompts ask the debrief JSON to carry, about the mod itself. */
 export const MOD_FINDINGS_ASK =
-  'Also add one more top-level key to the JSON you write, mod_findings: an array of { kind: went_well | went_wrong, surface (the command, hook or file of chassis-delegation it is about), fault_class: bug | design | docs | cost | performance, severity: P1 | P2 | P3, title, body, evidence: [strings] } about chassis-delegation itself, not the project, grounded in the facts above (verdict lines, refutes, by-hand accepts, denials, corrections); [] when there is nothing to say. Name no product, repo, customer, person or path in it.'
+  `Also add one more top-level key to the JSON you write, mod_findings: an array of { kind: went_well | went_wrong, surface (one of: ${MOD_SURFACES.join(', ')}; a finding about the host's permission classifier or safety checks, the engine or the person's own hooks is set aside, never posted), fault_class: bug | design | docs | cost | performance, severity: P1 | P2 | P3, title, body, evidence: [strings] } about chassis-delegation itself, not the project, grounded in the facts above (verdict lines, refutes, by-hand accepts, denials, corrections); [] when there is nothing to say. Name no product, repo, customer, person or path in it.`
 
 /** The skill-wrapping prompt: the person's own skill file, unedited, plus the mod_findings ask and the facts it rests on. */
-export const debriefPrompt = (skillPath: string, sessionId: string, facts: readonly string[] = []): string =>
+export const debriefPrompt = (skillPath: string, sessionId: string, facts: readonly string[] = [], window?: DebriefWindow): string =>
   [
     `Run the /debrief skill exactly as written in ${skillPath}. Session id ${sessionId}. Write only what the skill allows.`,
     ...(facts.length > 0 ? ['What chassis-delegation saw since the last debrief:', ...facts.map(f => `- ${f}`)] : []),
+    ...(window ? [windowAsk(window)] : []),
     MOD_FINDINGS_ASK,
   ].join('\n')
 
@@ -104,12 +106,13 @@ export const FRICTION_CAP = 100
 export const debriefSource = (home: string, pluginRoot: string, skillExists: boolean): { path: string; builtIn: boolean } =>
   skillExists ? { path: debriefSkillPath(home), builtIn: false } : { path: `${pluginRoot.replace(/\/+$/, '')}/hooks/templates/debrief.md`, builtIn: true }
 
-export const builtInDebriefPrompt = (templatePath: string, sessionId: string, root: string, facts: readonly string[]): string =>
+export const builtInDebriefPrompt = (templatePath: string, sessionId: string, root: string, facts: readonly string[], window?: DebriefWindow): string =>
   [
     `Run the debrief exactly as written in ${templatePath}.`,
     `Session id ${sessionId}. Repo root ${root}.`,
     facts.length > 0 ? 'What chassis-delegation saw since the last debrief:' : 'chassis-delegation saw no friction events beyond the verdicts below.',
     ...facts.map(f => `- ${f}`),
+    ...(window ? [windowAsk(window)] : []),
     MOD_FINDINGS_ASK,
     'Write only what it allows.',
   ].join('\n')
@@ -193,10 +196,14 @@ export function scrubbedFindings(json: string, rules: RedactRules): ModFinding[]
 export const findingsPathOf = (debriefPath: string): string => debriefPath.replace(/\.json$/, '') + '.findings.json'
 
 /** The file the mod writes: what a poster reads. */
-export const findingsFile = (debrief: string, modVersion: string, findings: readonly ModFinding[]) => ({ debrief, modVersion, scrubbed: true as const, findings })
+export const findingsFile = (debrief: string, modVersion: string, findings: readonly ModFinding[], hostFindings: readonly ModFinding[] = []) => ({ debrief, modVersion, scrubbed: true as const, findings, host_findings: hostFindings })
 
 /** One line per finding, then where the drafts are; nothing to say prints `no findings`. */
-export function findingsLines(findings: readonly ModFinding[], draftsPath: string): string[] {
-  if (findings.length === 0) return ['no findings']
-  return [...findings.map((f, i) => `[${i + 1}] ${f.kind} · ${f.severity} · ${f.surface || '(no surface)'} · ${f.title}`), `drafts: ${draftsPath}`]
+export function findingsLines(findings: readonly ModFinding[], draftsPath: string, hostCount = 0): string[] {
+  const aside = hostCount > 0 ? [`${hostCount} host_findings set aside (never posted)`] : []
+  if (findings.length === 0) return ['no findings', ...aside]
+  return [...findings.map((f, i) => `[${i + 1}] ${f.kind} · ${f.severity} · ${f.surface || '(no surface)'} · ${f.title}`), ...aside, `drafts: ${draftsPath}`]
 }
+
+/** MOD-10: the scrubbed findings split into the mod's and the host's. */
+export const splitModFindings = (findings: readonly ModFinding[]): { mod: ModFinding[]; host: ModFinding[] } => splitFindings(findings)

@@ -894,6 +894,31 @@ The `redact` list is a `/config` option and nothing else. It is never read from
 of the names you do not want public would publish them. Put the product,
 customer, employer and repo names there once, in your own settings.
 
+### What bounds a debrief
+
+In breadcrumbs mode a debrief is held to four rules (MOD-10):
+
+1. **A window.** Both prompts name the lines `(watermark, end]` of the breadcrumb
+   file with their first and last timestamps, say to read only transcript entries
+   inside it and to take the work summary from assistant and user turns, never
+   from tool error text, and ask each `corrections`, `tool_denials` and `outcomes`
+   entry for an `at` (a breadcrumb line or a timestamp).
+2. **A check at hand-back.** Before the findings file is written, the mod strips
+   an entry whose `at` is outside the window, keeps and counts one with none, and
+   flags a `corrections` or `tool_denials` list the window's breadcrumbs cannot
+   contain. It prints one line each, then `debrief check: clean` or the counts.
+3. **A record that moves only when clean.** The debrief record (`lastAt`,
+   watermark, lines) moves only when nothing was stripped or flagged; otherwise
+   the previous record stands and the next debrief covers the window again. The
+   mod never writes the `.done` watermark file; the skill does, and the built-in
+   template says to do it only after the check line reads clean.
+4. **Mod findings only.** `mod_findings[].surface` is one of `card`, `dispatch`,
+   `brief`, `verifier`, `gate`, `dashboard`, `debrief`, `update`, `accept`,
+   `config`, `allowlist`, `scheduler`. A finding on any other surface, or whose
+   text names the host's permission classifier, a host safety check, the engine
+   or your own hooks, goes to `host_findings` in the `.findings.json`.
+   `/delegation debrief post` never lists or files those and says how many it set aside.
+
 ### Posting the findings
 
 Set `issueRepo` (`owner/name`, in `.chassis-delegation.json` or `/config`; empty

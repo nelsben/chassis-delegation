@@ -2303,6 +2303,65 @@ describe('MOD-6: /delegation debrief', () => {
   })
 })
 
+describe('MOD-10: the debrief hand-back is validated against its window', () => {
+  const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const FOLDER = `${ROOT}/.delegation/debriefs`
+  const DEBRIEF = `${FOLDER}/2026-10-10-mod-run.json`
+  const FINDINGS = `${FOLDER}/2026-10-10-mod-run.findings.json`
+  const CRUMBS = `${HOME}/.claude/harness/breadcrumbs/sess-1.jsonl`
+  const crumbs = [
+    ['2026-10-08T09:00:00Z', 'session_start'],
+    ['2026-10-10T10:00:00Z', 'correction'],
+    ['2026-10-10T10:05:00Z', 'permission_prompt'],
+    ['2026-10-10T10:20:00Z', 'session_end'],
+  ].map(([ts, kind]) => JSON.stringify({ ts, kind, detail: {} })).join('\n') + '\n'
+  const PRIOR = { lastAt: 5, watermark: 1, lines: 1, sessionId: 'sess-1', mode: 'breadcrumbs' }
+  const finding = { kind: 'went_wrong', surface: 'verifier', fault_class: 'bug', severity: 'P2', title: 'Verdict row went missing', body: 'It did.', evidence: ['e'] }
+  const files = (debrief: object) => ({ [CRUMBS]: crumbs, [`${CRUMBS.replace(/\.jsonl$/, '.done')}`]: '1\n', [DEBRIEF]: JSON.stringify({ summary: 'x', mod_findings: [finding], ...debrief }) })
+  const shown = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
+
+  test('an out-of-window entry leaves the debrief record unchanged, writes no findings file and prints the stripped line', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const bad = { tool_denials: [{ text: 'Bash denied', at: '2026-10-08T09:00:00Z' }] }
+    const w = world(on, { listAgents: true, store: { 'delegation.debrief.sess-1': PRIOR }, files: files(bad) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief'))).text)
+    expect(out).toContain('lines 2 to 4')
+    expect(String(w.spawns[0]?.prompt)).toContain('2026-10-10T10:20:00Z')
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect(w.store.get('delegation.debrief.sess-1')).toEqual(PRIOR)
+    expect(w.files.has(FINDINGS)).toBe(false)
+    expect(shown(w)).toContain('stripped 1 tool_denials entry outside the window')
+    expect(shown(w)).toContain('record not moved')
+    expect(JSON.parse(w.files.get(DEBRIEF) ?? '{}').tool_denials).toEqual([])
+    expect(w.files.get(CRUMBS.replace(/\.jsonl$/, '.done'))).toBe('1\n')
+  })
+
+  test('a clean hand-back moves the record and writes the findings', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const ok = { tool_denials: [{ text: 'Bash denied', at: 3 }] }
+    const w = world(on, { listAgents: true, store: { 'delegation.debrief.sess-1': PRIOR }, files: files(ok) })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ watermark: 1, lines: 4, agentId: 'agent-1', path: DEBRIEF })
+    expect((w.store.get('delegation.debrief.sess-1') as { lastAt: number }).lastAt).toBeGreaterThan(5)
+    expect((w.store.get('delegation.debrief.sess-1') as { finishedAt?: number }).finishedAt).toBeDefined()
+    expect(JSON.parse(w.files.get(FINDINGS) ?? '{}').findings).toHaveLength(1)
+    expect(shown(w)).toContain('debrief check: clean')
+  })
+
+  test('a finding about the host goes to host_findings in the file and is counted in the printed result', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const host = { ...finding, surface: 'permission classifier', title: 'The classifier denied a read' }
+    const w = world(on, { listAgents: true, files: files({ mod_findings: [finding, host] }) })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    const written = JSON.parse(w.files.get(FINDINGS) ?? '{}')
+    expect(written.findings).toHaveLength(1)
+    expect(written.host_findings).toHaveLength(1)
+    expect(shown(w)).toContain('1 host_findings set aside')
+  })
+})
+
 describe('MOD-7: /delegation debrief post', () => {
   const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
   const FOLDER = `${ROOT}/.delegation/debriefs`
@@ -2360,6 +2419,20 @@ describe('MOD-7: /delegation debrief post', () => {
     expect(w.runs.filter(r => isWrite(r.argv)).map(r => r.argv[2])).toEqual(['create'])
     await $.command.run(delegation('debrief post 1'))
     expect(w.runs.filter(r => isWrite(r.argv)).map(r => r.argv.slice(0, 5))).toContainEqual(['gh', 'issue', 'comment', '9', '--repo'])
+  })
+
+  test('MOD-10: post with two mod findings and one host finding lists two and says one set aside; it files only the two', { options: { autoEval: false } }, async ($, on) => {
+    const host = one({ surface: 'permission classifier', title: 'The classifier denied a read' })
+    const withHost = JSON.stringify({ findings: JSON.parse(FILE).findings, host_findings: [host] })
+    const w = world(on, { files: { [FINDINGS]: withHost, [REPO_FILE]: '{"issueRepo":"owner/mod"}' }, dirs, run: ghRun })
+    await $.session.start(sessionStart)
+    const shown = String((await $.command.run(delegation('debrief post'))).text)
+    expect(shown).toContain('[2] new')
+    expect(shown).not.toContain('[3]')
+    expect(shown).not.toContain('The classifier denied a read')
+    expect(shown).toContain('1 host_findings set aside')
+    await $.command.run(delegation('debrief post all'))
+    expect(w.runs.filter(r => isWrite(r.argv))).toHaveLength(2)
   })
 
   test('with issueRepo empty it says so and posts nothing', { options: { autoEval: false } }, async ($, on) => {
