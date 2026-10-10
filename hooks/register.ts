@@ -185,7 +185,7 @@ import {
   type WorkPresent,
 } from './lib/verify'
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
-import { driftMessage, newAgentTypes, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
+import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
 
 type Host = EngineInterface
@@ -206,6 +206,8 @@ const K = {
   agent: (agentId: string) => `delegation.agent.${agentId}`,
   name: (name: string) => `delegation.agentName.${name}`,
   alias: (alias: string) => `delegation.alias.${alias}`,
+  /** GH-114: the classifier's tier for a card, from its dry run. */
+  classifier: (task: string) => `delegation.classifier.${task}`,
   agentTypes: 'delegation.agentTypes',
   answered: 'delegation.models.answered',
   replay: (briefPath: string) => `delegation.replay.${briefPath}`,
@@ -264,7 +266,9 @@ type HereFields = { here?: string; files?: string[] }
  * its report's task= (item 2).
  */
 type IssueOneFields = { requestedAlias?: Alias; adhoc?: true }
-type HereRecord = AttemptRecord & HereFields & IssueOneFields
+/** GH-114: what the classifier said of the card at the dry run, on the card's first attempt record. */
+type ClassifierFields = { classifierTier?: Tier }
+type HereRecord = AttemptRecord & HereFields & IssueOneFields & ClassifierFields
 /** GH-16: another repo=here card in flight in the same checkout: a record without a verdict. */
 type InFlight = { label: string; scope: string[]; files: string[] }
 
@@ -340,6 +344,8 @@ type Config = {
   gitGuard: boolean
   /** GH-112: the band above the prompt. */
   dashboardBand: boolean
+  /** GH-114: the card tool's dry run asks the classifier beside the card's tier. */
+  classifierSecondOpinion: boolean
   guardBranches: string[]
   // defaults < .chassis-delegation.json < settings (5B)
   gateMap: Record<string, string>
@@ -397,6 +403,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       ledgerFile: o.ledgerFile !== false,
       gitGuard: o.gitGuard !== false,
       dashboardBand: o.dashboardBand !== false,
+      classifierSecondOpinion: o.classifierSecondOpinion !== false,
       guardBranches: parseGuardBranches(str('guardBranches')),
       gateMap: eff.gateMap,
       gateTemplates: gateTemplatesOf(eff.gateMap),
@@ -2503,7 +2510,20 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   if (!header.startsWith('[[brief ')) return [wrote, dry].join('\n')
   const alias = finalAlias({ tier: made.tier, source: 'brief' }, cfg.tierMap[made.tier]).alias
   const notes = lines.filter(l => /^\s+(note|warning):/.test(l)).map(l => l.trim())
-  return [wrote, cardSummary(made, alias), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : []), '', sayGo(made.id)].join('\n')
+  // GH-114: one classifier call per card written, on the dry run only
+  let second: string | undefined
+  if (cfg.classifierSecondOpinion) {
+    try {
+      const said = await $.model.classify(classifierText(made.text), CLASSIFIER_LABELS)
+      if ((CLASSIFIER_LABELS as readonly string[]).includes(said ?? '')) {
+        await storeSet($, K.classifier(made.id), { card: made.tier, classifier: said })
+        second = said === made.tier ? `card says ${made.tier} · classifier agrees` : `card says ${made.tier} · classifier says ${said}`
+      }
+    } catch (err) {
+      debug($, `classifier second opinion failed: ${String(err)}`)
+    }
+  }
+  return [wrote, cardSummary(made, alias), ...(second ? [second] : []), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : []), '', sayGo(made.id)].join('\n')
 }
 
 /** `/delegation` with no argument: the delegation state and where the config came from. */
@@ -2520,6 +2540,7 @@ async function statusReport($: Host): Promise<string> {
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
     `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${cfg.maxWorkers} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
+    ...aliasLines(Object.fromEntries((await Promise.all(['haiku', 'sonnet', 'opus'].map(async a => [a, await storeGet<unknown>($, K.alias(a))] as const))).filter(([, v]) => v !== undefined)), await now($)),
     `base: ${cfg.baseRef || 'origin/main → main → origin/master → master'} · repo=here ignore: ${ignoreWithCards(cfg.ignore, cfg.cardDir).join(', ') || '(none)'}`,
   ].join('\n')
 }
@@ -2673,6 +2694,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
       await started(res.agentId)
     }
 
+    const classifierTier = !adhoc && attempt === 1 ? (await storeGet<{ classifier?: Tier }>($, K.classifier(task)))?.classifier : undefined
     const rec: HereRecord = {
       task,
       subtask,
@@ -2692,6 +2714,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
       ...laneFields(lane),
       ...(here ? { here } : {}),
       ...(fableAsked ? { requestedAlias: 'fable' as const } : {}),
+      ...(classifierTier ? { classifierTier } : {}),
     }
     if (adhoc) await storeSet($, K.adhoc, [...((await storeGet<AttemptRecord[]>($, K.adhoc)) ?? []), rec].slice(-200))
     else await storeSet($, K.tasks(task), [...records, rec])
@@ -2727,7 +2750,8 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
     // alias drift: the resolved id behind the alias moved
     const resolved = res.model
     if (resolved && resolved !== alias) {
-      const prev = await storeGet<string>($, K.alias(alias))
+      const prevRaw = await storeGet<unknown>($, K.alias(alias))
+      const prev = parseSighting(prevRaw)?.id
       const drift = driftMessage(alias, prev, resolved)
       if (drift) {
         $.ui.toast(drift)
@@ -2738,7 +2762,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string) => Pro
           $.ui.log(`${PLUGIN}: ${drift}`)
         }
       }
-      if (prev !== resolved) await storeSet($, K.alias(alias), resolved)
+      await storeSet($, K.alias(alias), nextSighting(prevRaw, resolved, t))
     }
 
     await setWorkers($, list => [...list, { task, subtask, attempt, kind: 'spawn', tier, alias, ...(res.agentId ? { agentId: res.agentId } : {}), verdict: 'pending', at: t }])
