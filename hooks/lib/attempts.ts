@@ -31,6 +31,8 @@ export type AttemptRecord = {
   source?: TierSource
   resolvedModel?: string
   verdict: AttemptVerdict
+  /** GH-115: a refuted attempt's first failed claim (branch, sha, scope, files, gate, red, pr). */
+  firstFailed?: string
   /** The report's own `gate=` claim. */
   reportGate?: string
   /**
@@ -86,19 +88,31 @@ export const recordFailed = (r: AttemptRecord): boolean => FAILING.includes(r.ve
  */
 export const escalatesOn = (verdict: string, reportGate?: string): boolean => verdict === 'refuted' || (verdict === 'verified' && reportGate === 'fail')
 
-/** The tier a respawn escalates from: the last attempt's, when that attempt was refuted or confirmed gate=fail (GH-104). */
+/** GH-115: the claims whose failure says the worker was out of its depth; the rest say the brief's globs or the base were wrong. */
+export const ESCALATING_CLAIMS: readonly string[] = ['sha', 'gate', 'red']
+
+/** GH-115: the claim a refuted attempt is held at its tier for (scope, files, branch, pr), else undefined (a record without `firstFailed` escalates). */
+export const heldClaim = (r: Pick<AttemptRecord, 'verdict' | 'firstFailed'>): string | undefined =>
+  r.verdict === 'refuted' && r.firstFailed !== undefined && !ESCALATING_CLAIMS.includes(r.firstFailed) ? r.firstFailed : undefined
+
+/**
+ * The tier a respawn escalates from: the last attempt's, when that attempt was
+ * refuted or confirmed gate=fail (GH-104), unless its first failed claim was
+ * scope, files, branch or pr (GH-115).
+ */
 export function escalationSource(records: readonly AttemptRecord[], subtask: string, lane?: Lane): Tier | undefined {
   const last = attemptsFor(records, subtask, lane).at(-1)
-  return last && escalatesOn(last.verdict, last.reportGate) ? last.tier : undefined
+  return last && escalatesOn(last.verdict, last.reportGate) && heldClaim(last) === undefined ? last.tier : undefined
 }
 
 /**
  * GH-104: the tier a respawn after a no-report is held at: that attempt's
  * own, never one up (and never below it, should the brief's tier be lower).
+ * GH-115: a scope, files, branch or pr refute holds it the same way.
  */
 export function holdSource(records: readonly AttemptRecord[], subtask: string, lane?: Lane): Tier | undefined {
   const last = attemptsFor(records, subtask, lane).at(-1)
-  return last && last.verdict === 'no-report' ? last.tier : undefined
+  return last && (last.verdict === 'no-report' || heldClaim(last) !== undefined) ? last.tier : undefined
 }
 
 /** GH-104: the shas the verifier already judged for this task + subtask (pending and work-present attempts are not judged). */

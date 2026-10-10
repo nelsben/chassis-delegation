@@ -160,6 +160,7 @@ import {
 } from './lib/tier'
 import {
   advise,
+  firstFailedClaim,
   amendApprovalLine,
   amendedLine,
   amendMalformedLine,
@@ -1767,6 +1768,8 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
         reportGate: report?.gate,
         // GH-104: the sha the report named, so a later look at the worktree knows it is judged
         ...(report?.sha ? { sha: report.sha.trim() } : {}),
+        // GH-115: the first failed claim, so a scope or files refute holds the tier on a respawn
+        ...(verdict === 'refuted' && firstFailedClaim(lines) ? { firstFailed: firstFailedClaim(lines)?.name } : {}),
         verdictAt: t,
         ...(usd !== undefined ? { usd } : {}),
       ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),

@@ -621,7 +621,15 @@ After a no-report it is `next=respawn at <same tier>`: a missing report line
 is a reporting defect, not a reason to pay for a bigger model, so a no-report
 never moves the tier up (a respawn after an attempt that was already
 escalated keeps that attempt's tier, and the debug line says it was picked by
-the last attempt's tier). With
+the last attempt's tier). A refute whose first failed claim is `scope`,
+`files`, `branch` or `pr` holds the tier too: it says the brief's globs (or the
+base) were wrong, not that the worker was out of its depth. Only a refute on
+`sha`, `gate` or `red` (or a record from before the mod kept `firstFailed`)
+earns the next tier. A scope refute advises
+`next=resume agent=<id> — amend: [[amend v=1 scope+=<path> reason=…]]` with the
+first out-of-scope path filled in; a files refute advises listing the paths in
+`files=` (or reverting the extras); a later respawn says
+`(held: a scope refute)` or `(held: a files refute)`. With
 `autoEscalate` the mod does either one itself. The budget counts spawns,
 resumes and verify attempts per task. Past it the next spawn is denied.
 

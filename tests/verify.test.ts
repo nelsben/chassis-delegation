@@ -78,6 +78,18 @@ describe('verdict, advice and budgets', () => {
     expect(escalatesOn('unverified', 'fail')).toBe(false)
     expect(escalatesOn('no-report')).toBe(false)
   })
+  test('GH-115: a scope refute advises the amend and never escalates; a files refute says to list the paths', () => {
+    const scope = ['claim sha: held — abc', 'claim scope: failed — out-of-scope path: hooks/x.ts']
+    const a = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', lines: scope })
+    expect(a.kind).toBe('resume')
+    expect(a.next).toBe('resume agent=agent-7 — amend: [[amend v=1 scope+=hooks/x.ts reason=…]] (the path is outside scope; a scope refute never escalates)')
+    const again = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines: scope })
+    expect(again).toEqual({ kind: 'respawn', tier: 'standard', next: 'respawn at standard — same brief /s/briefs/FE-1.brief.md, model omitted so the mod picks (held: a scope refute)' })
+    const files = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', lines: ['claim files: failed — extra paths: a.ts'] })
+    expect(files.next).toBe('resume agent=agent-7 — list the paths named above in files= (or revert the extras)')
+    const gate = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines: ['claim gate: failed — x'] })
+    expect(gate.tier).toBe('frontier')
+  })
   test('attempts at budget: exhausted, with the deny wording', () => {
     const a = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 2, lineageResumes: 1, tier: 'standard' })
     expect(a.kind).toBe('exhausted')
@@ -183,6 +195,18 @@ describe('attempt arithmetic', () => {
     expect(escalationSource([{ ...rec(1, 'spawn', 1, 'verified'), reportGate: 'fail' }], 'main')).toBe('standard')
     expect(escalationSource([rec(1, 'spawn', 1, 'work-present')], 'main')).toBeUndefined()
     expect(holdSource([rec(1, 'spawn', 1, 'work-present')], 'main')).toBeUndefined()
+  })
+  test('GH-115: a scope or files refute holds the tier; a gate, red or sha refute (or an old record) escalates', () => {
+    const refuted = (firstFailed?: string) => [{ ...rec(1, 'spawn', 1, 'refuted'), ...(firstFailed ? { firstFailed } : {}) }]
+    for (const name of ['scope', 'files', 'branch', 'pr']) {
+      expect(escalationSource(refuted(name), 'main')).toBeUndefined()
+      expect(holdSource(refuted(name), 'main')).toBe('standard')
+    }
+    for (const name of ['gate', 'red', 'sha']) {
+      expect(escalationSource(refuted(name), 'main')).toBe('standard')
+      expect(holdSource(refuted(name), 'main')).toBeUndefined()
+    }
+    expect(escalationSource(refuted(), 'main')).toBe('standard')
   })
   test('GH-104: judged shas are the ones a verdict was given on; pending and work-present are not judged', () => {
     const list = [{ ...rec(1, 'spawn', 1, 'refuted'), sha: '1234abcd' }, { ...rec(2, 'verify', 1, 'work-present'), sha: 'f'.repeat(40) }, rec(3, 'resume', 1, 'pending')]

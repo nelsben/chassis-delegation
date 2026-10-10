@@ -3,7 +3,7 @@
 // map's rules are ./gates.ts. GH-104: the look at a worker's worktree before a
 // respawn or an auto-resume, and the synthetic report `--verify` judges. Pure:
 // no `$` (git runs through an injected `exec`).
-import { escalatesOn } from './attempts'
+import { escalatesOn, ESCALATING_CLAIMS } from './attempts'
 import { parseClaimLine, type ClaimLine } from './quiet'
 import { nextTier, type Tier } from './tier'
 import { BASE_REFS, type ExecOut } from './verify-native'
@@ -38,6 +38,8 @@ export type AdviseInput = {
   adhoc: boolean
   /** GH-1 item 2: an ad hoc spawn (no header, no brief) whose report was verified cardlessly. */
   cardless?: boolean
+  /** GH-115: the refuted attempt's first failed claim; read from `lines` when omitted. */
+  firstFailed?: string
   /** The verifier's lines: an unverified verdict's resume names its unchecked claims (GH-1 item 5). */
   lines?: readonly string[]
 }
@@ -58,6 +60,13 @@ export function proveList(lines: readonly string[]): string {
     .map(c => `${c.name} (${cutTo(c.detail, PROVE_REASON_CAP)})`)
     .join(', ')
 }
+
+/** GH-115: a refuted verdict's first failed claim, as the verifier's lines name it. */
+export const firstFailedClaim = (lines: readonly string[]): ClaimLine | undefined =>
+  lines.map(parseClaimLine).find((c): c is ClaimLine => c?.status === 'failed')
+
+/** The first path of a scope claim's `out-of-scope path: <path>` detail. */
+const outOfScopePath = (c: ClaimLine): string | undefined => /out-of-scope path: (\S+)/.exec(c.detail)?.[1]
 
 export const budgetDenyMessage = (label: string, attempts: number, briefPath?: string): string =>
   `budget exhausted for ${label} (${attempts} attempts); raise budget= in ${briefPath ?? "the task's brief"} to continue (the ladder resumes from attempt ${attempts}, the brief is re-read)`
@@ -84,12 +93,22 @@ export function advise(input: AdviseInput): Advice {
     return { kind: 'check', next: 'check by hand — unverified is not a pass' }
   }
   if (input.attempts >= input.budget) return { kind: 'exhausted', next: `stop — ${budgetDenyMessage(input.task, input.attempts)}` }
+  // GH-115: a scope or files refute says the brief's globs are wrong, not that the worker was out of its depth
+  const failed = input.verdict === 'refuted' ? firstFailedClaim(input.lines ?? []) : undefined
+  const failedName = input.verdict === 'refuted' ? (input.firstFailed ?? failed?.name) : undefined
+  const held = failedName !== undefined && !ESCALATING_CLAIMS.includes(failedName) ? failedName : undefined
   if (input.lineageResumes === 0 && input.agentId) {
+    if (held === 'scope') {
+      const path = failed && failed.name === 'scope' ? outOfScopePath(failed) : undefined
+      return { kind: 'resume', next: `resume agent=${input.agentId} — amend: [[amend v=1 scope+=${path ?? '<path>'} reason=…]] (the path is outside scope; a scope refute never escalates)` }
+    }
+    if (held === 'files') return { kind: 'resume', next: `resume agent=${input.agentId} — list the paths named above in files= (or revert the extras)` }
     return { kind: 'resume', next: `resume agent=${input.agentId} — SendMessage it the verifier lines below` }
   }
-  const tier = escalatesOn(input.verdict, input.reportGate) ? nextTier(input.tier) : input.tier
+  const tier = escalatesOn(input.verdict, input.reportGate) && held === undefined ? nextTier(input.tier) : input.tier
   const brief = input.briefPath ? `same brief ${input.briefPath}` : 'same prompt'
-  return { kind: 'respawn', tier, next: `respawn at ${tier} — ${brief}, model omitted so the mod picks` }
+  const heldNote = held !== undefined && (held === 'scope' || held === 'files') ? ` (held: a ${held} refute)` : ''
+  return { kind: 'respawn', tier, next: `respawn at ${tier} — ${brief}, model omitted so the mod picks${heldNote}` }
 }
 
 // ---- GH-104: look before you respawn ---------------------------------------------
