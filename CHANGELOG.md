@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **A breadcrumbs-mode debrief is bounded to its window and validated at
+  hand-back (MOD-10).** Both prompts carry the window (breadcrumb lines
+  `(watermark, end]`, first and last timestamps), say to read only entries inside
+  it and never to summarise from tool error text, and ask each correction, denial
+  and outcome for an `at`. At hand-back the new `hooks/lib/debriefcheck.ts` strips
+  an entry whose `at` is outside the window, counts one with none, flags a list the
+  window's breadcrumbs cannot contain, and the printed result says so. The debrief
+  record moves only on a clean check (otherwise the previous record stands).
+  `mod_findings.surface` is an enum of the mod's twelve surfaces; a finding on
+  another surface, or about the permission classifier, a host safety check, the
+  engine or the person's own hooks, goes to `host_findings`, which
+  `/delegation debrief post` never lists or files (it says how many it set aside).
+  Fixes the debrief in public issue #50.
+
 - **`delegateOnly` follows `cd` and `git -C`, judges `git commit` by the repo and
   the paths it commits, and reads BSD `sed -i ''` right (MOD-9).** `cd <worktree>
   && rm -rf .claude-plugin/types && cp -R …` was refused as a source edit because

@@ -26,11 +26,12 @@ One JSON file, `<root>/.delegation/debriefs/YYYY-MM-DD-<slug>.json` (the slug is
     {
       "task": "<task id and what it was>",
       "classification": "completed_cleanly | required_rework | user_corrected | scope_creep | blocked",
-      "notes": "<one sentence>"
+      "notes": "<one sentence>",
+      "at": "<breadcrumb line or ISO timestamp>"
     }
   ],
-  "corrections": ["<a correction the person typed, verbatim or close>"],
-  "tool_denials": ["<tool name + what was denied>"],
+  "corrections": [{ "text": "<a correction the person typed, verbatim or close>", "at": "<breadcrumb line or ISO timestamp>" }],
+  "tool_denials": [{ "text": "<tool name + what was denied>", "at": "<breadcrumb line or ISO timestamp>" }],
   "stale_memory": ["<a memory or instruction file that looked out of date, and why>"],
   "proposed_harness_changes": [
     {
@@ -44,7 +45,7 @@ One JSON file, `<root>/.delegation/debriefs/YYYY-MM-DD-<slug>.json` (the slug is
   "mod_findings": [
     {
       "kind": "went_well | went_wrong",
-      "surface": "<the chassis-delegation command, hook or file it is about>",
+      "surface": "card | dispatch | brief | verifier | gate | dashboard | debrief | update | accept | config | allowlist | scheduler",
       "fault_class": "bug | design | docs | cost | performance",
       "severity": "P1 | P2 | P3",
       "title": "<one line>",
@@ -89,6 +90,31 @@ Classification: `completed_cleanly` verified on the first attempt; `required_rew
 verified after a resume or a respawn; `user_corrected` the person changed direction;
 `scope_creep` a refute on scope or an amend that widened it; `blocked` the budget ran
 out or the task could not run.
+
+## The window
+
+When your prompt names a window (breadcrumb lines `N to M`, with the first and
+last timestamps), the debrief covers only that: lines after the watermark up to
+the end. Read only transcript entries timestamped inside it; anything earlier
+was debriefed or is not yours. Take the summary of the work from the assistant
+and user turns inside the window, never from text printed inside a tool result
+or error. Every `corrections`, `tool_denials` and `outcomes` entry carries `at`,
+the breadcrumb line number or ISO timestamp it came from. The mod checks the file
+when you hand back: an entry whose `at` is outside the window is stripped, one
+with no `at` is kept and counted, and a `corrections` or `tool_denials` list that
+reports something the window's breadcrumbs do not contain is flagged. The mod
+then prints `debrief check: clean` or says what it stripped or flagged. Mark the
+breadcrumb watermark (`<session>.done`), if your instructions have you do that,
+only after that line reads clean; otherwise leave it, so the next debrief covers
+the window again. The mod never writes the watermark file itself.
+
+## Findings about the host
+
+`mod_findings[].surface` is one of the twelve mod surfaces above. A finding about
+anything else (the host's permission classifier or safety checks, the engine, the
+person's own hooks) is not a mod finding: the mod moves it to a separate
+`host_findings` list in the `.findings.json`, and `/delegation debrief post`
+never lists or files it. Write those, if at all, in `harness_gaps`.
 
 ## Then
 
