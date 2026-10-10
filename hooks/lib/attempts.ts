@@ -28,7 +28,8 @@ export type AttemptRecord = {
   lineage: number
   tier: Tier
   alias: string
-  source?: TierSource
+  /** MOD-15: `fallback` when the mod started a ready worktree row itself after the brain left it unclaimed (readyFallbackMinutes). */
+  source?: TierSource | 'fallback'
   resolvedModel?: string
   verdict: AttemptVerdict
   /** GH-115: a refuted attempt's first failed claim (branch, sha, scope, files, gate, red, pr). */

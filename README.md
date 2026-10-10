@@ -636,7 +636,8 @@ ledger are what they always were. Because the brain made the spawn, the engine
 runs the mod's other hooks for the worker too: the git guard on its Bash calls,
 its turn usage, its hand-back. A subagent a plugin starts with `$.agent.spawn`
 is stepped past by that plugin's own hooks, which is why the mod starts only its
-debrief and eval runners that way: they need none of the hooks.
+debrief and eval runners that way: they need none of the hooks (and, as a last
+resort, a ready worktree row the brain never claimed: see **The queue** below).
 
 The hook refuses a spawn with the same one line the dispatch result gives:
 
@@ -647,13 +648,46 @@ The hook refuses a spawn with the same one line the dispatch result gives:
 - a spawn while every worker slot is taken:
   `queued: BE-101 — the mod will tell you when a slot frees (2 live: BE-99, BE-100; 1 queued: BE-101)`.
 
-The queue is advice. A queued task waits; when a hand-back frees a slot, the
-verdict row says `ready: BE-101 — run its spawn block (/dispatch BE-101 prints
-it again)` once, and the "Delegation state" section of the brain's next prompt
-says it while it holds (a worker that ended with no hand-back frees its slot
-there). The brain makes the spawn, which takes the task's queued place
-(`started queued BE-101 (waited 4 min)`); the mod starts nothing itself. A
-respawn verdict carries the next spawn block in its advice the same way.
+**The queue.** The queue is advice. A queued task waits; when a hand-back frees
+a slot, the verdict row says `ready: BE-101 — run its spawn block (/dispatch
+BE-101 prints it again)` once, and the "Delegation state" section of the brain's
+next prompt says it while it holds (a worker that ended with no hand-back frees
+its slot there). The brain makes the spawn, which takes the task's queued place
+(`started queued BE-101 (waited 4 min)`). A respawn verdict carries the next
+spawn block in its advice the same way. While any row is ready or a respawn block
+is pending, the state section carries one posture line: make a ready row's spawn
+call, or a respawn block's Agent call, without asking the person; ask only when a
+verdict is refuted on a claim the brain cannot amend, a worker is over-spend, or
+an amend needs the person's approval.
+
+When the brain still does not act, `readyFallbackMinutes` (default 10; `0` is off)
+is the last resort: a ready row left unclaimed that long is started by the mod
+itself, through the same tier, budget and slot decision the brain's spawn takes,
+and the attempt is recorded with `source: fallback`. Only a worktree brief is
+started this way. A `repo=here` worker shares your checkout and a `repo=none`
+brief has no worktree, so those always wait for the brain; past the timeout their
+ready line says how long they have waited (`ready: BE-101 — run its spawn block
+(/dispatch BE-101 prints it again) — waited 12 min; a repo=here worker shares
+your checkout, so the mod never starts it`). A worker the mod starts itself runs
+outside the mod's hooks, because the engine steps a plugin's own hooks past any
+subagent that plugin starts: no git guard, no effort setting, and its cost known
+only when it ends. The row the mod posts says so (`chassis-delegation: BE-101 was
+ready for 10 min and the brain had not spawned it; the mod started it itself …`).
+A row the brain spawns first, or one still waiting behind a full house, is never
+started.
+
+**Waking the brain.** A verdict row used to reach the brain only inside the
+person's next message. Now, after the mod posts the row for a background worker's
+hand-back, it calls `$.prompt.submit` once with that row and its next action
+(`next=accept`, `next=resume agent=…`, the `ready:` line the hand-back freed, or
+the respawn spawn block): a turn of the brain's own once the session is idle,
+which the model reads as "The chassis-delegation plugin sent a message". It is
+never submitted as the person's words (no `asUser`), and while the person is
+mid-prompt the engine holds it until idle. One submit per verdict: a verdict the
+brain produced itself with `/dispatch <id> --verify` in its own turn, and a
+foreground worker's verdict, which rides its Agent result, wake nothing; an
+over-spend verdict does wake, so the brain can tell you. `wakeOnVerdict` (default
+`true`) turns it off, and the row is posted all the same.
 
 **Report.** The worker's hand-back ends with the report line. The mod reads
 the last one across the worker's final answer and its SubagentHandback
@@ -962,6 +996,8 @@ Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `s
 | Key | Default | What it does |
 | --- | --- | --- |
 | `autoEscalate` | `false` | perform the resume instead of advising it; a respawn is always advice (its verdict carries the spawn block) |
+| `wakeOnVerdict` | `true` | after a verdict row, submit it with its next action as a turn of the brain's own, never as your words (MOD-15; see **Waking the brain** under the contracts) |
+| `readyFallbackMinutes` | `10` | minutes a `ready:` worktree row may wait for the brain before the mod starts it itself, recorded with `source: fallback` and running outside the mod's hooks; `repo=here` and `repo=none` rows always wait; `0` = off (MOD-15; see **The queue**) |
 | `applyAmends` | `true` | append `scope+=` / `forbid+=` blocks to the brief before verifying |
 | `defaultBudget` | `3` | attempts when the brief names no budget: spawn, resume, respawn |
 | `verdictVerbosity` | `line` | `line`: one row; `full`: the row plus every claim line; `silent`: a toast only |
@@ -1320,7 +1356,9 @@ so it is approximate.
   `queued: BE-314 — the mod will tell you when a slot frees (1 live: BE-310; 1 queued: BE-314)`,
   and a second dispatch of a queued task answers `…; already queued since
   14:02 (position 1)` and prints no spawn block. The queue is advice (MOD-12):
-  the mod never starts a queued task. When a hand-back frees a slot, its verdict
+  the brain starts a queued task, and only a ready worktree row left unclaimed
+  for `readyFallbackMinutes` is started by the mod itself (MOD-15; that worker
+  runs outside the mod's hooks). When a hand-back frees a slot, its verdict
   row says `ready: BE-314 — run its spawn block (/dispatch BE-314 prints it
   again)` once, and the "Delegation state" section says it while the slot
   stays free; the brain's spawn of the task takes its queued place and toasts

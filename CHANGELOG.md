@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+- **Work keeps moving without the person (MOD-15).** Since 0.7.0 dispatch prints
+  an Agent call the brain makes, so the queue and the respawn ladder are advice,
+  and a verdict row reached the brain only inside the person's next message.
+  Three changes close the gap:
+  - **A verdict wakes the brain.** After the mod posts the row for a background
+    worker's hand-back it calls `$.prompt.submit` once with that row and its next
+    action (`next=accept`, a resume, the `ready:` line the hand-back freed, or the
+    respawn spawn block), never `asUser`: the model reads "The chassis-delegation
+    plugin sent a message" and acts, once the session is idle (the engine queues it
+    while the person is mid-prompt). One submit per verdict; none for a verdict the
+    brain produced itself with `--verify` in its own turn, none for a foreground
+    worker's (it rides the Agent result); an over-spend verdict wakes it too. The
+    new boolean `wakeOnVerdict` (default `true`) turns it off; the row is posted
+    all the same. The mod's own submit is not counted as a correction.
+  - **The brain is told to act.** While any row is `ready:` or a respawn block is
+    pending, the "Delegation state" section carries one posture line: make a ready
+    row's spawn call or a respawn block's Agent call without asking the person; ask
+    only when a verdict is refuted on a claim the brain cannot amend, a worker is
+    over-spend, or an amend needs approval.
+  - **A ready worktree row left unclaimed is started.** New option
+    `readyFallbackMinutes` (default 10; `0` is off): a `ready:` row the brain has
+    not spawned after that long is started through `spawnSelf`, as every queued row
+    was before MOD-12, with the same tier, budget and slot decision, and recorded
+    with `source: fallback`. The row the mod posts says the worker ran outside the
+    mod's hooks (no git guard, no effort setting, cost known only at the end). Only
+    a worktree brief is started this way: a `repo=here` worker shares the person's
+    checkout and `repo=none` has no worktree, so those always wait for the brain,
+    and past the timeout their ready line says how long they have waited. A row the
+    brain spawns first, or one still behind a full house, is left alone. The node
+    test that pins `spawnSelf`'s callers now names the fallback (`selfSpawnReady`)
+    as the third, and still fails on any other.
+  The README's Spawn contract and Known issues are brought in line, with a
+  "Waking the brain" paragraph and the two options; the manifest declares both.
+
 ## 0.7.0 — 2026-10-11
 
 - **Workers under the mod's hooks (MOD-13).** Now that the brain makes every

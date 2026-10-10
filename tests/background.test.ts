@@ -308,7 +308,7 @@ describe('2C: the clean-stop debrief', () => {
   })
 
   test('5E: no breadcrumb file: five corrections the mod saw are the friction signal', NO_EVAL, async ($, on) => {
-    const w = world(on, { listAgents: true })
+    const w = world(on, { listAgents: true, skip: ['prompt.submit'] }) // this test answers prompt.submit itself
     on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
     for (const text of ['no, the other file', 'stop', "don't push", 'actually use pnpm']) await $.prompt.submit({ text } as never)
     await $.turn.complete(mainTurn())

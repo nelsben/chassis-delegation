@@ -257,6 +257,18 @@
       "title": "Classifier second opinion",
       "description": "In the card tool's dry run, ask the tier classifier once and print its tier beside the card's (card says standard · classifier says economy); never on a dispatch. Off skips the call",
       "default": true
+    },
+    "wakeOnVerdict": {
+      "type": "boolean",
+      "title": "Wake the brain on a verdict",
+      "description": "After the mod posts a verdict row for a worker's hand-back it submits that row with its next action (accept, resume, the ready: line, the respawn spawn block) as a turn of the brain's own, so the brain acts without waiting for you to type; never as your words, and the engine queues it while you are mid-prompt. Off posts the row only",
+      "default": true
+    },
+    "readyFallbackMinutes": {
+      "type": "number",
+      "title": "Ready fallback minutes",
+      "description": "A queued row the mod said ready: for that the brain has not spawned after this many minutes is started by the mod itself, but only a worktree brief (repo=here and repo=none always wait for the brain, and the ready line says how long). A mod-started worker runs outside the mod's hooks: no git guard, no effort setting, cost known only at the end. 0 = off",
+      "default": 10
     }
   }
 }
