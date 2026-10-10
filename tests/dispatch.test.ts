@@ -15,6 +15,9 @@ import {
   agentTypeFor,
   spawnPrompt,
   spawnDescription,
+  spawnCall,
+  spawnBlock,
+  SPAWN_STARTS,
   scopeLooksProse,
   budgetAttempts,
   scratchpadFor,
@@ -209,6 +212,18 @@ describe('the argv /dispatch would run (never run for real here)', () => {
     expect(spawnPrompt('/s/briefs/BE-101.brief.md')).toBe('Your brief is the file /s/briefs/BE-101.brief.md. Read it whole, then follow it exactly.')
     const d = spawnDescription('BE-101', 'x'.repeat(100))
     expect(d).toBe('BE-101: ' + 'x'.repeat(60))
+  })
+
+  test('MOD-12: the spawn block is the Agent call as fenced JSON, then the one line saying the worker starts when it is made', () => {
+    const call = spawnCall({ label: 'BE-101', tier: 'frontier', alias: 'opus', subagentType: 'backend', briefPath: '/s/briefs/BE-101.brief.md' })
+    expect(call).toEqual({ subagent_type: 'backend', model: 'opus', description: 'BE-101 frontier opus', prompt: 'Your brief is the file /s/briefs/BE-101.brief.md. Read it whole, then follow it exactly.' })
+    const lines = spawnBlock(call).split('\n')
+    expect(lines[0]).toBe('spawn: Agent')
+    expect(lines[1]).toBe('```json')
+    expect(lines.at(-2)).toBe('```')
+    expect(lines.at(-1)).toBe(SPAWN_STARTS)
+    expect(JSON.parse(lines.slice(2, -2).join('\n'))).toEqual(call)
+    expect(SPAWN_STARTS.startsWith('The worker starts when you make this Agent call')).toBe(true)
   })
 })
 

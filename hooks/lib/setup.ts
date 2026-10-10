@@ -222,9 +222,13 @@ export function firstTaskExample(gate: Gate | undefined): string {
   return `${what} a go test`
 }
 
-/** What setup ends with: ask for the first task in a sentence; the brain writes the card with the card tool. */
+/**
+ * What setup ends with: ask for the first task in a sentence; the brain writes
+ * the card with the card tool. MOD-12: on go the brain dispatches and makes the
+ * Agent call the dispatch returns; the mod shapes and verifies that worker.
+ */
 export const handoverText = (gate: Gate | undefined): string =>
-  `Set up. Tell Claude your first task in a sentence, for example: "${firstTaskExample(gate)}". Claude writes the card, shows you the brief, and dispatches when you say go.`
+  `Set up. Tell Claude your first task in a sentence, for example: "${firstTaskExample(gate)}". Claude writes the card, shows you the brief, and when you say go dispatches it and makes the Agent call that starts the worker; the mod shapes and verifies it.`
 
 /** The extra line the setup tool (the brain) gets. */
-export const BRAIN_HANDOVER = 'Ask the person for the first task, then call the card tool.'
+export const BRAIN_HANDOVER = 'Ask the person for the first task, then call the card tool. On go, call dispatch and make the Agent call its result ends with (the spawn block, verbatim): that call starts the worker.'

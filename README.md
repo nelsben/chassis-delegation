@@ -3,15 +3,17 @@
 ![chassis-delegation: the brain writes the task card; dispatch spawns a worker at the opus, sonnet or haiku tier; the verified hand-back comes back](docs/chassis-delegation.png)
 
 Brain-seat delegation for Claude Code. The main model (the "brain") hands a
-task card to a worker subagent with one tool call, `dispatch`. The mod does the
-rest. It writes the brief, cuts a git worktree and picks the model tier. It
-spawns the worker, holding it in a queue while two others run. When the worker
-reports, the mod checks the report against the repo itself (branch, sha,
-changed files, scope, gate, PR) and hands the brain one verdict line with what
-to do next. At a quiet stop it can write a debrief in the background, and it
-can run your eval when `origin/main` moves. It is a Claude Code mod (a plugin
-of function hooks). It needs nothing from any other repo: no scripts, no
-harness, no network. Version 0.6.1, MIT.
+task card to a worker subagent with one tool call, `dispatch`, then makes the
+one Agent call it gets back. The mod does the rest. It writes the brief, cuts a
+git worktree and picks the model tier, and returns the spawn for the brain to
+make (holding the task in a queue while two others run). The brain makes the
+spawn; the mod shapes it (tier, slot, attempt record) and sees the worker
+through every hook it has. When the worker reports, the mod checks the report
+against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
+the brain one verdict line with what to do next. At a quiet stop it can write a
+debrief in the background, and it can run your eval when `origin/main` moves.
+It is a Claude Code mod (a plugin of function hooks). It needs nothing from
+any other repo: no scripts, no harness, no network. Version 0.6.1, MIT.
 
 ## Install on a new machine
 
@@ -291,11 +293,13 @@ The four blocks:
 What is live and what is not. The spend line samples the session's cost every
 15 seconds while a worker is live or queued and every 60 seconds otherwise
 (the last 240 points are kept, and survive a reload), and the live and queued
-counts and the `live mm:ss` clock follow the engine's agent list. A worker the
-mod spawns itself does not run the mod's per-step hooks (public issue #22), so
-**a worker's tokens and cost, and the by-model bars, update when its run ends**,
-not during it. The tokens column is the total the run reported; the dollar
-figure is the worker's own cost.
+counts and the `live mm:ss` clock follow the engine's agent list. The mod adds
+a worker's cost from each of its `turn.complete` events, so **a worker's tokens
+and cost, and the by-model bars, update when a run ends**, not per step. Since
+MOD-12 every worker is the brain's own Agent call and the engine shows the mod
+its steps too (public issue #22); reading them mid-run is the next card. The
+tokens column is the total the run reported; the dollar figure is the worker's
+own cost.
 
 A screen that shows no mod panes (the VS Code extension today) answers
 `/delegation dashboard` with the same blocks as markdown text instead: the
@@ -311,9 +315,9 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/delegation update` | you type it | brings the loaded copy of the mod to origin/main (fast-forward only), migrates this repo's config and says whether the session reloaded or needs a restart (see [Upgrading](#upgrading)) |
 | `/delegation debrief` | you type it | runs the background debrief now and ends with scrubbed findings about the mod, ready to post (see [The debrief now](#the-debrief-now)) |
 | `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
-| `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card; the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
+| `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
-| `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool |
+| `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool; the model then makes the Agent call its result ends with |
 | `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test; it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
 | `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (no input) |
@@ -363,10 +367,14 @@ prints one `config:` line per key it set in a fresh config (`gateMap.test`, and
 
     Set up. Tell Claude your first task in a sentence, for example: "add a
     function that reads a file header and returns its size, with a unittest".
-    Claude writes the card, shows you the brief, and dispatches when you say go.
+    Claude writes the card, shows you the brief, and when you say go dispatches
+    it and makes the Agent call that starts the worker; the mod shapes and
+    verifies it.
 
 The example follows the detected gate. Through the `setup` tool the result adds
-`Ask the person for the first task, then call the card tool.` Setup prints
+`Ask the person for the first task, then call the card tool. On go, call
+dispatch and make the Agent call its result ends with (the spawn block,
+verbatim): that call starts the worker.` Setup prints
 init's file lines but not init's own "Next:" line. Nothing needs committing
 before a dispatch: a worktree dispatch reads the card from the main checkout,
 and in `repo=here` mode the card folder is in the always-applied `ignore=` set.
@@ -391,12 +399,24 @@ read the diff.
 
 2. **Say go.** Claude calls the `dispatch` tool (or the `card` tool again with
    `dispatch: true`); you can also type `/dispatch OPS-1` yourself. The tool
-   reports what it did, one line per step:
+   reports what it did, one line per step, and ends with the spawn block:
 
        1. card …/agents/tasks/OPS-1-fix-the-thing.md (status queued, domain ops)
        2. brief …/.delegation/briefs/OPS-1.brief.md written (tier=standard, model=sonnet, budget=2-attempts)
        3. worktree …-OPS-1 on agent/ops/OPS-1 from origin/main
-       4. spawned general-purpose agent agent-7 on claude-sonnet-… · attempt 1/2
+       4. spawn prepared: general-purpose on sonnet · tier=standard (brief) · attempt 1/2 — nothing runs until the Agent call below is made
+       brief …/OPS-1.brief.md · worktree …-OPS-1 · branch agent/ops/OPS-1 · tier=standard → sonnet
+
+       spawn: Agent
+       ```json
+       { "subagent_type": "general-purpose", "model": "sonnet", "description": "OPS-1 standard sonnet", "prompt": "Your brief is the file …/OPS-1.brief.md. Read it whole, then follow it exactly." }
+       ```
+       The worker starts when you make this Agent call: pass the JSON above as its input, verbatim; …
+
+   Claude makes that Agent call, and the worker starts. The mod's spawn hook
+   tiers it, takes a worker slot, records attempt 1 and runs it in its worktree;
+   from then on the mod's hooks see the worker (the git guard, its spend, its
+   hand-back).
 
 3. **The worker hands back.** The brain's conversation gains one row:
 
@@ -561,6 +581,51 @@ is reused, never overwritten, so a later attempt keeps its amend blocks. A
 header that lacks a field is not verified, and the row names what is missing:
 
     note: no brief file named in the prompt; the inline header lacks gate= (or repo=none); verify skipped
+
+**Spawn.** `/dispatch` and the dispatch tool spawn no worker (MOD-12, public
+issue #22). After the brief, the worktree and the tier, the result ends with the
+spawn block, the Agent tool's input as fenced JSON, and one line:
+
+    spawn: Agent
+    ```json
+    {
+      "subagent_type": "<agent type>",
+      "model": "<the tier's alias>",
+      "description": "<ID> <tier> <alias>",
+      "prompt": "Your brief is the file <brief>. Read it whole, then follow it exactly."
+    }
+    ```
+    The worker starts when you make this Agent call: pass the JSON above as its input, verbatim; the mod tiers it, records the attempt and verifies the hand-back.
+
+The brain passes the JSON to its Agent tool as it is. The engine raises the
+mod's `agent.spawn` hook for that call as for any spawn, and the hook shapes it:
+it finds the brief, keeps the call's model when it is the tier's alias (else the
+brief's tier decides, and the debug log says so), runs the worker in the folder
+`/dispatch` prepared (the worktree, or the root for repo=here: the Agent tool
+takes no folder), takes a worker slot and records the attempt (`kind: spawn`,
+`source: brief`). From there the hand-back, the verdict, the ladder and the
+ledger are what they always were. Because the brain made the spawn, the engine
+runs the mod's other hooks for the worker too: the git guard on its Bash calls,
+its turn usage, its hand-back. A subagent a plugin starts with `$.agent.spawn`
+is stepped past by that plugin's own hooks, which is why the mod starts only its
+debrief and eval runners that way: they need none of the hooks.
+
+The hook refuses a spawn with the same one line the dispatch result gives:
+
+- a second spawn of a brief whose attempt still runs:
+  `chassis-delegation: BE-101 not spawned — already running as attempt 1 (agent agent-7); wait for its hand-back`;
+- a spawn past the budget, or one whose worktree holds finished work (see
+  **Look before you respawn** below);
+- a spawn while every worker slot is taken:
+  `queued: BE-101 — the mod will tell you when a slot frees (2 live: BE-99, BE-100; 1 queued: BE-101)`.
+
+The queue is advice. A queued task waits; when a hand-back frees a slot, the
+verdict row says `ready: BE-101 — run its spawn block (/dispatch BE-101 prints
+it again)` once, and the "Delegation state" section of the brain's next prompt
+says it while it holds (a worker that ended with no hand-back frees its slot
+there). The brain makes the spawn, which takes the task's queued place
+(`started queued BE-101 (waited 4 min)`); the mod starts nothing itself. A
+respawn verdict carries the next spawn block in its advice the same way.
 
 **Report.** The worker's hand-back ends with the report line. The mod reads
 the last one across the worker's final answer and its SubagentHandback
@@ -751,8 +816,10 @@ earns the next tier. A scope refute advises
 `next=resume agent=<id> — amend: [[amend v=1 scope+=<path> reason=…]]` with the
 first out-of-scope path filled in; a files refute advises listing the paths in
 `files=` (or reverting the extras); a later respawn says
-`(held: a scope refute)` or `(held: a files refute)`. With
-`autoEscalate` the mod does either one itself. The budget counts spawns,
+`(held: a scope refute)` or `(held: a files refute)`. A respawn verdict carries
+the next spawn block under its row (the tier the spawn hook will pick); the
+brain makes it, and with `autoEscalate` on as well: `autoEscalate` performs a
+resume itself (a message to the worker), never a spawn. The budget counts spawns,
 resumes and verify attempts per task. Past it the next spawn is denied.
 
 Unverified is actionable too. While the budget lasts, an unverified verdict
@@ -763,9 +830,9 @@ That resume counts against the budget like a failing verdict's, and
 `autoEscalate` performs it, sending the unchecked claim lines. Past the budget,
 or with no agent id, the advice stays `check by hand — unverified is not a pass`.
 
-**Look before you respawn.** Before a respawn (the mod's own, a by-hand Agent
-spawn of the same brief, or one the queue starts) and before it advises or
-performs a resume, the mod reads the worker's worktree with allowlisted git reads only: `rev-parse HEAD`,
+**Look before you respawn.** Before a respawn (the brain's spawn of the same
+brief, from a spawn block or by hand, and a dispatch preparing one) and before
+it advises or performs a resume, the mod reads the worker's worktree with allowlisted git reads only: `rev-parse HEAD`,
 `status --porcelain` and `log --format=%H <base>..HEAD` (`<base>` as the
 verifier takes it). Work is present when HEAD has commits ahead of the base,
 the tree is clean, and the verifier has not judged that sha yet. Then nothing
@@ -813,7 +880,9 @@ branch's name, `<branch>:<x>`, `--all` or `--mirror`; tag pushes
 (`git push origin v1.2.3`, `--tags`) and deletes or pushes of other branches
 (`git push origin --delete agent/mod/GH-21`) pass. The guard reads command
 words, not text, so a heredoc body that mentions `git commit` never triggers
-it.
+it. It sees every worker as well as the brain: a worker is the brain's own Agent
+call (MOD-12), so the engine runs the mod's `tool.call` hook for the worker's
+Bash calls, and a repo=here worker on `main` cannot commit there.
 
 ## Configuration
 
@@ -840,7 +909,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `tierMap` | object | JSON string | `{economy: haiku, standard: sonnet, frontier: opus}` | tier → alias. `fable` is never spawned; it becomes opus, and when a brief, the caller or the map asks for fable the notice says so (`tier=frontier → opus (fable requested; fable is never spawned by the mod)`) and the attempt record keeps `requestedAlias: fable` |
 | `domains` | array | comma string | `frontend, backend, ops, dispatcher, cross, shared` | the domains a card may name |
 | `spendByTier` | object | JSON string | `{economy: 3, standard: 10, frontier: 25}` | dollars one attempt may spend, per tier (GH-106); `0` means no ceiling; merges per tier; `/dispatch` writes the tier's entry as `spend=` unless the card has its own `spend:` |
-| `maxWorkers` | number | number (0 = unset) | `2` | briefed workers at once; the next one waits in a queue |
+| `maxWorkers` | number | number (0 = unset) | `2` | briefed workers at once; the next one waits in a queue, and the mod says `ready:` when a slot frees |
 | `worktreeRoot` | string | string | `""` (siblings: `<root>-<id>`) | worktrees go to `<worktreeRoot>/<repo name>-<id>` |
 | `cardDir` | string | string | `agents/tasks` | the folder the task cards live in, relative to the repo root (no leading `/`, no `..`); `/dispatch` and the dispatch tool read cards from it. `init` writes `docs/cards` in a plugin repo. `--replay` stays on `agents/tasks/` |
 | `briefTemplate` | string | string | `hooks/templates/brief.md` | the brief body template file |
@@ -857,7 +926,7 @@ Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `s
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `autoEscalate` | `false` | perform the resume or respawn instead of advising it |
+| `autoEscalate` | `false` | perform the resume instead of advising it; a respawn is always advice (its verdict carries the spawn block) |
 | `applyAmends` | `true` | append `scope+=` / `forbid+=` blocks to the brief before verifying |
 | `defaultBudget` | `3` | attempts when the brief names no budget: spawn, resume, respawn |
 | `verdictVerbosity` | `line` | `line`: one row; `full`: the row plus every claim line; `silent`: a toast only |
@@ -1046,6 +1115,13 @@ and 5 are in the price table at $10 / $50 per million tokens. The brain's
 share is its dollars over the session total (brain plus workers when the
 session total is unknown).
 
+**The brain makes the spawn (MOD-12).** Every worker starts from the brain's
+own Agent call: the one a dispatch result's spawn block names, or a ready
+queued task's, or a respawn verdict's. That call is part of the brain's turn and
+its tokens are the brain's; everything the worker does is the worker's, priced
+from the worker's own `turn.complete` usage (keyed by its agent id), so nothing
+is counted twice. The mod spends no turn of its own to start a worker.
+
 **Where it shows.**
 
 - `/delegation` adds
@@ -1057,8 +1133,8 @@ session total is unknown).
   text fallback prints `Spend split: …` and the same `brain · fable · …` row.
 
 **`delegateOnly`** (`off`, `warn`, `deny`; default `off`; `/config` or the repo
-file). It applies to the main loop only (a worker's tool calls are never
-touched), and only while the session model is opus or fable; a Sonnet or Haiku
+file). It applies to the main loop only (a worker's tool calls reach the mod's
+hooks but are never touched by it), and only while the session model is opus or fable; a Sonnet or Haiku
 brain is never restricted. Under it the brain's own edits are:
 
 - **allowed** when the path is under the card folder (`cardDir`), `.delegation/`,
@@ -1116,11 +1192,12 @@ spend while a worker runs.
 **What the mod can see, and when.** The engine does not show a plugin the
 steps or tool calls of a subagent the plugin spawned itself
 (`$.agent.spawn`): its `turn.step` and `tool.call` hooks are skipped for that
-worker. A worker started by `/dispatch`, by the dispatch tool or from the queue
-is such a worker, so the mod learns its cost only from the `turn.complete` at
-the end of its run. The checks below therefore run when a run ends, not
-mid-run. A worker the brain spawned itself with the Agent tool is seen step by
-step, but the mod does not use that yet.
+worker (public issue #22). Since MOD-12 no worker is such a subagent: `/dispatch`,
+the dispatch tool, a queued task and a respawn all hand the brain the Agent call
+to make, so every worker is the brain's own spawn and the mod's hooks see it,
+its tool calls (the git guard) and its turns. The checks below still read the
+worker's cost from its `turn.complete` events, so they run when a run (or a turn
+of it) ends; using the steps mid-run, and the effort control, is the next card.
 
 What the mod does with each worker's own cost (the cost formula below):
 
@@ -1145,8 +1222,8 @@ What the mod does with each worker's own cost (the cost formula below):
   the verifier, whatever it cost.
 - **On the status line.** The status line and the queued-spawn refusal name
   each live worker with its cost so far: `(2 live: BE-310 $3.10, BE-314
-  $1.20)`. For a dispatched worker that figure moves only when a run ends (a
-  resumed worker shows its earlier runs).
+  $1.20)`. That figure moves when a turn of the worker ends (a resumed worker
+  shows its earlier runs).
 
 ## The cost formula
 
@@ -1185,20 +1262,20 @@ so it is approximate.
 - **`usd` is approximate when marked `~`.** It is then the session delta; see the cost formula.
 - **Concurrent workers can starve the machine.** `maxWorkers` (2) caps briefed
   workers. It does not count ad hoc agents. A briefed spawn past the cap waits
-  in a queue that holds one row per task and subtask: the refusal reads
-  `BE-314 starts when a worker slot frees (1 live: BE-310; 1 queued: BE-314)`,
-  a second dispatch of a queued task answers `already queued since 14:02
-  (position 1)` and spawns nothing, and a by-hand spawn of a queued task takes
-  its place once a slot is free. The queue drains after every hand-back, at the
-  start of every dispatch and after any dispatch that did not spawn; each
-  start toasts `started queued <task> (waited <m> min)`. Only live agents
-  and other tasks' starting spawns hold slots, never queue rows. A queued
-  row leaves the queue only once its spawn succeeds: if the spawn hook refuses
-  the head (work present, say), the head keeps its place and `at`, nothing
-  behind it jumps ahead, and a session row says `queued <task> not started:
-  <reason>; it keeps its place (position 1)`. A refusal retrying cannot cure
-  (budget exhausted, a brief that cannot be read) removes the row, with a row
-  saying so.
+  in a queue that holds one row per task and subtask: the dispatch result and
+  the spawn hook's refusal read
+  `queued: BE-314 — the mod will tell you when a slot frees (1 live: BE-310; 1 queued: BE-314)`,
+  and a second dispatch of a queued task answers `…; already queued since
+  14:02 (position 1)` and prints no spawn block. The queue is advice (MOD-12):
+  the mod never starts a queued task. When a hand-back frees a slot, its verdict
+  row says `ready: BE-314 — run its spawn block (/dispatch BE-314 prints it
+  again)` once, and the "Delegation state" section says it while the slot
+  stays free; the brain's spawn of the task takes its queued place and toasts
+  `started queued <task> (waited <m> min)`. Only live agents and other tasks'
+  starting spawns hold slots, never queue rows. A queued row leaves the queue
+  only once its spawn succeeds: a spawn the engine refuses leaves it at the head.
+  A refusal retrying cannot cure (budget exhausted, work present in the
+  worktree) removes the row.
 - **The git guard reads the command text.** It cannot see a commit made inside
   a script, or a folder named through a variable.
 - **The background runners act on the session's permissions.** The built-in
@@ -1218,6 +1295,7 @@ so it is approximate.
   these keys:
   - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named; a `work-present` attempt, kind `verify`, carries the branch head it found);
   - `delegation.recent.<session>`: the verdict lines;
+  - `delegation.handoff.<brief>`: the folder `/dispatch` prepared for the brief's worker, which the spawn hook gives the brain's Agent call (MOD-12);
   - `delegation.debrief.<session>`;
   - `delegation.friction.<session>`;
   - `delegation.evals`.

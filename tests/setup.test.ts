@@ -153,7 +153,7 @@ describe('GH-109: the scaffold', () => {
 })
 
 describe('GH-111: the handover asks for the first task', () => {
-  const go = ' Claude writes the card, shows you the brief, and dispatches when you say go.'
+  const go = ' Claude writes the card, shows you the brief, and when you say go dispatches it and makes the Agent call that starts the worker; the mod shapes and verifies it.'
   test('one sentence, with an example from the detected stack', () => {
     const t = (p: SetupProbe): string => handoverText(detectGate(p))
     const base = { packageJson: undefined, markers: [] as string[] }
@@ -168,7 +168,7 @@ describe('GH-111: the handover asks for the first task', () => {
     expect(t).not.toContain('REPLACE ME')
     expect(t).not.toContain('save this as')
     expect(t).not.toContain('git commit')
-    expect(BRAIN_HANDOVER).toBe('Ask the person for the first task, then call the card tool.')
+    expect(BRAIN_HANDOVER).toBe('Ask the person for the first task, then call the card tool. On go, call dispatch and make the Agent call its result ends with (the spawn block, verbatim): that call starts the worker.')
   })
 })
 

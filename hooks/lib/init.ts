@@ -20,7 +20,9 @@ One file per task: \`agents/tasks/<ID>-<slug>.md\`, YAML frontmatter, then the s
 in markdown. \`<ID>\` is \`<PREFIX>-<number>[letter]\`: OPS-12, BE-101, FE-7b. The
 brain (the main model) dispatches a card with the \`dispatch\` tool, or you do
 with \`/dispatch <ID>\`; chassis-delegation writes the brief, cuts the worktree,
-picks the model tier, spawns the worker and verifies what it reports.
+picks the model tier and hands back the one Agent call that starts the worker.
+The brain makes that call; the mod shapes the spawn (tier, slot, attempt) and
+verifies what the worker reports.
 
 \`\`\`yaml
 ---

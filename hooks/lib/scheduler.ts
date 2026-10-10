@@ -1,10 +1,14 @@
 // The worker scheduler (SPEC part 2F): at most `maxWorkers` briefed workers
-// run at once; a briefed spawn past that is queued in $.state and started when
-// a worker's slot frees. Ad hoc spawns (no brief) are never queued. Pure: no `$`.
+// run at once; a briefed spawn past that is queued in $.state. MOD-12 (#22):
+// the queue is advice, not a launcher. When a worker's slot frees the mod says
+// `ready: <id>` and the brain makes the spawn; the mod never starts a queued
+// worker itself. Ad hoc spawns (no brief) are never queued. Pure: no `$`.
 import type { QueuedSpawn } from '../types'
 
 export const DEFAULT_MAX_WORKERS = 2
-export const QUEUED_PREFIX = 'queued by chassis-delegation: '
+export const QUEUED_PREFIX = 'queued: '
+/** MOD-12: what a queued task waits for; the mod says `ready:` when it comes. */
+export const SLOT_FREES = 'the mod will tell you when a slot frees'
 
 export const parseMaxWorkers = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : DEFAULT_MAX_WORKERS)
 
@@ -14,9 +18,13 @@ export const hasSlot = (running: number, starting: number, max: number): boolean
 /** The labels of spawns starting for someone else: a spawn's own starting token (same label) is never counted against it. */
 export const startingOthers = (starting: Iterable<string>, label: string): string[] => [...starting].filter(l => l !== label)
 
-/** The refusal for a briefed spawn that waits: the agents live and the rows queued, named apart. */
+/**
+ * The refusal for a briefed spawn that waits, the line the dispatch result
+ * and the spawn hook both give (MOD-12): the agents live and the rows queued,
+ * named apart.
+ */
 export const queuedDeny = (task: string, live: readonly string[], queued: readonly string[]): string =>
-  `${QUEUED_PREFIX}${task} starts when a worker slot frees (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')})`
+  `${QUEUED_PREFIX}${task} — ${SLOT_FREES} (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')})`
 
 /** HH:MM of a queue row's time, as the clock on the wall reads it. */
 export const clockText = (at: number): string => {
@@ -26,7 +34,7 @@ export const clockText = (at: number): string => {
 
 export const alreadyQueuedText = (at: number, position: number): string => `already queued since ${clockText(at)} (position ${position})`
 
-export const alreadyQueuedDeny = (task: string, at: number, position: number): string => `${QUEUED_PREFIX}${task} ${alreadyQueuedText(at, position)}`
+export const alreadyQueuedDeny = (task: string, at: number, position: number): string => `${QUEUED_PREFIX}${task} — ${SLOT_FREES}; ${alreadyQueuedText(at, position)}`
 
 /** The "already queued since …" part of a deny, if it is that kind. */
 export const alreadyQueuedPart = (deny: string): string | undefined => (isQueuedDeny(deny) ? /already queued since \d\d:\d\d \(position \d+\)$/.exec(deny)?.[0] : undefined)
@@ -37,7 +45,7 @@ export const waitedMinutes = (since: number, now: number): number => Math.max(0,
 /** The queue index of a task and subtask, or -1. */
 export const queuedIndex = (queue: readonly QueuedSpawn[], task: string, subtask: string): number => queue.findIndex(q => q.task === task && (q.subtask ?? 'main') === subtask)
 
-export const isQueuedDeny = (deny: string): boolean => deny.startsWith(QUEUED_PREFIX)
+export const isQueuedDeny = (deny: string): boolean => deny.startsWith(QUEUED_PREFIX) && deny.includes(` — ${SLOT_FREES}`)
 
 export const queuedText = (position: number): string => `queued (position ${position})`
 
@@ -65,6 +73,17 @@ export const promptKey = (s: { prompt: string; cwd?: string }): string => `${s.c
 /** GH-107: a refusal retrying cannot cure (the budget is spent, the brief cannot be read): the row leaves the queue. */
 export const isFinalDeny = (deny: string): boolean => /^budget exhausted\b/.test(deny) || /\bbrief\b.*(cannot be read|could not be read|unreadable|not readable|ENOENT)/i.test(deny)
 
-/** GH-107: the session row for a drained spawn that was refused; the brain reads rows, not toasts. */
-export const drainRefusalRow = (task: string, reason: string, dropped: boolean): string =>
-  `chassis-delegation: queued ${task} not started: ${reason}; ${dropped ? 'it is removed from the queue (retrying cannot succeed)' : 'it keeps its place (position 1)'}`
+/**
+ * MOD-12: a second spawn of a brief whose attempt still runs (or is starting)
+ * is refused, by the spawn hook and the dispatch result alike, naming it.
+ */
+export const runningDeny = (label: string, running?: { attempt: number; agentId: string }): string =>
+  running
+    ? `chassis-delegation: ${label} not spawned — already running as attempt ${running.attempt} (agent ${running.agentId}); wait for its hand-back`
+    : `chassis-delegation: ${label} not spawned — already starting (another spawn of its brief holds the slot); wait for its hand-back`
+
+/** MOD-12: how many queued rows a free slot waits for: the cap less the workers running and starting. */
+export const readyCount = (running: number, starting: number, max: number): number => Math.max(0, max - running - starting)
+
+/** MOD-12: the advice when a slot frees for a queued task: the brain makes its spawn. */
+export const readyLine = (label: string, task: string): string => `ready: ${label} — run its spawn block (/dispatch ${task} prints it again)`
