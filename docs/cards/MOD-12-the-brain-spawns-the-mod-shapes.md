@@ -1,0 +1,24 @@
+---
+id: MOD-12
+title: The brain spawns, the mod shapes: dispatch prepares the brief, worktree and tier and hands the brain one Agent call to make, so every worker runs under the mod's own hooks
+domain: mod
+tier: frontier
+status: merged
+scope: [hooks/register.ts, hooks/lib/dispatch.ts, hooks/lib/scheduler.ts, hooks/lib/attempts.ts, hooks/lib/compaction.ts, hooks/lib/quiet.ts, hooks/lib/tier.ts, hooks/lib/init.ts, hooks/lib/setup.ts, hooks/templates/**, tests/**, README.md, CHANGELOG.md]
+forbid: [.claude-plugin/**, .chassis-delegation.json, docs/**, hooks/lib/allow.ts, hooks/lib/verify-native.ts, hooks/lib/gitguard.ts, hooks/lib/card.ts, hooks/lib/brain.ts, hooks/lib/update.ts, hooks/lib/cleanstop.ts, hooks/lib/findings.ts, hooks/lib/redact.ts, hooks/lib/debriefcheck.ts]
+red_test: engine tests in tests/hooks.test.ts: the dispatch tool's result holds a spawn block and the harness records no $.agent.spawn call; a brain Agent call carrying the brief header is tiered, slot-claimed and recorded as attempt 1 with source brief; a second brain spawn of the same brief while attempt 1 runs is denied naming it; a hand-back from the brain-spawned worker verifies exactly as before (reuse an existing verified-hand-back test with the spawn path swapped); a repo=here worker spawned by the brain whose Bash is `git commit -m x` on main is denied by the git guard; the queue advice line appears when maxWorkers is full and the ready line after the hand-back; red first
+gate: validate, node, test
+budget: 2-attempts
+spend: 25
+---
+## Why
+
+Public issue #22, found while building the spend ceiling: the engine's turn.step and tool.call hooks step past any subagent the same plugin spawned through $.agent.spawn, and every worker today (the /dispatch command, the dispatch tool, the queue drain, auto-escalation) is spawned that way. So dispatched workers run with no git guard (a repo=here worker on main can commit), no mid-run spend (the ceiling learns a cost only at the end), no effort control, and the SubagentHandback capture never fired (GH-2). The issue's option 1 restores all three in one move: the mod prepares everything and returns the spawn for the brain to make with its own Agent tool; the mod's agent.spawn hook already tiers and records by-hand spawns, so a brain-made spawn carrying a brief header is shaped and recorded exactly as today, and every other hook then sees the worker. Debrief and eval runners keep self-spawning: they need no hooks. This card is the handshake; the guard, mid-run ceiling and effort that it unlocks are the next card.
+
+## Done when
+
+- the dispatch tool and /dispatch write the brief, cut the worktree and pick the tier exactly as today, then spawn nothing: the result ends with a block the brain runs, `spawn: Agent({ subagent_type: <agentType>, model: <alias>, description: <id> <tier> <alias>, prompt: <the brief handoff> })`, as a fenced JSON object the brain can pass verbatim, plus one line saying the worker starts when the brain makes that call; dryRun and verify are unchanged
+- the agent.spawn hook recognises a brain spawn whose prompt carries a brief header (it already tiers by-hand spawns): it resolves the alias, keeps the caller's model when it matches the tier, claims the slot, records the attempt with kind spawn and source brief, and the hand-back path, verdict, ladder and ledger are byte-for-byte what a mod-spawned worker produced; a brain spawn whose brief is already running or whose slot is taken is denied by the hook with the same one-line reasons the dispatch tool gave
+- the queue and the ladder become advice the brain acts on: when maxWorkers is full the dispatch result says `queued: <id> — the mod will tell you when a slot frees`, and when one frees (a hand-back) the verdict row or the next prompt.compose state section carries `ready: <id> — run its spawn block (/dispatch <id> prints it again)`; a respawn-one-tier-up verdict prints the next spawn block in its advice instead of spawning; nothing in the mod calls $.agent.spawn for a worker any more (grep shows spawnSelf used only by the debrief and eval runners)
+- an engine test proves the point of the change: a worker spawned by the harness's brain Agent call with a brief header makes a Bash tool call and the mod's tool.call hook sees it (the git guard denies `git commit` on main inside a repo=here worker), and its turn.complete usage lands on the attempt record mid-run; a second test shows a worker the mod self-spawns (the old path, kept in a test helper) is NOT seen, as the engine documents — both tests named in the PR as the evidence for #22
+- the setup wizard's handover, the init brief template, README (dispatch, the contracts, the brain's spend) and CHANGELOG describe the handshake: the brain makes the spawn, the mod shapes and verifies it; the public issue #22 options are answered as option 1 in the CHANGELOG entry
