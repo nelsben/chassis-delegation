@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Owed rows retire by themselves, `/delegation accept <id>` closes one, and
+  the state block counts the old ones (MOD-4, public issue #23).** An owed row
+  leaves the compaction block, the prompt section and `/delegation` when its
+  task's last attempt sha is an ancestor of `origin/main` or its card there
+  reads `status: merged` (read from the configured `cardDir`; the allowlist
+  takes `ls-tree` / `show` at `origin/main` for it); the attempt records
+  `retired: merged`. The check runs at most once per 15 minutes per task and a
+  failed one changes nothing. `/delegation accept <id> [note]` records
+  `accepted` plus the note on the last attempt and retires the row. The block
+  prints the live rows in full and then `n older owed rows: <ids>`.
+
 - **`/delegation update` brings the loaded copy to origin/main (MOD-3).** It
   classifies the loaded folder (`classifyRoot` in `hooks/lib/update.ts`): a git
   clone is fetched and fast-forwarded (`git -C <root> merge --ff-only

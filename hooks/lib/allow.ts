@@ -15,6 +15,8 @@
 //                                        the literal -replay suffix on both or neither)
 //   git -C <root> ls-tree --name-only <sha> agents/tasks/    (exact; /dispatch --replay)
 //   git -C <root> show <sha>:agents/tasks/<id>-<name>.md     (exact; /dispatch --replay)
+//   the same two with origin/main for <sha> and the configured cardDir for agents/tasks
+//                                                            (MOD-4: is a task's card merged)
 //   gh pr list|view …                                        (no --web)
 //   claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
 //   a gate-map command, word for word, `{files}` and `{worktree}` filled by absolute paths
@@ -32,7 +34,7 @@ export const DEFAULT_DOMAINS = ['frontend', 'backend', 'ops', 'dispatcher', 'cro
 export type Check = { ok: true } | { ok: false; reason: string }
 
 /** What the allowlist reads of the config: the gate templates (gateTemplatesOf(gateMap)), the domains, the worktree root. */
-export type AllowConfig = { gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string }
+export type AllowConfig = { gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string }
 
 const GIT_READ = ['diff', 'merge-base', 'rev-parse', 'status', 'log']
 const GIT_WRITEY_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|-O)/
@@ -40,6 +42,13 @@ const TASK_ID = /^[A-Z][A-Z0-9]*-\d+[a-z]?$/
 const TASK_ID_SRC = '[A-Z][A-Z0-9]*-\\d+[a-z]?'
 const SHA = /^[0-9a-f]{7,40}$/
 const SHOW_CARD = new RegExp(`^[0-9a-f]{7,40}:agents/tasks/${TASK_ID_SRC}-[A-Za-z0-9._-]+\\.md$`)
+const CARD_FILE = new RegExp(`^${TASK_ID_SRC}-[A-Za-z0-9._-]+\\.md$`)
+/** A relative folder, plain segments only (the configured cardDir). */
+const PLAIN_DIR = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/
+const cardDirOk = (d: string, allow: AllowConfig): boolean => {
+  const want = (allow.cardDir ?? '').replace(/^\/+|\/+$/g, '')
+  return PLAIN_DIR.test(d) && !d.split('/').some(seg => seg === '.' || seg === '..') && (d === 'agents/tasks' || (want !== '' && d === want))
+}
 const REPLAY = '-replay'
 
 const refuse = (reason: string): Check => ({ ok: false, reason })
@@ -78,11 +87,20 @@ function checkGit(args: readonly string[], allow: AllowConfig): Check {
   }
   if (sub === 'ls-tree') {
     const [flag, sha, path, ...more] = tail
-    const exact = dirs.length === 1 && flag === '--name-only' && SHA.test(sha ?? '') && path === 'agents/tasks/' && more.length === 0
+    const dir = (path ?? '').replace(/\/$/, '')
+    const exact =
+      dirs.length === 1 && flag === '--name-only' && more.length === 0 && (path ?? '').endsWith('/') &&
+      ((SHA.test(sha ?? '') && path === 'agents/tasks/') || (isBaseRef(sha ?? '') && cardDirOk(dir, allow)))
     return exact ? ok : refuse(`git ls-tree ${tail.join(' ')} is not the exact shape (-C <root> ls-tree --name-only <sha> agents/tasks/)`)
   }
   if (sub === 'show') {
-    const exact = dirs.length === 1 && tail.length === 1 && SHOW_CARD.test(tail[0] as string) && !(tail[0] as string).includes('..')
+    const spec = tail[0] ?? ''
+    const colon = spec.indexOf(':')
+    const ref = spec.slice(0, colon)
+    const file = spec.slice(colon + 1)
+    const slash = file.lastIndexOf('/')
+    const cardAtRef = colon > 0 && isBaseRef(ref) && slash > 0 && cardDirOk(file.slice(0, slash), allow) && CARD_FILE.test(file.slice(slash + 1))
+    const exact = dirs.length === 1 && tail.length === 1 && (SHOW_CARD.test(spec) || cardAtRef) && !spec.includes('..')
     return exact ? ok : refuse(`git show ${tail.join(' ')} is not the exact shape (-C <root> show <sha>:agents/tasks/<id>-<name>.md)`)
   }
   if (sub === 'fetch') {

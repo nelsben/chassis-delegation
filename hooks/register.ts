@@ -15,7 +15,7 @@ import { bashWrites, brainEdit, brainFamily, brainLine, brainSummary, brainTurn,
 import { paneTree, type PaneTable } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
-import { checkArgv, refusedLine, type AllowConfig } from './lib/allow'
+import { checkArgv, isSha, refusedLine, type AllowConfig } from './lib/allow'
 import {
   attemptsFor,
   escalationSource,
@@ -26,6 +26,8 @@ import {
   nextAttempt,
   patchRecord,
   priorRedHashes,
+  retireDue,
+  retirePatch,
   verifyTarget,
   taskLabel,
   type AttemptRecord,
@@ -80,7 +82,7 @@ import {
   watermarkPath,
   type FrictionEvent,
 } from './lib/cleanstop'
-import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedFrom, prsFrom, renderState, SECTION_ID, type RecentVerdict, type StateSnapshot } from './lib/compaction'
+import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedRowsFrom, prsFrom, renderState, SECTION_ID, splitOwed, type RecentVerdict, type StateSnapshot } from './lib/compaction'
 import {
   agentTypeFor,
   branchName,
@@ -144,7 +146,7 @@ import { CARD_TOOL, cardFromFields, cardSummary, sayGo } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
-import { ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
+import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
 import { alreadyQueuedDeny, alreadyQueuedPart, drainRefusalRow, enqueue, hasSlot, isFinalDeny, isQueuedDeny, promptKey, queuedDeny, queuedIndex, queuedText, startingOthers, waitedMinutes } from './lib/scheduler'
 import {
   CLASSIFIER_LABELS,
@@ -485,7 +487,7 @@ let frictionTail: Promise<unknown> = Promise.resolve()
 
 /** MOD-3: the folder this copy of the mod loaded from; the one dir `git merge --ff-only origin/main` may run in. */
 let loadedRoot = ''
-const allowCfg = (): AllowConfig => ({ gateTemplates: cfg.gateTemplates, domains: cfg.domains, ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}) })
+const allowCfg = (): AllowConfig => ({ gateTemplates: cfg.gateTemplates, domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}) })
 
 // ---- small host helpers (fail-open) ---------------------------------------
 function debug($: Host, text: string) {
@@ -1150,7 +1152,17 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   const recent = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
   s.recent = recent.map(r => ({ line: r.line, at: r.at }))
   const busy = new Set([...s.running.map(r => r.task), ...s.pending.map(p => p.task), ...s.queued.map(q => q.task)])
-  s.owed = owedFrom(recent, busy)
+  const t = await now($)
+  const rows: { task: string; text: string; at: number; checked?: boolean }[] = []
+  const retired = new Set<string>()
+  for (const r of owedRowsFrom(recent, busy)) {
+    const st = await retireCheck($, r.task, t)
+    if (st.retired) retired.add(r.task)
+    else rows.push({ task: r.task, text: r.owed as string, at: r.at, ...(st.checked ? { checked: true } : {}) })
+  }
+  const split = splitOwed(rows, t)
+  s.owed = split.live
+  s.owedOlder = split.older
   s.prs = prsFrom(recent)
   const debrief = await storeGet<DebriefRecord>($, K.debrief(sid))
   if (debrief?.lastAt !== undefined) {
@@ -1161,6 +1173,67 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   if (inflight && inflight.sessionId === sid) s.eval = { tier: inflight.tier, sha: inflight.sha, at: inflight.at, running: true, ...(inflight.agentId ? { agentId: inflight.agentId } : {}) }
   else if (last) s.eval = { tier: last.tier, sha: last.sha, at: last.at, ...(last.pass !== undefined ? { pass: last.pass } : {}), ...(last.total !== undefined ? { total: last.total } : {}) }
   return s
+}
+
+// ---- MOD-4: an owed row retires when its work is on the default branch, or by hand ---------
+const splitLabel = (label: string): { task: string; subtask: string } => {
+  const [task = label, subtask = 'main'] = label.split('/')
+  return { task, subtask }
+}
+
+/** What two read-only git calls say of a task's last attempt: is its sha on origin/main, does its card there read merged. undefined: could not say. */
+async function retireProbe($: Host, task: string, sha: string | undefined): Promise<{ ancestor?: boolean; card?: string }> {
+  const root = await $.session.root()
+  const out: { ancestor?: boolean; card?: string } = {}
+  if (sha !== undefined && isSha(sha)) {
+    const r = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, 'origin/main'], { cwd: root, timeoutMs: 10000 })
+    if (r.ok && r.exitCode === 0) return { ancestor: true }
+    if (r.ok && r.exitCode === 1) out.ancestor = false
+  }
+  const dir = (cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')
+  const listed = await run($, ['git', '-C', root, 'ls-tree', '--name-only', 'origin/main', `${dir}/`], { cwd: root, timeoutMs: 10000 })
+  if (!listed.ok || listed.exitCode !== 0) return out
+  const name = cardMatches(cardNamesFromLsTree(listed.stdout), task)[0]
+  if (name === undefined) return out
+  const shown = await run($, ['git', '-C', root, 'show', `origin/main:${dir}/${name}`], { cwd: root, timeoutMs: 10000 })
+  if (shown.ok && shown.exitCode === 0) out.card = shown.stdout
+  return out
+}
+
+/**
+ * Does this owed task's row retire? Its last attempt carries `retired` once it
+ * has, from the merge or from `/delegation accept`. Otherwise, at most once per
+ * 15 minutes, the sha is looked for in origin/main and the card there for
+ * `status: merged`; a check that gets no answer leaves the row as it is.
+ */
+async function retireCheck($: Host, label: string, t: number): Promise<{ retired: boolean; checked: boolean }> {
+  const { task, subtask } = splitLabel(label)
+  try {
+    const records = await loadAttempts($, task)
+    const last = attemptsFor(records, subtask).at(-1)
+    if (!last) return { retired: false, checked: false }
+    if (last.retired) return { retired: true, checked: true }
+    if (!retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
+    const patch = retirePatch(await retireProbe($, task, last.sha), t)
+    await storeSet($, K.tasks(task), patchRecord(await loadAttempts($, task), subtask, last.attempt, patch))
+    return { retired: patch.retired !== undefined, checked: patch.retireCheckedAt !== undefined || last.retireCheckedAt !== undefined }
+  } catch (err) {
+    debug($, `${label}: retire check failed: ${String(err)}`)
+    return { retired: false, checked: false }
+  }
+}
+
+/** `/delegation accept <id> [note]`: records it on the task's last attempt and retires its owed row. One line. */
+async function acceptTask($: Host, rest: string): Promise<string> {
+  const [id = '', ...words] = rest.split(/\s+/).filter(Boolean)
+  if (id === '') return 'usage: /delegation accept <id> [note]'
+  const { task, subtask } = splitLabel(id)
+  const records = await loadAttempts($, task)
+  const last = attemptsFor(records, subtask).at(-1)
+  if (!last) return `/delegation accept: no attempts recorded for ${id}; nothing changed`
+  const note = words.join(' ')
+  await storeSet($, K.tasks(task), patchRecord(records, subtask, last.attempt, { retired: 'accepted', accepted: { ...(note ? { note } : {}), at: await now($) } }))
+  return `accepted ${id} by hand (attempt ${last.attempt})${note ? `: ${note}` : ''}; its owed row is retired`
 }
 
 async function recipeDir($: Host): Promise<string | undefined> {
@@ -3289,7 +3362,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup|init|update|dashboard]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup|init|update|dashboard|accept <id> [note]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -3358,6 +3431,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'init') return { text: await runInit($) }
     if (arg === 'setup') return { text: await runSetup($) }
     if (arg === 'update') return { text: await runUpdate($) }
+    if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'dashboard') {
       let placed = false
       let why = ''
@@ -3379,7 +3453,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view)].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|dashboard]' }
+    return { text: 'usage: /delegation [setup|init|update|dashboard|accept <id> [note]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async $ => ({ result: await runInit($) }))

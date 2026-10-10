@@ -1485,6 +1485,8 @@ describe('GH-104: spend guards', () => {
     if (sub[0] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
     if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${HEAD}\n` }
     if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
+    // MOD-4: the work is not on origin/main yet (its owed row stays)
+    if (sub[0] === 'merge-base' && last === 'origin/main') return { exitCode: 1, stdout: '' }
     // the delta as either spelling asks for it: --name-only (this base), --name-status (a rename-aware verifier)
     if (sub[0] === 'diff') return { exitCode: 0, stdout: sub.includes('--name-status') ? 'M\ta/x.ts\n' : 'a/x.ts\n' }
     if (sub[0] === 'log') return { exitCode: 0, stdout: Array.from({ length: o.ahead ?? 2 }, (_, i) => `${i + 3}`.repeat(40)).join('\n') + (o.ahead === 0 ? '' : '\n') }
@@ -1558,6 +1560,52 @@ describe('GH-104: spend guards', () => {
     expect(again.deny).toContain(WORK_PRESENT)
     expect(w.spawns).toHaveLength(1)
     expect(records(w, 'T-4')).toHaveLength(2)
+  })
+
+  // MOD-4: an owed row retires by itself when the work is on origin/main, or by hand
+  const delegationCmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const owedWorkPresent = async ($: any, on: any, ancestor: number) => {
+    const base = worker()
+    const w = world(on, { files: files(), dirs, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: ancestor, stdout: '' } : base(argv)), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'All done, the gate is green.'))
+    return w
+  }
+
+  test('MOD-4: after an owed attempt whose sha is an ancestor of origin/main, /delegation prints no row for it and the record says retired: merged', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = await owedWorkPresent($, on, 0)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegationCmd(''))).text)
+    expect(out).not.toContain('owed: T-4')
+    expect(records(w, 'T-4').at(-1)).toMatchObject({ retired: 'merged' })
+    expect(w.runs.some(x => x.argv.includes('--is-ancestor') && x.argv.includes('origin/main') && x.argv.includes(HEAD))).toBe(true)
+    const section = (await $.prompt.compose(composeInput(['Agent']))).sections.at(-1)?.text ?? ''
+    expect(section).not.toContain('T-4')
+  })
+
+  test('MOD-4: a sha that is not on origin/main keeps its row, and the check runs once per 15 minutes', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = await owedWorkPresent($, on, 1)
+    await $.session.start(sessionStart)
+    expect(String((await $.command.run(delegationCmd(''))).text)).toContain(`- owed: T-4: verify sha=${HEAD}`)
+    const n = () => w.runs.filter(x => x.argv.includes('--is-ancestor')).length
+    const first = n()
+    expect(first).toBeGreaterThan(0)
+    await $.command.run(delegationCmd(''))
+    expect(n()).toBe(first)
+  })
+
+  test('MOD-4: /delegation accept <id> [note] records it on the last attempt, retires the row, prints one line; an unknown id changes nothing', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = await owedWorkPresent($, on, 1)
+    await $.session.start(sessionStart)
+    const before = JSON.stringify(records(w, 'T-4'))
+    const none = String((await $.command.run(delegationCmd('accept NOPE-9 fine'))).text)
+    expect(none.split('\n')).toHaveLength(1)
+    expect(JSON.stringify(records(w, 'T-4'))).toBe(before)
+    const out = String((await $.command.run(delegationCmd('accept T-4 reviewed by hand'))).text)
+    expect(out.split('\n')).toHaveLength(1)
+    expect(out).toContain('T-4')
+    expect(records(w, 'T-4').at(-1)).toMatchObject({ retired: 'accepted', accepted: { note: 'reviewed by hand' } })
+    expect(String((await $.command.run(delegationCmd(''))).text)).not.toContain('owed: T-4')
   })
 
   test('(b) /dispatch --verify <sha> runs the verifier on the branch head with a synthetic report, no spawn; the work-present attempt takes the verdict', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
