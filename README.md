@@ -70,8 +70,28 @@ To check the folder on the new machine, run `tests/selfcheck.sh`. It runs
 
 ## Upgrading
 
-Upgrade between turns, with no worker running. These steps are written so the
-agent in the session that loads the mod can follow them.
+Upgrade between turns, with no worker running. Type `/delegation update`: it
+finds the loaded folder (`$.plugin.root`, the `loaded from` line of
+`/delegation`) and, for a git clone, runs `git fetch origin main` then
+`git merge --ff-only origin/main` there; a dirty tree or a non-fast-forward
+refuses with git's reason and changes nothing. It prints
+`update: <old version> (<old sha>) → <new version> (<new sha>), n commits`, the
+CHANGELOG sections newer than the old version (at most 40 lines, with a pointer
+to the README's `From <old> to <new>` section when there is one), adds to
+`.chassis-delegation.json` every key that has a built-in default and is missing
+(with a `_<key>` note; nothing else in the file moves), and ends with what is
+left: a folder under `~/.claude/dev-mods` reloads when the turn ends; for any
+other folder the window must be reloaded (VS Code: Developer: Reload Window;
+terminal: restart `claude`; the session can be reopened with its transcript),
+since nothing reloads a folder outside `~/.claude/dev-mods`. A folder that is
+not a clone is left alone and the command prints the `git clone` that replaces
+it. It refuses while a worker is running. `/delegation` itself adds
+`update: n commits behind origin/main · run /delegation update` when the loaded
+clone is behind (one fetch per ten minutes), and nothing when it is current.
+Nothing updates by itself.
+
+The steps below are the fallback by hand; they are written so the agent in the
+session that loads the mod can follow them.
 
 1. **Find the loaded copy.** Type `/delegation`. From 0.5.0 on, one line reads
    `mod: chassis-delegation <version> loaded from <folder>`. An older version
@@ -208,6 +228,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/delegation` | you type it | shows the delegation state and where the config came from |
 | `/delegation setup` | you type it | checks the repo and tools, names the fixes, then scaffolds and asks for your first task (see [Setup](#setup)) |
 | `/delegation init` | you type it | the bare scaffold, no checks (step 4 above) |
+| `/delegation update` | you type it | brings the loaded copy of the mod to origin/main (fast-forward only), migrates this repo's config and says whether the session reloaded or needs a restart (see [Upgrading](#upgrading)) |
 | `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card; the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
@@ -787,6 +808,7 @@ says `chassis-delegation: refused argv [...] (<reason>)`. The list, verbatim:
                                         log --format=%H <base>..HEAD through it)
     git [-C <dir>] worktree list [--porcelain|-v|--verbose|-z]
     git [-C <dir>] fetch [-q] origin main                    (exact)
+    git -C <plugin root> merge --ff-only origin/main         (exact; <plugin root> is the loaded folder only; /delegation update)
     git -C <root> worktree add -q -b agent/<domain>/<id>[-replay] <worktree> <origin/main|7-40 hex sha>
                                         (<domain>: the configured domains, by default
                                          frontend|backend|ops|dispatcher|cross|shared;

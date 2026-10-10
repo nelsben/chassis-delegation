@@ -6,6 +6,7 @@
 //   git [-C <dir>] diff|merge-base|rev-parse|status|log …   (no --output, --ext-diff, --textconv; the verifier's delta is `diff --name-status -M`)
 //   git [-C <dir>] worktree list [--porcelain|-v|--verbose|-z]
 //   git [-C <dir>] fetch [-q] origin main                    (exact)
+//   git -C <plugin root> merge --ff-only origin/main        (exact; <plugin root> is the loaded folder only; /delegation update)
 //   git -C <root> worktree add -q -b agent/<domain>/<id>[-replay] <worktree> <origin/main|7-40 hex sha>
 //                                       (<domain>: the configured domains, by default
 //                                        frontend|backend|ops|dispatcher|cross|shared;
@@ -31,7 +32,7 @@ export const DEFAULT_DOMAINS = ['frontend', 'backend', 'ops', 'dispatcher', 'cro
 export type Check = { ok: true } | { ok: false; reason: string }
 
 /** What the allowlist reads of the config: the gate templates (gateTemplatesOf(gateMap)), the domains, the worktree root. */
-export type AllowConfig = { gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string }
+export type AllowConfig = { gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string }
 
 const GIT_READ = ['diff', 'merge-base', 'rev-parse', 'status', 'log']
 const GIT_WRITEY_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|-O)/
@@ -87,6 +88,10 @@ function checkGit(args: readonly string[], allow: AllowConfig): Check {
   if (sub === 'fetch') {
     const exact = tail.join(' ')
     return exact === '-q origin main' || exact === 'origin main' ? ok : refuse(`git fetch ${exact} is not the exact shape (fetch [-q] origin main)`)
+  }
+  if (sub === 'merge') {
+    const exact = dirs.length === 1 && allow.pluginRoot !== undefined && allow.pluginRoot !== '' && (dirs[0] as string).replace(/\/+$/, '') === allow.pluginRoot.replace(/\/+$/, '') && tail.join(' ') === '--ff-only origin/main'
+    return exact ? ok : refuse(`git merge ${tail.join(' ')} is not the exact shape (-C <the loaded plugin folder> merge --ff-only origin/main)`)
   }
   if (sub === 'worktree') {
     const action = tail[0]

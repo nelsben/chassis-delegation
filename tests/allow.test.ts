@@ -171,3 +171,26 @@ describe('GH-11: {worktree} in a gate-map command', () => {
     expect(s.errors[0]).toContain('not an absolute folder')
   })
 })
+
+describe('MOD-3: the one merge form', () => {
+  const PLUGIN = '/Users/b/.claude/dev-mods/s1/chassis-delegation'
+  const A: AllowConfig = { ...ALLOW, pluginRoot: PLUGIN }
+  test('git -C <loaded root> merge --ff-only origin/main is allowed', () => {
+    ok(['git', '-C', PLUGIN, 'merge', '--ff-only', 'origin/main'], A)
+    ok(['git', '-C', PLUGIN + '/', 'merge', '--ff-only', 'origin/main'], A)
+  })
+  test('merge on any other dir, without --ff-only, of any other ref, and pull stay refused', () => {
+    no(['git', '-C', R, 'merge', '--ff-only', 'origin/main'], A)
+    no(['git', '-C', PLUGIN + '-x', 'merge', '--ff-only', 'origin/main'], A)
+    no(['git', 'merge', '--ff-only', 'origin/main'], A)
+    no(['git', '-C', PLUGIN, 'merge', 'origin/main'], A)
+    no(['git', '-C', PLUGIN, 'merge', '--ff-only', 'origin/develop'], A)
+    no(['git', '-C', PLUGIN, 'merge', '--ff-only', 'main'], A)
+    no(['git', '-C', PLUGIN, 'merge', '--ff-only', 'origin/main', '--no-verify'], A)
+    no(['git', '-C', PLUGIN, 'pull', '--ff-only', 'origin', 'main'], A)
+    no(['git', '-C', PLUGIN, 'pull'], A)
+  })
+  test('with no plugin root known, no merge is allowed', () => {
+    no(['git', '-C', PLUGIN, 'merge', '--ff-only', 'origin/main'], ALLOW)
+  })
+})

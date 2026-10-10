@@ -191,6 +191,7 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
+import { behindLine, changelogSlice, classifyRoot, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
 type Host = EngineInterface
 
@@ -201,6 +202,9 @@ const LAST_VERDICT = { plugin: 'chassis-delegation', key: 'lastVerdict' } as con
 const QUEUE = { plugin: 'chassis-delegation', key: 'queue' } as const
 const SPEND = { plugin: 'chassis-delegation', key: 'spend' } as const
 const BRAIN = { plugin: 'chassis-delegation', key: 'brain' } as const
+/** MOD-3: the last `git fetch` for the status line's behind count, at most one per ten minutes (in the store: the manifest names no new state key). */
+const UPDATE_CHECK = 'delegation.updateCheck'
+const UPDATE_CHECK_MS = 10 * 60 * 1000
 /** GH-112: the pane `/delegation dashboard` and the band's `[ details ]` open. */
 const DASH_PANE = 'delegation-dash'
 
@@ -479,7 +483,9 @@ let lockTail: Promise<unknown> = Promise.resolve()
 let ledgerTail: Promise<unknown> = Promise.resolve()
 let frictionTail: Promise<unknown> = Promise.resolve()
 
-const allowCfg = (): AllowConfig => ({ gateTemplates: cfg.gateTemplates, domains: cfg.domains, ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}) })
+/** MOD-3: the folder this copy of the mod loaded from; the one dir `git merge --ff-only origin/main` may run in. */
+let loadedRoot = ''
+const allowCfg = (): AllowConfig => ({ gateTemplates: cfg.gateTemplates, domains: cfg.domains, ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}) })
 
 // ---- small host helpers (fail-open) ---------------------------------------
 function debug($: Host, text: string) {
@@ -531,6 +537,7 @@ type RunOut = { ok: true; exitCode: number; stdout: string; stderr: string } | {
 
 /** The ONLY way the mod runs a host command: a refused argv never reaches `$.process.run`. */
 async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number }): Promise<RunOut> {
+  loadedRoot = $.plugin.root
   const check = checkArgv(argv, allowCfg())
   if (!check.ok) {
     try {
@@ -2634,6 +2641,7 @@ async function statusReport($: Host): Promise<string> {
     ...(split.hasBrain ? [brainLine(split.summary)] : []),
     ...(split.hasEdits ? [`brain edits: ${split.summary.edits}`] : []),
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
+    ...(await updateStatusLines($)),
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
@@ -2641,6 +2649,118 @@ async function statusReport($: Host): Promise<string> {
     ...aliasLines(Object.fromEntries((await Promise.all(['haiku', 'sonnet', 'opus'].map(async a => [a, await storeGet<unknown>($, K.alias(a))] as const))).filter(([, v]) => v !== undefined)), await now($)),
     `base: ${cfg.baseRef || 'origin/main → main → origin/master → master'} · repo=here ignore: ${ignoreWithCards(cfg.ignore, cfg.cardDir).join(', ') || '(none)'}`,
   ].join('\n')
+}
+
+// ---- MOD-3: /delegation update ---------------------------------------------------------
+type GitOut = { ok: true; out: string } | { ok: false; why: string }
+/** `git -C <dir> …` through the allowlist: stdout on exit 0, else git's own reason. */
+async function gitIn($: Host, dir: string, args: string[]): Promise<GitOut> {
+  const r = await run($, ['git', '-C', dir, ...args])
+  if (!r.ok) return { ok: false, why: r.why }
+  if (r.exitCode !== 0) return { ok: false, why: (r.stderr.trim() || r.stdout.trim() || `git ${args[0]} exited ${r.exitCode}`).split('\n').slice(0, 4).join('\n') }
+  return { ok: true, out: r.stdout }
+}
+const commitCount = (out: string): number => out.split('\n').filter(l => /^[0-9a-f]{7,40}$/.test(l.trim())).length
+
+/** The status line's `update:` text: the loaded clone's commits behind origin/main, fetched at most once per ten minutes; '' when current or not a clone. */
+async function updateStatusLines($: Host): Promise<string[]> {
+  try {
+    const root = $.plugin.root
+    if (!(await exists($, `${root}/.git`))) return []
+    const t = await now($)
+    let check = (await storeGet<{ at: number; behind: number; failed?: boolean }>($, UPDATE_CHECK)) as { at: number; behind: number; failed?: boolean } | undefined
+    if (!check || t - check.at >= UPDATE_CHECK_MS || check.at > t) {
+      const fetched = await gitIn($, root, ['fetch', '-q', 'origin', 'main'])
+      if (!fetched.ok) check = { at: t, behind: 0, failed: true }
+      else {
+        const log = await gitIn($, root, ['log', '--format=%H', 'HEAD..origin/main'])
+        check = { at: t, behind: log.ok ? commitCount(log.out) : 0, ...(log.ok ? {} : { failed: true }) }
+      }
+      await storeSet($, UPDATE_CHECK, check)
+    }
+    if (check.failed) return ['update: could not check origin/main']
+    const line = behindLine(check.behind)
+    return line ? [line] : []
+  } catch (err) {
+    debug($, `update check failed: ${String(err)}`)
+    return []
+  }
+}
+
+/** `/delegation update`: bring the loaded copy of the mod to origin/main, migrate this repo's config, say what is left. */
+async function runUpdate($: Host): Promise<string> {
+  const root = $.plugin.root
+  loadedRoot = root
+  const live = await liveState($)
+  const busy = [...live.workers.map(w => w.label), ...live.pending.map(p => p.task)]
+  if (busy.length > 0) return `update refused: ${busy.join(', ')} ${busy.length === 1 ? 'is' : 'are'} still running. Update between turns, with no worker running.`
+  let home = ''
+  try {
+    home = (await $.env.get('HOME')) ?? ''
+  } catch {
+    home = ''
+  }
+  const isClone = await exists($, `${root}/.git`)
+  const cls = classifyRoot(root, home, isClone)
+  if (cls.kind === 'folder') return cls.reloadStory
+  const fail = (why: string) => `update refused, nothing changed: ${why}`
+  const dirty = await gitIn($, root, ['status', '--porcelain'])
+  if (!dirty.ok) return fail(dirty.why)
+  if (dirty.out.trim() !== '') return fail(`${root} has uncommitted changes:\n${dirty.out.trim().split('\n').slice(0, 8).join('\n')}`)
+  const fetched = await gitIn($, root, ['fetch', 'origin', 'main'])
+  if (!fetched.ok) return fail(fetched.why)
+  const oldHead = await gitIn($, root, ['rev-parse', 'HEAD'])
+  const oldSha = oldHead.ok ? oldHead.out.trim().slice(0, 7) : '?'
+  const versionAt = async (): Promise<string> => {
+    try {
+      const v = (JSON.parse((await readText($, `${root}/.claude-plugin/plugin.json`)) ?? '{}') as { version?: unknown }).version
+      return typeof v === 'string' ? v : MOD_VERSION
+    } catch {
+      return MOD_VERSION
+    }
+  }
+  const oldVersion = await versionAt()
+  const behind = await gitIn($, root, ['log', '--format=%H', 'HEAD..origin/main'])
+  if (!behind.ok) return fail(behind.why)
+  const commits = commitCount(behind.out)
+  const out: string[] = []
+  if (commits === 0) out.push(upToDateLine(oldVersion, oldSha))
+  else {
+    const merged = await gitIn($, root, ['merge', '--ff-only', 'origin/main'])
+    if (!merged.ok) return fail(merged.why)
+    const newHead = await gitIn($, root, ['rev-parse', 'HEAD'])
+    const newVersion = await versionAt()
+    out.push(updateLine(oldVersion, oldSha, newVersion, newHead.ok ? newHead.out.trim().slice(0, 7) : '?', commits))
+    const slice = changelogSlice((await readText($, `${root}/CHANGELOG.md`)) ?? '', oldVersion, newVersion, await readText($, `${root}/README.md`))
+    if (slice.text !== '') out.push('', slice.text)
+  }
+  await storeSet($, UPDATE_CHECK, { at: await now($), behind: 0 })
+  // the repo's config: the keys the new defaults name and the file lacks
+  let repoRoot = ''
+  try {
+    repoRoot = await $.session.root()
+  } catch {
+    repoRoot = ''
+  }
+  const cfgPath = `${repoRoot}/${REPO_CONFIG_FILE}`
+  const cfgText = repoRoot ? await readText($, cfgPath) : undefined
+  out.push('')
+  if (cfgText === undefined) out.push(`config: no ${REPO_CONFIG_FILE} in ${repoRoot || 'this session'}: run /delegation setup`)
+  else {
+    const m = migrateConfig(cfgText)
+    if (m.error) out.push(`config: ${cfgPath} left as it is (${m.error})`)
+    else if (m.added.length === 0) out.push(`config: ${cfgPath} already names every key`)
+    else {
+      try {
+        await $.fs.write(cfgPath, m.text)
+        out.push(`config: added ${m.added.join(', ')} to ${cfgPath}`)
+      } catch (err) {
+        out.push(`config: could not write ${cfgPath} (${String(err).slice(0, 100)})`)
+      }
+    }
+  }
+  out.push(commits === 0 ? `reload: nothing changed, nothing to reload.` : cls.reloadStory)
+  return out.join('\n')
 }
 
 // ---- the spawn decision: tier, budget, slot, record, drift ------------------------------
@@ -3169,7 +3289,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup|init|dashboard]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup|init|update|dashboard]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -3237,6 +3357,7 @@ export const register: Register = (on, opts) => {
     const arg = e.args.trim()
     if (arg === 'init') return { text: await runInit($) }
     if (arg === 'setup') return { text: await runSetup($) }
+    if (arg === 'update') return { text: await runUpdate($) }
     if (arg === 'dashboard') {
       let placed = false
       let why = ''
@@ -3258,7 +3379,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view)].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|dashboard]' }
+    return { text: 'usage: /delegation [setup|init|update|dashboard]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async $ => ({ result: await runInit($) }))

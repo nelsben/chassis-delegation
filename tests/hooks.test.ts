@@ -730,6 +730,99 @@ describe('5B: /delegation init and the init tool', () => {
   })
 })
 
+describe('MOD-3: /delegation update', () => {
+  const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const CHANGELOG_NEW = '# Changelog\n\n## 0.5.0 — 2026-10-08\n\n- five a\n\n## 0.4.0 — 2026-10-05\n\n- four a\n'
+  /** A clone root behind origin/main by two commits, 0.4.0 → 0.5.0; the merge moves the files in. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const behindClone = async ($: any, on: any, opts: { fetchFails?: boolean; dirty?: boolean } = {}) => {
+    let merged = false
+    const root = { value: '' }
+    let files: Map<string, string> | undefined
+    const O = 'a'.repeat(40)
+    const N = 'b'.repeat(40)
+    const w = world(on, {
+      run: argv => {
+        if (argv[0] !== 'git') return undefined
+        const sub = argv.slice(3)
+        if (sub[0] === 'fetch') return opts.fetchFails ? { exitCode: 128, stdout: '', stderr: 'fatal: no origin' } : { exitCode: 0, stdout: '' }
+        if (sub[0] === 'status') return { exitCode: 0, stdout: opts.dirty ? ' M hooks/register.ts\n' : '' }
+        if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${merged ? N : O}\n` }
+        if (sub[0] === 'log') return { exitCode: 0, stdout: merged ? '' : `${N}\n${O.replace(/a/, 'c')}\n` }
+        if (sub[0] === 'merge') {
+          merged = true
+          files?.set(`${root.value}/.claude-plugin/plugin.json`, '{"version":"0.5.0"}')
+          files?.set(`${root.value}/CHANGELOG.md`, CHANGELOG_NEW)
+          return { exitCode: 0, stdout: 'Updating\n' }
+        }
+        return undefined
+      },
+    })
+    files = w.files
+    await $.session.start(sessionStart)
+    const first = String((await $.command.run(delegation(''))).text)
+    root.value = /loaded from (\S+)/.exec(first)?.[1] ?? ''
+    w.files.set(`${root.value}/.git`, 'gitdir')
+    w.files.set(`${root.value}/.claude-plugin/plugin.json`, '{"version":"0.4.0"}')
+    w.files.set(`${ROOT}/.chassis-delegation.json`, '{\n  "maxWorkers": 2\n}\n')
+    return { w, N, O }
+  }
+
+  test('a clone behind origin/main: fetch then merge --ff-only, the update line and the changelog slice; /delegation afterwards has no update: line', async ($, on) => {
+    const { w, N, O } = await behindClone($, on)
+    const out = String((await $.command.run(delegation('update'))).text)
+    const git = argvs(w).filter(a => a[0] === 'git').map(a => a.slice(3).join(' '))
+    const fetchAt = git.findIndex(g => g === 'fetch origin main' || g === 'fetch -q origin main')
+    const mergeAt = git.findIndex(g => g === 'merge --ff-only origin/main')
+    expect(fetchAt).toBeGreaterThanOrEqual(0)
+    expect(mergeAt).toBeGreaterThan(fetchAt)
+    expect(out).toContain(`update: 0.4.0 (${O.slice(0, 7)}) → 0.5.0 (${N.slice(0, 7)}), 2 commits`)
+    expect(out).toContain('## 0.5.0 — 2026-10-08')
+    expect(out).toContain('- five a')
+    expect(out).not.toContain('four a')
+    expect(out).toContain('config: added')
+    expect(out).toContain('delegateOnly')
+    expect(String(w.files.get(`${ROOT}/.chassis-delegation.json`))).toContain('"delegateOnly": "off"')
+    const after = String((await $.command.run(delegation(''))).text)
+    expect(after).not.toMatch(/^update:/m)
+  })
+
+  test('the status line says n commits behind when the clone is behind, and is silent once current', async ($, on) => {
+    const { w } = await behindClone($, on)
+    const out = String((await $.command.run(delegation(''))).text)
+    expect(out).toContain('update: 2 commits behind origin/main · run /delegation update')
+    // the fetch is cached for ten minutes
+    const fetches = () => argvs(w).filter(a => a[0] === 'git' && a[3] === 'fetch').length
+    const n = fetches()
+    await $.command.run(delegation(''))
+    expect(fetches()).toBe(n)
+  })
+
+  test('a dirty tree or a failed fetch refuses with the reason and merges nothing; a failed status fetch is one line', async ($, on) => {
+    const { w } = await behindClone($, on, { dirty: true })
+    const out = String((await $.command.run(delegation('update'))).text)
+    expect(out).toContain('uncommitted')
+    expect(argvs(w).some(a => a.includes('merge'))).toBe(false)
+  })
+
+  test('a failed fetch: update names it and merges nothing; /delegation says one line, no error', async ($, on) => {
+    const { w } = await behindClone($, on, { fetchFails: true })
+    const out = String((await $.command.run(delegation('update'))).text)
+    expect(out).toContain('fatal: no origin')
+    expect(argvs(w).some(a => a.includes('merge'))).toBe(false)
+    const st = String((await $.command.run(delegation(''))).text)
+    expect(st.split('\n').filter(l => l.startsWith('update:')).length).toBeLessThanOrEqual(1)
+  })
+
+  test('a plain folder changes nothing and prints the clone command with its own path', async ($, on) => {
+    const w = world(on)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('update'))).text)
+    expect(out).toMatch(/git clone \S+ \S+/)
+    expect(argvs(w).some(a => a[0] === 'git')).toBe(false)
+  })
+})
+
 describe('turn.complete', () => {
   test('a background ad hoc agent finishing adds nothing to the conversation', async ($, on) => {
     const w = world(on, { classify: 'standard' })
