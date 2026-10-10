@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A scope or files refute holds the tier (GH-115, public issue #34 ask 3).**
+  The attempt record keeps `firstFailed`, the first failed claim of a refuted
+  verdict. A refute on `scope`, `files`, `branch` or `pr` no longer earns the
+  next tier on respawn (only `sha`, `gate` or `red` does, as does a record
+  without the field). A scope refute advises
+  `resume agent=<id> — amend: [[amend v=1 scope+=<path> reason=…]]`, a files
+  refute advises listing the paths in `files=`, and a later respawn says
+  `(held: a scope refute)` or `(held: a files refute)`.
+
 - **`/delegation` names what each alias resolves to and when it moved; the card
   dry run shows the classifier's tier (GH-114, public issue #34).** The store's
   alias record is now `{ id, since, previous?: { id, until } }` (the old plain
@@ -12,7 +21,6 @@
   answer is kept as `classifierTier` on the card's first attempt record.
   The `classifierSecondOpinion` option still needs declaring in
   `.claude-plugin/plugin.json`.
-
 - **A live delegation dashboard (GH-112).** A band above the prompt (drawn only
   while a worker is live, queued or owed a verdict; hover it for a card, press
   `[ details ]` for the pane) and a pane opened by `/delegation dashboard`:
