@@ -45,6 +45,8 @@ export type AttemptRecord = {
   red?: string
   /** sha-256 of that file's bytes: a later attempt naming the same bytes is refuted on red. */
   redHash?: string
+  /** MOD-1: that attempt's red claim held, so its file is the task's one proof of red. */
+  redHeld?: true
   /** The worker's own cost from its turn usage (GH-106); else the session's cost growth between spawn (or resume) and verdict, marked by `usdApprox`. */
   usd?: number
   /** True when `usd` is the session delta, not the worker's own cost. */
@@ -120,8 +122,28 @@ export const judgedShas = (records: readonly AttemptRecord[], subtask: string, l
   attemptsFor(records, subtask, lane).flatMap(r => (r.sha && r.verdict !== 'pending' && r.verdict !== 'work-present' ? [r.sha] : []))
 
 /** The red hashes of the attempts before `attempt` (same subtask and lane): what a fresh red file must differ from. */
-export const priorRedHashes = (records: readonly AttemptRecord[], subtask: string, attempt: number, lane?: Lane): { attempt: number; hash: string }[] =>
-  attemptsFor(records, subtask, lane).flatMap(r => (r.attempt < attempt && r.redHash ? [{ attempt: r.attempt, hash: r.redHash }] : []))
+export const priorRedHashes = (records: readonly AttemptRecord[], subtask: string, attempt: number, lane?: Lane): { attempt: number; hash: string; held?: boolean }[] =>
+  attemptsFor(records, subtask, lane).flatMap(r => (r.attempt < attempt && r.redHash ? [{ attempt: r.attempt, hash: r.redHash, ...(r.redHeld ? { held: true } : {}) }] : []))
+
+/** MOD-1: do two spellings of a sha (7-40 hex) name the same commit? One may be a prefix of the other. */
+const sameSha = (a: string, b: string): boolean => {
+  const x = a.trim().toLowerCase()
+  const y = b.trim().toLowerCase()
+  return x.length >= 7 && y.length >= 7 && (x.startsWith(y) || y.startsWith(x))
+}
+
+/**
+ * MOD-1: which attempt `/dispatch <id> --verify <sha>` judges. The last attempt
+ * when it is a work-present one (GH-104), or when it was already judged at this
+ * very sha (`rejudge`: same attempt number, no new record, no budget spent);
+ * else the next attempt number.
+ */
+export function verifyTarget(records: readonly AttemptRecord[], subtask: string, sha: string, lane?: Lane): { attempt: number; rejudge: boolean } {
+  const last = attemptsFor(records, subtask, lane).at(-1)
+  if (last?.verdict === 'work-present') return { attempt: last.attempt, rejudge: false }
+  if (last && last.verdict !== 'pending' && last.sha !== undefined && sameSha(last.sha, sha)) return { attempt: last.attempt, rejudge: true }
+  return { attempt: nextAttempt(records, subtask, lane), rejudge: false }
+}
 
 /** Replaces the record with the same subtask + attempt by `patch` applied to it. */
 export function patchRecord(records: readonly AttemptRecord[], subtask: string, attempt: number, patch: Partial<AttemptRecord>, lane?: Lane): AttemptRecord[] {

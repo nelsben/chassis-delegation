@@ -26,6 +26,7 @@ import {
   nextAttempt,
   patchRecord,
   priorRedHashes,
+  verifyTarget,
   taskLabel,
   type AttemptRecord,
   type Lane,
@@ -1465,7 +1466,7 @@ async function probe($: Host) {
 }
 
 // ---- verify + verdict (5A: native) ---------------------------------------------------
-type Verified = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string }
+type Verified = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true }
 
 /** sha-256 of `bytes`, hex, by the environment's crypto.subtle; undefined when it cannot be taken. */
 async function sha256Hex(bytes: Uint8Array): Promise<string | undefined> {
@@ -1617,7 +1618,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
     },
     { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path) },
   )
-  return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}) } : {}) }
+  return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
 }
 
 /**
@@ -1759,7 +1760,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   let verdict: Verdict
   let lines: string[] = []
   let noRepo = false
-  let red: Pick<AttemptRecord, 'red' | 'redHash'> = {}
+  let red: Pick<AttemptRecord, 'red' | 'redHash' | 'redHeld'> = {}
   // GH-16: a repo=here worker's claimed files go on its record before the verify, so a sibling verifying now subtracts them
   if (report && spawn.here && !spawn.adhoc) {
     const claimed: Partial<AttemptRecord> & HereFields = { files: reportFiles(report.files) }
@@ -1779,7 +1780,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
     verdict = v.verdict
     lines = v.lines
     noRepo = v.noRepo === true
-    red = { ...(v.red !== undefined ? { red: v.red } : {}), ...(v.redHash !== undefined ? { redHash: v.redHash } : {}) }
+    red = { ...(v.red !== undefined ? { red: v.red } : {}), ...(v.redHash !== undefined ? { redHash: v.redHash } : {}), redHeld: v.redHeld }
   }
 
   const t = await now($)
@@ -2356,8 +2357,11 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   const base = (contract.ok ? contract.base : undefined) || cfg.baseRef || undefined
   const delta = await branchDelta({ repo, sha, ...(base ? { base } : {}) }, (argv, init) => run($, [...argv], init))
   if ('why' in delta) return `${head}: ${delta.why}`
+  // MOD-1: --verify at the last attempt's own sha re-judges that attempt instead of opening another
+  const target = verifyTarget(ladder, subtask, sha)
   let red: string | undefined
-  if (contract.ok && briefWantsRed(contract.redTest)) {
+  if (target.rejudge && last?.red) red = last.red
+  else if (contract.ok && briefWantsRed(contract.redTest)) {
     try {
       const name = newestRed((await $.fs.list(`${repo}/.delegation/${id}`)).map(e => e.name))
       red = name ? `.delegation/${id}/${name}` : undefined
@@ -2370,10 +2374,8 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   // the attempt it judges: the work-present one when it is last, else a new verify attempt
   const t = await now($)
   const briefTier: Tier = tierOf(header?.tier) ?? 'standard'
-  let attempt: number
-  if (last?.verdict === 'work-present') attempt = last.attempt
-  else {
-    attempt = nextAttempt(ladder, subtask)
+  const attempt = target.attempt
+  if (!target.rejudge && last?.verdict !== 'work-present') {
     const rec: HereRecord = {
       task: id,
       subtask,
@@ -2394,7 +2396,7 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   }
   const rec = attemptsFor(await loadAttempts($, id), subtask).find(r => r.attempt === attempt && (r as HereRecord).adhoc !== true)
   const spawn: SpawnRecord = {
-    key: `verify-${id}-${subtask}-${attempt}`,
+    key: `verify-${id}-${subtask}-${attempt}${target.rejudge ? `-rejudge-${t}` : ''}`,
     task: id,
     subtask,
     adhoc: false,
@@ -2414,7 +2416,8 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
     ...(here ? { here: root } : {}),
   }
   const rendered = await finalize($, spawn, report)
-  return [`${head}: no spawn — the verifier ran on ${here ? `the shared checkout ${root}` : `worktree ${repo}`} at ${sha.slice(0, 7)} (base ${delta.base})`, `synthetic report: ${report}`, rendered.full].join('\n')
+  const rejudged = target.rejudge ? [`re-judging attempt ${attempt}/${spawn.budget} at ${sha}`] : []
+  return [...rejudged, `${head}: no spawn — the verifier ran on ${here ? `the shared checkout ${root}` : `worktree ${repo}`} at ${sha.slice(0, 7)} (base ${delta.base})`, `synthetic report: ${report}`, rendered.full].join('\n')
 }
 
 // ---- part 5B: /delegation init and the init tool ----------------------------------------

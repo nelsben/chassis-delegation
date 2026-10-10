@@ -487,7 +487,7 @@ anything. Each claim is held, failed or unchecked.
 | `scope` | every path changed between `merge-base(<base>, sha)` and the sha matches a scope glob and no forbid glob. `<base>` is a replay's own base, else the brief's `base=`, else `baseRef`, else the first of `origin/main`, `main`, `origin/master`, `master` |
 | `files` | `files=` equals that changed set exactly. A moved file is listed once, at its new path (git's rename detection; an old path listed too is dropped, not refuted). A path missing from it or invented in it is named. An entry ending in `/` stands for the changed files under that folder; a folder with none changed is an invented path |
 | `gate` | the tree's HEAD is the sha and `git status --porcelain` is empty. Then each gate id runs from `gateMap` in the worktree: exit 0 under `gate=pass` holds, non-zero is failed and shows the last 8 output lines, and `gate=fail` with a red gate holds (an honest stop) |
-| `red` | only when the brief's `red_test=` is set (not empty, not `none`). The `red=` file lies in the worker's tree, is not empty, holds a failure marker (`fail`, `error`, `not ok`, `✗`, `exit code 1`-`9`, `exit 1`, `AssertionError`, `expected`; any case), and is not byte-identical (sha-256) to an earlier attempt's red file for the same task and subtask. Held shows its size and first failure line. No `red=` or no marker is unchecked; a path outside the tree, a missing or empty file, or an earlier attempt's file again is **failed** |
+| `red` | only when the brief's `red_test=` is set (not empty, not `none`). The `red=` file lies in the worker's tree, is not empty, holds a failure marker (`fail`, `error`, `not ok`, `✗`, `exit code 1`-`9`, `exit 1`, `AssertionError`, `expected`; any case), and, if byte-identical (sha-256) to an earlier attempt's red file for the same task and subtask, that attempt's own red claim held (one proof per task: it is held again, `attempt n's proof, reused`). Held shows its size and first failure line. No `red=` or no marker is unchecked; a path outside the tree, a missing or empty file, or an earlier attempt's file that did not itself hold is **failed** |
 | `pr` | `pr=none`, or `gh pr view <n> --json state` finds it |
 
 The gate is left unchecked, never failed, in these cases:
@@ -671,9 +671,13 @@ worktree (the root for repo=here) at the sha, with a synthetic report:
 `files=` is the delta `merge-base(<base>, sha)..sha`; `gate=pass` means the
 gate is re-run, so a red one refutes; `red=` names the newest
 `.delegation/<ID>/red-<n>.txt` in the tree when the brief has a red test. The
-verdict lands on the work-present attempt (else on a new `verify` attempt), and
-the advice follows as for any hand-back: `accept`, or a resume of the worker
-that did the work. `--verify` takes no other option, and it is refused while
+verdict lands in one of two places. When the sha is the one the last attempt
+record already names (a hand-back the brain is re-judging, say after amending
+the brief), it re-judges that attempt: the same attempt number, no new record,
+no budget spent, the first line `re-judging attempt n/b at <sha>`, and the
+attempt's verdict and advice replaced. Otherwise it lands on the work-present
+attempt, or on a new `verify` attempt. The advice follows as for any hand-back:
+`accept`, or a resume of the worker that did the work. `--verify` takes no other option, and it is refused while
 a worker of the task is still running.
 
 **The git guard (Bash).** It covers the write verbs `commit`, `merge`,

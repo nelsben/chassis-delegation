@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **One proof of red per task; `--verify` at the last attempt's own sha
+  re-judges it (MOD-1, public issue #35).** A red file byte-identical to one an
+  earlier attempt of the task held with is held again (`attempt n's proof,
+  reused (one proof per task)`); one whose earlier claim did not hold is still
+  refuted. `/dispatch <id> --verify <sha>` at the sha on the last attempt record
+  re-judges that attempt (same number, no new record, no budget spent, first
+  line `re-judging attempt n/b at <sha>`); any other sha opens a verify attempt
+  as before. The choice is the pure `verifyTarget` in `hooks/lib/attempts.ts`.
+
 - **A dispatch that names a base writes it into an existing brief (MOD-2, public
   issue #37).** Dispatching with `--base <sha>` (or the tool's `base`) against a
   brief already on disk now sets or replaces `base=` in its header
