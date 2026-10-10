@@ -139,7 +139,7 @@ import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguar
 import { handbackMessages, workerSaid } from './lib/handback'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardFromFields, cardSummary, sayGo } from './lib/card'
-import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
+import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
@@ -2524,7 +2524,7 @@ async function runSetup($: Host, viaTool = false): Promise<string> {
     if (text === undefined) unreadable.add(path)
     existing[path] = text ?? ''
   }
-  const found = foundOf(facts)
+  const found = { ...foundOf(facts), spendByTier: proposedSpend(foundOf(facts).gate) }
   const plan = initPlan(root, existing, { sample: false }).map(s => {
     if (unreadable.has(s.path)) return { ...s, action: 'skip' as const }
     if (s.path === configPath && s.action === 'write') return { ...s, text: scaffoldConfig(s.text, found) }

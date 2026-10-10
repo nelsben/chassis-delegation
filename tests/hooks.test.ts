@@ -2,7 +2,7 @@ import { test, expect, describe } from 'claude-code/testing'
 import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, NOW, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
-const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=15 budget=')
+const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=25 budget=')
 
 const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task}`) ?? []) as Record<string, unknown>[]
 const argvs = (w: { runs: { argv: string[] }[] }) => w.runs.map(r => r.argv)
@@ -946,7 +946,7 @@ describe('/dispatch', () => {
     const out = await $.command.run(commandInput('BE-101 --here --scope app/billing/Rate*.ts'))
     const brief = w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? ''
     const header = brief.split('\n')[0] ?? ''
-    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/**,agents/tasks/** spend=15 budget=3-attempts report=chassis.report.v1]]')
+    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/**,agents/tasks/** spend=25 budget=3-attempts report=chassis.report.v1]]')
     expect(header).not.toContain(' base=')
     // no worktree, no fetch: the only git the dispatch runs reads the current branch
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD']])
@@ -979,7 +979,7 @@ describe('/dispatch', () => {
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput(`BE-101 --scope ${LLM}`))
     const header = (w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0] ?? ''
-    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,agents/tasks/**,src/b.ts spend=15 budget=3-attempts`)
+    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,agents/tasks/**,src/b.ts spend=25 budget=3-attempts`)
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD'],
       ['git', '-C', ROOT, 'rev-parse', 'HEAD'],
@@ -1610,7 +1610,7 @@ describe('GH-105: a dispatch given --base <sha> writes base= into the brief, and
     await $.session.start(sessionStart)
     const out = String((await $.command.run(commandInput(`T-4 --base ${BASE} --scope a/**`))).text)
     const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
-    expect(header).toContain(` gate=prettier base=${BASE} spend=6 budget=3-attempts`)
+    expect(header).toContain(` gate=prettier base=${BASE} spend=10 budget=3-attempts`)
     expect(out).toContain(`3. worktree ${ROOT}-T-4 on ${BRANCH} from ${BASE}`)
     const REPORT = `[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=a/x.ts]]`
     await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
@@ -1729,8 +1729,8 @@ describe('GH-111: the card tool', () => {
     const path = `${ROOT}/agents/tasks/OPS-1-the-rom-reader-returns-the-header.md`
     expect(w.files.get(path)).toContain('id: OPS-1\n')
     expect(out).toContain(`wrote ${path}`)
-    expect(out).toContain('OPS-1 · standard → sonnet · scope game_decompiler/**, tests/** · gate test · red: python3 -m unittest tests.test_rom · 2 attempts · $6 ceiling')
-    expect(out).toContain('```\n[[brief v=1 task=OPS-1 subtask=main purpose=build tier=standard model=sonnet scope=game_decompiler/**,tests/** forbid= red_test="python3 -m unittest tests.test_rom" gate=test spend=6 budget=2-attempts report=chassis.report.v1]]\n```')
+    expect(out).toContain('OPS-1 · standard → sonnet · scope game_decompiler/**, tests/** · gate test · red: python3 -m unittest tests.test_rom · 2 attempts · $10 ceiling')
+    expect(out).toContain('```\n[[brief v=1 task=OPS-1 subtask=main purpose=build tier=standard model=sonnet scope=game_decompiler/**,tests/** forbid= red_test="python3 -m unittest tests.test_rom" gate=test spend=10 budget=2-attempts report=chassis.report.v1]]\n```')
     expect(out.trimEnd().endsWith('Say go and Claude dispatches OPS-1.')).toBe(true)
     expect(w.files.has(`${SCRATCH}/briefs/OPS-1.brief.md`)).toBe(true)
     expect(w.spawns).toHaveLength(0)

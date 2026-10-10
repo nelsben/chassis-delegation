@@ -70,7 +70,7 @@
     "spendByTier": {
       "type": "string",
       "title": "Spend ceiling per tier (JSON)",
-      "description": "Dollars one attempt may spend, per tier, e.g. {\"standard\":8}; built in: economy 2, standard 6, frontier 15; 0 means no ceiling. /dispatch writes it as spend= in the brief (a card's own spend: wins); the mod warns the worker once at the ceiling and records over-spend at twice it. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "description": "Dollars one attempt may spend, per tier, e.g. {\"standard\":8}; built in: economy 3, standard 10, frontier 25; 0 means no ceiling. /dispatch writes it as spend= in the brief (a card's own spend: wins); the mod warns the worker once at the ceiling and records over-spend at twice it. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
       "default": ""
     },
     "domains": {

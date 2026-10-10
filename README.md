@@ -115,7 +115,7 @@ What the brain will see:
   `--scope <globs>`, or write globs on the card. Before, the worker ran and
   the brief was refused afterwards.
 - **A spend ceiling.** New briefs carry `spend=<usd>` from `spendByTier`
-  (economy 2, standard 6, frontier 15 dollars), and the worker is told it. A
+  (economy 3, standard 10, frontier 25 dollars), and the worker is told it. A
   run that ends past it with no report gets one wrap-up message; at twice it
   the attempt is `over-spend`. Set `spend:` on a card or `spendByTier` in the
   repo file to change it; `0` means no ceiling.
@@ -252,8 +252,12 @@ When every required check holds, setup runs the init scaffold (the card
 folder's README, `.chassis-delegation.json`, the `.gitignore` line; no sample
 card), writes `.chassis-delegation.json` with `gateMap: {"test": "<detected>"}`
 (an existing config is left as it is and setup prints what it would have set),
+also writes `spendByTier` (GH-116): economy 5, standard 15, frontier 35 when a gate
+command starts with `sf` or `sfdx` or names `deploy`, `--target-org`, `gcloud`,
+`aws`, `az` or `terraform` (a cloud deploy plus remote test runs cost $10 to $15
+before any thinking), else the defaults (economy 3, standard 10, frontier 25),
 prints one `config:` line per key it set in a fresh config (`gateMap.test`, and
-`baseRef` or `cardDir` when set), and ends by asking for the first task:
+`baseRef` or `cardDir` when set, and `spendByTier`), and ends by asking for the first task:
 
     Set up. Tell Claude your first task in a sentence, for example: "add a
     function that reads a file header and returns its size, with a unittest".
@@ -713,7 +717,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `agentTypes` | object | JSON string | `{}` | card domain → subagent type. A domain not named runs on a subagent type of the same name if the session offers one, else `general-purpose` |
 | `tierMap` | object | JSON string | `{economy: haiku, standard: sonnet, frontier: opus}` | tier → alias. `fable` is never spawned; it becomes opus, and when a brief, the caller or the map asks for fable the notice says so (`tier=frontier → opus (fable requested; fable is never spawned by the mod)`) and the attempt record keeps `requestedAlias: fable` |
 | `domains` | array | comma string | `frontend, backend, ops, dispatcher, cross, shared` | the domains a card may name |
-| `spendByTier` | object | JSON string | `{economy: 2, standard: 6, frontier: 15}` | dollars one attempt may spend, per tier (GH-106); `0` means no ceiling; merges per tier; `/dispatch` writes the tier's entry as `spend=` unless the card has its own `spend:` |
+| `spendByTier` | object | JSON string | `{economy: 3, standard: 10, frontier: 25}` | dollars one attempt may spend, per tier (GH-106); `0` means no ceiling; merges per tier; `/dispatch` writes the tier's entry as `spend=` unless the card has its own `spend:` |
 | `maxWorkers` | number | number (0 = unset) | `2` | briefed workers at once; the next one waits in a queue |
 | `worktreeRoot` | string | string | `""` (siblings: `<root>-<id>`) | worktrees go to `<worktreeRoot>/<repo name>-<id>` |
 | `cardDir` | string | string | `agents/tasks` | the folder the task cards live in, relative to the repo root (no leading `/`, no `..`); `/dispatch` and the dispatch tool read cards from it. `init` writes `docs/cards` in a plugin repo. `--replay` stays on `agents/tasks/` |

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Spend ceilings that fit the host (GH-116, public issue #34).** The defaults
+  are now economy 3, standard 10, frontier 25 dollars (were 2, 6, 15). Setup
+  proposes economy 5, standard 15, frontier 35 when a gate command is `sf`,
+  `sfdx`, or names a deploy or a remote test runner (`deploy`, `--target-org`,
+  `gcloud`, `aws`, `az`, `terraform`), writes it as `spendByTier` into a fresh
+  config, and prints `config: spendByTier = …` with the reason.
+
 - **The brain's own spend is priced and shown apart; Fable is priced; a
   delegate-only mode (GH-113).** `hooks/lib/cost.ts` prices `fable-5-1` and
   `fable-5` at $10 / $50 per million tokens. Every main-loop `turn.complete`

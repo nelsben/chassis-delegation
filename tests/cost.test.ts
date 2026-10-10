@@ -76,19 +76,19 @@ describe('GH-106: the spend ceiling (pure)', () => {
     expect(ceilingState(3.99, 2)).toBe('warn')
     expect(ceilingState(4, 2)).toBe('stop')
   })
-  test('the card spend: wins, else the tier default (economy 2, standard 6, frontier 15); the card 0 is none', () => {
+  test('the card spend: wins, else the tier default (economy 3, standard 10, frontier 25); the card 0 is none', () => {
     const t = mergeConfig({}, {}).spendByTier
-    expect(t).toEqual({ economy: 2, standard: 6, frontier: 15 })
-    expect(spendCeiling(undefined, 'standard', t)).toBe(6)
+    expect(t).toEqual({ economy: 3, standard: 10, frontier: 25 })
+    expect(spendCeiling(undefined, 'standard', t)).toBe(10)
     expect(spendCeiling('3', 'standard', t)).toBe(3)
     expect(spendCeiling('0', 'standard', t)).toBe(0)
-    expect(spendCeiling(undefined, 'premium', t)).toBe(15)
+    expect(spendCeiling(undefined, 'premium', t)).toBe(25)
   })
   test('spendByTier merges per tier: repo file, then /config (JSON string)', () => {
     const repo = parseRepoConfig('{"spendByTier":{"standard":8,"bogus":1}}')
     expect(repo.errors.join()).toContain('spendByTier.bogus')
     const settings = settingsLayer({ spendByTier: '{"frontier":0}' })
-    expect(mergeConfig(repo.config, settings.config).spendByTier).toEqual({ economy: 2, standard: 8, frontier: 0 })
+    expect(mergeConfig(repo.config, settings.config).spendByTier).toEqual({ economy: 3, standard: 8, frontier: 0 })
   })
   test('the lines', () => {
     expect(warnText(2.2, 2)).toBe('chassis-delegation: you have spent about $2.20 of a $2 ceiling; wrap up now and hand back with the report line')
