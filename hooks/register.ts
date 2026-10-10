@@ -709,7 +709,8 @@ async function brainGuard($: Host, e: { tool: unknown; agentId?: string }): Prom
   try {
     const input = e as unknown as Record<string, unknown>
     const root = await $.session.root()
-    const bash = tool === 'Bash' ? bashWrites(typeof input.command === 'string' ? input.command : '', root) : undefined
+    const home = (await $.env.get('HOME')) || undefined
+    const bash = tool === 'Bash' ? bashWrites(typeof input.command === 'string' ? input.command : '', root, home) : undefined
     const paths = bash ? bash.paths : toolPath(input)
     if (paths.length === 0 && !bash?.commit) return undefined
     await loadRepoConfig($)

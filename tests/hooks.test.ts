@@ -2155,6 +2155,16 @@ describe('GH-113: the brain spend and delegate-only', () => {
     expect((await $.tool.call({ tool: 'Bash', command: 'cat src/a.ts | head' } as never)).deny).toBeUndefined()
   })
 
+  test('MOD-8: delegateOnly deny: a variable pointing outside the root is no write in it; $PWD is', OPTS, async ($, on) => {
+    world(on, { model: FABLE })
+    on('tool.call', { tool: 'Bash' }, passed)
+    await $.session.start(sessionStart)
+    const outside = "M=/elsewhere/memory; cat >> $M/p.md <<'EOF'\nhi\nEOF"
+    expect((await $.tool.call({ tool: 'Bash', command: outside } as never)).deny).toBeUndefined()
+    const pwd = await $.tool.call({ tool: 'Bash', command: 'echo x > $PWD/hooks/x.ts' } as never)
+    expect(pwd.deny).toContain('card tool')
+  })
+
   test('a worker tool.call is untouched, and so is a sonnet brain', OPTS, async ($, on) => {
     const w = world(on, { model: FABLE })
     on('tool.call', { tool: 'Edit' }, passed)

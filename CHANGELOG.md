@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`delegateOnly` resolves `~`, `$HOME`, `$PWD` and earlier variables before it
+  decides a Bash write is in the repo (MOD-8).** `M=~/.claude/m; cat >> $M/p.md`
+  was read as a file named `$M` under the root and denied; it is now a write
+  outside the repo and runs. An unresolvable target is unknown and not counted.
+  `bashWrites` takes the home folder as a third argument.
+
 - **`/delegation debrief post` shows the findings, then posts the named ones
   (MOD-7).** New repo-file key `issueRepo` (`owner/name`; empty = off, and
   `/delegation` prints `issues: <repo>` when set). `post` alone prints the latest
