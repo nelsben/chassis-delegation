@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+- **The brain spawns, the mod shapes (MOD-12; public issue #22, option 1).**
+  The engine steps a plugin's own hooks past any subagent that plugin starts
+  with `$.agent.spawn`, and every worker used to start that way, so a dispatched
+  worker ran with no git guard (a repo=here worker on `main` could commit), no
+  mid-run spend and no hand-back capture from its tool calls. Of the options #22
+  laid out, this takes option 1: the mod prepares everything and the brain makes
+  the spawn with its own Agent tool. `/dispatch` and the dispatch tool still
+  write the brief, cut the worktree and pick the tier, then spawn nothing: the
+  result ends with a spawn block, `spawn: Agent` and a fenced JSON object
+  (`subagent_type`, `model` = the tier's alias, `description` = `<id> <tier>
+  <alias>`, `prompt` = the brief handoff) the brain passes verbatim, and one line
+  saying the worker starts when it makes that call. `--dry-run` and `--verify`
+  are unchanged. The `agent.spawn` hook shapes the brain's call as it shaped
+  every spawn: it keeps the call's model when it is the tier's alias, runs the
+  worker in the folder `/dispatch` prepared (new store key
+  `delegation.handoff.<brief>`; the Agent tool takes no folder), claims the slot
+  and records the attempt (`kind: spawn`, `source: brief`); the hand-back,
+  verdict, ladder and ledger are what a mod-spawned worker produced. A second
+  spawn of a brief whose attempt still runs is refused naming it (`… not
+  spawned — already running as attempt 1 (agent agent-7); wait for its
+  hand-back`), by the hook and the dispatch result alike, as are a spawn past
+  the budget, one with work present, and one with every slot taken. The queue
+  and the ladder are advice: a full house answers `queued: <id> — the mod will
+  tell you when a slot frees (…)`; the hand-back that frees a slot carries
+  `ready: <id> — run its spawn block (/dispatch <id> prints it again)`, as does
+  the "Delegation state" section while it holds; a respawn verdict prints the
+  next spawn block (one tier up after a refute) instead of spawning, with
+  `autoEscalate` too, which now performs resumes only. Nothing in the mod calls
+  `$.agent.spawn` for a worker (a node test reads `hooks/register.ts`:
+  `spawnSelf` serves only the debrief and eval runners, which need no hooks).
+  The evidence for #22, in `tests/hooks.test.ts`: "#22 evidence: a repo=here
+  worker the brain spawned is seen by the mod" (the git guard denies its `git
+  commit` on `main`, and its turn usage lands on the attempt mid-run) and "#22
+  evidence: a worker the mod spawns itself (the old path, kept here in a
+  helper) is stepped past by the mod's hooks". The harness now records who
+  raised each spawn (`spawnedBy`, from the kit's `next.origin`). The setup
+  handover, the card folder's README template and the brief template say who
+  starts the worker. Using the worker's steps mid-run (the spend ceiling, effort)
+  is the next card.
+
 ## 0.6.1 — 2026-10-10
 
 - **A breadcrumbs-mode debrief is bounded to its window and validated at

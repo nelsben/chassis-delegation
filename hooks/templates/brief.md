@@ -8,6 +8,7 @@ Worktree: {{worktree}}, branch {{branch}}. Work ONLY there (`git -C {{worktree}}
 Checkout: {{worktree}}, branch {{branch}} (repo=here: no worktree). You share this checkout with the brain and maybe other workers: touch only your scope, and never stash, reset, checkout, clean or revert a path you did not write.
 {{/here}}
 Domain: {{domain}}.
+You were started by the brain's own Agent call: the mod that dispatched you recorded this attempt, its git guard sees your git commands, and it checks your report against the repo itself.
 
 ## Rules
 {{#worktree}}

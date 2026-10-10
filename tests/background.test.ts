@@ -2,7 +2,7 @@
 // the eval trigger, compaction + the system prompt section, the scheduler.
 // Every spawn here lands in the harness; nothing real runs.
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, mainTurn, agentResult, sessionStart, commandInput, compactInput, composeInput, ROOT, SCRATCH, HOME, NOW, type RunAnswer } from './harness'
+import { world, spawnInput, turnInput, mainTurn, agentResult, sessionStart, commandInput, compactInput, composeInput, brainSpawn, spawnCallOf, ROOT, SCRATCH, HOME, NOW, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 
 const TOOL = 'mcp__chassis-delegation__dispatch'
@@ -49,7 +49,7 @@ describe('2A: the dispatch tool', () => {
     expect(resultText(viaTool)).toBe(cmd.text)
   })
 
-  test('the full run through the tool: worktree, spawn with model omitted, the spawn hook picks the tier and records the attempt', BRIEFS, async ($, on) => {
+  test('the full run through the tool: worktree and the spawn block; the brain makes the call, the spawn hook picks the tier and records the attempt', BRIEFS, async ($, on) => {
     const w = world(on, { files: cardFiles(), dirs: cardDirs, run: whichOpus, agentId: 'agent-318', store: offered })
     await $.session.start(sessionStart)
     const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
@@ -57,9 +57,12 @@ describe('2A: the dispatch tool', () => {
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101', `${ROOT}-BE-101`, 'origin/main'],
     ])
+    expect(w.spawns).toHaveLength(0) // MOD-12: the mod spawns no worker
+    expect(text).toContain('4. spawn prepared: backend on opus · tier=frontier (brief) · attempt 1/3')
+    expect(spawnCallOf(text)).toMatchObject({ subagent_type: 'backend', model: 'opus' })
+    await brainSpawn($, text)
     expect(w.spawns[0]).toMatchObject({ cwd: `${ROOT}-BE-101`, model: 'opus' })
     expect(typeOf(w.spawns[0])).toBe('backend')
-    expect(text).toContain('4. spawned backend agent')
     // the spawn hook recorded the attempt under the agent id the engine gave it
     expect(records(w, 'BE-101')[0]).toMatchObject({ attempt: 1, kind: 'spawn', tier: 'frontier', alias: 'opus', agentId: 'agent-318' })
     expect(text).toContain('tier=frontier → opus')
@@ -152,13 +155,13 @@ describe('2B: quiet verdicts', () => {
 describe('2F: the worker scheduler', () => {
   const brief = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard]]\nDo it.`
 
-  test('the third briefed spawn is queued, not started; an ad hoc one never is; a worker finishing starts the head', async ($, on) => {
+  test('the third briefed spawn is queued, not started; an ad hoc one never is; a worker finishing makes the head ready (MOD-12: the brain starts it)', async ($, on) => {
     const w = world(on, { listAgents: true })
     const a = await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     const b = await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
     const c = await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_C0000003', description: 'T-3 work', subagentType: 'backend', cwd: '/w3' }))
     expect([a.agentId, b.agentId]).toEqual(['agent-1', 'agent-2'])
-    expect(c.deny).toBe('queued by chassis-delegation: T-3 starts when a worker slot frees (2 live: T-1, T-2; 1 queued: T-3)')
+    expect(c.deny).toBe('queued: T-3 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: T-3)')
     expect(w.spawns).toHaveLength(2)
     const queue = w.state.get('chassis-delegation.queue') as Record<string, unknown>[]
     expect(queue).toHaveLength(1)
@@ -173,6 +176,11 @@ describe('2F: the worker scheduler', () => {
     expect(w.spawns).toHaveLength(3)
 
     await $.turn.complete(turnInput('agent-1', '[[report v=1 task=T-1 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]'))
+    // MOD-12: the mod starts nothing; the row that freed the slot says which task is ready
+    expect(w.spawns).toHaveLength(3)
+    expect(rowsOf(w).some(r => r.includes('ready: T-3 — run its spawn block (/dispatch T-3 prints it again)'))).toBe(true)
+    // the brain makes the spawn: it takes its queued place
+    await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_E0000003', description: 'T-3 work', subagentType: 'backend', cwd: '/w3' }))
     expect(w.spawns).toHaveLength(4)
     expect(w.spawns[3]).toMatchObject({ prompt: brief('T-3'), cwd: '/w3', model: 'sonnet' })
     expect(typeOf(w.spawns[3])).toBe('backend')
@@ -196,7 +204,7 @@ describe('2F: the worker scheduler', () => {
     const w = world(on, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     const second = await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
-    expect(second.deny).toBe('queued by chassis-delegation: T-2 starts when a worker slot frees (1 live: T-1; 1 queued: T-2)')
+    expect(second.deny).toBe('queued: T-2 — the mod will tell you when a slot frees (1 live: T-1; 1 queued: T-2)')
     expect(w.spawns).toHaveLength(1)
   })
 
@@ -206,10 +214,11 @@ describe('2F: the worker scheduler', () => {
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
     const viaCommand = await $.command.run(commandInput('BE-101 --scope app/**'))
-    expect(viaCommand.text).toContain('4. queued (position 1) — queued by chassis-delegation: BE-101 starts when a worker slot frees (2 live: T-1, T-2; 1 queued: BE-101)')
+    expect(viaCommand.text).toContain('4. queued: BE-101 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: BE-101)')
     expect(viaCommand.text).toContain(`brief ${SCRATCH}/briefs/BE-101.brief.md · worktree ${ROOT}-BE-101 · branch agent/backend/BE-101 · queued (position 1)`)
+    expect(spawnCallOf(String(viaCommand.text))).toBeUndefined()
     const viaTool = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
-    expect(viaTool).toMatch(/4\. already queued since \d\d:\d\d \(position 1\)/)
+    expect(viaTool).toMatch(/4\. queued: BE-101 — the mod will tell you when a slot frees; already queued since \d\d:\d\d \(position 1\)/)
     const queue = w.state.get('chassis-delegation.queue') as Record<string, unknown>[]
     expect(queue.map(q => q.task)).toEqual(['BE-101'])
     expect(queue[0]).toMatchObject({ cwd: `${ROOT}-BE-101`, subagentType: 'backend' })

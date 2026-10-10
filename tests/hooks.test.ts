@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, NOW, HOME, type RunAnswer } from './harness'
+import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, brainSpawn, spawnCallOf, workerCall, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 import { MOD_VERSION } from '../hooks/lib/version'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
@@ -229,7 +229,7 @@ describe('tool.call on Agent: report capture and verify', () => {
     expect(delivered(w)).toContain('chassis-delegation: verdict=unverified task=T-4')
   })
 
-  test('background worker, autoEscalate: first failure resumes it, the second respawns one tier up', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+  test('background worker, autoEscalate: first failure resumes it, the second advises a respawn one tier up (MOD-12: the brain makes it)', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
@@ -240,7 +240,9 @@ describe('tool.call on Agent: report capture and verify', () => {
     expect(records(w, 'T-4').map(r => [r.attempt, r.kind, r.lineage, r.verdict])).toEqual([[1, 'spawn', 1, 'refuted'], [2, 'resume', 1, 'pending']])
 
     await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('5678abcd')))
-    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=2/3 usd=~0.00 model=claude-sonnet-5-5 next=respawned at frontier')
+    expect(delivered(w)).toContain(`chassis-delegation: verdict=refuted task=T-4 attempt=2/3 usd=~0.00 model=claude-sonnet-5-5 next=respawn at frontier — same brief ${BRIEF}`)
+    expect(w.spawns).toHaveLength(1)
+    await brainSpawn($, delivered(w), { tool_use_id: 'toolu_02RESPAWN' })
     expect(w.spawns[1]?.model).toBe('opus')
     expect(records(w, 'T-4').map(r => [r.attempt, r.kind, r.lineage, r.tier, r.source])).toEqual([
       [1, 'spawn', 1, 'standard', 'brief'],
@@ -705,11 +707,11 @@ describe('5B: /delegation init and the init tool', () => {
     expect(out.text).not.toContain('Commit the card')
     expect(out.text).not.toContain('git add -A')
     expect(out.text).not.toContain('Ask the person for the first task')
-    expect(String(out.text).trimEnd().split('\n').at(-1)).toBe('Set up. Tell Claude your first task in a sentence, for example: "add a function that reads a file header and returns its size, with a node --test test". Claude writes the card, shows you the brief, and dispatches when you say go.')
+    expect(String(out.text).trimEnd().split('\n').at(-1)).toBe('Set up. Tell Claude your first task in a sentence, for example: "add a function that reads a file header and returns its size, with a node --test test". Claude writes the card, shows you the brief, and when you say go dispatches it and makes the Agent call that starts the worker; the mod shapes and verifies it.')
     expect(w.files.has(`${ROOT}/agents/tasks/README.md`)).toBe(true)
     expect(w.files.has(`${ROOT}/agents/tasks/OPS-000-sample.md`)).toBe(false)
     const viaTool = resultText(await $.tool.call({ tool: 'mcp__chassis-delegation__setup' } as never))
-    expect(viaTool.trimEnd().split('\n').at(-1)).toBe('Ask the person for the first task, then call the card tool.')
+    expect(viaTool.trimEnd().split('\n').at(-1)).toBe('Ask the person for the first task, then call the card tool. On go, call dispatch and make the Agent call its result ends with (the spawn block, verbatim): that call starts the worker.')
     expect(viaTool).toContain('Set up. Tell Claude your first task')
   })
 
@@ -873,7 +875,8 @@ describe('/dispatch', () => {
     const again = await $.command.run(commandInput('BE-101 --scope app/billing/**'))
     expect(again.text).toContain('exists — reused, not overwritten')
     expect(again.text).not.toContain('stopped:')
-    expect(w.spawns).toHaveLength(1)
+    expect(spawnCallOf(String(again.text))).toMatchObject({ subagent_type: 'backend', model: 'opus' })
+    expect(w.spawns).toHaveLength(0)
   })
 
   test('--scope and --forbid replace the card prose in the header', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
@@ -907,6 +910,7 @@ describe('/dispatch', () => {
     const w = world(on, { files: f, dirs, run: replayRun, agentId: 'agent-r' })
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput('BE-101 --replay --base 96014e3b --scope app/billing/Rate*.ts'))
+    await brainSpawn($, String(out.text))
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'ls-tree', '--name-only', '96014e3b', 'agents/tasks/'],
       ['git', '-C', ROOT, 'show', `96014e3b:agents/tasks/${FIXTURE_CARD_NAME}`],
@@ -952,8 +956,10 @@ describe('/dispatch', () => {
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/dispatcher/BE-101', `${ROOT}-BE-101`, 'origin/main'],
     ])
+    expect(spawnCallOf(String(out.text))?.subagent_type).toBe('general-purpose')
+    expect(out.text).toContain('4. spawn prepared: general-purpose on opus')
+    await brainSpawn($, String(out.text))
     expect(w.spawns[0]?.subagentType ?? w.spawns[0]?.subagent_type).toBe('general-purpose')
-    expect(out.text).toContain('4. spawned general-purpose agent')
   })
 
   test('5B: the repo file agentTypes, domains and worktreeRoot steer the dispatch', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
@@ -964,9 +970,10 @@ describe('/dispatch', () => {
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(argvs(w).filter(a => a[0] === 'git')).toContainEqual(['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/web/BE-101', '/trees/acme-app-BE-101', 'origin/main'])
+    expect(out.text).toContain('4. spawn prepared: frontend on opus')
+    await brainSpawn($, String(out.text))
     expect(w.spawns[0]?.subagentType ?? w.spawns[0]?.subagent_type).toBe('frontend')
     expect(w.spawns[0]).toMatchObject({ cwd: '/trees/acme-app-BE-101' })
-    expect(out.text).toContain('4. spawned frontend agent')
   })
 
   test('briefDir unset: the brief goes to <root>/.delegation/briefs/', async ($, on) => {
@@ -991,7 +998,7 @@ describe('/dispatch', () => {
     expect(w.files.has(`${pad}/briefs/BE-101.brief.md`)).toBe(true)
   })
 
-  test('the full run adds the worktree from a sha base and spawns with model omitted', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+  test('the full run adds the worktree from a sha base and ends with the spawn block; the brain makes it and the hook sets its folder', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, run, agentId: 'agent-318', store: offered })
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput('BE-101 --scope app/** --base 96014e3b'))
@@ -999,15 +1006,16 @@ describe('/dispatch', () => {
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101', `${ROOT}-BE-101`, '96014e3b'],
     ])
+    expect(w.spawns).toHaveLength(0)
+    await brainSpawn($, String(out.text))
     expect(w.spawns[0]).toMatchObject({
       prompt: `Your brief is the file ${SCRATCH}/briefs/BE-101.brief.md. Read it whole, then follow it exactly.`,
       cwd: `${ROOT}-BE-101`,
       model: 'opus',
     })
-    // the kit hands a plugin's spawn on in the Agent tool's own spelling (subagent_type);
     // no map entry, so the domain's own type, which the session offers
     expect(w.spawns[0]?.subagentType ?? w.spawns[0]?.subagent_type).toBe('backend')
-    expect(out.text).toContain('4. spawned backend agent')
+    expect(out.text).toContain('4. spawn prepared: backend on opus')
     expect(out.text).toContain('tier=frontier → opus')
     expect(argvs(w).some(a => a[0] === 'bash')).toBe(false)
   })
@@ -1038,6 +1046,7 @@ describe('/dispatch', () => {
     const w = world(on, { files: files(), dirs, run: onMain, agentId: 'agent-h', store: offered })
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput('BE-101 --here --scope app/billing/Rate*.ts'))
+    await brainSpawn($, String(out.text))
     const brief = w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? ''
     const header = brief.split('\n')[0] ?? ''
     expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/**,agents/tasks/** spend=25 budget=3-attempts report=chassis.report.v1]]')
@@ -1080,7 +1089,8 @@ describe('/dispatch', () => {
     ])
     expect(out.text).toContain(`   repo=here: base=${HEAD_SHA} · ignore=.delegation/**,traces/**,agents/tasks/**,src/b.ts`)
     expect(out.text).toContain(`3. no worktree (repo=here): the worker shares ${ROOT}`)
-    expect(out.text).toContain(`brief ${SCRATCH}/briefs/BE-101.brief.md · repo=here in ${ROOT} · branch main · agent agent-1`)
+    expect(out.text).toContain(`brief ${SCRATCH}/briefs/BE-101.brief.md · repo=here in ${ROOT} · branch main · tier=frontier → opus`)
+    await brainSpawn($, String(out.text))
     expect(w.spawns[0]).toMatchObject({ cwd: ROOT })
   })
 
@@ -1095,7 +1105,7 @@ describe('/dispatch', () => {
     const forced = await $.command.run(commandInput(`BE-101 --here --force-overlap --scope ${LLM}`))
     expect(forced.text).toContain(`   warning: BE-101 scope ${LLM} overlaps in-flight GH-19 scope app/** in the shared checkout (--force-overlap: dispatched anyway)`)
     expect(forced.text).toContain(`3. no worktree (repo=here): the worker shares ${ROOT}`)
-    expect(w.spawns).toHaveLength(1)
+    expect(spawnCallOf(String(forced.text))).toBeDefined()
   })
 
   test('GH-16: not in flight here: a card with a verdict, a worktree card, a card in another checkout', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
@@ -1107,7 +1117,7 @@ describe('/dispatch', () => {
     const out = await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))
     expect(out.text).not.toContain('refused')
     expect(out.text).not.toContain('overlaps')
-    expect(w.spawns).toHaveLength(1)
+    expect(spawnCallOf(String(out.text))).toBeDefined()
   })
 
   test('GH-16: a repo=here hand-back is verified in the root: the dirty tree less ignore= and the files another in-flight card claimed', { options: { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full', gateMap: '{"G2":"npx g2","G8p":"npx g8p"}' } }, async ($, on) => {
@@ -1122,7 +1132,7 @@ describe('/dispatch', () => {
     const RED_HERE = { [`${ROOT}/.delegation/BE-101/red-1.txt`]: 'npx vitest run\nFAIL RateA.test.ts: expected 1 got 0\n' }
     const w = world(on, { files: { ...files(), ...gh19.files, ...RED_HERE }, dirs, run, agentId: 'agent-h', store: { ...offered, ...gh19.store } })
     await $.session.start(sessionStart)
-    await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))
+    await brainSpawn($, String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text))
     // meanwhile GH-19 handed back: its record now claims src/b.ts
     w.store.set('delegation.tasks.GH-19', [{ ...records(w, 'GH-19')[0], files: ['src/b.ts'] }])
     const AMEND = '[[amend v=1 ignore+=src/** reason=hide it]]'
@@ -1354,16 +1364,20 @@ describe('GH-101: the queue never holds a phantom', () => {
   const offered = { 'delegation.agentTypes': ['general-purpose', 'backend', 'frontend'] }
   const TOOL = 'mcp__chassis-delegation__dispatch'
 
-  test('(a) both workers hand back: the queued task starts before the turn ends, with a toast naming it', async ($, on) => {
+  test('(a) both workers hand back: the queued task is said ready once, the brain starts it, with a toast naming it (MOD-12)', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
     const queued = await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_C0000009' }))
-    expect(queued.deny).toContain('T-9 starts when a worker slot frees')
+    expect(queued.deny).toContain('queued: T-9 — the mod will tell you when a slot frees')
     await $.turn.complete(turnInput('agent-1', '[[report v=1 task=T-1 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]'))
     await $.turn.complete(turnInput('agent-2', '[[report v=1 task=T-2 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]'))
+    expect(w.spawns).toHaveLength(2)
+    const ready = w.appended.filter(a => a.text.includes('ready: T-9 — run its spawn block'))
+    expect(ready).toHaveLength(1)
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-9'])
+    await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_D0000009' }))
     expect(w.spawns).toHaveLength(3)
-    expect(String(w.spawns[2]?.prompt)).toContain('task=T-9')
     expect(queueOf(w)).toEqual([])
     expect(w.toasts.some(t => /^started queued T-9 \(waited \d+ min\)$/.test(t))).toBe(true)
   })
@@ -1376,7 +1390,7 @@ describe('GH-101: the queue never holds a phantom', () => {
     const first = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(first.text).toContain('queued (position 1)')
     const again = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
-    expect(again).toMatch(/already queued since \d\d:\d\d \(position 1\)/)
+    expect(again).toMatch(/queued: BE-101 — the mod will tell you when a slot frees; already queued since \d\d:\d\d \(position 1\)/)
     const viaCommand = await $.command.run(commandInput('BE-101 --scope app/**'))
     expect(viaCommand.text).toMatch(/already queued since \d\d:\d\d \(position 1\)/)
     expect(queueOf(w)).toHaveLength(1)
@@ -1402,7 +1416,7 @@ describe('GH-101: the queue never holds a phantom', () => {
     const w = world(on, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: brief('BE-310'), tool_use_id: 'toolu_A0000001' }))
     const res = await $.agent.spawn(spawnInput({ prompt: brief('BE-314'), tool_use_id: 'toolu_B0000002' }))
-    expect(res.deny).toBe('queued by chassis-delegation: BE-314 starts when a worker slot frees (1 live: BE-310; 1 queued: BE-314)')
+    expect(res.deny).toBe('queued: BE-314 — the mod will tell you when a slot frees (1 live: BE-310; 1 queued: BE-314)')
     expect(w.spawns).toHaveLength(1)
   })
 })
@@ -1521,14 +1535,17 @@ describe('GH-104: spend guards', () => {
     expect(w.debugLogs).toContain("chassis-delegation: T-4: tier=standard picked by the brief header's tier= (no classify call)")
   })
 
-  test('(a) autoEscalate: no-report resumes, a second no-report respawns at the SAME tier', { options: { verdictVerbosity: 'full', autoEscalate: true } }, async ($, on) => {
+  test('(a) autoEscalate: no-report resumes, a second no-report advises a respawn at the SAME tier (MOD-12: the brain makes it)', { options: { verdictVerbosity: 'full', autoEscalate: true } }, async ($, on) => {
     const w = world(on, { files: files(), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: PROMPT }))
     await $.turn.complete(turnInput('agent-4', 'Working on it.'))
     expect(w.sent).toHaveLength(1)
     await $.turn.complete(turnInput('agent-4', 'Still working on it.'))
-    expect(posted(w)[1]?.split('\n')[0]).toBe('chassis-delegation: verdict=no-report task=T-4 attempt=2/3 usd=~0.00 model=claude-sonnet-5-5 next=respawned at standard as agent-2 (autoEscalate)')
-    // the mod's own spawn has no dialog to carry a notice: the record says the tier and its source
+    expect(posted(w)[1]?.split('\n')[0]).toBe(`chassis-delegation: verdict=no-report task=T-4 attempt=2/3 usd=~0.00 model=claude-sonnet-5-5 next=respawn at standard — same brief ${BRIEF}, model omitted so the mod picks`)
+    // the row carries the spawn block at the same tier; the brain makes it
+    expect(spawnCallOf(posted(w)[1] ?? '')).toMatchObject({ model: 'sonnet', description: 'T-4 standard sonnet' })
+    expect(w.spawns).toHaveLength(1)
+    await brainSpawn($, posted(w)[1] ?? '', { tool_use_id: 'toolu_03RESPAWN' })
     expect(w.spawns[1]?.model).toBe('sonnet')
     expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.tier, x.source, x.verdict])).toEqual([
       [1, 'spawn', 'standard', 'brief', 'no-report'],
@@ -1691,18 +1708,20 @@ describe('GH-104: spend guards', () => {
     const w = world(on, { files: { [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD }, dirs: { [`${ROOT}/agents/tasks`]: [CARD_NAME] }, agentId: 'agent-7' })
     await $.session.start(sessionStart)
     const out = String((await $.command.run(commandInput('T-4'))).text)
-    expect(out).toMatch(/^4\. spawned general-purpose agent agent-7 on \S+ · attempt 1\/3$/m)
+    expect(out).toMatch(/^4\. spawn prepared: general-purpose on sonnet · tier=standard \(brief\) · attempt 1\/3 — nothing runs until the Agent call below is made$/m)
+    expect(w.spawns).toHaveLength(0)
+    await brainSpawn($, out)
     expect(w.spawns[0]?.model).toBe('sonnet')
   })
 })
 
-describe('GH-107: a drained spawn that is refused keeps its place at the head of the queue', () => {
+describe('GH-107 (MOD-12): a ready task the brain spawns, refused, keeps its place at the head of the queue unless retrying cannot cure it', () => {
   const brief = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard]]\nDo it.`
   const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
   const report = (task: string) => `[[report v=1 task=${task} subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]`
   const rowsOf = (w: { appended: { type: string; text: string }[] }) => w.appended.filter(a => a.type === 'user').map(a => a.text)
 
-  test('(a) one worker hands back: A starts, B stays queued at position 1', async ($, on) => {
+  test('(a) one worker hands back: A is ready, B stays queued at position 2', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
@@ -1710,7 +1729,11 @@ describe('GH-107: a drained spawn that is refused keeps its place at the head of
     await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_D0000009' }))
     expect(queueOf(w).map(q => q.task)).toEqual(['T-8', 'T-9'])
     await $.turn.complete(turnInput('agent-1', report('T-1')))
-    expect(w.spawns).toHaveLength(3)
+    expect(w.spawns).toHaveLength(2)
+    const rows = w.appended.map(a => a.text).join('\n')
+    expect(rows).toContain('ready: T-8 — run its spawn block')
+    expect(rows).not.toContain('ready: T-9')
+    await $.agent.spawn(spawnInput({ prompt: brief('T-8'), tool_use_id: 'toolu_E0000008' }))
     expect(String(w.spawns[2]?.prompt)).toContain('task=T-8')
     expect(queueOf(w).map(q => q.task)).toEqual(['T-9'])
   })
@@ -1735,23 +1758,26 @@ describe('GH-107: a drained spawn that is refused keeps its place at the head of
     return undefined
   }
 
-  test('(b) A is refused at the drain for work present: A leaves the queue with a row saying so, and B starts', { options: { gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
+  test('(b) the brain spawns ready A and is refused for work present: A leaves the queue, and B is ready', { options: { gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
     const w = world(on, { listAgents: true, run: worker, files: { [BRIEF]: HEADER + '\nbody' }, dirs: { [WT]: [] } })
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
-    const a = { prompt: `Your brief is the file ${BRIEF}. Read it whole, then follow it exactly.`, description: 'task', subagentType: 'general-purpose', cwd: WT, task: 'T-4', subtask: 'main', at: 1000 }
+    const PROMPT = `Your brief is the file ${BRIEF}. Read it whole, then follow it exactly.`
+    const a = { prompt: PROMPT, description: 'task', subagentType: 'general-purpose', cwd: WT, task: 'T-4', subtask: 'main', at: 1000 }
     const b = { prompt: brief('T-9'), description: 'task', subagentType: 'general-purpose', task: 'T-9', subtask: 'main', at: 2000 }
     w.state.set('chassis-delegation.queue', [a, b])
     // T-4 already had an attempt: its worktree holds finished work
     w.store.set('delegation.tasks.T-4', [{ attempt: 1, subtask: 'main', kind: 'spawn', tier: 'standard', alias: 'sonnet', verdict: 'no-report', source: 'brief', purpose: 'build', briefPath: BRIEF }])
     await $.turn.complete(turnInput('agent-1', report('T-1')))
-    expect(w.spawns).toHaveLength(3)
-    expect(queueOf(w)).toEqual([])
-    const row = rowsOf(w).concat(w.logs).find(r => r.startsWith('chassis-delegation: queued T-4 not started: ')) ?? ''
-    expect(row).toContain('work present at')
-    expect(row).toContain('; it is removed from the queue (retrying cannot succeed)')
+    expect(w.appended.map(x => x.text).join('\n')).toContain('ready: T-4 — run its spawn block')
+    const refused = await $.agent.spawn(spawnInput({ prompt: PROMPT, tool_use_id: 'toolu_E0000004' }))
+    expect(refused.deny).toContain('T-4 not spawned — work present at')
+    expect(w.spawns).toHaveLength(2)
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-9'])
+    const composed = await $.prompt.compose(composeInput(['Agent']))
+    expect(composed.sections.find(x => x.id === 'chassis-delegation:state')?.text).toContain('- ready: T-9 — run its spawn block (/dispatch T-9 prints it again)')
   })
-  test('(c) a transient refusal keeps A at the head and posts its row once, however often the drain runs', { options: { gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
+  test('(c) a transient refusal of the brain spawn keeps A at the head; each task is said ready once, however often slots free', { options: { gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
     const w = world(on, { listAgents: true, run: worker, spawnDeny: e => (String(e.prompt).includes('T-4') ? 'the engine is busy' : undefined) })
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
@@ -1760,10 +1786,12 @@ describe('GH-107: a drained spawn that is refused keeps its place at the head of
     w.state.set('chassis-delegation.queue', [a, b])
     await $.turn.complete(turnInput('agent-1', report('T-1')))
     await $.turn.complete(turnInput('agent-2', report('T-2')))
+    const rows = w.appended.map(x => x.text).join('\n')
+    expect(rows.split('ready: T-4 — ')).toHaveLength(2)
+    expect(rows.split('ready: T-9 — ')).toHaveLength(2)
+    const refused = await $.agent.spawn(spawnInput({ prompt: brief('T-4'), tool_use_id: 'toolu_E0000004' }))
+    expect(refused.deny).toBe('the engine is busy')
     expect(queueOf(w).map(q => q.task)).toEqual(['T-4', 'T-9'])
-    const posted = rowsOf(w).concat(w.logs).filter(r => r.startsWith('chassis-delegation: queued T-4 not started: '))
-    expect(posted).toHaveLength(1)
-    expect(posted[0]).toContain('the engine is busy; it keeps its place (position 1)')
   })
 })
 
@@ -1806,6 +1834,7 @@ describe('GH-105: a dispatch given --base <sha> writes base= into the brief, and
     const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
     expect(header).toContain(` gate=prettier base=${BASE} spend=10 budget=3-attempts`)
     expect(out).toContain(`3. worktree ${ROOT}-T-4 on ${BRANCH} from ${BASE}`)
+    await brainSpawn($, out)
     const REPORT = `[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=a/x.ts]]`
     await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
     const row = delivered(w)
@@ -1894,7 +1923,7 @@ describe('MOD-2: a dispatch that names a base writes it into an existing brief',
     const w = world(on, { files: files(), dirs, run: stacked, agentId: 'agent-4' })
     await $.session.start(sessionStart)
     await $.command.run(commandInput('T-4 --dry-run --scope a/**'))
-    await $.command.run(commandInput(`T-4 --base ${BASE}`))
+    await brainSpawn($, String((await $.command.run(commandInput(`T-4 --base ${BASE}`))).text))
     const REPORT = `[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=a/x.ts]]`
     await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
     const row = delivered(w)
@@ -2023,13 +2052,16 @@ describe('GH-111: the card tool', () => {
     expect(w.spawns).toHaveLength(0)
   })
 
-  test('with dispatch: true it dispatches the card it wrote: one spawn', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+  test('with dispatch: true it dispatches the card it wrote: the spawn block, for the brain to make (MOD-12)', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = setup(on)
     await $.session.start(sessionStart)
     const out = resultText(await $.tool.call({ tool: TOOL, ...given, dispatch: true } as never))
     expect(out).toContain(`wrote ${ROOT}/agents/tasks/OPS-1-the-rom-reader-returns-the-header.md`)
-    expect(out).toContain('4. spawned')
+    expect(out).toContain('4. spawn prepared:')
     expect(out).not.toContain('Say go and Claude dispatches')
+    expect(w.spawns).toHaveLength(0)
+    expect(spawnCallOf(out)).toMatchObject({ description: 'OPS-1 standard sonnet' })
+    await brainSpawn($, out)
     expect(w.spawns).toHaveLength(1)
   })
 
@@ -2053,7 +2085,7 @@ describe('GH-111: the card tool', () => {
     await $.session.start(sessionStart)
     expect(resultText(await $.tool.call({ tool: TOOL, ...given } as never))).toContain('card says standard · classifier agrees')
     expect(asked).toBe(1)
-    await $.tool.call({ tool: TOOL, ...given, title: 'Another thing', dispatch: true } as never)
+    await brainSpawn($, resultText(await $.tool.call({ tool: TOOL, ...given, title: 'Another thing', dispatch: true } as never)))
     expect(asked).toBe(1)
     expect(w.spawns).toHaveLength(1)
   })
@@ -2452,5 +2484,210 @@ describe('MOD-7: /delegation debrief post', () => {
     const body = w.files.get(`${FOLDER}/2026-10-10-mod-run.post-1.md`) ?? ''
     expect(body.toLowerCase()).not.toContain('globex')
     expect(body).toContain('<redacted> broke it')
+  })
+})
+
+describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
+  const TOOL = 'mcp__chassis-delegation__dispatch'
+  const BRIEF = `${SCRATCH}/briefs/BE-101.brief.md`
+  const PROMPT = `Your brief is the file ${BRIEF}. Read it whole, then follow it exactly.`
+  const STARTS = 'The worker starts when you make this Agent call'
+  const files = (): Record<string, string> => ({ [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: FIXTURE_CARD })
+  const dirs = { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME] }
+  const offered = { 'delegation.agentTypes': ['general-purpose', 'backend', 'frontend'] }
+  const BRIEFS = { briefDir: `${SCRATCH}/briefs` }
+  const LLM = 'app/billing/Rate*.ts'
+  const onMain = (argv: string[]): RunAnswer | undefined => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined)
+  const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
+  const delegationCmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+
+  test('the dispatch tool writes the brief, cuts the worktree and picks the tier, then spawns nothing: its result ends with the spawn block', { options: BRIEFS }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, store: offered })
+    await $.session.start(sessionStart)
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
+      ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
+      ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101', `${ROOT}-BE-101`, 'origin/main'],
+    ])
+    expect(w.files.has(BRIEF)).toBe(true)
+    // nothing spawned: the harness saw no $.agent.spawn, from the mod or anyone
+    expect(w.spawns).toHaveLength(0)
+    expect(w.spawnedBy.size).toBe(0)
+    expect(records(w, 'BE-101')).toEqual([])
+    expect(spawnCallOf(text)).toEqual({ subagent_type: 'backend', model: 'opus', description: 'BE-101 frontier opus', prompt: PROMPT })
+    const lines = text.trimEnd().split('\n')
+    expect(lines.at(-1)).toContain(STARTS)
+    expect(lines.at(-2)).toBe('```')
+    // /dispatch is the same function: it prints the same block again
+    const again = String((await $.command.run(commandInput('BE-101 --scope app/**'))).text)
+    expect(spawnCallOf(again)).toEqual(spawnCallOf(text))
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test("the brain's Agent call carrying the brief is tiered, takes a slot and is recorded as attempt 1 (source brief); a second spawn of the same brief while it runs is denied naming it", { options: { ...BRIEFS, maxWorkers: 1 } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, store: offered, listAgents: true })
+    await $.session.start(sessionStart)
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    const r = await brainSpawn($, text, { tool_use_id: 'toolu_BRAIN0001' })
+    expect(r.deny).toBeUndefined()
+    expect(r.agentId).toBe('agent-1')
+    expect(w.spawnedBy.get('agent-1')).toBe('engine')
+    // the hook kept the brain's model (it matches the tier) and set the worker in its worktree
+    expect(w.spawns[0]).toMatchObject({ prompt: PROMPT, model: 'opus', cwd: `${ROOT}-BE-101` })
+    expect(w.notices).toContain('tier=frontier → opus (brief) · attempt 1/3')
+    expect(records(w, 'BE-101')).toHaveLength(1)
+    expect(records(w, 'BE-101')[0]).toMatchObject({ task: 'BE-101', attempt: 1, kind: 'spawn', lineage: 1, tier: 'frontier', alias: 'opus', source: 'brief', verdict: 'pending', agentId: 'agent-1', toolUseId: 'toolu_BRAIN0001', briefPath: BRIEF })
+    // the slot is held: with maxWorkers 1 another briefed spawn waits
+    const other = await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-2 subtask=main tier=standard]]\nDo it.', tool_use_id: 'toolu_BRAIN0002' }))
+    expect(other.deny).toBe('queued: T-2 — the mod will tell you when a slot frees (1 live: BE-101; 1 queued: T-2)')
+    // a second brain spawn of the same brief while attempt 1 runs
+    const second = await brainSpawn($, text, { tool_use_id: 'toolu_BRAIN0003' })
+    expect(second.deny).toBe('chassis-delegation: BE-101 not spawned — already running as attempt 1 (agent agent-1); wait for its hand-back')
+    expect(w.spawns).toHaveLength(1)
+    expect(records(w, 'BE-101')).toHaveLength(1)
+    // the dispatch tool gives the same one-line reason, and no block
+    const again = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    expect(again).toContain(String(second.deny))
+    expect(spawnCallOf(again)).toBeUndefined()
+  })
+
+  /** Another repo=here card in flight in ROOT: a pending record marked here, its brief, and the files it claimed so far. */
+  const inFlight = (task: string, scope: string) => {
+    const path = `${ROOT}/.delegation/briefs/${task}.brief.md`
+    return {
+      store: { [`delegation.tasks.${task}`]: [{ task, subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'pending', at: 1, briefPath: path, here: ROOT }] },
+      files: { [path]: `[[brief v=1 task=${task} subtask=main tier=standard scope=${scope} forbid= gate=node repo=here]]\nbody` },
+    }
+  }
+
+  // the GH-16 verified hand-back, with the spawn path swapped: the brain makes the spawn the dispatch handed it
+  test('a hand-back from the brain-spawned worker verifies exactly as before (GH-16 repo=here)', { options: { ...BRIEFS, verdictVerbosity: 'full', gateMap: '{"G2":"npx g2","G8p":"npx g8p"}' } }, async ($, on) => {
+    const gh19 = inFlight('GH-19', 'src/**')
+    const PORCELAIN = [' M app/billing/RateA.ts', '?? .delegation/briefs/BE-101.brief.md', ' M src/b.ts', ''].join('\0')
+    const run = (argv: string[]): RunAnswer | undefined => {
+      if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+      if (argv[3] === 'status') return { exitCode: 0, stdout: PORCELAIN }
+      return onMain(argv)
+    }
+    const RED_HERE = { [`${ROOT}/.delegation/BE-101/red-1.txt`]: 'npx vitest run\nFAIL RateA.test.ts: expected 1 got 0\n' }
+    const w = world(on, { files: { ...files(), ...gh19.files, ...RED_HERE }, dirs, run, agentId: 'agent-h', store: { ...offered, ...gh19.store } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text)
+    expect(w.spawns).toHaveLength(0)
+    await brainSpawn($, out)
+    expect(w.spawns[0]).toMatchObject({ cwd: ROOT, model: 'opus' })
+    w.store.set('delegation.tasks.GH-19', [{ ...records(w, 'GH-19')[0], files: ['src/b.ts'] }])
+    const AMEND = '[[amend v=1 ignore+=src/** reason=hide it]]'
+    const REPORT = `[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=app/billing/RateA.ts]]`
+    await $.turn.complete(turnInput('agent-h', `Done.\n${AMEND}\n${REPORT}`))
+    const row = delivered(w)
+    expect(row).toContain('chassis-delegation: verdict=verified task=BE-101 attempt=1/3')
+    expect(row).toContain('claim branch: held — main is the current branch of ' + ROOT)
+    expect(row).toContain('ignored: 1 path by ignore= (.delegation/briefs/BE-101.brief.md), 1 path belonging to GH-19 (src/b.ts)')
+    expect(row).toContain('claim files: held — files= matches the dirty-tree delta exactly')
+    expect(row).toContain('claim red: held — .delegation/BE-101/red-1.txt')
+    expect(row).toContain(`claim gate: held — gate green in the shared checkout ${ROOT} (gate=pass confirmed; repo=here: the dirty tree is allowed, the clean-tree rule does not apply)`)
+    expect(row).toContain(`amend needs approval: ${AMEND} — append it to ${SCRATCH}/briefs/BE-101.brief.md and re-verify to accept it`)
+    expect(w.runs.filter(x => x.argv[0] === 'npx').map(x => x.cwd)).toEqual([ROOT, ROOT])
+    expect(records(w, 'BE-101')[0]).toMatchObject({ here: ROOT, files: ['app/billing/RateA.ts'], verdict: 'verified', source: 'brief' })
+    // the ledger line is the one a mod-spawned worker wrote
+    const ledger = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    expect(ledger.at(-1)).toMatchObject({ task: 'BE-101', attempt: 1, kind: 'spawn', verdict: 'verified', next: 'accept' })
+  })
+
+  test('#22 evidence: a repo=here worker the brain spawned is seen by the mod — the git guard denies its `git commit` on main, and its turn usage lands on the attempt mid-run', { options: BRIEFS }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: onMain, store: offered, listAgents: true })
+    // the brain's Agent call stays in flight (foreground) while its worker runs, until the test hands back
+    let handBack: (said: string) => void = () => undefined
+    const answered = new Promise<string>(r => {
+      handBack = r
+    })
+    on('tool.call', { tool: 'Agent' }, async () => agentResult(await answered, 'agent-1'))
+    await $.session.start(sessionStart)
+    const text = String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text)
+    expect(w.spawns).toHaveLength(0)
+    const call = spawnCallOf(text) as SpawnCall
+    const agentCall = $.tool.call({ tool: 'Agent', tool_use_id: 'toolu_BRAINFG01', ...call } as never)
+    const spawned = await brainSpawn($, text, { tool_use_id: 'toolu_BRAINFG01', background: false })
+    expect(spawned.agentId).toBe('agent-1')
+    expect(w.spawnedBy.get('agent-1')).toBe('engine')
+    expect(w.spawns[0]).toMatchObject({ cwd: ROOT })
+    const commit = await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'git commit -m x' })
+    expect(commit.seen).toBe(true)
+    expect(commit.seen ? commit.result.deny : undefined).toBe('chassis-delegation: no commit on main; branch first (git checkout -b agent/<domain>/<id>)')
+    // a turn ends mid-run (no report yet): its usage is the attempt's own cost, the attempt still pending
+    await $.turn.complete(turnInput('agent-1', 'Still working.', usage('claude-opus-5-5', 10_000, 2_000)))
+    expect(w.store.get('delegation.cost.agent-1')).toMatchObject({ attempt: 1, spend: { tokens: { in: 10_000, out: 2_000 }, turns: 1 } })
+    expect(records(w, 'BE-101')[0]).toMatchObject({ attempt: 1, verdict: 'pending', here: ROOT })
+    handBack('Done for now.')
+    await agentCall
+    expect(records(w, 'BE-101')[0]).toMatchObject({ attempt: 1, verdict: 'no-report' })
+  })
+
+  test('#22 evidence: a worker the mod spawns itself (the old path, kept here in a helper) is stepped past by the mod’s hooks, as the engine documents', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const w = world(on, { run: onMain, listAgents: true })
+    await $.session.start(sessionStart)
+    // the old path: one of the mod's own hooks calls $.agent.spawn (spawnSelf); only the debrief and eval runners still do
+    const oldPath = async (): Promise<string> => {
+      await $.command.run(delegationCmd('debrief'))
+      return String(w.agents.at(-1)?.id)
+    }
+    const selfId = await oldPath()
+    expect(w.spawnedBy.get(selfId)).toBe('chassis-delegation')
+    expect(w.agents.find(a => a.id === selfId)?.spawnedBy).toBe('chassis-delegation')
+    expect(await workerCall($, w, selfId, { tool: 'Bash', command: 'git commit -m x' })).toEqual({ seen: false, why: STEPPED_PAST })
+    // the brain's spawn of a brief comes from the engine: the mod sees its worker
+    const brainId = String((await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-1 subtask=main tier=standard repo=here]]\nDo it.', tool_use_id: 'toolu_BRAIN0009' }))).agentId)
+    expect(w.spawnedBy.get(brainId)).toBe('engine')
+    const seen = await workerCall($, w, brainId, { tool: 'Bash', command: 'git commit -m x' })
+    expect(seen.seen ? seen.result.deny : undefined).toContain('no commit on main')
+  })
+
+  test('the queue is advice: with maxWorkers full the dispatch says queued; the hand-back that frees the slot carries the ready line; the mod spawns nothing', { options: { ...BRIEFS, maxWorkers: 1 } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, store: offered, listAgents: true })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-1 subtask=main tier=standard]]\nDo it.', tool_use_id: 'toolu_BRAIN0001' }))
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    expect(text).toContain('queued: BE-101 — the mod will tell you when a slot frees')
+    expect(spawnCallOf(text)).toBeUndefined()
+    expect(queueOf(w).map(q => q.task)).toEqual(['BE-101'])
+    await $.turn.complete(turnInput('agent-1', '[[report v=1 task=T-1 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]'))
+    expect(w.spawns).toHaveLength(1)
+    const READY = 'ready: BE-101 — run its spawn block (/dispatch BE-101 prints it again)'
+    // the verdict row that freed the slot carries it
+    const row = w.appended.map(a => a.text).find(t => t.includes(READY)) ?? ''
+    expect(row).toContain('chassis-delegation: T-1 attempt 1/3')
+    // and so does the state section of the brain's next prompt
+    const composed = await $.prompt.compose(composeInput(['Agent']))
+    expect(composed.sections.find(x => x.id === 'chassis-delegation:state')?.text).toContain(`- ${READY}`)
+    // /dispatch prints the block again; the brain's call takes the queued place
+    const again = String((await $.command.run(commandInput('BE-101 --scope app/**'))).text)
+    const r = await brainSpawn($, again, { tool_use_id: 'toolu_BRAIN0002' })
+    expect(r.deny).toBeUndefined()
+    expect(queueOf(w)).toEqual([])
+    expect(w.spawns).toHaveLength(2)
+  })
+
+  const T4 = `${SCRATCH}/briefs/T-4.brief.md`
+  const T4_HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const T4_REPORT = (sha: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass files=a/x.ts]]`
+
+  test('a respawn one tier up prints the next spawn block in its advice instead of spawning (autoEscalate)', { options: { verdictVerbosity: 'full', autoEscalate: true, gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
+    const w = world(on, { files: { [T4]: T4_HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${T4}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + T4_REPORT('1234abcd')))
+    expect(w.sent).toHaveLength(1) // the resume is a message, not a spawn
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + T4_REPORT('5678abcd')))
+    expect(w.spawns).toHaveLength(1)
+    const row = w.appended.map(a => a.text).find(t => t.includes('verdict=refuted task=T-4 attempt=2/3')) ?? ''
+    expect(spawnCallOf(row)).toEqual({ subagent_type: 'general-purpose', model: 'opus', description: 'T-4 frontier opus', prompt: `Your brief is the file ${T4}. Read it whole, then follow it exactly.` })
+    expect(row).toContain(STARTS)
+    const r = await brainSpawn($, row, { tool_use_id: 'toolu_BRAIN0004' })
+    expect(r.deny).toBeUndefined()
+    expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.lineage, x.tier, x.source])).toEqual([
+      [1, 'spawn', 1, 'standard', 'brief'],
+      [2, 'resume', 1, 'standard', 'resume'],
+      [3, 'spawn', 3, 'frontier', 'escalated'],
+    ])
   })
 })

@@ -40,6 +40,14 @@ describe('the delegation state', () => {
     expect(lines).toContain('- PRs named in reports: #926')
   })
 
+  test('MOD-12: a queued row a free slot waits for reads ready, the rest stay queued', () => {
+    const s = { ...busy(), queued: [{ task: 'FE-227', position: 1, ready: 'ready: FE-227 — run its spawn block (/dispatch FE-227 prints it again)' }, { task: 'FE-228', position: 2 }] }
+    const lines = renderState(s)
+    expect(lines).toContain('- ready: FE-227 — run its spawn block (/dispatch FE-227 prints it again)')
+    expect(lines).not.toContain('- queued: FE-227 (position 1)')
+    expect(lines).toContain('- queued: FE-228 (position 2)')
+  })
+
   test('at most 40 lines and the last 5 verdicts, however much there is', () => {
     const s = busy()
     s.running = Array.from({ length: 30 }, (_, i) => ({ task: `T-${i}`, tier: 'standard', agentId: `a-${i}`, at: AT }))

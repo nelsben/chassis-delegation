@@ -6,7 +6,7 @@ describe('the dispatch tool (2A)', () => {
     expect(DISPATCH_TOOL.name).toBe('dispatch')
     expect(DISPATCH_TOOL_NAME).toBe('mcp__chassis-delegation__dispatch')
     expect(DISPATCH_TOOL.description).toBe(
-      "Dispatch a chassis task card to a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout), picks the tier and spawns. Pass scope/forbid globs when the card's are prose. With verify (a sha), spawns nothing: runs the verifier on the work already in the task's worktree.",
+      "Prepare a chassis task card for a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout) and picks the tier, then returns the Agent call to make (a spawn block of JSON): the worker starts when you make it, and the mod records and verifies it. When every worker slot is taken it says queued, and tells you when a slot frees. Pass scope/forbid globs when the card's are prose. With verify (a sha), spawns nothing: runs the verifier on the work already in the task's worktree.",
     )
     expect(DISPATCH_TOOL.inputSchema).toEqual({
       type: 'object',
@@ -16,7 +16,7 @@ describe('the dispatch tool (2A)', () => {
         forbid: { type: 'string', description: 'Comma-separated forbid globs; replaces the card forbid in the brief header' },
         replay: { type: 'boolean', description: 'Re-run a card already merged on main, read at base (needs a sha base)' },
         base: { type: 'string', description: 'origin/main (default) or a 7-40 hex sha to cut the worktree from' },
-        dryRun: { type: 'boolean', description: 'Write the brief and print its header; no worktree, no spawn' },
+        dryRun: { type: 'boolean', description: 'Write the brief and print its header; no worktree, no spawn block' },
         here: { type: 'boolean', description: "repo=here: no worktree and no fetch; the worker shares the session's own checkout" },
         forceOverlap: { type: 'boolean', description: "repo=here: dispatch even when the card's scope overlaps an in-flight card's" },
         verify: { type: 'string', description: "A 7-40 hex sha, the branch head: run the verifier on the work in the task's worktree with a synthetic report naming the delta; no spawn. Takes no other option" },

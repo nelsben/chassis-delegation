@@ -9,8 +9,12 @@ export type StateSnapshot = {
   pending: { task: string; agentId?: string }[]
   /** This session's verdict lines, oldest first. */
   recent: { line: string; at: number }[]
-  /** The scheduler queue, head first. */
-  queued: { task: string; position: number }[]
+  /**
+   * The scheduler queue, head first. MOD-12: `ready` is the advice line for a
+   * row a free slot waits for (the brain makes its spawn); it replaces the row's
+   * queued line.
+   */
+  queued: { task: string; position: number; ready?: string }[]
   /** Advice the brain (or Ben) has not acted on: `<task>: <next>`. */
   owed: string[]
   /** MOD-4: owed tasks checked and older than 24 hours: counted on one line, not printed. */
@@ -82,7 +86,7 @@ export function renderState(s: StateSnapshot, reserve = 0): string[] {
   const live = [
     ...s.running.map(r => `- running: ${r.task} ${r.tier} agent ${r.agentId}${r.at !== undefined ? ` since ${stamp(r.at)}` : ''}`),
     ...s.pending.map(p => `- pending verdict: ${p.task}${p.agentId ? ` agent ${p.agentId}` : ''}`),
-    ...s.queued.map(q => `- queued: ${q.task} (position ${q.position})`),
+    ...s.queued.map(q => (q.ready ? `- ${q.ready}` : `- queued: ${q.task} (position ${q.position})`)),
     ...s.owed.map(o => `- owed: ${o}`),
   ]
   const older = s.owedOlder ?? []

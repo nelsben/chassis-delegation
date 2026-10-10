@@ -33,7 +33,7 @@ export type World = {
   /** `$.state` values, keyed `<plugin>.<key>`. */
   state: Map<string, unknown>
   /** What `$.agent.list()` answers; with `listAgents` each spawn adds itself as running. */
-  agents: { id: string; type: string; description: string; status: string }[]
+  agents: { id: string; type: string; description: string; status: string; spawnedBy?: string }[]
   /** Tools the mod registered (`$.tool.register`), by short name. */
   tools: string[]
   /** The `instructions` each `session.compact` reached the engine with. */
@@ -56,6 +56,12 @@ export type World = {
   aborted: string[]
   /** What `$.session.model()` answers (GH-113); a test sets it to put a fable or opus brain in the seat. */
   model: string
+  /**
+   * MOD-12 (#22): who raised each spawn, by the agent id it started: `engine` for
+   * the brain's own Agent call (the test's `$`), the plugin's name when a plugin
+   * hook called `$.agent.spawn` (the kit's `next.origin`, read at the bottom).
+   */
+  spawnedBy: Map<string, string>
 }
 
 export type WorldOptions = {
@@ -114,6 +120,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     transcripts: new Map(Object.entries(options.transcripts ?? {})),
     aborted: [],
     model: options.model ?? 'claude-sonnet-5-5',
+    spawnedBy: new Map(),
   }
   const dirs = new Map(Object.entries(options.dirs ?? {}))
   let spawnCount = 0
@@ -187,16 +194,20 @@ export function world(on: On, options: WorldOptions = {}): World {
     return next(e)
   })
   hook('session.send', (e: { to: unknown; text: string }) => (w.sent.push({ to: e.to, text: e.text }), { isDelivered: true }))
-  hook('agent.spawn', (e: Record<string, unknown>) => {
-    const refused = options.spawnDeny?.(e)
-    if (refused !== undefined) return { deny: refused }
-    w.spawns.push({ ...e })
-    spawnCount += 1
-    const alias = String(e.model ?? '')
-    const agentId = options.agentId && spawnCount === 1 ? options.agentId : `agent-${spawnCount}`
-    if (options.listAgents) w.agents.push({ id: agentId, type: String(e.subagentType ?? e.subagent_type ?? 'general-purpose'), description: String(e.description ?? ''), status: 'running' })
-    return { model: RESOLVED[alias] ?? alias, agentId }
-  })
+  if (!options.skip?.includes('agent.spawn')) {
+    ;(on as unknown as (n: string, h: unknown) => void)('agent.spawn', ($: unknown, e: Record<string, unknown>, next: { origin?: { plugin?: string } }) => {
+      const refused = options.spawnDeny?.(e)
+      if (refused !== undefined) return { deny: refused }
+      w.spawns.push({ ...e })
+      spawnCount += 1
+      const alias = String(e.model ?? '')
+      const agentId = options.agentId && spawnCount === 1 ? options.agentId : `agent-${spawnCount}`
+      const by = next.origin?.plugin ?? 'engine'
+      w.spawnedBy.set(agentId, by)
+      if (options.listAgents) w.agents.push({ id: agentId, type: String(e.subagentType ?? e.subagent_type ?? 'general-purpose'), description: String(e.description ?? ''), status: 'running', ...(by !== 'engine' ? { spawnedBy: by } : {}) })
+      return { model: RESOLVED[alias] ?? alias, agentId }
+    })
+  }
   hook('session.start', (e: { cwd: string }) => ({ cwd: e.cwd }))
   hook('turn.start', (e: { turnId: string }) => ({ turnId: e.turnId }))
   hook('turn.abort', (e: { turnId: string }) => (w.aborted.push(e.turnId), { value: undefined }))
@@ -275,3 +286,44 @@ export const bandProps = (bodyColumns = 100, maxRows = 12) => ({ hasSurvey: fals
 /** The pane's props as a surface hands them (4B). */
 export const paneProps = (bodyColumns = 60) => ({ title: 'Delegation', isFocused: false, bodyColumns, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 60 }, view: {} })
 export const commandInput = (args: string) => ({ command: 'dispatch', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+
+/**
+ * MOD-12: the spawn block a dispatch result (or a respawn verdict) ends with,
+ * `spawn: Agent` and a fenced JSON object: the Agent tool's input, verbatim.
+ */
+export type SpawnCall = { subagent_type: string; model: string; description: string; prompt: string }
+export function spawnCallOf(text: string): SpawnCall | undefined {
+  const m = /spawn: Agent\n```json\n([\s\S]*?)\n```/.exec(text)
+  if (!m) return undefined
+  return JSON.parse(m[1] as string) as SpawnCall
+}
+
+/**
+ * MOD-12: the brain making the Agent call a spawn block names, as the engine
+ * raises it: `agent.spawn` from the test's `$` (origin engine), the call's
+ * fields in the engine's spelling. `over` sets the tool_use_id, cwd, ….
+ */
+export function brainSpawn($: { agent: { spawn: (e: never) => Promise<{ agentId?: string; model?: string; deny?: string }> } }, text: string, over: Record<string, unknown> = {}) {
+  const call = spawnCallOf(text)
+  if (!call) throw new Error(`no spawn block in:\n${text}`)
+  return $.agent.spawn(spawnInput({ prompt: call.prompt, description: call.description, subagentType: call.subagent_type, model: call.model, ...over }))
+}
+
+/** Why the engine keeps a plugin's own subagent from that plugin's hooks (the engine types, TurnStepInput.agentId). */
+export const STEPPED_PAST = 'a subagent a hook spawned through $.agent.spawn steps past that hook, as its tool calls do; every other hook sees its steps'
+
+/**
+ * MOD-12 (#22): a worker's tool call as the engine routes it. The kit runs every
+ * plugin hook for any call, so this keeps the engine's documented rule the kit
+ * does not model: an agent the mod itself spawned (spawnedBy chassis-delegation)
+ * is stepped past by the mod's hooks, and the call never reaches them.
+ */
+export async function workerCall(
+  $: { tool: { call: (e: never) => Promise<unknown> } },
+  w: World,
+  agentId: string,
+  input: Record<string, unknown>,
+): Promise<{ seen: true; result: { deny?: string; text?: string } } | { seen: false; why: string }> {
+  if (w.spawnedBy.get(agentId) === 'chassis-delegation') return { seen: false, why: STEPPED_PAST }
+  return { seen: true, result: (await $.tool.call({ ...input, agentId } as never)) as { deny?: string; text?: string } }
+}

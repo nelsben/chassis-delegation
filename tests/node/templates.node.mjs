@@ -19,6 +19,8 @@ describe('5C: hooks/templates/brief.md is repo-neutral', () => {
     for (const want of ['{{worktree}}', '{{branch}}', '{{install}}', '{{extra}}', '{{redTest}}', '{{gate}}', '{{body}}', 'never push', '[[report v=1 task={{id}}', '[[amend v=1 scope+=']) {
       expect(t.includes(want)).toBe(true)
     }
+    // MOD-12: the worker is told how it started and that the mod sees it
+    expect(t.includes("You were started by the brain's own Agent call")).toBe(true)
     // no line STARTS with an amend block: the verifier would read it as an amendment of every brief
     expect(t.split('\n').some(l => l.trim().startsWith('[[amend'))).toBe(false)
   })
