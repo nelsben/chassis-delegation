@@ -6,6 +6,7 @@
 import type { AttemptRecord } from './attempts'
 import { taskLabel } from './attempts'
 import { base64, elapsed } from './dashboard'
+import { brainSummary, brainTileText, type BrainRecord, type BrainSummary } from './brain'
 import { worktreePath } from './paths'
 
 // ---- the spend series -------------------------------------------------------------
@@ -107,6 +108,8 @@ export const MODEL_COLORS: Record<Exclude<Family, 'other'>, Record<Scheme, strin
   sonnet: { light: '#eb6834', dark: '#d95926' },
   opus: { light: '#1baf7a', dark: '#199e70' },
 }
+/** The brain's colour on a premium model (GH-113). */
+export const FABLE_COLOR: Record<Scheme, string> = { light: '#7c4dcc', dark: '#9a73e0' }
 export const modelColor = (family: Family, scheme: Scheme): string | undefined => (family === 'other' ? undefined : MODEL_COLORS[family][scheme])
 
 export const SURFACE: Record<Scheme, string> = { light: '#fcfcfb', dark: '#1a1a19' }
@@ -262,6 +265,8 @@ export type LiveView = {
   rows: WorktreeRow[]
   byModel: ModelSpend[]
   firstTry: { n: number; m: number }
+  /** GH-113: the brain's own spend beside the workers'; absent before the brain's first turn. */
+  brain?: BrainSummary
 }
 
 /** Cards judged on their first attempt this session: how many verified. */
@@ -272,7 +277,7 @@ export function firstTry(records: readonly AttemptRecord[]): { n: number; m: num
   return { n: judged.filter(r => r.verdict === 'verified').length, m: judged.length }
 }
 
-export type ViewInput = WorktreeInput & { since: number; usd: number; series: readonly SpendPoint[]; owed: number }
+export type ViewInput = WorktreeInput & { since: number; usd: number; series: readonly SpendPoint[]; owed: number; brain?: BrainRecord }
 
 export function liveView(i: ViewInput): LiveView {
   const records = sessionRecords(i.records, i.since)
@@ -287,8 +292,15 @@ export function liveView(i: ViewInput): LiveView {
     rows: worktreeRows({ ...i, records }),
     byModel: spendByModel(records),
     firstTry: firstTry(records),
+    ...(i.brain && i.brain.turns > 0 ? { brain: brainSummary(i.brain, workersUsd(records), attempts(records), i.usd > 0 ? i.usd : undefined) } : {}),
   }
 }
+
+/** Dollars the session's worker attempts spent (the brain's own turns are not among them). */
+export const workersUsd = (records: readonly AttemptRecord[]): number => round4(records.reduce((a, r) => a + (r.usd ?? 0), 0))
+
+/** Worker attempts this session (a verify pass is no attempt). */
+export const attempts = (records: readonly AttemptRecord[]): number => records.filter(r => r.kind !== 'verify').length
 
 /** The band shows while a worker is live, a spawn is queued or a verdict is owed. */
 export const isActive = (v: Pick<LiveView, 'live' | 'queued' | 'owed'>): boolean => v.live + v.queued + v.owed > 0
@@ -317,6 +329,10 @@ export function tokText(n: number): string {
 
 /** `sonnet · $3.10 · 412k tok · 4 verified`. */
 export const modelLabel = (m: ModelSpend): string => `${m.family} · ${dollars(m.usd)} · ${tokText(m.tokens)} tok · ${m.verified} verified`
+
+/** `brain · fable · $2.25 · 630k tok · 3 turns`: the brain's row of spend by model, labelled so Fable is never mistaken for a worker's. */
+export const brainModelLabel = (b: BrainSummary): string =>
+  `brain · ${b.family} · ${dollars(b.brain)}${b.unpriced ? '+' : ''} · ${tokText(b.tokens)} tok · ${b.turns} ${b.turns === 1 ? 'turn' : 'turns'}`
 
 // ---- the dashboard as text (a screen that shows no panes) --------------------------
 
@@ -357,7 +373,8 @@ export function dashboardText(v: LiveView): string {
       lines.push(`| ${cell(r.task)} | ${cell(r.family === 'other' ? r.model : `${r.family} (${r.model})`)} | ${cell(state)} | ${cell(where)} | ${r.tokens !== undefined ? tokText(r.tokens) : '–'} | ${r.usd !== undefined ? dollars(r.usd) : '–'} | ${r.attempt} |`)
     }
   }
-  if (v.byModel.length > 0) lines.push('', `By model: ${v.byModel.map(modelLabel).join('; ')}`)
+  if (v.brain) lines.push('', `Spend split: ${brainTileText(v.brain)}${v.brain.edits > 0 ? ` · ${v.brain.edits} brain ${v.brain.edits === 1 ? 'edit' : 'edits'}` : ''}`)
+  if (v.byModel.length > 0 || v.brain) lines.push(...(v.brain ? [] : ['']), `By model: ${[...(v.brain ? [brainModelLabel(v.brain)] : []), ...v.byModel.map(modelLabel)].join('; ')}`)
   lines.push('', 'Tokens and cost for a worker update when its run ends.')
   return lines.join('\n')
 }

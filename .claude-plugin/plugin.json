@@ -228,6 +228,12 @@
       "description": "Draw the delegation band above the prompt while a worker is live, queued or owed a verdict; hover it for the spend chart and worktrees, [ details ] opens the pane. Off hides the band; /delegation dashboard still opens the pane",
       "default": true
     },
+    "delegateOnly": {
+      "type": "string",
+      "title": "Delegate only (off | warn | deny)",
+      "description": "Keep an opus or fable brain from doing worker work itself. warn: its Edit, Write, MultiEdit, NotebookEdit and Bash writes into the repo run, and the mod posts one row per turn saying so; deny: they are refused, naming the card tool. The card folder, .delegation/, .chassis-delegation.json, CHANGELOG.md and any docs/ folder stay writable. A sonnet or haiku brain, and workers, are never restricted. Empty or off = the repo file (.chassis-delegation.json), else off; a value here wins over it",
+      "default": "off"
+    },
     "cardDir": {
       "type": "string",
       "title": "Card folder",

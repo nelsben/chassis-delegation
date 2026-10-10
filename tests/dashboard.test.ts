@@ -249,6 +249,15 @@ describe('GH-112: the band and the pane', () => {
     expect(await ui.find({ key: 'dash-spend' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /T-1/ })).toBeDefined()
   })
+  test('GH-113: the pane has a brain / workers tile and a brain row in spend by model once the brain has spent', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    worker(w)
+    w.state.set('chassis-delegation.brain', { tokens: { in: 100_000, out: 10_000, cacheRead: 500_000, cacheWrite: 20_000 }, usd: 2.25, unpriced: false, turns: 2, edits: 0, byModel: { 'claude-fable-5-1': { usd: 2.25, tokens: 630_000, turns: 2 } } })
+    const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'Pane', requestId: 'delegation-dash', props: PANE_PROPS })
+    expect(await ui.find({ key: 'kpi-brain' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /brain \$2\.25 \/ workers \$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /brain · fable · \$2\.25/ })).toBeDefined()
+  })
   test('a screen that places no panes gets the dashboard as text, and the waiting pane is closed', async ($, on) => {
     const w = world(on, { listAgents: true, panesUnplaced: 'no attached surface places panes' })
     worker(w)

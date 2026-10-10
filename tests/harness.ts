@@ -54,6 +54,8 @@ export type World = {
   transcripts: Map<string, unknown[]>
   /** The turn ids the mod ended with `$.turn.abort` (GH-106). */
   aborted: string[]
+  /** What `$.session.model()` answers (GH-113); a test sets it to put a fable or opus brain in the seat. */
+  model: string
 }
 
 export type WorldOptions = {
@@ -73,6 +75,8 @@ export type WorldOptions = {
   panesUnplaced?: string
   /** Agents' transcripts for `$.session.messages({ agentId })` (World.transcripts). */
   transcripts?: Record<string, unknown[]>
+  /** What `$.session.model()` answers (GH-113); default a sonnet brain. */
+  model?: string
 }
 
 const RESOLVED: Record<string, string> = {
@@ -109,6 +113,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     storeKeyReads: 0,
     transcripts: new Map(Object.entries(options.transcripts ?? {})),
     aborted: [],
+    model: options.model ?? 'claude-sonnet-5-5',
   }
   const dirs = new Map(Object.entries(options.dirs ?? {}))
   let spawnCount = 0
@@ -125,6 +130,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('store.keys', () => ((w.storeKeyReads += 1), { value: [...w.store.keys()] }))
   hook('session.root', () => ({ value: ROOT }))
   hook('session.cwd', () => ({ value: ROOT }))
+  hook('session.model', () => ({ value: w.model }))
   hook('session.id', () => ({ value: options.sessionId ?? 'sess-1' }))
   hook('session.usage', () => ({ value: { startedAt: 0, context: { window: 200000, percent: 12 }, rateLimits: [], cost: { usd: w.usd } } }))
   hook('fs.exists', (e: { path: string }) => ({ value: w.files.has(e.path) || dirs.has(e.path) }))

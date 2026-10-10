@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **The brain's own spend is priced and shown apart; Fable is priced; a
+  delegate-only mode (GH-113).** `hooks/lib/cost.ts` prices `fable-5-1` and
+  `fable-5` at $10 / $50 per million tokens. Every main-loop `turn.complete`
+  with a usage adds to a brain record in `$.state` (tokens, dollars by model,
+  turns, brain edits; pure model in `hooks/lib/brain.ts`). `/delegation` prints
+  `brain: <family> $x over n turns · workers $y (n attempts) · brain share p%`;
+  the dashboard gains a "brain $x / workers $y" tile and a `brain` row in spend
+  by model (the text fallback too). A new `delegateOnly` key (`off`, `warn`,
+  `deny`; `/config` and the repo file) keeps an opus or fable brain from editing
+  source itself: `warn` posts one row per turn, `deny` refuses and names the
+  card tool; the card folder, `.delegation/`, `.chassis-delegation.json`,
+  `CHANGELOG.md` and any `docs/` folder stay writable, workers and a Sonnet
+  brain are never restricted. A fable brain under it is told its posture at the
+  top of the delegation state. README: "The brain's spend".
+
 - **A scope or files refute holds the tier (GH-115, public issue #34 ask 3).**
   The attempt record keeps `firstFailed`, the first failed claim of a refuted
   verdict. A refute on `scope`, `files`, `branch` or `pr` no longer earns the

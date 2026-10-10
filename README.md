@@ -724,6 +724,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `autoEval` | boolean | boolean | `false` | run `evalCommand` once per new `origin/main` sha while idle (needs `evalCommand`) |
 | `baseRef` | string | string | `""` (the chain: `origin/main`, `main`, `origin/master`, `master`) | where the delta starts when a brief names no `base=`. Used as given (`main`, `develop`, `HEAD~2`); a repo=here dispatch writes it into the brief as `base=`, and pins `HEAD` to its sha |
 | `ignore` | array | comma string | `[".delegation/**"]` | globs always taken off a repo=here delta (the card folder is always added to them); `[]` in the repo file ignores nothing |
+| `delegateOnly` | `off` \| `warn` \| `deny` | string (`off` = unset) | `off` | keeps an opus or fable brain from doing worker work itself (GH-113; see [The brain's spend](#the-brains-spend)) |
 
 Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `settings.json`):
 
@@ -815,6 +816,57 @@ so it is not found a gate run later.
 The mod never runs your eval, your tests or a deploy itself. The eval runner
 and the debrief are ordinary subagents, under the session's own permissions.
 
+## The brain's spend
+
+The workers' cost is priced per attempt (above). The brain's own turns are
+priced too, and shown apart, so you can see how much of a bill was the brain
+reading, editing and running tests itself.
+
+**The split.** Every main-loop `turn.complete` (no `agentId`) with a `usage`
+adds to one record in `$.state` (`chassis-delegation.brain`): tokens, dollars by
+the model each turn reported, the turn count and the brain's edits. Fable 5.1
+and 5 are in the price table at $10 / $50 per million tokens. The brain's
+share is its dollars over the session total (brain plus workers when the
+session total is unknown).
+
+**Where it shows.**
+
+- `/delegation` adds
+  `brain: fable $2.25 over 2 turns · workers $0.75 (3 attempts) · brain share 75%`
+  and, once the brain has edited, `brain edits: n`.
+- The dashboard's tile row (pane, hover card) gains a tile
+  `brain $2.25 / workers $0.75`; spend by model gains a row labelled `brain`
+  for the brain's model, so Fable's spend is never mistaken for a worker's. The
+  text fallback prints `Spend split: …` and the same `brain · fable · …` row.
+
+**`delegateOnly`** (`off`, `warn`, `deny`; default `off`; `/config` or the repo
+file). It applies to the main loop only (a worker's tool calls are never
+touched), and only while the session model is opus or fable; a Sonnet or Haiku
+brain is never restricted. Under it the brain's own edits are:
+
+- **allowed** when the path is under the card folder (`cardDir`), `.delegation/`,
+  `.chassis-delegation.json`, `CHANGELOG.md` or a `docs/` folder;
+- otherwise, with `warn`, run, and the mod posts one row per turn:
+  `chassis-delegation: the brain edited <path> itself; a card would have delegated it (delegateOnly=warn)`;
+- otherwise, with `deny`, refused: `chassis-delegation: delegateOnly is on: the
+  brain does not edit source. Describe the task and call the card tool, or set
+  delegateOnly off.`
+
+**What counts as a brain edit.** A call to `Edit`, `Write`, `MultiEdit` or
+`NotebookEdit` on a path under the repo root, and a `Bash` command that writes
+a path under the root: a `>` or `>>` redirection, `tee`, `sed -i`, `cp` or
+`mv` into the root, or `git commit`. Reading the words is a tripwire, not a
+sandbox (`bash -c "…"` and `eval` are not looked into). Every brain edit,
+allowed or not, counts in `brain edits: n`, whatever the mode. Paths outside
+the root (the scratchpad, `~/.claude`) are no edit.
+
+**Posture.** While the session model is fable and `delegateOnly` is not `off`,
+the "Delegation state" section of the system prompt starts with two lines: "You
+are the brain on a premium model. Build work goes to workers through the card
+tool; you read the repo to write cards, verify hand-backs, and read diffs. Do
+not edit source or run the test suite yourself." The section keeps its
+40-line cap.
+
 ## Spend ceiling
 
 An attempt has a ceiling in dollars: `spend=` in the brief header (above).
@@ -866,8 +918,8 @@ resolved), with the built-in table in `hooks/lib/cost.ts`:
     usd = (in·P_in + out·P_out + cacheRead·P_in·0.1 + cacheWrite·P_in·1.25) / 1e6
 
 Prices are dollars per million tokens, from a small table: opus-5-5 4/20,
-opus-5 5/25, sonnet-5-5 2/10, sonnet-5 3/15, haiku-5-5 0.10/0.50, haiku-4-5
-1/5. Haiku 5.5 bills 0.50/2.50 for a request whose prompt passes 100K tokens;
+opus-5 5/25, fable-5-1 10/50, fable-5 10/50, sonnet-5-5 2/10, sonnet-5 3/15,
+haiku-5-5 0.10/0.50, haiku-4-5 1/5. Haiku 5.5 bills 0.50/2.50 for a request whose prompt passes 100K tokens;
 usage arrives summed over a worker's run, so that rate cannot be applied, and
 for a long Haiku 5.5 run the figure is a floor. The verdict row's
 `usd`, the attempt record's `usd` and the ledger's `usd` are that number, kept
