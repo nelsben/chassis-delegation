@@ -68,7 +68,10 @@ any other repo: no scripts, no harness, no network. Version 0.7.0, MIT.
 
 To check the folder on the new machine, run `tests/selfcheck.sh`. It runs
 `claude plugin validate` and `claude plugin test`, then prints the
-`--plugin-dir` line to use.
+`--plugin-dir` line to use. If the engine's rollout switch is off there, it
+also prints the two `settings.json` hook entries that carry the verifier and
+the git guard without the mod (see
+[Without the engine](#without-the-engine-two-settingsjson-hooks)).
 
 ## Upgrading
 
@@ -1379,6 +1382,82 @@ at the verdict minus at the spawn (or resume), shown with a `~`
 includes whatever the main loop and the other workers spent at the same time,
 so it is approximate.
 
+## Without the engine: two settings.json hooks
+
+The mod is a function-hook plugin, so where the engine's rollout switch serves
+off, or a host cannot load a hooks module, none of it runs. The two parts most
+worth carrying are pure functions: the native verifier (the report and brief
+grammar, the gate rules) and the git guard. `bin/chassis-hook.mjs` exposes
+them through ordinary `settings.json` command hooks, with no engine behind
+them. It needs only a `node` on PATH that strips types by itself, **node 22.18
+or newer**, where that is on by default; nothing is installed or fetched. On an
+older node it prints that to stderr and exits 1, a hook error that blocks
+nothing.
+
+Merge this into the `"hooks"` block of `~/.claude/settings.json` (every
+project) or `.claude/settings.json` (one repo), with `<this folder>` the
+absolute path of your clone. `tests/selfcheck.sh` prints it with the path
+filled in when it finds the rollout switch off.
+
+    {
+      "hooks": {
+        "PostToolUse": [
+          { "matcher": "Agent|Task", "hooks": [ { "type": "command", "command": "node \"<this folder>/bin/chassis-hook.mjs\" post-agent", "timeout": 600 } ] }
+        ],
+        "PreToolUse": [
+          { "matcher": "Bash", "hooks": [ { "type": "command", "command": "node \"<this folder>/bin/chassis-hook.mjs\" pre-bash" } ] }
+        ]
+      }
+    }
+
+Use it where the mod does not load. With the mod loaded as well you would get
+two verdict rows and two guards for one worker.
+
+- **`post-agent`** (PostToolUse on the Agent tool) reads the hook input on
+  stdin and takes the last `[[report …]]` of the result. With none it prints
+  nothing and exits 0. Otherwise it finds the brief the way the mod does: the
+  `….brief.md` path the prompt names, else an inline `[[brief …]]` header in
+  the prompt (a report with no brief is checked for what git alone can say, as
+  in a cardless hand-back, and is never verified). It finds the worker's tree
+  (the brief's `repo=`, the call's `cwd`, the worktree that has the report's
+  branch checked out, the sibling `<repo>-<id>` worktree, else the repo the
+  hook runs in), runs the verifier there, and prints the verdict row as the
+  hook's additional context:
+
+      {"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"chassis-delegation: verdict=verified task=T-1 via=settings-hook next=accept\nclaim branch: held — …"}}
+
+  The row is the mod's own: the verdict line, then one line per claim. The
+  gate can take minutes, hence the `timeout`.
+- **`pre-bash`** (PreToolUse on the Bash tool) runs the git guard over the
+  command, against the repo the command runs in (`cd` and `git -C` are
+  followed), and when it refuses prints the deny with the guard's own reason:
+
+      {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"chassis-delegation: no commit on main; branch first (git checkout -b agent/<domain>/<id>)"}}
+
+  Anything else prints nothing and exits 0. The guarded branches are `main`
+  and `master`.
+
+Every command the wrapper runs itself (read-only git, and the repo's gate)
+first passes `hooks/lib/allow.ts` with the gate map of the repo's
+`.chassis-delegation.json`, as in the engine; it never pushes, installs or
+fetches. The gate map is read from that file alone (there is no `/config`
+without the engine).
+
+What differs from the engine's verdict:
+
+- the row has no attempt count (`via=settings-hook` in its place): nothing is
+  recorded, so a red file reused from an earlier attempt is not caught;
+- a `repo=here` or `repo=none` brief gets an `unverified` row saying so;
+- the hand-back's `[[amend …]]` blocks are not applied (a note says so), so the
+  worker is judged against the brief as written.
+
+What exists only with the engine: tiering (the model picked from the card's
+tier, the effort setting), the queue and `maxWorkers`, the respawn ladder and
+attempt budgets, the spend ceilings, the dashboard and the delegation band, the
+debrief, the eval runner, the "Delegation state" section the brain reads, the
+verdict waking the brain, `/delegation`, `dispatch` and the other tools,
+`readyFallbackMinutes`, and `delegateOnly`.
+
 ## Known issues
 
 - **Function-hook plugins need the engine's rollout switch.** Where it serves
@@ -1449,10 +1528,17 @@ The code is laid out like this:
   - `repoconfig.ts` reads the repo file, `init.ts` scaffolds and `gitguard.ts` holds the guard;
   - `dispatch.ts` covers the card, the brief and the worktree;
   - `cleanstop.ts` decides the debrief and `evaltrigger.ts` the eval.
+- **`bin/chassis-hook.mjs`** is the settings.json fallback (see
+  [Without the engine](#without-the-engine-two-settingsjson-hooks)): plain
+  node, no `$`. It reads the pure libraries above through `bin/ts-resolve.mjs`.
 - **`hooks/register.ts`** holds every `$` call. `$` is only ever spelled
   `$.noun.method(...)` or passed to a function, never stored.
 - **`tests/harness.ts`** answers every `$` call from memory. No test spawns,
   dispatches or runs anything real.
+- **`tests/node/bin.node.mjs`** pipes hook input JSON into
+  `node bin/chassis-hook.mjs` against real repositories under `tests/.tmp/`:
+  a matching report (verified), a file outside the delta (refuted), no report
+  (nothing printed), a commit on `main` (denied) and on `agent/x/y` (passes).
 - **`tests/node/verify-native.git.node.mjs`** builds temporary git
   repositories under `tests/.tmp/`. It checks these cases: verified, a sha off
   the branch, a sha that does not exist, a dirty tree, a files mismatch, a red

@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **A settings.json fallback for hosts that do not load the mod (MOD-17, #2).**
+  The mod is a function-hook plugin: where the engine's rollout switch serves
+  off, or a host cannot load a hooks module, none of it runs. New
+  `bin/chassis-hook.mjs` carries the two parts that are pure functions through
+  ordinary `settings.json` command hooks, under any node that strips types by
+  itself (22.18 or newer; nothing installed or fetched):
+  - `post-agent` (PostToolUse on Agent) takes the last `[[report …]]` of the
+    result, finds the brief (the path the prompt names, or an inline
+    `[[brief …]]` header) and the worker's tree, runs the native verifier there
+    and prints the verdict row as the hook's additional context. No report
+    prints nothing. The row reads `via=settings-hook` where the engine's has an
+    attempt count: nothing is recorded, a `repo=here` or `repo=none` brief is
+    said to be engine-only, and the hand-back's `[[amend …]]` blocks are not
+    applied.
+  - `pre-bash` (PreToolUse on Bash) runs the git guard over the command,
+    against the repo it runs in, and prints a deny with the guard's own reason.
+  Every command the wrapper runs (read-only git, the repo's gate) passes
+  `hooks/lib/allow.ts` with the repo file's gate map first; it never pushes,
+  installs or fetches. The README gains "Without the engine: two settings.json
+  hooks" with the two entries to paste and a plain list of what exists only
+  with the engine; `tests/selfcheck.sh` prints the entries when it finds the
+  rollout switch off. New `tests/node/bin.node.mjs` pipes hook input into the
+  wrapper against real repositories under `tests/.tmp/`.
+
 - **Each worker gets its own identity in its Bash environment (MOD-16; public
   issue #24).** Workers inherited the brain's session id, and a vendored lock
   script keys a hold on role plus session id, so two sibling workers on one
