@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, NOW, type RunAnswer } from './harness'
+import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, NOW, HOME, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
 const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=25 budget=')
@@ -2210,5 +2210,63 @@ describe('GH-113: the brain spend and delegate-only', () => {
     const out = await $.command.run({ command: 'delegation', args: 'dashboard', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
     expect(out.text).toContain('Spend split: brain $2.25 / workers $0.00')
     expect(out.text).toContain('brain · fable · $2.25 · 630k tok · 1 turn')
+  })
+})
+
+describe('MOD-6: /delegation debrief', () => {
+  const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const FOLDER = `${ROOT}/.delegation/debriefs`
+  const DEBRIEF = `${FOLDER}/2026-10-10-mod-run.json`
+  const FINDINGS = `${FOLDER}/2026-10-10-mod-run.findings.json`
+
+  test('spawns the debrief agent at once and prints its id, the mode and the folder; a second call while it runs refuses naming it', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief'))).text)
+    expect(w.spawns).toHaveLength(1)
+    expect(w.spawns[0]).toMatchObject({ description: 'debrief', model: 'sonnet' })
+    expect(String(w.spawns[0]?.prompt)).toContain('mod_findings')
+    expect(out).toContain('agent-1')
+    expect(out).toContain('events')
+    expect(out).toContain(`${FOLDER}/`)
+    expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ agentId: 'agent-1', builtIn: true })
+    const again = String((await $.command.run(delegation('debrief'))).text)
+    expect(again).toContain('agent-1')
+    expect(again.split('\n')).toHaveLength(1)
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test('it runs while a worker is running, and says so in one line and in the prompt', { options: { autoEval: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-1 subtask=main tier=standard]]\nDo it.' }))
+    const out = String((await $.command.run(delegation('debrief'))).text)
+    expect(w.spawns).toHaveLength(2)
+    expect(out).toMatch(/1 worker running/)
+    expect(String(w.spawns[1]?.prompt)).toMatch(/1 worker running/)
+  })
+
+  test('the hand-back: a went_wrong finding with a denylisted word leaves a .findings.json without the word and prints a [1] line', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    const finding = { kind: 'went_wrong', surface: '/delegation accept', fault_class: 'bug', severity: 'P2', title: 'Globex row stayed owed', body: `see ${HOME}/globex-app`, evidence: ['Globex-1 refuted'] }
+    const w = world(on, { listAgents: true, files: { [DEBRIEF]: JSON.stringify({ summary: 'x', mod_findings: [finding] }) } })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    const written = w.files.get(FINDINGS) ?? ''
+    expect(written).not.toBe('')
+    expect(written.toLowerCase()).not.toContain('globex')
+    expect(JSON.parse(written)).toMatchObject({ debrief: DEBRIEF, scrubbed: true, findings: [{ kind: 'went_wrong', severity: 'P2', title: '<redacted> row stayed owed' }] })
+    const shown = [...w.appended.map(a => a.text), ...w.logs].join('\n')
+    expect(shown).toContain('[1] went_wrong · P2 · /delegation accept · <redacted> row stayed owed')
+    expect(shown).toContain(`drafts: ${FINDINGS}`)
+    expect(shown.toLowerCase()).not.toContain('globex')
+  })
+
+  test('an empty mod_findings prints no findings', { options: { autoEval: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: { [DEBRIEF]: '{"mod_findings":[]}' } })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect([...w.appended.map(a => a.text), ...w.logs].join('\n')).toContain('no findings')
   })
 })

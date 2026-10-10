@@ -55,4 +55,10 @@ describe('5E: hooks/templates/debrief.md, the built-in debrief', () => {
     expect(t.includes('.delegation/debriefs/YYYY-MM-DD-<slug>.json')).toBe(true)
     expect(t.includes('.delegation/ledger.md')).toBe(true)
   })
+  test('MOD-6: it documents mod_findings with one example of each kind', () => {
+    const t = read('hooks/templates/debrief.md')
+    expect(t.includes('"mod_findings"')).toBe(true)
+    expect(t.includes('"kind": "went_well"')).toBe(true)
+    expect(t.includes('"kind": "went_wrong"')).toBe(true)
+  })
 })

@@ -69,9 +69,17 @@ describe('the clean-stop predicate', () => {
 
 describe('the background debrief agent', () => {
   test('its prompt names the skill file and the session', () => {
-    expect(debriefPrompt('/Users/b/.claude/commands/debrief.md', 's-1')).toBe(
-      'Run the /debrief skill exactly as written in /Users/b/.claude/commands/debrief.md. Session id s-1. Write only what the skill allows.',
-    )
+    const p = debriefPrompt('/Users/b/.claude/commands/debrief.md', 's-1')
+    expect(p.split('\n')[0]).toBe('Run the /debrief skill exactly as written in /Users/b/.claude/commands/debrief.md. Session id s-1. Write only what the skill allows.')
+  })
+  test('MOD-6: both prompts ask for mod_findings, and the skill prompt carries the facts', () => {
+    const skill = debriefPrompt('/Users/b/.claude/commands/debrief.md', 's-1', ['verdict: T-1 refuted'])
+    expect(skill).toContain('mod_findings')
+    expect(skill).toContain('went_well | went_wrong')
+    expect(skill).toContain('- verdict: T-1 refuted')
+    const built = builtInDebriefPrompt('/mods/cd/hooks/templates/debrief.md', 'sess-1', '/w/app', [])
+    expect(built).toContain('mod_findings')
+    expect(built).toContain('fault_class: bug | design | docs | cost | performance')
   })
   test('its answer names the debrief file; the toast carries the path, else says it finished', () => {
     const answer = 'Wrote `/Users/b/.claude/harness/debriefs/2026-10-03-mod-build.json` — 3 gaps, 2 wins.'

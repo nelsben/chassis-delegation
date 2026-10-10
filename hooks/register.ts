@@ -71,6 +71,10 @@ import {
   debriefSkillPath,
   debriefSource,
   debriefToast,
+  findingsFile,
+  findingsLines,
+  findingsPathOf,
+  scrubbedFindings,
   DEFAULT_DEBRIEF_AGENT,
   DEFAULT_DEBRIEF_COOLDOWN_HOURS,
   DEFAULT_DEBRIEF_IDLE_MINUTES,
@@ -193,6 +197,7 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
+import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
 import { behindLine, changelogSlice, classifyRoot, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
 type Host = EngineInterface
@@ -250,6 +255,8 @@ const HOUR_MS = 60 * MIN_MS
 const RECENT_CAP = 50
 /** An eval runner out longer than this is taken as gone (a T1 run takes minutes). */
 const EVAL_STALE_MS = 3 * HOUR_MS
+/** MOD-6: a debrief whose agent never handed back is not holding the one slot past this. */
+const DEBRIEF_STALE_MS = HOUR_MS
 const EVALS_CAP = 100
 const GATE_TIMEOUT_MS = 9 * 60 * 1000
 /** The advice kinds that leave something for the brain (or the person) to do. */
@@ -344,6 +351,8 @@ type Config = {
   debriefMinEvents: number
   debriefCooldownMs: number
   debriefAgent: string
+  /** MOD-6: the person's words the scrub replaces; /config only, never the (public) repo file. */
+  redact: string[]
   /** On only with an evalCommand configured (5E). */
   autoEval: boolean
   evalLive: boolean
@@ -407,6 +416,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       debriefMinEvents: Math.max(1, Math.floor(num('debriefMinEvents', DEFAULT_DEBRIEF_MIN_EVENTS))),
       debriefCooldownMs: num('debriefCooldownHours', DEFAULT_DEBRIEF_COOLDOWN_HOURS) * HOUR_MS,
       debriefAgent: str('debriefAgent') || DEFAULT_DEBRIEF_AGENT,
+      redact: parseRedactList(str('redact')),
       autoEval: eff.autoEval && eff.evalCommand.trim() !== '',
       evalLive: o.evalLive === true,
       evalLiveMaxUsd: num('evalLiveMaxUsd', DEFAULT_EVAL_LIVE_MAX_USD),
@@ -1273,21 +1283,9 @@ async function maybeDebrief($: Host) {
   if (debriefBusy || inTurn || !cfg.autoDebrief) return
   debriefBusy = true
   try {
-    const sid = await sessionIdOf($)
-    let home: string | undefined
-    try {
-      home = await $.env.get('HOME')
-    } catch {
-      home = undefined
-    }
-    if (!sid || !home) return debug($, 'no debrief: the session id or HOME is unknown')
-    const live = await liveState($)
-    const prev = await storeGet<DebriefRecord>($, K.debrief(sid))
-    const crumbs = await readText($, breadcrumbPath(home, sid))
-    const friction = (await storeGet<FrictionRecord>($, K.friction(sid))) ?? { total: 0, events: [] }
-    const mode: 'breadcrumbs' | 'events' = crumbs !== undefined ? 'breadcrumbs' : 'events'
-    const lines = mode === 'breadcrumbs' ? countLines(crumbs ?? '') : friction.total
-    const watermark = mode === 'breadcrumbs' ? parseWatermark(await readText($, watermarkPath(home, sid))) : prev?.mode === 'events' ? prev.lines : 0
+    const basis = await debriefBasis($)
+    if (!basis) return debug($, 'no debrief: the session id or HOME is unknown')
+    const { sid, prev, mode, lines, watermark, live } = basis
     const t = await now($)
     const verdict = cleanStop({
       inTurn,
@@ -1303,33 +1301,138 @@ async function maybeDebrief($: Host) {
     })
     if (!verdict.ok) return debug($, `no debrief: ${verdict.why}${mode === 'events' ? ' (friction events)' : ''}`)
     if (inTurn) return
-    const source = debriefSource(home, $.plugin.root, await exists($, debriefSkillPath(home)))
-    // claimed before the spawn: never twice for this watermark, whatever the spawn does
-    const record: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn }
-    await storeSet($, K.debrief(sid), record)
-    let prompt: string
-    if (source.builtIn) {
-      const recent = ((await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []).filter(r => prev === undefined || r.at > prev.lastAt)
-      const fresh = friction.events.slice(-Math.max(0, Math.min(friction.events.length, lines - watermark)))
-      prompt = builtInDebriefPrompt(source.path, sid, await $.session.root(), [...frictionFacts(fresh), ...recent.map(r => `verdict: ${r.line}`)])
-    } else prompt = debriefPrompt(source.path, sid)
-    const recordAgent = async (agentId: string) => storeSet($, K.debrief(sid), { ...record, agentId })
-    runnerStarted.set(promptKey({ prompt }), recordAgent)
-    let res: { agentId?: string; deny?: string }
-    try {
-      res = await spawnSelf($, { subagentType: cfg.debriefAgent, model: 'sonnet', description: 'debrief', prompt })
-    } catch (err) {
-      res = { deny: String(err) }
-    }
-    runnerStarted.delete(promptKey({ prompt }))
-    if (res.deny !== undefined) {
-      await storeSet($, K.debrief(sid), { ...record, denied: res.deny })
-      return debug($, `debrief not started: ${res.deny}`)
-    }
-    if (res.agentId) await recordAgent(res.agentId)
+    const res = await startDebrief($, basis, t, [])
+    if (res.deny !== undefined) return debug($, `debrief not started: ${res.deny}`)
     $.ui.toast('debrief running in the background')
   } finally {
     debriefBusy = false
+  }
+}
+
+type DebriefBasis = { sid: string; home: string; prev: DebriefRecord | undefined; mode: 'breadcrumbs' | 'events'; lines: number; watermark: number; friction: FrictionRecord; live: Live }
+
+/** What both doors read before a debrief: the friction signal (breadcrumb lines past the watermark, else the events the mod saw) and the live state. */
+async function debriefBasis($: Host): Promise<DebriefBasis | undefined> {
+  const sid = await sessionIdOf($)
+  let home: string | undefined
+  try {
+    home = await $.env.get('HOME')
+  } catch {
+    home = undefined
+  }
+  if (!sid || !home) return undefined
+  const live = await liveState($)
+  const prev = await storeGet<DebriefRecord>($, K.debrief(sid))
+  const crumbs = await readText($, breadcrumbPath(home, sid))
+  const friction = (await storeGet<FrictionRecord>($, K.friction(sid))) ?? { total: 0, events: [] }
+  const mode: 'breadcrumbs' | 'events' = crumbs !== undefined ? 'breadcrumbs' : 'events'
+  const lines = mode === 'breadcrumbs' ? countLines(crumbs ?? '') : friction.total
+  const watermark = mode === 'breadcrumbs' ? parseWatermark(await readText($, watermarkPath(home, sid))) : prev?.mode === 'events' ? prev.lines : 0
+  return { sid, home, prev, mode, lines, watermark, friction, live }
+}
+
+/** The folder the debrief file lands in: the built-in writes under the repo, the person's skill under ~/.claude/harness. */
+const debriefFolder = (builtIn: boolean, root: string, home: string): string => (builtIn ? `${root.replace(/\/+$/, '')}/.delegation/debriefs` : `${home.replace(/\/+$/, '')}/.claude/harness/debriefs`)
+
+/** The record claimed, the prompt built (the skill's or the built-in's, each asking for mod_findings), the agent spawned. `notes` are extra fact lines. */
+async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: string[]): Promise<{ agentId?: string; deny?: string; builtIn: boolean }> {
+  const { sid, home, prev, mode, lines, watermark, friction } = basis
+  const source = debriefSource(home, $.plugin.root, await exists($, debriefSkillPath(home)))
+  // claimed before the spawn: never twice for this watermark, whatever the spawn does
+  const record: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn }
+  await storeSet($, K.debrief(sid), record)
+  const recent = ((await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []).filter(r => prev === undefined || r.at > prev.lastAt)
+  const fresh = friction.events.slice(-Math.max(0, Math.min(friction.events.length, lines - watermark)))
+  const facts = [...notes, ...frictionFacts(fresh), ...recent.map(r => `verdict: ${r.line}`)]
+  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), facts) : debriefPrompt(source.path, sid, facts)
+  const recordAgent = async (agentId: string) => storeSet($, K.debrief(sid), { ...record, agentId })
+  runnerStarted.set(promptKey({ prompt }), recordAgent)
+  let res: { agentId?: string; deny?: string }
+  try {
+    res = await spawnSelf($, { subagentType: cfg.debriefAgent, model: 'sonnet', description: 'debrief', prompt })
+  } catch (err) {
+    res = { deny: String(err) }
+  }
+  runnerStarted.delete(promptKey({ prompt }))
+  if (res.deny !== undefined) {
+    await storeSet($, K.debrief(sid), { ...record, denied: res.deny })
+    return { deny: res.deny, builtIn: source.builtIn }
+  }
+  if (res.agentId) await recordAgent(res.agentId)
+  return { ...(res.agentId ? { agentId: res.agentId } : {}), builtIn: source.builtIn }
+}
+
+/**
+ * MOD-6, `/delegation debrief`: the same background debrief maybeDebrief starts, now. It skips the idle,
+ * cooldown and minimum-friction tests, keeps one at a time, and runs while a worker runs (saying so).
+ */
+async function runDebrief($: Host): Promise<string> {
+  if (debriefBusy) return 'a debrief is already starting; try again in a moment'
+  debriefBusy = true
+  try {
+    const basis = await debriefBasis($)
+    if (!basis) return 'debrief not started: the session id or HOME is unknown'
+    const t = await now($)
+    const prev = basis.prev
+    if (prev?.agentId !== undefined && prev.finishedAt === undefined && prev.denied === undefined && t - prev.lastAt < DEBRIEF_STALE_MS) {
+      return `a debrief is already running: agent ${prev.agentId}`
+    }
+    const workers = basis.live.workers.length
+    const note = workers > 0 ? `${workers} ${workers === 1 ? 'worker' : 'workers'} running; their attempts are not finished` : ''
+    const res = await startDebrief($, basis, t, note ? [`note: ${note}`] : [])
+    if (res.deny !== undefined) return `debrief not started: ${res.deny}`
+    const root = await $.session.root()
+    return `debrief started: agent ${res.agentId ?? '(id not yet known)'} · mode ${basis.mode} · writes to ${debriefFolder(res.builtIn, root, basis.home)}/${note ? ` · ${note}` : ''}`
+  } finally {
+    debriefBusy = false
+  }
+}
+
+/** The scrub rules of this session: the repo folder and origin, the git user (read from the git config files, which the allowlist need not run), the /config list. */
+async function homeOf($: Host): Promise<string> {
+  try {
+    return (await $.env.get('HOME')) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+async function redactRules($: Host): Promise<RedactRules> {
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const home = (await homeOf($)).replace(/\/+$/, '')
+  const repoCfg = (await readText($, `${root}/.git/config`)) ?? ''
+  const userCfgs = home ? [await readText($, `${home}/.gitconfig`), await readText($, `${home}/.config/git/config`)] : []
+  const user = (key: string) => [repoCfg, ...userCfgs].map(t => (t ? gitConfigValue(t, 'user', key) : undefined)).find(v => v !== undefined)
+  const origin = gitConfigValue(repoCfg, 'remote "origin"', 'url')
+  const userName = user('name')
+  const userEmail = user('email')
+  return {
+    repo: root.split('/').pop() ?? '',
+    ...(origin ? { origin } : {}),
+    ...(userName ? { userName } : {}),
+    ...(userEmail ? { userEmail } : {}),
+    words: cfg.redact,
+  }
+}
+
+/**
+ * MOD-6: the debrief agent handed back. Read its JSON, scrub every string of mod_findings,
+ * write <same folder>/<same name>.findings.json and print one line per finding.
+ */
+async function writeFindings($: Host, debriefPath: string) {
+  try {
+    const home = await homeOf($)
+    const path = debriefPath.startsWith('~/') ? `${home.replace(/\/+$/, '')}${debriefPath.slice(1)}` : debriefPath
+    const text = await readText($, path)
+    if (text === undefined) return await appendRow($, `findings: could not read ${path}; no findings file written`)
+    const findings = scrubbedFindings(text, await redactRules($))
+    if (findings === undefined) return await appendRow($, `findings: ${path} is not a JSON object; no findings file written`)
+    if (findings.length === 0) return await appendRow($, findingsLines(findings, '').join('\n'))
+    const out = findingsPathOf(path)
+    await $.fs.write(out, JSON.stringify(findingsFile(path, MOD_VERSION, findings), null, 2) + '\n')
+    await appendRow($, findingsLines(findings, out).join('\n'))
+  } catch (err) {
+    debug($, `findings not written: ${String(err)}`)
   }
 }
 
@@ -1438,6 +1541,7 @@ async function onRunnerComplete($: Host, agentId: string, said: () => Promise<st
     const path = debriefPathOf(answer)
     await storeSet($, K.debrief(sid), { ...debrief, finishedAt: t, ...(path ? { path } : {}) })
     $.ui.toast(debriefToast(answer))
+    if (path) await writeFindings($, path)
     return
   }
   const inflight = await storeGet<EvalInflight>($, K.evalInflight)
@@ -3431,6 +3535,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'init') return { text: await runInit($) }
     if (arg === 'setup') return { text: await runSetup($) }
     if (arg === 'update') return { text: await runUpdate($) }
+    if (arg === 'debrief') return { text: await runDebrief($) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'dashboard') {
       let placed = false
@@ -3453,7 +3558,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view)].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|dashboard|accept <id> [note]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|accept <id> [note]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async $ => ({ result: await runInit($) }))

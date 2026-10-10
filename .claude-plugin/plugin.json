@@ -144,6 +144,12 @@
       "description": "The subagent type the background debrief runs as",
       "default": "general-purpose"
     },
+    "redact": {
+      "type": "string",
+      "title": "Redact list",
+      "description": "Comma-separated words (product, customer, employer, repo names) the debrief's findings scrub replaces with <redacted>, whole words, any case. Lives here and not in the repo file, which is public; the home path, the repo and its origin, and the git user are scrubbed without it",
+      "default": ""
+    },
     "autoEval": {
       "type": "boolean",
       "title": "Background eval",
