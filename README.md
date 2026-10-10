@@ -945,6 +945,7 @@ says `chassis-delegation: refused argv [...] (<reason>)`. The list, verbatim:
     git -C <root> ls-tree --name-only <sha> agents/tasks/    (exact; /dispatch --replay)
     git -C <root> show <sha>:agents/tasks/<id>-<name>.md     (exact; /dispatch --replay)
     gh pr list|view …                                        (no --web)
+    gh issue create|comment|list, for the configured issueRepo only (MOD-7; the body file under <root>/.delegation/debriefs/)
     claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
     a gate-map command, word for word, `{files}` and `{worktree}` filled by absolute paths
 
