@@ -85,9 +85,11 @@ export type RepoConfig = {
   spendByTier?: Partial<Record<SpendTier, number>>
   /** GH-113: the brain on opus or fable may not edit source (warn: a row; deny: refused); default off. */
   delegateOnly?: DelegateOnly
+  /** MOD-7: owner/name of the repo /delegation debrief post files issues in; empty = posting is off. */
+  issueRepo?: string
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'delegateOnly'] as const
+export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'delegateOnly', 'issueRepo'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -107,6 +109,7 @@ export type Effective = {
   ignore: string[]
   spendByTier: Record<SpendTier, number>
   delegateOnly: DelegateOnly
+  issueRepo: string
   /** Which layer each key came from. */
   sources: Record<RepoKey, 'default' | 'repo' | 'settings'>
 }
@@ -250,6 +253,13 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         // in /config "off" is the manifest default: unset, so the repo file's value shows through
         else if (strict || v.trim() !== 'off') config.delegateOnly = v.trim() as DelegateOnly
         break
+      case 'issueRepo':
+        if (typeof v !== 'string') errors.push(`issueRepo${where}: not a string (ignored)`)
+        else if (v.trim() !== '') {
+          if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(v.trim())) config.issueRepo = v.trim()
+          else errors.push(`issueRepo${where}: ${JSON.stringify(v)} is not owner/name (ignored)`)
+        }
+        break
       case 'domains': {
         const d = domainsOf(v, errors, where)
         if (d) config.domains = d
@@ -335,6 +345,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig): Effective {
     ignore: [...pick('ignore', [...DEFAULT_IGNORE])],
     spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...settings.spendByTier },
     delegateOnly: pick('delegateOnly', 'off'),
+    issueRepo: pick('issueRepo', ''),
     sources,
   }
 }

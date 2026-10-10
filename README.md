@@ -816,6 +816,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `autoEval` | boolean | boolean | `false` | run `evalCommand` once per new `origin/main` sha while idle (needs `evalCommand`) |
 | `baseRef` | string | string | `""` (the chain: `origin/main`, `main`, `origin/master`, `master`) | where the delta starts when a brief names no `base=`. Used as given (`main`, `develop`, `HEAD~2`); a repo=here dispatch writes it into the brief as `base=`, and pins `HEAD` to its sha |
 | `ignore` | array | comma string | `[".delegation/**"]` | globs always taken off a repo=here delta (the card folder is always added to them); `[]` in the repo file ignores nothing |
+| `issueRepo` | `owner/name` | string | `""` | the repo `/delegation debrief post` files the mod findings in; empty = posting is off (see [Posting the findings](#posting-the-findings)) |
 | `delegateOnly` | `off` \| `warn` \| `deny` | string (`off` = unset) | `off` | keeps an opus or fable brain from doing worker work itself (GH-113; see [The brain's spend](#the-brains-spend)) |
 
 Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `settings.json`):
@@ -879,7 +880,7 @@ say. When the agent hands back, the mod reads the JSON, scrubs every string of
 `mod_findings` and writes `<same folder>/<same name>.findings.json`, holding `{
 debrief, modVersion, scrubbed: true, findings }`. It prints one line per finding,
 `[1] went_wrong · P2 · <surface> · <title>`, then `drafts: <path>`; with nothing
-to say it prints `no findings`. Posting them is a separate step.
+to say it prints `no findings`. Posting them is a separate step, and two.
 
 The scrub (`redact` in `hooks/lib/redact.ts`) turns every `/Users/<name>/…` or
 `/home/<name>/…` prefix into `<home>/…`; the session root's folder name and its
@@ -892,6 +893,34 @@ The `redact` list is a `/config` option and nothing else. It is never read from
 `.chassis-delegation.json`: that file is committed, and often public, so a list
 of the names you do not want public would publish them. Put the product,
 customer, employer and repo names there once, in your own settings.
+
+### Posting the findings
+
+Set `issueRepo` (`owner/name`, in `.chassis-delegation.json` or `/config`; empty
+means posting is off) and `/delegation` prints `issues: <owner/name>`. Posting is
+two steps on purpose:
+
+1. `/delegation debrief post` reads the latest `.findings.json` under
+   `<root>/.delegation/debriefs/` and prints every finding in full, scrubbed
+   again, as it would be posted: the title (`[went well]` first for a went_well
+   one), a body whose first line is `**Surface:** … · **Fault class:** … ·
+   **Severity:** …`, the text, an Evidence list and a footer `posted by
+   chassis-delegation <version> via /delegation debrief`. Each is numbered with
+   a status, `new` or `covered by #<k>` (an issue in the repo, read with `gh
+   issue list --state all --limit 200`, shares the surface and at least three
+   title words). This form posts nothing.
+2. `/delegation debrief post 1,3` (or `all`) posts the named findings whose
+   status is `new`, one `gh issue create` each, prints `#<n> <url>` and records
+   the number in the `.findings.json`, so a later post skips it. A covered
+   finding is skipped with its `#k` unless you name it, and then it is added to
+   that issue as a comment. Every body is scrubbed once more at post time, and
+   the post is refused, naming the finding, if any word of the `redact` list
+   survives.
+
+Why two steps: the public tracker already carries product, repo, employer and
+home-path names that sessions typed from memory. Nothing leaves the machine
+unseen, and the allowlist grows by exactly the forms the second step needs,
+all tied to the one configured repo (see below).
 
 ## The host-command allowlist
 

@@ -130,3 +130,13 @@ describe('GH-16: baseRef and ignore', () => {
     for (const no of ['', '-x', '--output=x', 'a..b', 'a b', 'a;b', '$(x)']) expect(isGitRef(no)).toBe(false)
   })
 })
+
+describe('MOD-7: issueRepo', () => {
+  test('owner/name is kept; a bad value is named and ignored; empty means off', () => {
+    expect(parseRepoConfig('{"issueRepo":"owner/mod"}').config.issueRepo).toBe('owner/mod')
+    const bad = parseRepoConfig('{"issueRepo":"not a repo"}')
+    expect(bad.config.issueRepo).toBeUndefined()
+    expect(bad.errors.join('\n')).toContain('issueRepo')
+    expect(parseRepoConfig('{"issueRepo":""}').config.issueRepo).toBeUndefined()
+  })
+})
