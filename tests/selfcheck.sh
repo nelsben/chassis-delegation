@@ -32,6 +32,22 @@ if printf '%s' "$out" | grep -q 'rollout switch'; then
   else
     echo "           (node is not on PATH; skipped)"
   fi
+  echo
+  echo "Without the mod, the verifier and the git guard still run as ordinary hooks (node 22.18 or newer;"
+  echo "this node: $(node --version 2>/dev/null || echo 'not found')). Merge this into the \"hooks\" block of"
+  echo "~/.claude/settings.json, or .claude/settings.json in the repo (README: Without the engine):"
+  cat <<EOF
+{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Agent|Task", "hooks": [ { "type": "command", "command": "node \"$DIR/bin/chassis-hook.mjs\" post-agent", "timeout": 600 } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "node \"$DIR/bin/chassis-hook.mjs\" pre-bash" } ] }
+    ]
+  }
+}
+EOF
 elif [ "$code" -ne 0 ]; then
   echo "selfcheck: tests FAILED" >&2
   status=1
