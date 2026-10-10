@@ -78,6 +78,14 @@ agent in the session that loads the mod can follow them.
    has no such line: the folder is the session's hot-reload clone,
    `~/.claude/dev-mods/<session-id>/chassis-delegation`, or the one named by
    `--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`.
+
+`/delegation` also prints what each alias resolved to at the last spawn and
+when it moved (the model alias is the engine's, so the mod only reports what
+it saw):
+`aliases: haiku → claude-haiku-5-5 (since 10-08; was claude-haiku-4-5-20251001 until 10-07) · sonnet → … · opus → …`.
+When an alias moved in the last 7 days a second line says so, for example
+`haiku moved on 10-08: economy cards now run on Haiku 5.5; re-run the economy
+cases of tests/eval/classifier-cases.jsonl`.
 2. **Update that folder.**
 
        git -C <folder> pull --ff-only origin main
@@ -204,7 +212,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card; the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool |
-| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test; it writes the card, runs the dry run and returns the one-line summary and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
+| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test; it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
 | `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (no input) |
 
@@ -720,6 +728,7 @@ Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `s
 | `briefDir` | `""` | where briefs go; empty means `<root>/.delegation/briefs/`, and Claude Code's session scratchpad only when the root is not writable |
 | `ledgerFile` | `true` | append one JSON line per judged attempt to `<root>/.delegation/ledger.jsonl` |
 | `gitGuard` | `true` | the git guard on Bash |
+| `classifierSecondOpinion` | `true` | the card tool's dry run asks the classifier and prints its tier beside the card's; the answer is kept on the card's first attempt record as `classifierTier` |
 | `dashboardBand` | `true` | the band above the prompt while a worker is live, queued or owed a verdict (see [Dashboard](#dashboard)) |
 | `guardBranches` | `main,master` | the branches it holds |
 | `autoDebrief` | `true` | write a debrief in the background at a clean stop |

@@ -233,6 +233,12 @@
       "title": "Card folder",
       "description": "Where the task cards live, relative to the repo root (default agents/tasks). In a repo that is itself a plugin keep it out of agents/, which the engine reads as subagent definitions. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
       "default": ""
+    },
+    "classifierSecondOpinion": {
+      "type": "boolean",
+      "title": "Classifier second opinion",
+      "description": "In the card tool's dry run, ask the tier classifier once and print its tier beside the card's (card says standard · classifier says economy); never on a dispatch. Off skips the call",
+      "default": true
     }
   }
 }

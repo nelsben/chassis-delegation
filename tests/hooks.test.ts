@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, type RunAnswer } from './harness'
+import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, NOW, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
 const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=15 budget=')
@@ -47,7 +47,7 @@ describe('agent.spawn: tier selection, ledger, store', () => {
     expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/3') // GH-104: a briefed spawn names its attempt
     expect(w.runs).toEqual([]) // 5A: no ledger script, no which-model; the store is the ledger
     expect(records(w, 'T-1')[0]).toMatchObject({ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', resolvedModel: 'claude-sonnet-5-5', verdict: 'pending', source: 'brief' })
-    expect(w.store.get('delegation.alias.sonnet')).toBe('claude-sonnet-5-5')
+    expect(w.store.get('delegation.alias.sonnet')).toMatchObject({ id: 'claude-sonnet-5-5', since: expect.any(Number) })
   })
 
   test('a header in a named .brief.md file counts; the built-in tier map maps it', async ($, on) => {
@@ -1760,6 +1760,48 @@ describe('GH-111: the card tool', () => {
     expect(out).toContain('4. spawned')
     expect(out).not.toContain('Say go and Claude dispatches')
     expect(w.spawns).toHaveLength(1)
+  })
+
+  test('GH-114: the dry run asks the classifier once and prints it beside the card tier; dispatch does not ask; the config turns it off', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { classify: 'economy', files: { [`${ROOT}/.chassis-delegation.json`]: cfgFile }, dirs: { [`${ROOT}/agents/tasks`]: ['README.md'] }, store: { 'delegation.agentTypes': ['general-purpose'] } })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
+    expect(out).toContain('card says standard · classifier says economy')
+    expect(out.indexOf('card says standard')).toBeGreaterThan(out.indexOf('OPS-1 · standard'))
+    expect(out.indexOf('card says standard')).toBeLessThan(out.indexOf('```'))
+    expect(w.store.get('delegation.classifier.OPS-1')).toEqual({ card: 'standard', classifier: 'economy' })
+  })
+
+  test('GH-114: the classifier agrees, is not asked on dispatch, and is off with classifierSecondOpinion false; the first attempt record carries it', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    let asked = 0
+    const w = world(on, { skip: ['model.classify'], files: { [`${ROOT}/.chassis-delegation.json`]: cfgFile }, dirs: { [`${ROOT}/agents/tasks`]: ['README.md'] }, store: { 'delegation.agentTypes': ['general-purpose'] } })
+    on('model.classify', () => {
+      asked++
+      return { value: 'standard' } as never
+    })
+    await $.session.start(sessionStart)
+    expect(resultText(await $.tool.call({ tool: TOOL, ...given } as never))).toContain('card says standard · classifier agrees')
+    expect(asked).toBe(1)
+    await $.tool.call({ tool: TOOL, ...given, title: 'Another thing', dispatch: true } as never)
+    expect(asked).toBe(1)
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test('GH-114: classifierSecondOpinion false: no classifier call, no line', { options: { briefDir: `${SCRATCH}/briefs`, classifierSecondOpinion: false } }, async ($, on) => {
+    const w = world(on, { classify: 'economy', files: { [`${ROOT}/.chassis-delegation.json`]: cfgFile }, dirs: { [`${ROOT}/agents/tasks`]: ['README.md'] }, store: { 'delegation.agentTypes': ['general-purpose'] } })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
+    expect(out).not.toContain('classifier')
+    expect(w.store.has('delegation.classifier.OPS-1')).toBe(false)
+  })
+
+  test('GH-114: /delegation names what each alias resolves to and when it moved', async ($, on) => {
+    world(on, { store: { 'delegation.alias.haiku': { id: 'claude-haiku-5-5', since: NOW - 1000, previous: { id: 'claude-haiku-4-5-20251001', until: NOW - 2000 } }, 'delegation.alias.sonnet': 'claude-sonnet-5-5' } })
+    await $.session.start(sessionStart)
+    const out = await $.command.run({ command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    expect(out.text).toContain('aliases: haiku → claude-haiku-5-5 (since ')
+    expect(out.text).toContain('sonnet → claude-sonnet-5-5')
+    expect(out.text).toContain('cards now run on Haiku 5.5; re-run the economy cases of tests/eval/classifier-cases.jsonl')
   })
 
   test('a baseRef alone does not mean repo=here: with origin/main the card is a worktree card', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {

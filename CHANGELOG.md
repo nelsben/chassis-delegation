@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **`/delegation` names what each alias resolves to and when it moved; the card
+  dry run shows the classifier's tier (GH-114, public issue #34).** The store's
+  alias record is now `{ id, since, previous?: { id, until } }` (the old plain
+  id still reads). `/delegation` prints one `aliases:` line and, for a move in
+  the last 7 days, a line naming it. The card tool's dry run asks the classifier
+  once and prints `card says <tier> · classifier says <tier>` (or `agrees`); a
+  new boolean `classifierSecondOpinion` (default true) turns it off, and the
+  answer is kept as `classifierTier` on the card's first attempt record.
+  The `classifierSecondOpinion` option still needs declaring in
+  `.claude-plugin/plugin.json`.
+
 - **A live delegation dashboard (GH-112).** A band above the prompt (drawn only
   while a worker is live, queued or owed a verdict; hover it for a card, press
   `[ details ]` for the pane) and a pane opened by `/delegation dashboard`:
