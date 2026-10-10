@@ -1,6 +1,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, ROOT, SCRATCH, NOW, HOME, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
+import { MOD_VERSION } from '../hooks/lib/version'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
 const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=25 budget=')
 
@@ -2388,7 +2389,7 @@ describe('MOD-7: /delegation debrief post', () => {
     expect(out).toContain('Accepted row stayed owed')
     expect(out).toContain('[went well] Debrief wrote findings at once')
     expect(out).toContain('**Surface:** /delegation accept · **Fault class:** bug · **Severity:** P2')
-    expect(out).toContain('posted by chassis-delegation 0.6.0 via /delegation debrief')
+    expect(out).toContain(`posted by chassis-delegation ${MOD_VERSION} via /delegation debrief`)
     expect(w.runs.some(r => isWrite(r.argv))).toBe(false)
     expect(w.runs.some(r => r.argv.join(' ').includes('issue list'))).toBe(true)
   })
