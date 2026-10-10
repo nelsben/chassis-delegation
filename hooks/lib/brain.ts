@@ -149,7 +149,7 @@ export type DelegateInput = {
   paths: readonly string[]
   root: string
   cardDir: string
-  /** A Bash command that commits. */
+  /** A Bash command that commits (MOD-9: the flag alone never denies; the paths the commit takes are in `paths`). */
   commit?: boolean
 }
 export type DelegateDecision = { action: 'allow' | 'warn' | 'deny'; edit: boolean; path?: string }
@@ -160,11 +160,11 @@ export type DelegateDecision = { action: 'allow' | 'warn' | 'deny'; edit: boolea
  * opus or fable, or every path in the root is on the allowlist; else warn or deny.
  */
 export function delegateDecision(i: DelegateInput): DelegateDecision {
-  const isWrite = WRITE_TOOLS.includes(i.tool) || (i.tool === 'Bash' && (i.commit === true || i.paths.length > 0))
+  const isWrite = WRITE_TOOLS.includes(i.tool) || (i.tool === 'Bash' && i.paths.length > 0)
   if (!isWrite) return { action: 'allow', edit: false }
   const rels = i.paths.map(p => relativeTo(i.root, p)).filter((r): r is string => r !== undefined)
-  if (rels.length === 0 && i.commit !== true) return { action: 'allow', edit: false } // wholly outside the repo
-  const offending = rels.find(r => !isAllowedPath(r, i.cardDir)) ?? (i.commit === true ? 'git commit' : undefined)
+  if (rels.length === 0) return { action: 'allow', edit: false } // wholly outside the repo
+  const offending = rels.find(r => !isAllowedPath(r, i.cardDir))
   if (offending === undefined || i.mode === 'off' || !isRestricted(i.brainFamily)) return { action: 'allow', edit: true }
   return { action: i.mode, edit: true, path: offending }
 }
@@ -307,42 +307,83 @@ function lex(text: string): Tok[] {
   return toks
 }
 
+/** A `git commit` that runs in the session's repo (MOD-9): where, and what it was told to commit. */
+export type CommitCall = { dir: string; all: boolean; amend: boolean; pathspecs: string[] }
+
+const RESERVED = new Set(['{', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', 'time'])
+const CD_OPT = /^(-[LPe@]+|--)$/
+/** A sed -i backup suffix given as its own word: empty, or dotted (`.bak`). */
+const BSD_SUFFIX = /^(\.[A-Za-z0-9._~-]*)?$/
+const COMMIT_VALUE_SHORT = 'mFCctS'
+const COMMIT_VALUE_LONG = new Set(['--message', '--file', '--author', '--date', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--template'])
+
+/** `/a/./b/../c` as `/a/c`. */
+function normAbs(path: string): string {
+  const parts: string[] = []
+  for (const p of path.split('/')) {
+    if (p === '' || p === '.') continue
+    if (p === '..') parts.pop()
+    else parts.push(p)
+  }
+  return `/${parts.join('/')}`
+}
+
 /**
- * The files a Bash command writes under the root: a `>` / `>>` redirection, `tee`,
- * `sed -i`, `cp` / `mv` (the destination), and whether it runs `git commit`.
- * Read the way a shell reads words (quotes whole, heredoc bodies skipped); an
- * accident tripwire, not adversary-proof. A target is resolved first (MOD-8): `~`,
- * `$HOME` (the `home` argument), `$PWD` (the root) and a `$NAME` assigned a literal
- * earlier in the command; one that stays unresolved is unknown and not counted.
+ * Reads a command the way a shell reads words (quotes whole, heredoc bodies skipped)
+ * and follows the working directory through it: the files it writes under the root
+ * (a `>` / `>>` redirection, `tee`, `sed -i`, `cp` / `mv` destination) and the
+ * `git commit`s it runs. An accident tripwire, not adversary-proof.
+ *
+ * A target is resolved first (MOD-8): `~`, `$HOME` (the `home` argument), `$PWD`
+ * (the working directory in force) and a `$NAME` assigned a literal earlier in the
+ * command. MOD-9: a relative target resolves against the folder a `cd` / `pushd`
+ * left (the root to begin with); a `cd` inside `( )` or `$( )` is undone at the
+ * closing parenthesis; a `cd` in a pipeline or run in the background does not
+ * move the later segments; a `cd` whose folder cannot be resolved makes every later
+ * relative target unknown. A target that stays unresolved is unknown and not counted.
  */
-export function bashWrites(command: string, root: string, home?: string): { paths: string[]; commit: boolean } {
+function scan(command: string, root: string, home?: string): { paths: string[]; commits: CommitCall[] } {
   const toks = lex(command)
-  const segments: Tok[][] = [[]]
+  type Seg = { toks: Tok[]; before: string; after: string }
+  const segments: Seg[] = [{ toks: [], before: '', after: '' }]
   for (const t of toks) {
-    if (t.k === 'sep') segments.push([])
-    else (segments.at(-1) as Tok[]).push(t)
+    if (t.k === 'sep') {
+      ;(segments.at(-1) as Seg).after = t.t
+      segments.push({ toks: [], before: t.t, after: '' })
+    } else (segments.at(-1) as Seg).toks.push(t)
   }
   const out: string[] = []
-  let commit = false
+  const commits: CommitCall[] = []
   const prefix = root.replace(/\/+$/, '')
+  const homeDir = home ? home.replace(/\/+$/, '') : undefined
   const vars = new Map<string, string>()
+  let cwd: string | undefined = normAbs(prefix)
+  const stack: (string | undefined)[] = []
+  let ticks = false
   const resolve = (p: string): string | undefined => {
     let t = p
     if (t === '~' || t.startsWith('~/')) {
-      if (!home) return undefined
-      t = home.replace(/\/+$/, '') + t.slice(1)
+      if (!homeDir) return undefined
+      t = homeDir + t.slice(1)
     }
     t = t.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (m, a, b) => {
       const name = (a ?? b) as string
-      if (name === 'HOME') return home ? home.replace(/\/+$/, '') : m
-      if (name === 'PWD') return prefix
+      if (name === 'HOME') return homeDir ?? m
+      if (name === 'PWD') return cwd ?? m
       return vars.get(name) ?? m
     })
     return /[$`]/.test(t) ? undefined : t
   }
-  const add = (raw: string | undefined) => {
-    if (!raw || SKIP_TARGET.test(raw)) return
+  /** An absolute, normalised folder or file for a word, against `base`; undefined when unknown. */
+  const absOf = (raw: string, base: string | undefined): string | undefined => {
     const p = resolve(raw)
+    if (p === undefined || p.startsWith('~')) return undefined
+    if (p.startsWith('/')) return normAbs(p)
+    return base === undefined ? undefined : normAbs(`${base}/${p}`)
+  }
+  const add = (raw: string | undefined, base: string | undefined) => {
+    if (!raw || SKIP_TARGET.test(raw)) return
+    const p = absOf(raw, base)
     if (p === undefined || SKIP_TARGET.test(p)) return
     const rel = relativeTo(root, p)
     if (rel !== undefined && !out.includes(`${prefix}/${rel}`)) out.push(`${prefix}/${rel}`)
@@ -351,47 +392,104 @@ export function bashWrites(command: string, root: string, home?: string): { path
     // redirections anywhere in the segment, then the command's own words
     const words: string[] = []
     const redirs: (string | undefined)[] = []
-    for (let i = 0; i < seg.length; i++) {
-      const tk = seg[i] as Tok
+    for (let i = 0; i < seg.toks.length; i++) {
+      const tk = seg.toks[i] as Tok
       if (tk.k === 'word') words.push(tk.t)
       else {
-        const target = seg[i + 1]?.k === 'word' ? (seg[i + 1] as Tok).t : undefined
+        const target = seg.toks[i + 1]?.k === 'word' ? (seg.toks[i + 1] as Tok).t : undefined
         if (tk.k === 'out') redirs.push(target)
         if (target !== undefined) i += 1
       }
     }
+    const opensSubst = seg.after === '$(' || seg.after === '`'
     let k = 0
-    while (k < words.length && ASSIGN.test(words[k] as string)) k++
-    for (const a of words.slice(0, k)) {
+    while (k < words.length && (ASSIGN.test(words[k] as string) || RESERVED.has(words[k] as string))) k++
+    const assigns = words.slice(0, k).filter(a => ASSIGN.test(a))
+    assigns.forEach((a, n) => {
       const eq = a.indexOf('=')
-      const val = resolve(a.slice(eq + 1))
+      const val = opensSubst && k === words.length && n === assigns.length - 1 ? undefined : resolve(a.slice(eq + 1))
       if (val === undefined) vars.delete(a.slice(0, eq))
       else vars.set(a.slice(0, eq), val)
-    }
-    for (const r of redirs) add(r)
+    })
+    for (const r of redirs) add(r, cwd)
     const cmd = (words[k] ?? '').replace(/^.*\//, '')
     const args = words.slice(k + 1)
     const plain = args.filter(a => !a.startsWith('-'))
-    if (cmd === 'git') {
-      // the subcommand is the first word that is no option (nor the value of -C / -c)
+    if (cmd === 'cd' || cmd === 'pushd' || cmd === 'popd') {
+      const subshell = seg.before === '|' || seg.before === '|&' || seg.after === '|' || seg.after === '|&' || seg.after === '&'
+      if (!subshell) {
+        const rest = args.filter(a => !CD_OPT.test(a))
+        if (cmd === 'popd' || opensSubst || rest[0] === '-') cwd = undefined
+        else if (rest.length === 0) cwd = homeDir ? normAbs(homeDir) : undefined
+        else cwd = absOf(rest[0] as string, cwd)
+      }
+    } else if (cmd === 'git') {
+      // the subcommand is the first word that is no option (nor the value of -C / -c); each -C moves this command's folder only
+      let dir = cwd
       let j = 0
-      while (j < args.length && (args[j] as string).startsWith('-')) j += args[j] === '-C' || args[j] === '-c' ? 2 : 1
-      if (args[j] === 'commit') commit = true
+      while (j < args.length && (args[j] as string).startsWith('-')) {
+        if (args[j] === '-C') dir = absOf(args[j + 1] ?? '', dir)
+        j += args[j] === '-C' || args[j] === '-c' ? 2 : 1
+      }
+      if (args[j] === 'commit' && dir !== undefined && (dir === normAbs(prefix) || relativeTo(root, dir) !== undefined)) {
+        const call: CommitCall = { dir, all: false, amend: false, pathspecs: [] }
+        let past = false
+        for (let m = j + 1; m < args.length; m++) {
+          const a = args[m] as string
+          if (past || !a.startsWith('-')) {
+            const p = absOf(a, dir)
+            if (p !== undefined) call.pathspecs.push(p)
+          } else if (a === '--') past = true
+          else if (a === '--all') call.all = true
+          else if (a === '--amend') call.amend = true
+          else if (COMMIT_VALUE_LONG.has(a)) m += 1
+          else if (!a.startsWith('--') && a.length > 1) {
+            for (let c = 1; c < a.length; c++) {
+              const ch = a[c] as string
+              if (ch === 'a') call.all = true
+              else if (COMMIT_VALUE_SHORT.includes(ch)) {
+                if (c === a.length - 1) m += 1
+                break
+              }
+            }
+          }
+        }
+        commits.push(call)
+      }
     } else if (cmd === 'tee') {
-      for (const p of plain) add(p)
+      for (const p of plain) add(p, cwd)
     } else if (cmd === 'sed' || cmd === 'gsed') {
       const inPlace = args.some(a => a.startsWith('--in-place') || /^-[A-Za-z]*i/.test(a))
       if (inPlace) {
-        const scripted = args.some(a => a === '-e' || a === '-f' || a.startsWith('--expression') || a.startsWith('--file'))
-        const eArg = args.reduce<string[]>((acc, a, j) => (a === '-e' || a === '-f' ? [...acc, args[j + 1] as string] : acc), [])
-        const files = plain.filter(a => !eArg.includes(a))
-        for (const p of scripted ? files : files.slice(1)) add(p)
+        // BSD: `-i ''` / `-i .bak` take the next word as the backup suffix
+        const suffixAt = args.findIndex((a, n) => /^-[A-Za-z]*i$/.test(a) && n + 1 < args.length && BSD_SUFFIX.test(args[n + 1] as string))
+        const rest = args.filter((_, n) => suffixAt < 0 || n !== suffixAt + 1)
+        const restPlain = rest.filter(a => !a.startsWith('-'))
+        const scripted = rest.some(a => a === '-e' || a === '-f' || a.startsWith('--expression') || a.startsWith('--file'))
+        const eArg = rest.reduce<string[]>((acc, a, j) => (a === '-e' || a === '-f' ? [...acc, rest[j + 1] as string] : acc), [])
+        const files = restPlain.filter(a => !eArg.includes(a))
+        for (const p of scripted ? files : files.slice(1)) add(p, cwd)
       }
     } else if (cmd === 'cp' || cmd === 'mv' || cmd === 'install') {
       const t = args.findIndex(a => a === '-t' || a === '--target-directory')
-      if (t >= 0) add(args[t + 1])
-      else add(plain.at(-1))
+      if (t >= 0) add(args[t + 1], cwd)
+      else add(plain.at(-1), cwd)
     }
+    if (seg.after === '(' || seg.after === '$(') stack.push(cwd)
+    else if (seg.after === '`') {
+      if (ticks) cwd = stack.pop()
+      else stack.push(cwd)
+      ticks = !ticks
+    } else if (seg.after === ')' && stack.length > 0) cwd = stack.pop()
   }
-  return { paths: out, commit }
+  return { paths: out, commits }
 }
+
+/** The files a Bash command writes under the root, and whether it runs `git commit` in the root's repo. */
+export function bashWrites(command: string, root: string, home?: string): { paths: string[]; commit: boolean } {
+  const r = scan(command, root, home)
+  return { paths: r.paths, commit: r.commits.length > 0 }
+}
+
+/** MOD-9: the `git commit`s a command runs in the root's repo (the cwd in force after any cd, or the `-C` folder); one in a repo outside the root, or in an unknown folder, is not listed. */
+export const bashCommits = (command: string, root: string, home?: string): CommitCall[] => scan(command, root, home).commits

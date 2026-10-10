@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`delegateOnly` follows `cd` and `git -C`, judges `git commit` by the repo and
+  the paths it commits, and reads BSD `sed -i ''` right (MOD-9).** `cd <worktree>
+  && rm -rf .claude-plugin/types && cp -R …` was refused as a source edit because
+  the relative target was read against the repo root; it now resolves against the
+  folder the `cd` left, and an unresolvable `cd` makes later relative writes
+  unknown and uncounted. A `cd` inside `( )` is undone at the closing
+  parenthesis. A commit in a repo outside the root is never an edit; in the root
+  the staged paths are read with `git diff --cached --name-only` and judged like
+  written paths, so a commit of only card, `docs/`, `.delegation/`, repo-file or
+  CHANGELOG files runs. `sed -i '' …` and `sed -i .bak …` no longer take the
+  suffix or the script as a file.
+
 - **`delegateOnly` resolves `~`, `$HOME`, `$PWD` and earlier variables before it
   decides a Bash write is in the repo (MOD-8).** `M=~/.claude/m; cat >> $M/p.md`
   was read as a file named `$M` under the root and denied; it is now a write

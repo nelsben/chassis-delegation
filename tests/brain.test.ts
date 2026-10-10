@@ -1,7 +1,7 @@
 // GH-113: the brain's own spend, priced and kept apart from the workers', and the delegate-only decision table (pure).
 import { test, expect, describe } from 'claude-code/testing'
 import { priceFor } from '../hooks/lib/cost'
-import { brainTurn, brainEdit, brainSplit, brainFamily, brainSummary, brainLine, brainTileText, bashWrites, delegateDecision, DELEGATE_DENY, PREMIUM_POSTURE } from '../hooks/lib/brain'
+import { brainTurn, brainEdit, brainSplit, brainFamily, brainSummary, brainLine, brainTileText, bashWrites, bashCommits, delegateDecision, DELEGATE_DENY, PREMIUM_POSTURE } from '../hooks/lib/brain'
 import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
 
 const turn = (model: string, input: number, output: number, read = 0, write = 0) => ({
@@ -108,8 +108,10 @@ describe('GH-113: delegate-only: the decision table', () => {
     expect(d('deny', 'fable', 'Read', ['/repo/x/src/a.ts'])).toEqual({ action: 'allow', edit: false })
     expect(d('deny', 'fable', 'Bash', [])).toEqual({ action: 'allow', edit: false })
   })
-  test('git commit in a Bash command is a write with no path', () => {
-    expect(d('deny', 'fable', 'Bash', [], { commit: true })).toEqual({ action: 'deny', edit: true, path: 'git commit' })
+  test('MOD-9: the bare commit flag alone never denies; the paths it commits are judged like written paths', () => {
+    expect(d('deny', 'fable', 'Bash', [], { commit: true })).toEqual({ action: 'allow', edit: false })
+    expect(d('deny', 'fable', 'Bash', ['/repo/x/hooks/lib/brain.ts'], { commit: true })).toEqual({ action: 'deny', edit: true, path: 'hooks/lib/brain.ts' })
+    expect(d('deny', 'fable', 'Bash', ['/repo/x/docs/cards/X.md'], { commit: true })).toEqual({ action: 'allow', edit: true })
   })
   test('one path off the allowlist is enough; the first such path is named', () => {
     expect(d('warn', 'opus', 'Bash', ['/repo/x/docs/a.md', '/repo/x/src/b.ts'])).toEqual({ action: 'warn', edit: true, path: 'src/b.ts' })
@@ -179,5 +181,51 @@ describe('GH-113: the delegateOnly key', () => {
     const bad = parseRepoConfig('{"delegateOnly":"strict"}')
     expect(bad.errors.join()).toContain('delegateOnly')
     expect(mergeConfig(bad.config, {}).delegateOnly).toBe('off')
+  })
+})
+
+describe('MOD-9: bashWrites follows cd, git -C and BSD sed -i', () => {
+  const w = (c: string) => bashWrites(c, '/repo', '/home/u')
+  test('a relative target after a cd into a folder outside the root is no write in it', () => {
+    expect(w('cd /repo-MOD-8 && rm -rf .claude-plugin/types && cp -R /repo/.claude-plugin/types .claude-plugin/').paths).toEqual([])
+    expect(w('cd /repo && echo x > hooks/x.ts').paths).toEqual(['/repo/hooks/x.ts'])
+    expect(w('W=/repo-MOD-8; cd $W && echo x > hooks/x.ts').paths).toEqual([])
+    expect(w('cd /elsewhere; echo x > a.md').paths).toEqual([])
+  })
+  test('cd with no argument or ~ goes home; a relative cd stacks; cd back into the root counts again', () => {
+    expect(w('cd && echo x > a.md').paths).toEqual([])
+    expect(w('cd ~ && echo x > a.md').paths).toEqual([])
+    expect(w('cd src && echo x > a.ts').paths).toEqual(['/repo/src/a.ts'])
+    expect(w('cd /elsewhere && cd /repo/docs && echo x > a.md').paths).toEqual(['/repo/docs/a.md'])
+    expect(w('cd /repo/src && cd .. && echo x > a.ts').paths).toEqual(['/repo/a.ts'])
+  })
+  test('an unresolvable cd makes every later relative target unknown; an absolute one still counts', () => {
+    expect(w('cd $(mktemp -d) && echo x > hooks/x.ts').paths).toEqual([])
+    expect(w('cd $UNSET && echo x > hooks/x.ts && echo y > /repo/hooks/y.ts').paths).toEqual(['/repo/hooks/y.ts'])
+    expect(w('cd `pwd`/x && echo x > hooks/x.ts').paths).toEqual([])
+  })
+  test('a cd inside parentheses is undone at the closing parenthesis', () => {
+    expect(w('(cd /elsewhere && echo x > a.md); echo y > hooks/y.ts').paths).toEqual(['/repo/hooks/y.ts'])
+    expect(w('(cd /repo/docs && echo x > a.md) && echo y > b.md').paths).toEqual(['/repo/docs/a.md', '/repo/b.md'])
+  })
+  test('git -C does not move later segments; its own pathspecs are resolved against it', () => {
+    expect(w('git -C /elsewhere status; echo x > hooks/x.ts').paths).toEqual(['/repo/hooks/x.ts'])
+    expect(bashCommits('git -C /elsewhere/repo commit -m x', '/repo', '/home/u')).toEqual([])
+    expect(w('git -C /elsewhere/repo commit -m x').commit).toBe(false)
+    expect(bashCommits('git -C /repo/sub commit -m x -- a.ts', '/repo', '/home/u')).toEqual([{ dir: '/repo/sub', all: false, amend: false, pathspecs: ['/repo/sub/a.ts'] }])
+  })
+  test('git commit is counted where it runs: the cwd after a cd, in the root only', () => {
+    expect(w('git add -A && git commit -m x').commit).toBe(true)
+    expect(w('cd /elsewhere && git commit -m x').commit).toBe(false)
+    expect(w('cd $(mktemp -d) && git commit -m x').commit).toBe(false)
+    expect(bashCommits('git commit -am x', '/repo', '/home/u')).toEqual([{ dir: '/repo', all: true, amend: false, pathspecs: [] }])
+    expect(bashCommits('git commit --amend --no-edit', '/repo', '/home/u')).toEqual([{ dir: '/repo', all: false, amend: true, pathspecs: [] }])
+    expect(bashCommits('git commit -m "a b" docs/x.md', '/repo', '/home/u')[0]?.pathspecs).toEqual(['/repo/docs/x.md'])
+  })
+  test('BSD sed -i takes an empty or dotted suffix word as the suffix, never as a file; the script is no file', () => {
+    expect(bashWrites("sed -i '' 's/a/b/' docs/cards/X.md", '/repo').paths).toEqual(['/repo/docs/cards/X.md'])
+    expect(bashWrites("sed -i .bak 's/a/b/' docs/cards/X.md src/a.ts", '/repo').paths).toEqual(['/repo/docs/cards/X.md', '/repo/src/a.ts'])
+    expect(bashWrites("sed -i 's/a/b/' src/a.ts", '/repo').paths).toEqual(['/repo/src/a.ts'])
+    expect(bashWrites("sed -i '' -e 's/a/b/' src/a.ts", '/repo').paths).toEqual(['/repo/src/a.ts'])
   })
 })

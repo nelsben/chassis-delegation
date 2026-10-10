@@ -1013,7 +1013,7 @@ brain is never restricted. Under it the brain's own edits are:
 **What counts as a brain edit.** A call to `Edit`, `Write`, `MultiEdit` or
 `NotebookEdit` on a path under the repo root, and a `Bash` command that writes
 a path under the root: a `>` or `>>` redirection, `tee`, `sed -i`, `cp` or
-`mv` into the root, or `git commit`. Reading the words is a tripwire, not a
+`mv` into the root, or a `git commit` that takes a path (see below). Reading the words is a tripwire, not a
 sandbox (`bash -c "…"` and `eval` are not looked into). Every brain edit,
 allowed or not, counts in `brain edits: n`, whatever the mode. Paths outside
 the root (the scratchpad, `~/.claude`) are no edit.
@@ -1024,6 +1024,22 @@ command (or as a prefix assignment of the same command) becomes that value. A
 target that still holds `$`, a backtick or `$(` after that (an unset variable, a
 command substitution, `~` with no known home) is unknown and is not counted as a
 write in the repo.
+
+`cd` is followed (MOD-9). A relative target resolves against the folder the last
+`cd` (or `pushd`) in the same command left, the repo root to begin with, so
+`cd <worktree> && rm -rf .claude-plugin/types` is a write in the worktree, not in
+the repo. `cd` alone or `cd ~` goes home; a `cd` inside `( )` is undone at the
+closing parenthesis; a `cd` in a pipeline or run in the background moves nothing
+after it. A `cd` whose folder cannot be resolved (a variable never set, a command
+substitution) makes every later relative write in the command unknown, and
+unknown writes are not counted. `git -C <dir>` moves only its own command. A
+`git commit` is judged by where it runs and what it takes: in a repo outside the
+root it is no edit; in the root the staged paths (plus the changed files for `-a`
+and the pathspecs on the command) are read with read-only `git diff` and each is
+judged like a written path, so a commit of only card, `.delegation/`, repo-file,
+`CHANGELOG.md` or `docs/` files runs and one that includes a source path is
+warned or denied naming it. `sed -i ''` and `sed -i .bak` take the suffix word
+as the suffix, not as a file.
 
 **Posture.** While the session model is fable and `delegateOnly` is not `off`,
 the "Delegation state" section of the system prompt starts with two lines: "You
