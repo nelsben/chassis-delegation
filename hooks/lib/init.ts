@@ -124,6 +124,8 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
     evalCommand: '',
     evalLiveCommand: '',
     autoEval: false,
+    _issueRepo: 'owner/name of the public repo /delegation debrief post files the mod findings in, one issue per finding, after showing them; empty = posting is off.',
+    issueRepo: '',
   },
   null,
   2,

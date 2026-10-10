@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`/delegation debrief post` shows the findings, then posts the named ones
+  (MOD-7).** New repo-file key `issueRepo` (`owner/name`; empty = off, and
+  `/delegation` prints `issues: <repo>` when set). `post` alone prints the latest
+  `.findings.json` as it would be posted, scrubbed again, each `new` or `covered
+  by #k` against the repo's issues; `post 1,3` or `post all` runs one `gh issue
+  create` per new finding and records the number (a covered one is skipped, or
+  added as a comment when named); a body in which a `redact` word survives is
+  refused. The allowlist gains `gh issue create`, `gh issue comment` and the
+  read-only `gh issue list`, each only for the configured `issueRepo` and a body
+  file under `<root>/.delegation/debriefs/`; edit, close, delete and `gh pr create`
+  stay refused. Pure logic in the new `hooks/lib/findings.ts`.
+
 - **`/delegation debrief` runs the debrief now, and every debrief ends with
   scrubbed findings about the mod (MOD-6).** The command starts the background
   debrief at once (no idle, cooldown or minimum-friction test; one at a time;

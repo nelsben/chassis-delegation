@@ -197,6 +197,7 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
+import { coveredBy, issueNumberOf, parsePostArg, renderPost, survivingWord, type IssueRow, type PostFinding } from './lib/findings'
 import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
 import { behindLine, changelogSlice, classifyRoot, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
@@ -389,6 +390,8 @@ type Config = {
   spendByTier: Record<'economy' | 'standard' | 'frontier', number>
   /** GH-113: what an opus or fable brain may do itself. */
   delegateOnly: 'off' | 'warn' | 'deny'
+  /** MOD-7: owner/name /delegation debrief post files issues in; '' = posting is off. */
+  issueRepo: string
 }
 
 function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: string[] } {
@@ -444,6 +447,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       ignore: eff.ignore,
       spendByTier: eff.spendByTier,
       delegateOnly: eff.delegateOnly,
+      issueRepo: eff.issueRepo,
     },
   }
 }
@@ -497,7 +501,8 @@ let frictionTail: Promise<unknown> = Promise.resolve()
 
 /** MOD-3: the folder this copy of the mod loaded from; the one dir `git merge --ff-only origin/main` may run in. */
 let loadedRoot = ''
-const allowCfg = (): AllowConfig => ({ gateTemplates: cfg.gateTemplates, domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}) })
+let sessionRoot = ''
+const allowCfg = (): AllowConfig => ({ gateTemplates: cfg.gateTemplates, domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}) })
 
 // ---- small host helpers (fail-open) ---------------------------------------
 function debug($: Host, text: string) {
@@ -550,6 +555,11 @@ type RunOut = { ok: true; exitCode: number; stdout: string; stderr: string } | {
 /** The ONLY way the mod runs a host command: a refused argv never reaches `$.process.run`. */
 async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number }): Promise<RunOut> {
   loadedRoot = $.plugin.root
+  try {
+    sessionRoot = (await $.session.root()).replace(/\/+$/, '')
+  } catch {
+    // no root: no issue form passes
+  }
   const check = checkArgv(argv, allowCfg())
   if (!check.ok) {
     try {
@@ -1386,6 +1396,118 @@ async function runDebrief($: Host): Promise<string> {
   } finally {
     debriefBusy = false
   }
+}
+
+/**
+ * MOD-7, `/delegation debrief post [all|1,3]`: with no argument, the latest .findings.json as it
+ * would be posted (nothing is sent); with one, the named findings whose status is new become issues
+ * in cfg.issueRepo, one each, a covered one only when named (then as a comment).
+ */
+async function runDebriefPost($: Host, argText: string): Promise<string> {
+  await loadRepoConfig($)
+  const repo = cfg.issueRepo
+  if (repo === '') return 'debrief post: issueRepo is empty, so posting is off. Set issueRepo (owner/name) in .chassis-delegation.json to turn it on; nothing was posted.'
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const folder = `${root}/.delegation/debriefs`
+  let names: string[] = []
+  try {
+    names = (await $.fs.list(folder)).map(e => e.name).filter(n => n.endsWith('.findings.json')).sort()
+  } catch {
+    names = []
+  }
+  const name = names[names.length - 1]
+  if (name === undefined) return `debrief post: no .findings.json under ${folder}/. Run /delegation debrief first.`
+  const path = `${folder}/${name}`
+  const text = await readText($, path)
+  let parsed: Record<string, unknown> = {}
+  try {
+    const j: unknown = text === undefined ? undefined : JSON.parse(text)
+    if (j !== null && typeof j === 'object' && !Array.isArray(j)) parsed = j as Record<string, unknown>
+  } catch {
+    // reported below
+  }
+  const rawList = (Array.isArray(parsed.findings) ? parsed.findings : []).filter((r): r is Record<string, unknown> => r !== null && typeof r === 'object' && typeof (r as Record<string, unknown>).title === 'string' && ((r as Record<string, unknown>).title as string).trim() !== '')
+  if (rawList.length === 0) return `debrief post: ${path} holds no findings`
+  const rules = await redactRules($)
+  // scrubbed again, now: what the file says is not trusted to be clean
+  const scrubbed = scrubbedFindings(JSON.stringify({ mod_findings: rawList }), rules) ?? []
+  const findings: PostFinding[] = scrubbed.map((f, i) => {
+    const raw = rawList[i] ?? {}
+    return { ...f, ...(typeof raw.issue === 'number' ? { issue: raw.issue } : {}), ...(typeof raw.commentedOn === 'number' ? { commentedOn: raw.commentedOn } : {}) }
+  })
+  let issues: IssueRow[] = []
+  let trackerWhy = ''
+  const listed = await run($, ['gh', 'issue', 'list', '--repo', repo, '--state', 'all', '--limit', '200', '--json', 'number,title,body'])
+  if (!listed.ok || listed.exitCode !== 0) trackerWhy = listed.ok ? `gh exited ${listed.exitCode}: ${listed.stderr.trim().slice(0, 200)}` : listed.why
+  else {
+    try {
+      const j: unknown = JSON.parse(listed.stdout)
+      if (!Array.isArray(j)) throw new Error('not a list')
+      issues = j.filter((r): r is IssueRow => r !== null && typeof r === 'object' && typeof r.number === 'number').map(r => ({ number: r.number, title: String(r.title ?? ''), body: String(r.body ?? '') }))
+    } catch (err) {
+      trackerWhy = `could not read the issue list: ${String(err).slice(0, 100)}`
+    }
+  }
+  const statusOf = (f: PostFinding): string => (f.issue !== undefined ? `posted as #${f.issue}` : trackerWhy !== '' ? `unchecked (${trackerWhy})` : (() => { const k = coveredBy(f, issues); return k === undefined ? 'new' : `covered by #${k}` })())
+  const arg = argText.trim()
+  if (arg === '') {
+    const out = [`debrief post: ${path} -> ${repo} (nothing is posted by this form; /delegation debrief post all|1,3 posts)`]
+    findings.forEach((f, i) => {
+      const { title, body } = renderPost(f, MOD_VERSION)
+      out.push('', `[${i + 1}] ${statusOf(f)}`, `title: ${title}`, '', body.trimEnd(), '------')
+    })
+    return out.join('\n')
+  }
+  const want = parsePostArg(arg, findings.length)
+  if ('error' in want) return `debrief post: ${want.error}`
+  if (trackerWhy !== '') return `debrief post: could not check ${repo} for a finding already covered (${trackerWhy}); nothing posted`
+  const out: string[] = []
+  const post: Record<string, unknown>[] = rawList.map(r => ({ ...r }))
+  const base = name.replace(/\.findings\.json$/, '')
+  for (const n of want.nums) {
+    const f = findings[n - 1] as PostFinding
+    if (f.issue !== undefined) {
+      out.push(`[${n}] skipped: already posted as #${f.issue}`)
+      continue
+    }
+    const k = coveredBy(f, issues)
+    if (k !== undefined && want.all) {
+      out.push(`[${n}] skipped: covered by #${k} (name it, /delegation debrief post ${n}, to add it as a comment)`)
+      continue
+    }
+    const { title, body } = renderPost(f, MOD_VERSION)
+    const left = survivingWord(`${title}\n${body}`, cfg.redact)
+    if (left !== undefined) {
+      out.push(`[${n}] refused: "${left}" from the redact list survives in "${f.title}"; nothing posted for it`)
+      continue
+    }
+    const file = `${folder}/${base}.post-${n}.md`
+    await $.fs.write(file, body)
+    if (k !== undefined) {
+      const r = await run($, ['gh', 'issue', 'comment', String(k), '--repo', repo, '--body-file', file])
+      if (!r.ok || r.exitCode !== 0) {
+        out.push(`[${n}] not commented on #${k}: ${r.ok ? r.stderr.trim().slice(0, 200) || `gh exited ${r.exitCode}` : r.why}`)
+        continue
+      }
+      ;(post[n - 1] as Record<string, unknown>).commentedOn = k
+      out.push(`[${n}] commented on #${k} ${r.stdout.trim()}`.trimEnd())
+      continue
+    }
+    const r = await run($, ['gh', 'issue', 'create', '--repo', repo, '--title', title, '--body-file', file])
+    if (!r.ok || r.exitCode !== 0) {
+      out.push(`[${n}] not posted: ${r.ok ? r.stderr.trim().slice(0, 200) || `gh exited ${r.exitCode}` : r.why}`)
+      continue
+    }
+    const num = issueNumberOf(r.stdout)
+    if (num !== undefined) (post[n - 1] as Record<string, unknown>).issue = num
+    out.push(num !== undefined ? `#${num} ${r.stdout.trim().split('\n').pop()}` : `[${n}] posted: ${r.stdout.trim()} (no issue number found to record)`)
+  }
+  try {
+    await $.fs.write(path, JSON.stringify({ ...parsed, findings: post }, null, 2) + '\n')
+  } catch (err) {
+    out.push(`could not record the issue numbers in ${path}: ${String(err).slice(0, 100)}`)
+  }
+  return out.join('\n')
 }
 
 /** The scrub rules of this session: the repo folder and origin, the git user (read from the git config files, which the allowlist need not run), the /config list. */
@@ -2819,6 +2941,7 @@ async function statusReport($: Host): Promise<string> {
     ...(split.hasEdits ? [`brain edits: ${split.summary.edits}`] : []),
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
     ...(await updateStatusLines($)),
+    ...(cfg.issueRepo ? [`issues: ${cfg.issueRepo}`] : []),
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
@@ -3536,6 +3659,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'setup') return { text: await runSetup($) }
     if (arg === 'update') return { text: await runUpdate($) }
     if (arg === 'debrief') return { text: await runDebrief($) }
+    if (arg === 'debrief post' || arg.startsWith('debrief post ')) return { text: await runDebriefPost($, arg.slice('debrief post'.length)) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'dashboard') {
       let placed = false

@@ -18,12 +18,13 @@
 //   the same two with origin/main for <sha> and the configured cardDir for agents/tasks
 //                                                            (MOD-4: is a task's card merged)
 //   gh pr list|view …                                        (no --web)
+//   gh issue create|comment|list, for the configured issueRepo only (MOD-7; the body file under <root>/.delegation/debriefs/)
 //   claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
 //   a gate-map command, word for word, `{files}` and `{worktree}` filled by absolute paths
 //                                                            (./gates.ts holds what a map may name)
 // <id> is a dispatchable task id, <PREFIX>-<number>[letter]: BE-101, OPS-195b.
 // Notably refused: sf, curl, git push|commit|reset|checkout, any other git
-// global option (-c, --exec-path, --git-dir …), gh pr merge|create, and any
+// global option (-c, --exec-path, --git-dir …), gh pr merge|create, gh issue edit|close|delete, and any
 // script or package command the gate map does not name exactly.
 
 import { fillPlaceholders, gateCommandTemplates, matchesAnyTemplate } from './gates'
@@ -34,7 +35,7 @@ export const DEFAULT_DOMAINS = ['frontend', 'backend', 'ops', 'dispatcher', 'cro
 export type Check = { ok: true } | { ok: false; reason: string }
 
 /** What the allowlist reads of the config: the gate templates (gateTemplatesOf(gateMap)), the domains, the worktree root. */
-export type AllowConfig = { gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string }
+export type AllowConfig = { gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string; /** MOD-7: the one repo `gh issue` may name (owner/name); empty or absent = no issue form passes. */ issueRepo?: string; /** MOD-7: the session root, whose .delegation/debriefs/ holds the only body files. */ root?: string }
 
 const GIT_READ = ['diff', 'merge-base', 'rev-parse', 'status', 'log']
 const GIT_WRITEY_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|-O)/
@@ -62,7 +63,7 @@ export function checkArgv(argv: readonly string[], allow: AllowConfig = {}): Che
   const [cmd, ...rest] = argv
   if (cmd === undefined) return refuse('empty argv')
   if (cmd === 'git') return checkGit(rest, allow)
-  if (cmd === 'gh') return checkGh(rest)
+  if (cmd === 'gh') return checkGh(rest, allow)
   if (cmd === 'claude') return checkClaude(rest)
   if (matchesAnyTemplate(argv, allow.gateTemplates ?? [])) return ok
   return refuse(`${cmd} is not on the list (not git, gh, claude plugin, nor a gate-map command word for word)`)
@@ -139,10 +140,45 @@ function checkWorktreeAdd(dirs: readonly string[], args: readonly string[], allo
   return ok
 }
 
-function checkGh(args: readonly string[]): Check {
+function checkGh(args: readonly string[], allow: AllowConfig): Check {
+  if (args[0] === 'issue') return checkGhIssue(args.slice(1), allow)
   if (args[0] !== 'pr' || (args[1] !== 'list' && args[1] !== 'view')) return refuse(`gh ${args.slice(0, 2).join(' ')} is not on the list`)
   const bad = args.find(a => a === '--web' || a === '-w')
   return bad ? refuse(`gh pr ${args[1]} ${bad} is not on the list`) : ok
+}
+
+const ISSUE_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+/** A body file: absolute, under <root>/.delegation/debriefs/, plain segments. */
+function debriefBodyOk(path: string, root: string | undefined): boolean {
+  const r = (root ?? '').replace(/\/+$/, '')
+  const prefix = `${r}/.delegation/debriefs/`
+  return r !== '' && ABS_FOLDER.test(path) && path.startsWith(prefix) && path.length > prefix.length && !path.split('/').slice(1).some(seg => seg === '..' || seg === '.' || seg === '') && !path.endsWith('/')
+}
+
+/**
+ * MOD-7: gh issue, three exact shapes, the repo equal to the configured issueRepo:
+ *   create --repo <r> --title <t> --body-file <path>
+ *   comment <number> --repo <r> --body-file <path>
+ *   list --repo <r> --state all --limit 200 --json number,title,body   (read-only)
+ */
+function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
+  const repo = allow.issueRepo ?? ''
+  if (repo === '' || !ISSUE_REPO.test(repo)) return refuse('gh issue is not on the list: no issueRepo is configured')
+  const [verb, ...t] = args
+  const shape = (s: string): Check => refuse(`gh issue ${verb ?? ''} is not the exact shape (${s})`.replace('  ', ' '))
+  if (verb === 'create') {
+    const exact = t.length === 6 && t[0] === '--repo' && t[1] === repo && t[2] === '--title' && (t[3] ?? '') !== '' && !(t[3] as string).startsWith('-') && t[4] === '--body-file' && debriefBodyOk(t[5] as string, allow.root)
+    return exact ? ok : shape('create --repo <issueRepo> --title <title> --body-file <file under .delegation/debriefs/>')
+  }
+  if (verb === 'comment') {
+    const exact = t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === repo && t[3] === '--body-file' && debriefBodyOk(t[4] as string, allow.root)
+    return exact ? ok : shape('comment <number> --repo <issueRepo> --body-file <file under .delegation/debriefs/>')
+  }
+  if (verb === 'list') {
+    const exact = t.join(' ') === `--repo ${repo} --state all --limit 200 --json number,title,body`
+    return exact ? ok : shape('list --repo <issueRepo> --state all --limit 200 --json number,title,body')
+  }
+  return refuse(`gh issue ${verb ?? ''} is not on the list`.replace('  ', ' '))
 }
 
 /** An absolute folder with no `..` segment and nothing a shell would read. */

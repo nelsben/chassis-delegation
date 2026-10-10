@@ -206,3 +206,34 @@ describe('MOD-3: the one merge form', () => {
     no(['git', '-C', PLUGIN, 'merge', '--ff-only', 'origin/main'], ALLOW)
   })
 })
+
+describe('MOD-7: the two issue forms, for the configured issueRepo only', () => {
+  const X = '/Users/b/acme-app'
+  const A: AllowConfig = { ...ALLOW, issueRepo: 'owner/mod', root: X }
+  const BODY = `${X}/.delegation/debriefs/2026-10-10-mod-run.post-1.md`
+  test('create and comment pass with the configured repo and a body file under .delegation/debriefs/', () => {
+    ok(['gh', 'issue', 'create', '--repo', 'owner/mod', '--title', 'A title', '--body-file', BODY], A)
+    ok(['gh', 'issue', 'comment', '9', '--repo', 'owner/mod', '--body-file', BODY], A)
+    ok(['gh', 'issue', 'list', '--repo', 'owner/mod', '--state', 'all', '--limit', '200', '--json', 'number,title,body'], A)
+  })
+  test('refused: another repo, an unset issueRepo, inline --body, a body file elsewhere or climbing out', () => {
+    no(['gh', 'issue', 'create', '--repo', 'other/mod', '--title', 'T', '--body-file', BODY], A)
+    no(['gh', 'issue', 'create', '--repo', 'owner/mod', '--title', 'T', '--body-file', BODY], { ...ALLOW, root: X })
+    no(['gh', 'issue', 'create', '--repo', 'owner/mod', '--title', 'T', '--body', 'inline'], A)
+    no(['gh', 'issue', 'create', '--repo', 'owner/mod', '--title', 'T', '--body-file', `${X}/README.md`], A)
+    no(['gh', 'issue', 'create', '--repo', 'owner/mod', '--title', 'T', '--body-file', '/etc/passwd'], A)
+    no(['gh', 'issue', 'create', '--repo', 'owner/mod', '--title', 'T', '--body-file', `${X}/.delegation/debriefs/../../.env`], A)
+    no(['gh', 'issue', 'create', '--repo', 'owner/mod', '--title', 'T', '--body-file', `/other/.delegation/debriefs/x.md`], A)
+    no(['gh', 'issue', 'comment', '9', '--repo', 'other/mod', '--body-file', BODY], A)
+    no(['gh', 'issue', 'comment', 'x', '--repo', 'owner/mod', '--body-file', BODY], A)
+    no(['gh', 'issue', 'comment', '9', '--repo', 'owner/mod', '--body', 'hi'], A)
+    no(['gh', 'issue', 'list', '--repo', 'other/mod', '--state', 'all', '--limit', '200', '--json', 'number,title,body'], A)
+  })
+  test('refused: edit, close, delete, reopen, and gh pr create, even with the repo set', () => {
+    no(['gh', 'issue', 'edit', '9', '--repo', 'owner/mod', '--body-file', BODY], A)
+    no(['gh', 'issue', 'close', '9', '--repo', 'owner/mod'], A)
+    no(['gh', 'issue', 'delete', '9', '--repo', 'owner/mod'], A)
+    no(['gh', 'issue', 'reopen', '9', '--repo', 'owner/mod'], A)
+    no(['gh', 'pr', 'create', '--repo', 'owner/mod', '--title', 'T', '--body-file', BODY], A)
+  })
+})
