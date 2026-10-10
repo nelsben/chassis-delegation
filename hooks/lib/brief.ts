@@ -99,6 +99,32 @@ export function parseHeader(text: string): BriefHeader | undefined {
 }
 
 /**
+ * MOD-2: set or replace one field in the brief header, everything else
+ * (the rest of the header, amend blocks, the body) byte-identical. A new
+ * field goes before `spend=`/`budget=`, where dispatch renders `base=`; a
+ * replaced one keeps its place. `previous` is the value it replaced. Text with
+ * no header comes back as it was.
+ */
+export function setHeaderField(text: string, key: string, value: string): { text: string; previous?: string } {
+  const h = parseHeader(text)
+  if (!h) return { text }
+  const at = text.indexOf(h.raw)
+  const prior = h.fields[key]
+  let raw: string
+  if (prior !== undefined) {
+    const hit = new RegExp(`(\\s${key}=)(?:"[^"]*"|\\S*)`).exec(h.raw)
+    if (!hit) return { text }
+    raw = h.raw.slice(0, hit.index) + hit[1] + value + h.raw.slice(hit.index + hit[0].length)
+  } else {
+    const budget = h.raw.lastIndexOf(' budget=')
+    const spend = /\sspend=\S+(?=\s+budget=)/.exec(h.raw.slice(0, budget < 0 ? 0 : budget + 8))
+    const cut = spend ? spend.index : budget >= 0 ? budget : h.raw.length - 2
+    raw = `${h.raw.slice(0, cut)} ${key}=${value}${h.raw.slice(cut)}`
+  }
+  return { text: text.slice(0, at) + raw + text.slice(at + h.raw.length), ...(prior !== undefined && prior !== '' ? { previous: prior } : {}) }
+}
+
+/**
  * What a header still lacks to stand as its own brief (GH-6): a task, a
  * scope (`scope=` or `scope_globs=`) and a gate (`gate=` or `repo=none`).
  * Empty when it is complete.

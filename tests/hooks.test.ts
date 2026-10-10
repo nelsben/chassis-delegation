@@ -1620,15 +1620,92 @@ describe('GH-105: a dispatch given --base <sha> writes base= into the brief, and
     expect(row).toContain('claim files: held — files= matches the sha delta exactly')
   })
 
-  test('a dispatch with no --base writes no base=; a reused brief without base= is told so, not rewritten', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+  test('a dispatch with no --base writes no base=; a later dispatch naming one sets it on the reused brief', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, run: stacked, agentId: 'agent-4' })
     await $.session.start(sessionStart)
     await $.command.run(commandInput('T-4 --scope a/**'))
     const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
     expect(header).not.toContain(' base=')
     const again = String((await $.command.run(commandInput(`T-4 --base ${BASE}`))).text)
-    expect(again).toContain('note: the reused brief has no base=; the verifier diffs against origin/main → main → origin/master → master')
-    expect((w.files.get(BRIEF) ?? '').split('\n')[0]).not.toContain(' base=')
+    expect(again).toContain(`reused, base= set to ${BASE}`)
+    expect((w.files.get(BRIEF) ?? '').split('\n')[0]).toContain(` base=${BASE} `)
+  })
+})
+
+describe('MOD-2: a dispatch that names a base writes it into an existing brief', () => {
+  const CARD_NAME = 'T-4-the-thing.md'
+  const CARD = '---\nid: T-4\ntitle: The thing\ndomain: frontend\ntier: standard\nstatus: queued\nscope: [a/**]\nforbid: [b/**]\nred_test: none\ngate: prettier\nbudget: 3-attempts\n---\n## Why\nStacked.\n'
+  const BASE = 'd'.repeat(40)
+  const BASE2 = 'c'.repeat(40)
+  const HEAD = 'abcdef1' + '2'.repeat(33)
+  const BRANCH = 'agent/frontend/T-4'
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const files = () => ({ [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD })
+  const dirs = { [`${ROOT}/agents/tasks`]: [CARD_NAME] }
+  const worktrees: string[][] = []
+  const stacked = (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'worktree') {
+      worktrees.push(sub)
+      return { exitCode: 0, stdout: '' }
+    }
+    if (sub[0] === 'fetch') return { exitCode: 0, stdout: '' }
+    if (sub[0] === 'rev-parse' && sub[1] === '--abbrev-ref') return { exitCode: 0, stdout: `${BRANCH}\n` }
+    if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${sub[1] === BASE ? BASE : MB}\n` }
+    if (sub[0] === 'diff') {
+      const rows = sub.includes(BASE) ? ['A\ta/x.ts'] : ['A\ta/x.ts', 'A\tb/y.ts']
+      return { exitCode: 0, stdout: (sub.includes('--name-status') ? rows : rows.map(r => r.split('\t')[1])).join('\n') + '\n' }
+    }
+    if (sub[0] === 'status') return { exitCode: 0, stdout: '' }
+    return undefined
+  }
+  const header = (w: { files: Map<string, string> }) => (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
+
+  test('a dry run writes no base=; the dispatch with base=<sha> sets it and says so, then a second base replaces it', { options: { briefDir: `${SCRATCH}/briefs`, ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: stacked, agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.command.run(commandInput('T-4 --dry-run --scope a/**'))
+    expect(header(w)).not.toContain(' base=')
+    const before = w.files.get(BRIEF) ?? ''
+    const out = String((await $.command.run(commandInput(`T-4 --base ${BASE}`))).text)
+    expect(header(w)).toContain(` base=${BASE} `)
+    expect(out).toContain(`reused, base= set to ${BASE}`)
+    expect(out).not.toContain('the verifier diffs against')
+    expect(out).toContain(`from ${BASE}`)
+    expect((w.files.get(BRIEF) ?? '').split('\n').slice(1)).toEqual(before.split('\n').slice(1))
+    const again = String((await $.command.run(commandInput(`T-4 --dry-run --base ${BASE2}`))).text)
+    expect(again).toContain(`reused, base= replaced ${BASE} → ${BASE2}`)
+    expect(header(w).split(' base=').length).toBe(2)
+  })
+
+  test('a dispatch with no base against a reused brief that carries base= cuts the worktree from it', { options: { briefDir: `${SCRATCH}/briefs`, ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: stacked, agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.command.run(commandInput(`T-4 --dry-run --base ${BASE} --scope a/**`))
+    expect(header(w)).toContain(` base=${BASE} `)
+    worktrees.length = 0
+    const out = String((await $.command.run(commandInput('T-4'))).text)
+    expect(out).toContain(`3. worktree ${ROOT}-T-4 on ${BRANCH} from ${BASE}`)
+    expect(worktrees.at(-1)?.at(-1)).toBe(BASE)
+  })
+
+  test('a hand-back on a brief dry-run first holds scope once the dispatch wrote the base', { options: { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run: stacked, agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.command.run(commandInput('T-4 --dry-run --scope a/**'))
+    await $.command.run(commandInput(`T-4 --base ${BASE}`))
+    const REPORT = `[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=a/x.ts]]`
+    await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
+    const row = delivered(w)
+    expect(row).toContain('verdict=verified task=T-4')
+    expect(row).toContain(`claim scope: held — every changed path since ${BASE.slice(0, 7)} is within scope=[a/**]`)
   })
 })
 
