@@ -311,9 +311,11 @@ function lex(text: string): Tok[] {
  * The files a Bash command writes under the root: a `>` / `>>` redirection, `tee`,
  * `sed -i`, `cp` / `mv` (the destination), and whether it runs `git commit`.
  * Read the way a shell reads words (quotes whole, heredoc bodies skipped); an
- * accident tripwire, not adversary-proof.
+ * accident tripwire, not adversary-proof. A target is resolved first (MOD-8): `~`,
+ * `$HOME` (the `home` argument), `$PWD` (the root) and a `$NAME` assigned a literal
+ * earlier in the command; one that stays unresolved is unknown and not counted.
  */
-export function bashWrites(command: string, root: string): { paths: string[]; commit: boolean } {
+export function bashWrites(command: string, root: string, home?: string): { paths: string[]; commit: boolean } {
   const toks = lex(command)
   const segments: Tok[][] = [[]]
   for (const t of toks) {
@@ -323,25 +325,50 @@ export function bashWrites(command: string, root: string): { paths: string[]; co
   const out: string[] = []
   let commit = false
   const prefix = root.replace(/\/+$/, '')
-  const add = (p: string | undefined) => {
-    if (!p || SKIP_TARGET.test(p)) return
+  const vars = new Map<string, string>()
+  const resolve = (p: string): string | undefined => {
+    let t = p
+    if (t === '~' || t.startsWith('~/')) {
+      if (!home) return undefined
+      t = home.replace(/\/+$/, '') + t.slice(1)
+    }
+    t = t.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g, (m, a, b) => {
+      const name = (a ?? b) as string
+      if (name === 'HOME') return home ? home.replace(/\/+$/, '') : m
+      if (name === 'PWD') return prefix
+      return vars.get(name) ?? m
+    })
+    return /[$`]/.test(t) ? undefined : t
+  }
+  const add = (raw: string | undefined) => {
+    if (!raw || SKIP_TARGET.test(raw)) return
+    const p = resolve(raw)
+    if (p === undefined || SKIP_TARGET.test(p)) return
     const rel = relativeTo(root, p)
     if (rel !== undefined && !out.includes(`${prefix}/${rel}`)) out.push(`${prefix}/${rel}`)
   }
   for (const seg of segments) {
     // redirections anywhere in the segment, then the command's own words
     const words: string[] = []
+    const redirs: (string | undefined)[] = []
     for (let i = 0; i < seg.length; i++) {
       const tk = seg[i] as Tok
       if (tk.k === 'word') words.push(tk.t)
       else {
         const target = seg[i + 1]?.k === 'word' ? (seg[i + 1] as Tok).t : undefined
-        if (tk.k === 'out') add(target)
+        if (tk.k === 'out') redirs.push(target)
         if (target !== undefined) i += 1
       }
     }
     let k = 0
     while (k < words.length && ASSIGN.test(words[k] as string)) k++
+    for (const a of words.slice(0, k)) {
+      const eq = a.indexOf('=')
+      const val = resolve(a.slice(eq + 1))
+      if (val === undefined) vars.delete(a.slice(0, eq))
+      else vars.set(a.slice(0, eq), val)
+    }
+    for (const r of redirs) add(r)
     const cmd = (words[k] ?? '').replace(/^.*\//, '')
     const args = words.slice(k + 1)
     const plain = args.filter(a => !a.startsWith('-'))

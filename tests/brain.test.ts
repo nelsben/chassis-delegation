@@ -143,6 +143,31 @@ describe('GH-113: what in a Bash command writes to a file', () => {
   })
 })
 
+describe('MOD-8: Bash write targets are resolved before they are judged', () => {
+  const w = (c: string, home: string | undefined = '/home/u') => bashWrites(c, '/repo', home)
+  test('~, $HOME and a variable set earlier point outside the repo: no path', () => {
+    expect(w("M=/home/u/.claude/m; cat >> $M/p.md <<'EOF'\nhi\nEOF").paths).toEqual([])
+    expect(w('echo hi >> ~/.claude/m/p.md').paths).toEqual([])
+    expect(w('echo hi > ${HOME}/x.md').paths).toEqual([])
+    expect(w('echo hi > $HOME/x.md').paths).toEqual([])
+    expect(w('M=/home/u/m echo hi > ${M}/x.md').paths).toEqual([])
+  })
+  test('a relative value, $PWD and a plain relative target still land in the root', () => {
+    expect(w('D=src; echo x > $D/a.ts').paths).toEqual(['/repo/src/a.ts'])
+    expect(w('echo x > $PWD/hooks/a.ts').paths).toEqual(['/repo/hooks/a.ts'])
+    expect(w('echo x > ${PWD}/hooks/a.ts').paths).toEqual(['/repo/hooks/a.ts'])
+    expect(w('echo x > hooks/a.ts').paths).toEqual(['/repo/hooks/a.ts'])
+  })
+  test('an unknown target is not counted', () => {
+    expect(w('echo x > $UNSET/a.ts').paths).toEqual([])
+    expect(w('echo x > `pwd`/a.ts').paths).toEqual([])
+    expect(w('echo x > $(pwd)/a.ts').paths).toEqual([])
+    expect(w('N=$(pwd); echo x > $N/a.ts').paths).toEqual([])
+    expect(w('echo x > ~/a.ts', undefined).paths).toEqual([])
+    expect(w('echo x > $HOME/a.ts', undefined).paths).toEqual([])
+  })
+})
+
 describe('GH-113: the delegateOnly key', () => {
   test('off | warn | deny; off by default; a bad value is named and ignored; settings win over the repo file', () => {
     expect(mergeConfig({}, {}).delegateOnly).toBe('off')

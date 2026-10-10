@@ -1017,6 +1017,13 @@ a path under the root: a `>` or `>>` redirection, `tee`, `sed -i`, `cp` or
 sandbox (`bash -c "…"` and `eval` are not looked into). Every brain edit,
 allowed or not, counts in `brain edits: n`, whatever the mode. Paths outside
 the root (the scratchpad, `~/.claude`) are no edit.
+A write target is resolved before it is judged: a leading `~` or `~/` and
+`$HOME` / `${HOME}` become the home folder, `$PWD` / `${PWD}` become the repo
+root, and `$NAME` / `${NAME}` assigned a literal value earlier in the same
+command (or as a prefix assignment of the same command) becomes that value. A
+target that still holds `$`, a backtick or `$(` after that (an unset variable, a
+command substitution, `~` with no known home) is unknown and is not counted as a
+write in the repo.
 
 **Posture.** While the session model is fable and `delegateOnly` is not `off`,
 the "Delegation state" section of the system prompt starts with two lines: "You
