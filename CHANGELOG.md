@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-10-11
 
 - **Workers under the mod's hooks (MOD-13).** Now that the brain makes every
   spawn, the mod uses what it sees. The git guard names a worker's task in its
