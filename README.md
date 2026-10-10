@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.6.1, MIT.
+any other repo: no scripts, no harness, no network. Version 0.7.0, MIT.
 
 ## Install on a new machine
 
@@ -127,6 +127,34 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.6.1 to 0.7.0
+
+What the brain will see:
+
+- **Dispatch prints an Agent call; you make it (MOD-12, public issue #22).**
+  `/dispatch` and the dispatch tool still write the brief, cut the worktree and
+  pick the tier, but they spawn nothing. The result ends with `spawn: Agent` and
+  a fenced JSON object; make that Agent call verbatim, with the same
+  `subagent_type`, `model` and `prompt`. A hand-back's `ready: <id>` line means
+  make the next call: run that brief's spawn block (`/dispatch <id>` prints it
+  again). A respawn verdict prints the call instead of starting it, one tier up
+  after a refute. A full house answers `queued:` and the mod tells you when a
+  slot frees. A second spawn of a brief that still runs is refused, naming the
+  attempt. `autoEscalate` now performs resumes only.
+- **Workers run under the mod's hooks (MOD-13).** The git guard names a
+  worker's task in its refusal, the spend ceiling posts one row at `spend=` and
+  denies the worker's next tool call at twice its ceiling (`SubagentHandback`
+  still passes), and a worker's steps are set to an effort by tier from the new
+  `effortByTier` key (economy `low`, standard `medium`, frontier `high`; a
+  card's `effort:` wins). `/delegation` prints the effort.
+- **The upgrade is `/delegation update`.** It prints the CHANGELOG slice newer
+  than your version.
+
+What to do:
+
+- Nothing in `.chassis-delegation.json` has to change; `effortByTier` has its
+  defaults until you set it.
 
 ### From 0.6.0 to 0.6.1
 
