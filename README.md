@@ -11,7 +11,7 @@ changed files, scope, gate, PR) and hands the brain one verdict line with what
 to do next. At a quiet stop it can write a debrief in the background, and it
 can run your eval when `origin/main` moves. It is a Claude Code mod (a plugin
 of function hooks). It needs nothing from any other repo: no scripts, no
-harness, no network. Version 0.5.0, MIT.
+harness, no network. Version 0.6.0, MIT.
 
 ## Install on a new machine
 
@@ -125,6 +125,52 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.5.0 to 0.6.0
+
+What the brain will see:
+
+- **The live dashboard (GH-112).** A band above the prompt while a worker is
+  live, queued or owed a verdict, and `/delegation dashboard` for the pane. On
+  a screen that shows no mod panes it prints the dashboard as markdown
+  instead. `dashboardBand` turns the band off.
+- **Aliases and the classifier's second opinion (GH-114, public issue #34).**
+  `/delegation` prints what each model alias resolved to and when it moved. The
+  card tool's dry run prints `card says <tier> · classifier says <tier>` (or
+  `agrees`); `classifierSecondOpinion` turns it off.
+- **Escalation only on sha, gate or red (GH-115, public issue #34).** A scope,
+  files, branch or pr refute holds the tier on respawn and says `(held: a scope
+  refute)` or `(held: a files refute)`, with the advice to amend the scope or
+  list the paths in `files=`.
+- **The brain's own spend, apart (GH-113).** `/delegation` prints `brain: … ·
+  workers … · brain share p%`, and the dashboard shows it as its own tile and
+  row. Fable is priced.
+- **`delegateOnly` (GH-113).** `off`, `warn` or `deny` keeps an opus or fable
+  brain from editing source itself; under `deny` a source edit is refused and
+  names the card tool.
+- **Spend defaults 3, 10 and 25 dollars (GH-116, public issue #34).** Setup
+  proposes higher ceilings, written as `spendByTier`, when a gate deploys or
+  runs remotely.
+- **`base=` in a reused brief (MOD-2, public issue #37).** A dispatch with
+  `--base <sha>` sets or replaces `base=` in a brief already on disk and says
+  which; with no base it cuts from the brief's own.
+- **One proof of red per task (MOD-1, public issue #35).** A red file
+  identical to an earlier attempt's is held again, not refuted.
+  `/dispatch <ID> --verify <sha>` at the last attempt's sha re-judges that
+  attempt: no new record, no budget spent.
+- **`/delegation update` (MOD-3).** It fast-forwards the loaded git clone to
+  origin/main, migrates the repo config, and says what reload is left. It
+  refuses while a worker runs.
+- **Owed rows retire (MOD-4, public issue #23).** A row leaves the state block
+  when its work is on origin/main; `/delegation accept <id> [note]` closes one;
+  the block counts the older ones as `n older owed rows: <ids>`.
+- **From 0.6.0 on, the upgrade is `/delegation update`.** A session still on
+  0.5.0 has no such command and follows the hand steps above once.
+
+What to do:
+
+- Nothing in `.chassis-delegation.json` has to change; a key you never set
+  takes its default.
 
 ### From 0.4.0 to 0.5.0
 

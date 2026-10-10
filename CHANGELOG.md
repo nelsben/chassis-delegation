@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-10-10
 
 - **Owed rows retire by themselves, `/delegation accept <id>` closes one, and
   the state block counts the old ones (MOD-4, public issue #23).** An owed row
