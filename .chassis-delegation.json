@@ -39,6 +39,8 @@
   "evalCommand": "",
   "evalLiveCommand": "",
   "autoEval": false,
+  "_delegateOnly": "This repo is dogfooded by a Fable brain: an opus or fable brain may not edit source here; it writes cards (docs/cards/), .delegation/, this file, CHANGELOG.md and docs/, and dispatches the rest (GH-113).",
+  "delegateOnly": "deny",
   "_cardDir": "This repo is itself a plugin: the engine reads agents/*.md as subagent definitions, so the cards live under docs/cards/ (GH-12, GH-100: docs/ keeps the repo root short).",
   "cardDir": "docs/cards"
 }
