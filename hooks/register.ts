@@ -62,7 +62,7 @@ import {
   spendOf,
   type BriefHeader,
 } from './lib/brief'
-import { addTurn, ceilingState, liveWorker, overSpendLine, round4, spendCeiling, warnText, OVER_SPEND_NEXT, type Spend } from './lib/cost'
+import { addTurn, ceilingState, liveWorker, overSpendDeny, overSpendLine, round4, spendCeiling, spendWarnRow, warnText, OVER_SPEND_NEXT, type Spend } from './lib/cost'
 import {
   addFriction,
   breadcrumbPath,
@@ -164,6 +164,8 @@ import {
   aliasOf,
   CLASSIFIER_LABELS,
   classifierText,
+  effortFor,
+  effortText,
   fableRequested,
   finalAlias,
   tierOf,
@@ -173,6 +175,8 @@ import {
   pickTier,
   tierPickLine,
   type Alias,
+  type Effort,
+  type EffortSetting,
   type Tier,
   type TierPick,
 } from './lib/tier'
@@ -240,6 +244,8 @@ const K = {
   replay: (briefPath: string) => `delegation.replay.${briefPath}`,
   /** A worker's own spend this attempt, from its turn usage (GH-106). */
   cost: (agentId: string) => `delegation.cost.${agentId}`,
+  /** MOD-13: the card's own `effort:`, written at /dispatch; it wins over effortByTier. */
+  effort: (task: string) => `delegation.effort.${task}`,
   /** Set once an attempt's verdict row is posted to the conversation. */
   posted: (attemptKey: string) => `delegation.posted.${attemptKey}`,
   /** This session's verdict lines, for the compaction block and the system prompt section (2E). */
@@ -398,6 +404,8 @@ type Config = {
   ignore: string[]
   /** GH-106: dollars one attempt may spend, per tier; 0 = no ceiling. */
   spendByTier: Record<'economy' | 'standard' | 'frontier', number>
+  /** MOD-13: the effort a worker steps at, per tier; 0 or empty leaves the engine's default. */
+  effortByTier: Record<'economy' | 'standard' | 'frontier', EffortSetting>
   /** GH-113: what an opus or fable brain may do itself. */
   delegateOnly: 'off' | 'warn' | 'deny'
   /** MOD-7: owner/name /delegation debrief post files issues in; '' = posting is off. */
@@ -456,6 +464,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       baseRef: eff.baseRef,
       ignore: eff.ignore,
       spendByTier: eff.spendByTier,
+      effortByTier: eff.effortByTier,
       delegateOnly: eff.delegateOnly,
       issueRepo: eff.issueRepo,
     },
@@ -1089,6 +1098,7 @@ async function trackSpend($: Host, spawn: SpawnRecord, e: { agentId: string; usa
     return false
   } else if (state === 'warn' && !next.warned) {
     await storeSet($, K.cost(e.agentId), { ...next, warned: true })
+    await appendRow($, spendWarnRow(taskLabel(spawn.task, spawn.subtask), spend.usd, ceiling))
     try {
       const sent = await $.session.send({ to: { agentId: e.agentId }, text: warnText(spend.usd, ceiling) })
       if (!sent.isDelivered) debug($, `${taskLabel(spawn.task, spawn.subtask)}: spend warning not delivered: ${sent.reason}`)
@@ -1098,6 +1108,15 @@ async function trackSpend($: Host, spawn: SpawnRecord, e: { agentId: string; usa
     }
   }
   return false
+}
+
+/** MOD-13: the refusal for a worker that spent twice its ceiling this attempt (its next tool call), else undefined. */
+async function overSpendRefusal($: Host, agentId: string): Promise<string | undefined> {
+  const rec = await storeGet<CostRecord>($, K.cost(agentId))
+  if (!rec?.stopped) return undefined
+  const spawn = await spawnByAgent($, agentId)
+  if (!spawn || spawn.adhoc || spawn.spend === undefined || rec.attempt !== spawn.attempt) return undefined
+  return overSpendDeny(taskLabel(spawn.task, spawn.subtask), spawn.spend)
 }
 
 /** Twice the ceiling: the attempt's verdict is over-spend; the row says where to look; no escalation (never a failing verdict). */
@@ -1130,6 +1149,25 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
       debug($, `${label}: turn ${turnId} not aborted: ${String(err)}`)
     }
   }
+}
+
+// ---- MOD-13: the effort a worker steps at ----------------------------------------------
+const stepEfforts = new Map<string, Effort | null>() // agentId → the effort its steps are rewritten to (null: the engine's), until its turn ends
+
+/** The effort for a worker's next step: the card's `effort:`, else the tier's entry; recorded on the attempt the first time. */
+async function stepEffort($: Host, agentId: string): Promise<Effort | undefined> {
+  const hit = stepEfforts.get(agentId)
+  if (hit !== undefined) return hit ?? undefined
+  const spawn = await spawnByAgent($, agentId)
+  if (!spawn || spawn.adhoc) return undefined
+  const effort = effortFor(spawn.tier, await storeGet<string>($, K.effort(spawn.task)), cfg.effortByTier)
+  stepEfforts.set(agentId, effort ?? null)
+  if (effort) {
+    const lane = laneOf(spawn)
+    const records = await loadAttempts($, spawn.task)
+    await storeSet($, K.tasks(spawn.task), patchRecord(records, spawn.subtask, spawn.attempt, { effort }, lane))
+  }
+  return effort
 }
 
 // ---- part 5E: friction the mod can see -------------------------------------------------
@@ -2589,6 +2627,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     out.push(`   repo=here: base=${f.base || 'the chain (origin/main, main, origin/master, master)'} · ignore=${f.ignore || '(none)'}`)
   }
   if (dryRun) return [...out, '', shown].join('\n')
+  // MOD-13: the card's own effort: (it wins over effortByTier for this task's workers); cleared when the card has none
+  await storeSet($, K.effort(id), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
 
   // GH-103: a prose scope with no globs is caught here, before the worktree and the spawn
   const shownScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
@@ -2970,6 +3010,7 @@ async function statusReport($: Host): Promise<string> {
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
     `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${cfg.maxWorkers} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
+    effortText(cfg.effortByTier),
     ...aliasLines(Object.fromEntries((await Promise.all(['haiku', 'sonnet', 'opus'].map(async a => [a, await storeGet<unknown>($, K.alias(a))] as const))).filter(([, v]) => v !== undefined)), await now($)),
     `base: ${cfg.baseRef || 'origin/main → main → origin/master → master'} · repo=here ignore: ${ignoreWithCards(cfg.ignore, cfg.cardDir).join(', ') || '(none)'}`,
   ].join('\n')
@@ -3475,6 +3516,14 @@ export const register: Register = (on, opts) => {
       void noteFriction($, { kind: 'denial', detail: `${String(e.tool)}: ${refused.deny.slice(0, 160)}`, at: await now($) })
       return refused
     }
+    // MOD-13: a worker past twice its ceiling is refused every call but its hand-back
+    if (e.agentId && String(e.tool) !== 'SubagentHandback') {
+      const over = await overSpendRefusal($, e.agentId)
+      if (over) {
+        void noteFriction($, { kind: 'denial', detail: `${String(e.tool)}: ${over.slice(0, 160)}`, at: await now($) })
+        return { deny: over }
+      }
+    }
     if (e.agentId && String(e.tool) === 'SubagentHandback') {
       const message = (e as unknown as { message?: unknown }).message
       if (typeof message === 'string') handbacks.set(e.agentId, message)
@@ -3491,6 +3540,9 @@ export const register: Register = (on, opts) => {
     const command = typeof e.command === 'string' ? e.command : ''
     const writes = gitWrites(command, cfg.guardBranches)
     if (writes.length === 0) return next(e)
+    // MOD-13: a worker the mod recorded is held to the same rule; its refusal names its task
+    const worker = await spawnByAgent($, e.agentId)
+    const who = worker && !worker.adhoc ? taskLabel(worker.task, worker.subtask) : undefined
     const base = await bashCwd($, e.agentId)
     const branches = new Map<string, string | undefined>()
     for (const w of writes) {
@@ -3500,7 +3552,7 @@ export const register: Register = (on, opts) => {
         if (!branches.has(dir)) branches.set(dir, await branchOf($, dir))
         current = branches.get(dir)
       }
-      const deny = guardDeny(w, current, cfg.guardBranches)
+      const deny = guardDeny(w, current, cfg.guardBranches, who)
       if (deny) {
         debug($, `git guard: ${deny} — ${command.slice(0, 160)}`)
         return { deny }
@@ -3576,6 +3628,7 @@ export const register: Register = (on, opts) => {
       const costed = await spawnByAgent($, agentId)
       const warned = costed ? await trackSpend($, costed, { agentId, ...(e.usage ? { usage: e.usage } : {}), answer: e.answer }) : false
       turnOf.delete(agentId)
+      stepEfforts.delete(agentId)
       // the answer plus the hand-back (GH-2), read once and only for an agent the mod judges
       let said: Promise<string> | undefined
       const saidOnce = () => (said ??= workerText($, agentId, e.answer))
@@ -3619,6 +3672,12 @@ export const register: Register = (on, opts) => {
     }
     await refreshStatus($)
     return out
+  })
+
+  // ---- turn.step: a worker steps at the effort its tier (or its card) names (MOD-13) ----
+  on('turn.step', async function* ($, e, next) {
+    const effort = e.agentId ? await stepEffort($, e.agentId) : undefined
+    return yield* next(effort !== undefined ? { ...e, effort } : e)
   })
 
   // ---- turn.start: the main loop is busy; nothing runs in the background meanwhile ---

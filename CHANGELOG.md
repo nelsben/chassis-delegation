@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Workers under the mod's hooks (MOD-13).** Now that the brain makes every
+  spawn, the mod uses what it sees. The git guard names a worker's task in its
+  refusal (`no push on main (T-7); ...`), for a `repo=here` worker as for the
+  brain; a worktree worker on its own branch is untouched. The spend ceiling
+  posts one row at `spend=` (task and dollars, once) and, at twice it, denies
+  the worker's next tool call (`T-6 is over twice its $2 ceiling; hand back now
+  with what you have`; `SubagentHandback` passes) beside the `over-spend`
+  verdict; the recorded `usd` still comes from the end-of-run accounting.
+  `turn.step` on a worker is rewritten to an effort by tier, from the new key
+  `effortByTier` (economy `low`, standard `medium`, frontier `high`; `0` or
+  empty leaves the engine's; a card's `effort:` wins), recorded on the attempt
+  and printed by `/delegation`. The brain's steps, `delegateOnly` and the brain
+  spend ignore agent-context calls as before. The text MOD-12 left is brought in
+  line: the `autoEscalate` and `maxWorkers` descriptions, the `_agentTypes` and
+  `_maxWorkers` scaffold notes, the `QueuedSpawn.model` doc, and the respawn
+  advice (`make the spawn block below (it names the model)`).
+
 - **The brain spawns, the mod shapes (MOD-12; public issue #22, option 1).**
   The engine steps a plugin's own hooks past any subagent that plugin starts
   with `$.agent.spawn`, and every worker used to start that way, so a dispatched

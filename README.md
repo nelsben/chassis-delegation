@@ -871,6 +871,12 @@ a worker of the task is still running.
 
     chassis-delegation: no <verb> on <branch>; branch first (git checkout -b agent/<domain>/<id>)
 
+A worker the mod recorded (matched by the `agentId` its tool calls carry) is
+held to the same rules, and its refusal names its task:
+`chassis-delegation: no push on main (T-7); branch first (...)`. A `repo=here`
+worker on `main` is refused a commit or a push like the brain; a worktree
+worker on its own `agent/<domain>/<id>` branch is untouched.
+
 To find the branch, the guard reads `git rev-parse --abbrev-ref HEAD` in the
 command's folder. It follows `cd` and `-C`, and a `checkout -b` earlier in the
 same command. A push that names a guarded branch (`git push origin main`,
@@ -909,6 +915,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `tierMap` | object | JSON string | `{economy: haiku, standard: sonnet, frontier: opus}` | tier → alias. `fable` is never spawned; it becomes opus, and when a brief, the caller or the map asks for fable the notice says so (`tier=frontier → opus (fable requested; fable is never spawned by the mod)`) and the attempt record keeps `requestedAlias: fable` |
 | `domains` | array | comma string | `frontend, backend, ops, dispatcher, cross, shared` | the domains a card may name |
 | `spendByTier` | object | JSON string | `{economy: 3, standard: 10, frontier: 25}` | dollars one attempt may spend, per tier (GH-106); `0` means no ceiling; merges per tier; `/dispatch` writes the tier's entry as `spend=` unless the card has its own `spend:` |
+| `effortByTier` | object | JSON string | `{economy: low, standard: medium, frontier: high}` | how hard a worker thinks at each step (MOD-13): `low`, `medium`, `high`, `xhigh` or `max`; `0` or empty leaves the engine's default; a card's own `effort:` wins; merges per tier |
 | `maxWorkers` | number | number (0 = unset) | `2` | briefed workers at once; the next one waits in a queue, and the mod says `ready:` when a slot frees |
 | `worktreeRoot` | string | string | `""` (siblings: `<root>-<id>`) | worktrees go to `<worktreeRoot>/<repo name>-<id>` |
 | `cardDir` | string | string | `agents/tasks` | the folder the task cards live in, relative to the repo root (no leading `/`, no `..`); `/dispatch` and the dispatch tool read cards from it. `init` writes `docs/cards` in a plugin repo. `--replay` stays on `agents/tasks/` |
@@ -1195,9 +1202,9 @@ steps or tool calls of a subagent the plugin spawned itself
 worker (public issue #22). Since MOD-12 no worker is such a subagent: `/dispatch`,
 the dispatch tool, a queued task and a respawn all hand the brain the Agent call
 to make, so every worker is the brain's own spawn and the mod's hooks see it,
-its tool calls (the git guard) and its turns. The checks below still read the
-worker's cost from its `turn.complete` events, so they run when a run (or a turn
-of it) ends; using the steps mid-run, and the effort control, is the next card.
+its tool calls (the git guard) and its turns. The spend checks below read the
+worker's cost from its `turn.complete` events, and act on the worker's next
+tool call; its steps are given an effort (see "Effort by tier").
 
 What the mod does with each worker's own cost (the cost formula below):
 
@@ -1207,6 +1214,8 @@ What the mod does with each worker's own cost (the cost formula below):
   count against the budget):
   `chassis-delegation: you have spent about $2.20 of a $2 ceiling; wrap up now and hand back with the report line`.
   Once per attempt. The worker carries on, so that turn's end is not judged.
+  The mod also posts one row to the conversation, naming the task and the
+  dollars: `chassis-delegation: T-6 spend $2.20 reached its $2 ceiling; the worker was told to wrap up and hand back`.
 - **At twice the ceiling.** The attempt's verdict is `over-spend`, and the mod
   posts:
 
@@ -1216,14 +1225,30 @@ What the mod does with each worker's own cost (the cost formula below):
   mod does not resume or respawn on it. If the engine hands the mod the id of
   the worker's running turn (`turn.start` carrying the subagent's `agentId`),
   the mod also ends that turn with `$.turn.abort`. The engine's `turn.start`
-  carries no `agentId` today, so the mod cannot stop a subagent: it posts the
-  row and records the verdict without stopping the worker.
+  carries no `agentId` today, so that is rarely possible; what stops the worker
+  is its next tool call, which the mod denies with one line (MOD-13):
+
+      chassis-delegation: T-6 is over twice its $2 ceiling; hand back now with what you have (SubagentHandback)
+
+  Only `SubagentHandback` is let through. A hand-back after that is today's
+  `over-spend`: the end-of-run accounting stays the source of the recorded `usd`.
 - **A hand-back wins.** A turn whose answer carries the report line is left to
   the verifier, whatever it cost.
 - **On the status line.** The status line and the queued-spawn refusal name
   each live worker with its cost so far: `(2 live: BE-310 $3.10, BE-314
   $1.20)`. That figure moves when a turn of the worker ends (a resumed worker
   shows its earlier runs).
+
+## Effort by tier
+
+The mod rewrites each of a worker's `turn.step` requests to an effort by the
+card's tier: `effortByTier`, built in as economy `low`, standard `medium`,
+frontier `high` (premium reads the frontier's). A card's own `effort:` (one of
+`low` ... `max`; `0` keeps the engine's) wins; `/dispatch` writes it to the store
+for the task. An entry of `0` or empty leaves the engine's default. The brain's
+own steps and an ad hoc agent's are never touched. The effort used is recorded
+on the attempt (`effort`), and `/delegation` prints
+`effort: economy low · standard medium · frontier high`.
 
 ## The cost formula
 

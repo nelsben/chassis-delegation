@@ -2,7 +2,7 @@ import { test, expect, describe } from 'claude-code/testing'
 import { parseVerbosity, parseClaimLine, verdictReason, amendClauses, shortNext, quietLine, deliveryFor } from '../hooks/lib/quiet'
 
 const RESUME = 'resume agent=agent-4 — SendMessage it the verifier lines below'
-const RESPAWN = 'respawn at frontier — same brief /s/briefs/T-4.brief.md, model omitted so the mod picks'
+const RESPAWN = 'respawn at frontier — same brief /s/briefs/T-4.brief.md, make the spawn block below (it names the model)'
 
 describe('verdictVerbosity', () => {
   test('line is the default; full and silent are taken as given; anything else reads as line', () => {

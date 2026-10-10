@@ -281,9 +281,12 @@ export function gitWrites(command: string, guarded: readonly string[]): GitWrite
   return writes
 }
 
-/** The deny for one write, given the branch its folder is on now (undefined when unknown). */
-export function guardDeny(w: GitWrite, currentBranch: string | undefined, guarded: readonly string[]): string | undefined {
-  const deny = (branch: string) => `chassis-delegation: no ${w.verb} on ${branch}; branch first (git checkout -b agent/<domain>/<id>)`
+/**
+ * The deny for one write, given the branch its folder is on now (undefined when
+ * unknown). MOD-13: a worker's refusal names its task (`no push on main (T-7)`).
+ */
+export function guardDeny(w: GitWrite, currentBranch: string | undefined, guarded: readonly string[], task?: string): string | undefined {
+  const deny = (branch: string) => `chassis-delegation: no ${w.verb} on ${branch}${task ? ` (${task})` : ''}; branch first (git checkout -b agent/<domain>/<id>)`
   if (w.namesGuarded) return deny(w.namesGuarded)
   if (w.pushSrcs) {
     // a push of other refs (a tag, another branch, a delete) is not a push of the current branch
