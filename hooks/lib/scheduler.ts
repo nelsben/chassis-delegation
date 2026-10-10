@@ -1,8 +1,9 @@
 // The worker scheduler (SPEC part 2F): at most `maxWorkers` briefed workers
 // run at once; a briefed spawn past that is queued in $.state. MOD-12 (#22):
 // the queue is advice, not a launcher. When a worker's slot frees the mod says
-// `ready: <id>` and the brain makes the spawn; the mod never starts a queued
-// worker itself. Ad hoc spawns (no brief) are never queued. Pure: no `$`.
+// `ready: <id>` and the brain makes the spawn. MOD-15: only a worktree row the
+// brain leaves unclaimed past readyFallbackMinutes is started by the mod itself.
+// Ad hoc spawns (no brief) are never queued. Pure: no `$`.
 import type { QueuedSpawn } from '../types'
 
 export const DEFAULT_MAX_WORKERS = 2
@@ -87,3 +88,45 @@ export const readyCount = (running: number, starting: number, max: number): numb
 
 /** MOD-12: the advice when a slot frees for a queued task: the brain makes its spawn. */
 export const readyLine = (label: string, task: string): string => `ready: ${label} — run its spawn block (/dispatch ${task} prints it again)`
+
+// ---- MOD-15: a ready row the brain leaves unclaimed ------------------------------------
+
+/** MOD-15: minutes a ready row waits for the brain before the mod starts a worktree worker itself; 0 turns the fallback off. */
+export const DEFAULT_READY_FALLBACK_MINUTES = 10
+
+/** `readyFallbackMinutes`: a number of minutes, 0 meaning off; anything else is the default. */
+export const parseReadyFallbackMinutes = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : DEFAULT_READY_FALLBACK_MINUTES)
+
+/** Has a row that became ready at `since` waited `minutes` (0: never due)? */
+export const fallbackDue = (since: number, now: number, minutes: number): boolean => minutes > 0 && now - since >= minutes * 60000
+
+/** Milliseconds until a row that became ready at `since` is due (never below one second, so a timer never spins). */
+export const fallbackDelay = (since: number, now: number, minutes: number): number => Math.max(1000, since + minutes * 60000 - now)
+
+/**
+ * What kind of brief a queued row names, as its header says: a worktree brief
+ * (the default) may be started by the fallback; `repo=here` shares the person's
+ * checkout and `repo=none` has no worktree, so those wait for the brain; a
+ * header that could not be read is not guessed at.
+ */
+export type FallbackKind = 'worktree' | 'here' | 'none' | 'unknown'
+export const fallbackKind = (header: { repo?: string } | undefined): FallbackKind =>
+  header === undefined ? 'unknown' : header.repo === 'here' ? 'here' : header.repo === 'none' ? 'none' : 'worktree'
+
+const NEVER_STARTS: Readonly<Record<Exclude<FallbackKind, 'worktree'>, string>> = {
+  here: 'a repo=here worker shares your checkout, so the mod never starts it',
+  none: 'a repo=none worker has no worktree, so the mod never starts it',
+  unknown: 'its brief could not be read, so the mod never starts it',
+}
+
+/** The ready line of a row the fallback will never start, once it has waited past the timeout: it says how long. */
+export const readyWaitLine = (label: string, task: string, waited: number, kind: Exclude<FallbackKind, 'worktree'>): string =>
+  `${readyLine(label, task)} — waited ${waited} min; ${NEVER_STARTS[kind]}`
+
+/**
+ * The row posted when the fallback started a ready worktree row itself: it
+ * ran outside the mod's hooks, and the brain should know what that costs.
+ */
+export const fallbackRow = (v: { label: string; waited: number; attempt: number; budget: number; agentId?: string; alias?: string }): string =>
+  `chassis-delegation: ${v.label} was ready for ${v.waited} min and the brain had not spawned it; the mod started it itself (attempt ${v.attempt}/${v.budget}${v.alias ? `, ${v.alias}` : ''}${v.agentId ? `, agent ${v.agentId}` : ''}). ` +
+  "It runs outside the mod's hooks: no git guard, no effort setting, cost known only at the end."

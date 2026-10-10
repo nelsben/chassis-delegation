@@ -2773,3 +2773,286 @@ describe('MOD-13: workers under the mod hooks', () => {
     expect(w.steps).toEqual([{ agentId: 'agent-6', effort: 'xhigh' }])
   })
 })
+
+describe('MOD-15: work keeps moving without the person', () => {
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const REPORT = (sha: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass files=a/x.ts]]`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const brief = (task: string, over = '') => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard${over}]]\nDo it.`
+  const report = (task: string) => `[[report v=1 task=${task} subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]`
+  const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
+  type Dollar = Parameters<NonNullable<Parameters<typeof test>[2]>>[0]
+  const stateOf = async ($: Dollar) => String((await $.prompt.compose(composeInput(['Agent']))).sections.find(x => x.id === 'chassis-delegation:state')?.text ?? '')
+  const POSTURE = 'without asking the person'
+  const postureLines = (text: string) => text.split('\n').filter(l => l.includes(POSTURE))
+  /** Two briefed workers fill the house and a third waits: T-1 and T-2 run, `queued` waits. */
+  const fullHouse = async ($: Dollar, w: { state: Map<string, unknown> }, queued: string, over = '') => {
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    const denied = await $.agent.spawn(spawnInput({ prompt: brief(queued, over), tool_use_id: 'toolu_C0000009' }))
+    expect(denied.deny).toContain(`queued: ${queued} — the mod will tell you when a slot frees`)
+    expect(queueOf(w).map(q => q.task)).toEqual([queued])
+  }
+
+  test('a verified hand-back wakes the brain once: one prompt.submit holding the verdict row and next=accept, never asUser', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    expect(w.submitted).toEqual([])
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(w.submitted).toHaveLength(1)
+    const sent = w.submitted[0]
+    expect(sent?.text).toContain('chassis-delegation: T-4 attempt 1/3 verified')
+    expect(sent?.text).toContain('next=accept')
+    expect((sent?.origin as { asUser?: true } | undefined)?.asUser).toBeUndefined()
+    // the row is in the conversation too, and a late repeat fire of the same turn neither posts nor wakes again
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 verified')
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(w.submitted).toHaveLength(1)
+  })
+
+  test('wakeOnVerdict false: the row is posted and nothing is submitted', { options: { ...GM, wakeOnVerdict: false } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 verified')
+    expect(w.submitted).toEqual([])
+  })
+
+  test('a refuted hand-back wakes the brain with its next action (resume), and a respawn verdict with the spawn block', { options: { autoEscalate: true, verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('verdict=refuted task=T-4 attempt=1/3')
+    expect(w.submitted[0]?.text).toContain('next=resumed agent=agent-4 (autoEscalate)')
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('5678abcd')))
+    expect(w.submitted).toHaveLength(2)
+    expect(w.submitted[1]?.text).toContain('verdict=refuted task=T-4 attempt=2/3')
+    expect(spawnCallOf(String(w.submitted[1]?.text))).toMatchObject({ model: 'opus', description: 'T-4 frontier opus' })
+  })
+
+  test('a hand-back that frees a slot submits the ready: line, in the same one submit as its verdict row', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-9')
+    expect(w.submitted).toEqual([])
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('chassis-delegation: T-1 attempt 1/3')
+    expect(w.submitted[0]?.text).toContain('ready: T-9 — run its spawn block (/dispatch T-9 prints it again)')
+    // said once: the second hand-back does not say ready for it again
+    await $.turn.complete(turnInput('agent-2', report('T-2')))
+    expect(w.submitted).toHaveLength(2)
+    expect(w.submitted[1]?.text).not.toContain('ready: T-9')
+  })
+
+  test('the brain’s own --verify, in its own turn, wakes nothing', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const VBRIEF = `${ROOT}/.delegation/briefs/T-4.brief.md`
+    const CARD_NAME = 'T-4-the-thing.md'
+    const CARD = '---\nid: T-4\ntitle: The thing\ndomain: frontend\ntier: standard\nstatus: queued\nscope: [a/**]\nforbid: [b/**]\nred_test: none\ngate: prettier\nbudget: 3-attempts\n---\n## Why\nA card.\n'
+    const WT = `${ROOT}-T-4`
+    const HEAD = 'abcdef1' + '2'.repeat(33)
+    const worker = (argv: string[]): RunAnswer | undefined => {
+      if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+      if (argv[0] !== 'git') return undefined
+      const sub = argv.slice(3)
+      const last = sub[sub.length - 1] ?? ''
+      if (sub[0] === 'rev-parse' && sub[1] === '--abbrev-ref') return { exitCode: 0, stdout: 'agent/frontend/T-4\n' }
+      if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) return { exitCode: 0, stdout: `${HEAD}\n` }
+      if (sub[0] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
+      if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${HEAD}\n` }
+      if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
+      if (sub[0] === 'diff') return { exitCode: 0, stdout: sub.includes('--name-status') ? 'M\ta/x.ts\n' : 'a/x.ts\n' }
+      if (sub[0] === 'log') return { exitCode: 0, stdout: `${'3'.repeat(40)}\n${'4'.repeat(40)}\n` }
+      if (sub[0] === 'status') return { exitCode: 0, stdout: '' }
+      return undefined
+    }
+    const w = world(on, { files: { [VBRIEF]: HEADER + '\nbody', [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD }, dirs: { [WT]: [], [`${ROOT}/agents/tasks`]: [CARD_NAME] }, run: worker, agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${VBRIEF}. Read it whole, then follow it exactly.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'All done.')) // no report: a verdict the mod posts in the background, so one wake
+    expect(w.submitted).toHaveLength(1)
+    const out = String((await $.command.run(commandInput(`T-4 --verify ${HEAD}`))).text)
+    expect(out).toContain('chassis-delegation: verdict=verified task=T-4')
+    expect(w.submitted).toHaveLength(1) // the verdict the brain produced itself in its own turn wakes nobody
+  })
+
+  test('a foreground worker’s verdict rides its Agent result: no submit', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
+    on('tool.call', { tool: 'Agent' }, () => agentResult('Done.\n' + REPORT('1234abcd'), 'agent-4'))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}. Read it whole.`, tool_use_id: 'toolu_fg000001' }))
+    const r = await $.tool.call({ tool: 'Agent', description: 'T-4', prompt: `Your brief is the file ${BRIEF}. Read it whole.` })
+    expect((r.context ?? []).join('\n')).toContain('verdict=refuted task=T-4')
+    expect(w.submitted).toEqual([])
+  })
+
+  test('the delegation state carries one posture line while a row is ready, and not while it only waits or nothing is ready', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-9')
+    const waiting = await stateOf($)
+    expect(waiting).toContain('- queued: T-9 (position 1)')
+    expect(postureLines(waiting)).toEqual([])
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    const ready = await stateOf($)
+    expect(ready).toContain('- ready: T-9 — run its spawn block')
+    expect(postureLines(ready)).toHaveLength(1)
+    expect(postureLines(ready)[0]).toContain('make a ready: row’s spawn call or a respawn block’s Agent call')
+    expect(postureLines(ready)[0]).toContain('over-spend')
+    expect(ready.indexOf(POSTURE)).toBeLessThan(ready.indexOf('- ready: T-9')) // right under the header
+    // the brain makes the call: nothing is ready, T-2 and T-9 run
+    await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_D0000009' }))
+    expect(postureLines(await stateOf($))).toEqual([])
+  })
+
+  test('the delegation state carries the posture line while a respawn block is pending (an owed respawn), and not for an owed resume', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+    const verifier = nativeRun()
+    // the work is not on origin/main (MOD-4's retire check): the owed row stays
+    const run = (argv: string[]): RunAnswer | undefined => (argv.includes('--is-ancestor') ? { exitCode: 1, stdout: '' } : verifier(argv))
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd'))) // resumed by autoEscalate: nothing owed
+    expect(postureLines(await stateOf($))).toEqual([])
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('5678abcd'))) // the second failure: the respawn block is the brain's to make
+    const text = await stateOf($)
+    expect(text).toContain('- owed: T-4: respawn at frontier')
+    expect(postureLines(text)).toHaveLength(1)
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test("readyFallbackMinutes 1: a ready worktree row left unclaimed is self-spawned, recorded with source fallback, and the row says it ran outside the mod's hooks", { options: { readyFallbackMinutes: 1 } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-9')
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    expect(w.spawns).toHaveLength(2)
+    await w.clock.advance(30_000)
+    expect(w.spawns).toHaveLength(2) // not yet
+    await w.clock.advance(30_000)
+    expect(w.spawns).toHaveLength(3)
+    expect(String(w.spawns[2]?.prompt)).toContain('task=T-9')
+    expect(w.spawnedBy.get('agent-3')).toBe('chassis-delegation')
+    expect(records(w, 'T-9')).toHaveLength(1)
+    expect(records(w, 'T-9')[0]).toMatchObject({ task: 'T-9', attempt: 1, kind: 'spawn', source: 'fallback', agentId: 'agent-3', verdict: 'pending', tier: 'standard' })
+    expect(queueOf(w)).toEqual([])
+    const row = w.appended.map(a => a.text).find(t => t.includes('T-9') && t.includes("outside the mod's hooks")) ?? ''
+    expect(row).toContain('no git guard')
+    expect(row).toContain('no effort setting')
+    expect(row).toContain('cost known only at the end')
+    expect(row).toContain('agent-3')
+    expect(w.toasts.some(t => t.includes('T-9'))).toBe(true)
+    // nothing more happens on later ticks
+    await w.clock.advance(5 * 60_000)
+    expect(w.spawns).toHaveLength(3)
+  })
+
+  test('the fallback spawn is the whole decision: tier, budget and slot are taken, and the worker is judged at its hand-back as before', { options: { readyFallbackMinutes: 1, verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-9')
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    await w.clock.advance(60_000)
+    expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/3')
+    // the slot is held: a fourth briefed spawn waits
+    const other = await $.agent.spawn(spawnInput({ prompt: brief('T-5'), tool_use_id: 'toolu_E0000005' }))
+    expect(other.deny).toContain('queued: T-5')
+    const before = w.submitted.length
+    await $.turn.complete(turnInput('agent-3', report('T-9')))
+    expect(records(w, 'T-9')[0]).not.toMatchObject({ verdict: 'pending' })
+    expect(w.submitted.length).toBeGreaterThan(before) // its verdict wakes the brain like any other
+  })
+
+  test('a ready repo=here row is never self-spawned; after the timeout its ready line names the wait', { options: { readyFallbackMinutes: 1 } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-8', ' repo=here')
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    const before = await stateOf($)
+    expect(before).toContain('- ready: T-8 — run its spawn block (/dispatch T-8 prints it again)')
+    expect(before).not.toContain('waited')
+    await w.clock.advance(60_000)
+    await w.clock.advance(5 * 60_000)
+    expect(w.spawns).toHaveLength(2)
+    expect(records(w, 'T-8')).toEqual([])
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-8'])
+    const after = await stateOf($)
+    expect(after).toContain('- ready: T-8 — run its spawn block (/dispatch T-8 prints it again)')
+    expect(after).toMatch(/- ready: T-8 .* waited 6 min/)
+    expect(after).toContain('repo=here')
+  })
+
+  test('a row the brain spawns before the timeout is not self-spawned a second time', { options: { readyFallbackMinutes: 1 } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-9')
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_D0000009' }))
+    expect(w.spawns).toHaveLength(3)
+    await w.clock.advance(10 * 60_000)
+    expect(w.spawns).toHaveLength(3)
+    expect(records(w, 'T-9')).toHaveLength(1)
+    expect(records(w, 'T-9')[0]).toMatchObject({ source: 'brief' })
+  })
+
+  test('readyFallbackMinutes 0 is off: a ready row waits for the brain however long', { options: { readyFallbackMinutes: 0 } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-9')
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    await w.clock.advance(120 * 60_000)
+    expect(w.spawns).toHaveLength(2)
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-9'])
+    expect(await stateOf($)).not.toContain('waited')
+  })
+
+  test('readyFallbackMinutes defaults to 10', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-9')
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    await w.clock.advance(9 * 60_000)
+    expect(w.spawns).toHaveLength(2)
+    await w.clock.advance(60_000)
+    expect(w.spawns).toHaveLength(3)
+    expect(records(w, 'T-9')[0]).toMatchObject({ source: 'fallback' })
+  })
+
+  test('a row still behind a full house is not ready, so the timeout does not start it', { options: { readyFallbackMinutes: 1 } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await fullHouse($, w, 'T-9')
+    await w.clock.advance(30 * 60_000)
+    expect(w.spawns).toHaveLength(2)
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-9'])
+  })
+
+  test('a fallback spawn the engine refuses starts nothing: the row keeps its place, the toast says why, and it is tried again a full wait later', { options: { readyFallbackMinutes: 1 } }, async ($, on) => {
+    const w = world(on, { listAgents: true, spawnDeny: e => (String(e.prompt).includes('task=T-9') ? 'the engine is busy' : undefined) })
+    await fullHouse($, w, 'T-9')
+    await $.turn.complete(turnInput('agent-1', report('T-1')))
+    await w.clock.advance(60_000)
+    expect(w.spawns).toHaveLength(2)
+    expect(w.toasts).toContain('ready T-9 not started: the engine is busy')
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-9'])
+    expect(records(w, 'T-9')).toEqual([])
+    const toasts = () => w.toasts.filter(t => t.includes('ready T-9 not started')).length
+    expect(toasts()).toBe(1)
+    await w.clock.advance(30_000)
+    expect(toasts()).toBe(1) // not before the next full wait
+    await w.clock.advance(30_000)
+    expect(toasts()).toBe(2)
+  })
+
+  test('an over-spend verdict wakes the brain once; the spend warning before it is not a verdict', { options: { ...GM } }, async ($, on) => {
+    const SONNET = 'claude-sonnet-5-5' // $2 in, $10 out per million
+    const w = world(on, { files: { [BRIEF]: HEADER.replace(' budget=', ' spend=2 budget=') + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'working', usage(SONNET, 600_000, 100_000))) // $2.20: the warning
+    expect(w.submitted).toEqual([])
+    await $.turn.complete(turnInput('agent-4', 'more', usage(SONNET, 1_000_000, 0))) // $4.20: twice the ceiling
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'over-spend' })
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('chassis-delegation: T-4 attempt 1/3 over-spend')
+  })
+
+  test('a submit the engine refuses costs nothing: the row is posted, the verdict kept, and the debug log says the brain was not woken', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4', skip: ['prompt.submit'] })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 verified')
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'verified' })
+    expect(w.debugLogs.some(l => l.startsWith('chassis-delegation: brain not woken:'))).toBe(true)
+  })
+})

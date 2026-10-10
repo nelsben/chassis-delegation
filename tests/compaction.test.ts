@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { renderState, isEmptyState, compactBlock, appendInstructions, composeSection, emptySnapshot, owedRowsFrom, splitOwed, KEEP_VERBATIM, SECTION_ID, type StateSnapshot } from '../hooks/lib/compaction'
+import { renderState, isEmptyState, compactBlock, appendInstructions, composeSection, emptySnapshot, owedRowsFrom, splitOwed, KEEP_VERBATIM, SECTION_ID, ACT_POSTURE, actPending, isRespawnOwed, type StateSnapshot } from '../hooks/lib/compaction'
 
 // 2026-10-03 14:00Z
 const AT = Date.UTC(2026, 9, 3, 14, 0)
@@ -110,5 +110,49 @@ describe('MOD-4: the block keeps the live rows in full and counts the rest', () 
     expect(renderState({ ...emptySnapshot(), owed: Array.from({ length: 60 }, (_, i) => `A-${i}: resume`), owedOlder: ['Z-1'] }).length).toBeLessThanOrEqual(40)
     expect(compactBlock(s)).toContain('- 2 older owed rows: A-3, A-4')
     expect(composeSection(s)?.text.split('\n').at(-1)).toBe('- 2 older owed rows: A-3, A-4')
+  })
+})
+
+describe('MOD-15: the posture line for a brain that has a call to make', () => {
+  const READY = 'ready: BE-9 — run its spawn block (/dispatch BE-9 prints it again)'
+  const RESPAWN = 'T-4: respawn at frontier — same brief /s/briefs/T-4.brief.md, make the spawn block below (it names the model)'
+  const lines = (s: StateSnapshot, posture: readonly string[] = []) => (composeSection(s, posture)?.text ?? '').split('\n')
+
+  test('a ready row, or an owed respawn, carries the posture line once, right under the header', () => {
+    for (const s of [{ ...emptySnapshot(), queued: [{ task: 'BE-9', position: 1, ready: READY }] }, { ...emptySnapshot(), owed: [RESPAWN] }]) {
+      expect(actPending(s)).toBe(true)
+      const out = lines(s)
+      expect(out[0]).toBe('Delegation state (chassis-delegation):')
+      expect(out[1]).toBe(ACT_POSTURE)
+      expect(out.filter(l => l === ACT_POSTURE)).toHaveLength(1)
+    }
+    expect(ACT_POSTURE).toContain('without asking the person')
+    expect(ACT_POSTURE).toContain('over-spend')
+  })
+
+  test('not while a row only waits, a resume or a check is owed, or nothing is ready', () => {
+    for (const s of [
+      { ...emptySnapshot(), queued: [{ task: 'BE-9', position: 1 }] },
+      { ...emptySnapshot(), owed: ['T-4: resume agent=agent-9', 'T-5: check by hand — unverified is not a pass', 'T-6: verify sha=abc1234'] },
+      { ...emptySnapshot(), running: [{ task: 'T-1', tier: 'standard', agentId: 'a1' }] },
+    ]) {
+      expect(actPending(s)).toBe(false)
+      expect(lines(s)).not.toContain(ACT_POSTURE)
+    }
+    expect(composeSection(emptySnapshot())).toBeUndefined()
+  })
+
+  test('an owed respawn is told from the other owed rows by its advice', () => {
+    expect(isRespawnOwed(RESPAWN)).toBe(true)
+    expect(isRespawnOwed('T-1/ui: respawn at standard — same prompt, make the spawn block below (it names the model)')).toBe(true)
+    expect(isRespawnOwed('T-4: resume agent=agent-9')).toBe(false)
+    expect(isRespawnOwed('T-4: stop — budget exhausted for T-4 (3 attempts); raise budget= to continue')).toBe(false)
+  })
+
+  test('a premium brain keeps its own posture lines first; the cap of 40 lines holds', () => {
+    const s = { ...emptySnapshot(), queued: [{ task: 'BE-9', position: 1, ready: READY }], owed: Array.from({ length: 60 }, (_, i) => `A-${i}: resume`) }
+    const out = lines(s, ['You are the brain on a premium model.'])
+    expect(out.slice(0, 3)).toEqual(['Delegation state (chassis-delegation):', 'You are the brain on a premium model.', ACT_POSTURE])
+    expect(out.length).toBeLessThanOrEqual(40)
   })
 })

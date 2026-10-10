@@ -159,7 +159,7 @@ import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detect
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
-import { alreadyQueuedDeny, enqueue, hasSlot, isFinalDeny, isQueuedDeny, promptKey, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, runningDeny, startingOthers, waitedMinutes } from './lib/scheduler'
+import { alreadyQueuedDeny, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, promptKey, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, runningDeny, startingOthers, waitedMinutes, type FallbackKind } from './lib/scheduler'
 import {
   aliasOf,
   CLASSIFIER_LABELS,
@@ -410,6 +410,10 @@ type Config = {
   delegateOnly: 'off' | 'warn' | 'deny'
   /** MOD-7: owner/name /delegation debrief post files issues in; '' = posting is off. */
   issueRepo: string
+  /** MOD-15: a verdict row is followed by a `$.prompt.submit`, a turn of the brain's own. */
+  wakeOnVerdict: boolean
+  /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
+  readyFallbackMs: number
 }
 
 function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: string[] } {
@@ -467,6 +471,8 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       effortByTier: eff.effortByTier,
       delegateOnly: eff.delegateOnly,
       issueRepo: eff.issueRepo,
+      wakeOnVerdict: o.wakeOnVerdict !== false,
+      readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
     },
   }
 }
@@ -509,6 +515,12 @@ let slotSeq = 0
 const starting = new Map<number, string>() // slot token → the task label of a spawn holding a slot before $.agent.list shows it
 /** MOD-12: the queued tasks the mod has said `ready:` for and that are still ready; each is said once. */
 const announced = new Set<string>()
+/** MOD-15: label → ms the queued row became ready (the fallback's clock); a row leaves with the queue or when it is no longer ready. */
+const readySince = new Map<string, number>()
+/** MOD-15: ready rows the fallback has looked at past their timeout and will not start (repo=here, repo=none, an unreadable brief). */
+const fallbackSkipped = new Set<string>()
+let fallbackTimer: { cancel: () => void } | undefined
+let fallbackBusy = false
 // promptKey → what to record once the spawn hook sees the agent id of a debrief or eval runner the mod started
 const runnerStarted = new Map<string, (agentId: string) => Promise<void>>()
 const selfDecided = new Set<string>() // promptKeys of spawns spawnSelf has decided: the hook passes them through
@@ -1004,29 +1016,120 @@ async function dropQueued($: Host, task: string, subtask: string): Promise<Queue
     const at = queuedIndex(queue, task, subtask)
     if (at < 0) return undefined
     await writeQueue($, queue.filter((_, i) => i !== at))
+    // MOD-15: it is no longer waiting, ready or otherwise
+    readySince.delete(taskLabel(task, subtask))
+    fallbackSkipped.delete(taskLabel(task, subtask))
     return queue[at]
   })
 }
+
+/** MOD-15: the queued rows a free slot now waits for, head first; `exclude` is the worker whose turn just ended. */
+async function readyQueued($: Host, exclude?: string): Promise<QueuedSpawn[]> {
+  const queue = await readQueue($)
+  if (queue.length === 0) return []
+  const live = await liveState($, exclude)
+  return queue.slice(0, readyCount(live.workers.length, starting.size, cfg.maxWorkers))
+}
+
+const queuedLabel = (q: QueuedSpawn): string => taskLabel(q.task, q.subtask ?? 'main')
 
 /**
  * MOD-12: the queue is advice. The queued rows a free slot now waits for
  * (head first, as many as the slots free), each named once while it stays
  * ready: `ready: <id> — run its spawn block`. `exclude` is the worker whose
- * turn just ended. The mod starts nothing; the brain makes the spawn.
+ * turn just ended. The brain makes the spawn; MOD-15: a worktree row it leaves
+ * unclaimed past readyFallbackMinutes is started by the fallback (selfSpawnReady).
  */
 async function readyRows($: Host, exclude?: string): Promise<string[]> {
-  const queue = await readQueue($)
-  if (queue.length === 0) {
-    announced.clear()
-    return []
-  }
-  const live = await liveState($, exclude)
-  const ready = queue.slice(0, readyCount(live.workers.length, starting.size, cfg.maxWorkers)).map(q => ({ label: taskLabel(q.task, q.subtask ?? 'main'), task: q.task }))
+  const ready = (await readyQueued($, exclude)).map(q => ({ label: queuedLabel(q), task: q.task }))
   const stillReady = new Set(ready.map(r => r.label))
   for (const label of [...announced]) if (!stillReady.has(label)) announced.delete(label)
+  await noteReady($, ready.map(r => r.label), true)
   const fresh = ready.filter(r => !announced.has(r.label))
   for (const r of fresh) announced.add(r.label)
   return fresh.map(r => readyLine(r.label, r.task))
+}
+
+/**
+ * MOD-15: the clock of the fallback. A row seen ready for the first time is
+ * stamped now; `prune` (the hand-back and the timer, which know the whole
+ * ready set) drops the stamps of rows no longer ready. A new stamp arms the timer.
+ */
+async function noteReady($: Host, labels: readonly string[], prune: boolean): Promise<void> {
+  if (prune) {
+    for (const label of [...readySince.keys()]) if (!labels.includes(label)) readySince.delete(label)
+    for (const label of [...fallbackSkipped]) if (!labels.includes(label)) fallbackSkipped.delete(label)
+  }
+  const t = await now($)
+  let fresh = false
+  for (const label of labels) {
+    if (!readySince.has(label)) {
+      readySince.set(label, t)
+      fresh = true
+    }
+  }
+  if (fresh) await armFallback($)
+}
+
+/** (Re)arms the one timer of the fallback at the soonest ready row still to be looked at. */
+async function armFallback($: Host): Promise<void> {
+  fallbackTimer?.cancel()
+  fallbackTimer = undefined
+  if (cfg.readyFallbackMs <= 0) return
+  const waiting = [...readySince.entries()].filter(([label]) => !fallbackSkipped.has(label)).map(([, since]) => since)
+  if (waiting.length === 0) return
+  const t = await now($)
+  try {
+    fallbackTimer = $.clock.after(fallbackDelay(Math.min(...waiting), t, cfg.readyFallbackMs / MIN_MS), () => void fallbackCheck($))
+  } catch (err) {
+    debug($, `ready fallback not armed: ${String(err)}`)
+  }
+}
+
+/** MOD-15: what kind of brief a queued row names: the header in its prompt, else the brief file's. */
+async function queuedKind($: Host, q: QueuedSpawn): Promise<FallbackKind> {
+  const inline = parseHeader(q.prompt)
+  if (inline) return fallbackKind(inline)
+  const path = findBriefPath(q.prompt)
+  const text = path ? await readText($, path) : undefined
+  return fallbackKind(text !== undefined ? parseHeader(text) : undefined)
+}
+
+/**
+ * MOD-15: the timer's check. A ready row the brain left unclaimed for
+ * readyFallbackMinutes is started through spawnSelf when its brief is a worktree
+ * brief, as every queued row was before MOD-12; any other row is left for the
+ * brain, and its ready line says how long it has waited. A row that is no longer
+ * ready, or that the brain spawned meanwhile, is not touched.
+ */
+async function fallbackCheck($: Host): Promise<void> {
+  fallbackTimer = undefined
+  if (cfg.readyFallbackMs <= 0 || fallbackBusy) return
+  fallbackBusy = true
+  try {
+    for (let guard = 0; guard < 20; guard++) {
+      const ready = await readyQueued($)
+      await noteReady($, ready.map(queuedLabel), true)
+      const t = await now($)
+      const due = ready.find(q => !fallbackSkipped.has(queuedLabel(q)) && fallbackDue(readySince.get(queuedLabel(q)) ?? t, t, cfg.readyFallbackMs / MIN_MS))
+      if (!due) break
+      const label = queuedLabel(due)
+      const kind = await queuedKind($, due)
+      if (kind !== 'worktree') {
+        fallbackSkipped.add(label)
+        debug($, `ready ${label} waited past readyFallbackMinutes; it is a ${kind === 'unknown' ? 'brief the mod could not read' : `repo=${kind} brief`}, so the mod does not start it`)
+        continue
+      }
+      const started = await selfSpawnReady($, due, waitedMinutes(readySince.get(label) ?? t, t))
+      // refused for now (the engine busy): another full wait before it is tried again
+      if (!started && (await readQueue($)).some(q => queuedLabel(q) === label)) readySince.set(label, t)
+    }
+  } catch (err) {
+    debug($, `ready fallback failed: ${String(err)}`)
+  } finally {
+    fallbackBusy = false
+    await armFallback($)
+  }
 }
 
 // ---- part 2B: where a verdict goes -------------------------------------------------
@@ -1047,6 +1150,23 @@ async function appendRow($: Host, row: string) {
     debug($, `row not appended: ${String(err)}`)
     $.ui.log(row)
     $.ui.toast(row.split('\n')[0] ?? row)
+  }
+}
+
+/**
+ * MOD-15: a turn of the brain's own. Once a verdict row (and any ready line or
+ * respawn block with it) is in the conversation, the same text is submitted as
+ * the plugin's message, never as the person's words: the model reads it as "The
+ * chassis-delegation plugin sent a message" and acts, once the session is idle
+ * (typed over, the engine queues it until the person's prompt is done). The
+ * brain's own `--verify` and a foreground Agent result never come here.
+ */
+async function wakeBrain($: Host, text: string): Promise<void> {
+  if (!cfg.wakeOnVerdict || text === '') return
+  try {
+    await $.prompt.submit({ text })
+  } catch (err) {
+    debug($, `brain not woken: ${String(err)}`)
   }
 }
 
@@ -1140,6 +1260,7 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
   await noteRecent($, { task: label, attempt: spawnIn.attempt, verdict: 'over-spend', line: row, at: t, owed: `${label}: ${next}` })
   await appendLedger($, { ...(judged ?? { task: spawnIn.task, subtask: spawnIn.subtask, attempt: spawnIn.attempt }), verdict: 'over-spend', usd: own, next, sessionId: await sessionIdOf($) })
   await appendRow($, row)
+  await wakeBrain($, row)
   // the worker's running turn, when the engine gave us its id (a subagent's turn.start carries none today)
   const turnId = spawnIn.agentId ? turnOf.get(spawnIn.agentId) : undefined
   if (turnId) {
@@ -1209,10 +1330,25 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   s.pending = live.pending
   // MOD-12: the rows a free slot waits for read `ready:`; the brain makes their spawn
   const free = readyCount(live.workers.length, starting.size, cfg.maxWorkers)
-  s.queued = (await readQueue($)).map((q, i) => {
-    const label = taskLabel(q.task, q.subtask ?? 'main')
-    return { task: label, position: i + 1, ...(i < free ? { ready: readyLine(label, q.task) } : {}) }
-  })
+  const queue = await readQueue($)
+  // MOD-15: the clock of the fallback starts here too, for a slot that freed with no hand-back
+  await noteReady($, queue.slice(0, free).map(queuedLabel), false)
+  const clock = await now($)
+  s.queued = []
+  for (const [i, q] of queue.entries()) {
+    const label = queuedLabel(q)
+    let line: string | undefined
+    if (i < free) {
+      line = readyLine(label, q.task)
+      // MOD-15: a row the fallback will never start says how long it has waited, once it is past the timeout
+      const since = readySince.get(label)
+      if (since !== undefined && fallbackDue(since, clock, cfg.readyFallbackMs / MIN_MS)) {
+        const kind = await queuedKind($, q)
+        if (kind !== 'worktree') line = readyWaitLine(label, q.task, waitedMinutes(since, clock), kind)
+      }
+    }
+    s.queued.push({ task: label, position: i + 1, ...(line !== undefined ? { ready: line } : {}) })
+  }
   if (!sid) return s
   const recent = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
   s.recent = recent.map(r => ({ line: r.line, at: r.at }))
@@ -3130,7 +3266,7 @@ async function runUpdate($: Host): Promise<string> {
 
 // ---- the spawn decision: tier, budget, slot, record, drift ------------------------------
 /** What the spawn decision reads of an `agent.spawn` input (the hook's own, or one the mod builds). */
-type SpawnEvent = { tool_use_id: string; prompt: string; description: string; subagentType: string; model?: string; cwd?: string; name?: string }
+type SpawnEvent = { tool_use_id: string; prompt: string; description: string; subagentType: string; model?: string; cwd?: string; name?: string; /** MOD-15: the mod's own fallback spawn of a ready row: its record says so. */ fallback?: true }
 
 /**
  * What a spawn's prompt says of its task, read once: the brief named (or the
@@ -3356,7 +3492,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       lineage: attempt,
       tier,
       alias,
-      source: pick.source,
+      source: e.fallback ? 'fallback' : pick.source,
       resolvedModel: res.model,
       verdict: 'pending',
       at: t,
@@ -3447,12 +3583,15 @@ async function prepareSpawn($: Host, o: { briefPath: string; subagentType: strin
  * A spawn the mod makes itself: decided by `decideSpawn`, started with
  * `$.agent.spawn`. MOD-12 (#22): only the debrief and eval runners start this
  * way; the engine steps the mod's own hooks past an agent it spawns, so a
- * worker never does. Should the engine route it back through this plugin's
- * spawn hook, the hook passes it through untouched (it is decided already)
- * and reports the agent id it saw; else the id comes from the call's result,
- * else from `$.agent.list()` (the one new agent with this description).
+ * worker never does. MOD-15: but for the fallback (selfSpawnReady), which
+ * starts a ready worktree row the brain left unclaimed, knowing what that
+ * costs: no git guard, no effort setting, cost only at the end. Should the
+ * engine route it back through this plugin's spawn hook, the hook passes it
+ * through untouched (it is decided already) and reports the agent id it saw;
+ * else the id comes from the call's result, else from `$.agent.list()` (the
+ * one new agent with this description).
  */
-async function spawnSelf($: Host, input: { prompt: string; description: string; subagentType: string; model?: string; cwd?: string }): Promise<AgentSpawnResult> {
+async function spawnSelf($: Host, input: { prompt: string; description: string; subagentType: string; model?: string; cwd?: string; fallback?: true }): Promise<AgentSpawnResult> {
   const pk = promptKey(input)
   const before = new Set((await agentList($)).map(a => a.id))
   selfDecided.add(pk)
@@ -3469,6 +3608,35 @@ async function spawnSelf($: Host, input: { prompt: string; description: string; 
     selfDecided.delete(pk)
     selfIds.delete(pk)
   }
+}
+
+/**
+ * MOD-15: the fallback. A ready worktree row the brain left unclaimed for
+ * readyFallbackMinutes is started the way every queued row was before MOD-12:
+ * `spawnSelf` with the row's own prompt and folder, the same tier, budget, slot
+ * and record as the brain's spawn, recorded with source `fallback`. The worker
+ * runs outside the mod's hooks, and the row posted says so. Refused (the engine
+ * busy, a budget spent, work present), nothing starts; a refusal retrying cannot
+ * cure took the row off the queue (gateSpawn), and the brain is told. True when started.
+ */
+async function selfSpawnReady($: Host, head: QueuedSpawn, waited: number): Promise<boolean> {
+  const label = queuedLabel(head)
+  let res: AgentSpawnResult
+  try {
+    res = await spawnSelf($, { prompt: head.prompt, description: head.description, subagentType: head.subagentType, ...(head.cwd ? { cwd: head.cwd } : {}), fallback: true })
+  } catch (err) {
+    res = { deny: String(err) }
+  }
+  if (res.deny !== undefined) {
+    $.ui.toast(`ready ${label} not started: ${res.deny}`)
+    debug($, `ready ${label}: the fallback spawn was refused: ${res.deny}`)
+    // dropped from the queue (retrying cannot cure it): the brain reads a row, not a toast
+    if (!(await readQueue($)).some(q => queuedLabel(q) === label)) await appendRow($, `chassis-delegation: ready ${label} not started by the fallback and taken off the queue: ${res.deny}`)
+    return false
+  }
+  const spawn = await spawnByAgent($, res.agentId)
+  await appendRow($, fallbackRow({ label, waited, attempt: spawn?.attempt ?? 1, budget: spawn?.budget ?? cfg.defaultBudget, ...(res.agentId ? { agentId: res.agentId } : {}), ...(spawn?.alias ? { alias: spawn.alias } : {}) }))
+  return true
 }
 
 /** The input schema of the `init` tool: none. */
@@ -3657,7 +3825,12 @@ export const register: Register = (on, opts) => {
       await onRunnerComplete($, agentId, saidOnce)
       // MOD-12: a worker's slot may be free now (2F): the row says which queued task is ready; the brain spawns it
       const ready = foreground ? [] : await readyRows($, agentId)
-      if (row !== undefined || ready.length > 0) await appendRow($, [...(row !== undefined ? [row] : []), ...ready].join('\n'))
+      if (row !== undefined || ready.length > 0) {
+        const text = [...(row !== undefined ? [row] : []), ...ready].join('\n')
+        await appendRow($, text)
+        // MOD-15: the verdict wakes the brain as a turn of its own (a foreground worker's rides its Agent result: no row here)
+        await wakeBrain($, text)
+      }
       // idle counts from the last turn of either loop
       if (!inTurn) armIdle($)
     } else {
@@ -3695,7 +3868,9 @@ export const register: Register = (on, opts) => {
 
   // ---- prompt.submit: a correction counts as friction (5E) ------------------------------
   on('prompt.submit', async ($, e, next) => {
-    if (isCorrection(e.text)) void noteFriction($, { kind: 'correction', detail: e.text.slice(0, 200), at: await now($) })
+    // MOD-15: the mod's own wake-up is not the person's correction
+    const ours = e.origin?.kind === 'plugin' && e.origin.name === PLUGIN
+    if (!ours && isCorrection(e.text)) void noteFriction($, { kind: 'correction', detail: e.text.slice(0, 200), at: await now($) })
     return next(e)
   })
 

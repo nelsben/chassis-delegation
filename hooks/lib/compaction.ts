@@ -61,6 +61,20 @@ export function splitOwed(rows: readonly { task: string; text: string; at: numbe
 export const prsFrom = (recent: readonly RecentVerdict[]): string[] =>
   [...new Set(recent.map(r => r.pr ?? '').filter(pr => pr !== '' && pr !== 'none'))]
 
+/**
+ * MOD-15: the posture line the state section carries while the brain has a
+ * call of its own to make: a `ready:` row's spawn call, or a respawn block's
+ * Agent call. The person is asked about the three things the brain cannot decide alone.
+ */
+export const ACT_POSTURE =
+  'Posture: make a ready: row’s spawn call or a respawn block’s Agent call without asking the person; ask only when a verdict is refuted on a claim you cannot amend, a worker is over-spend, or an amend needs the person’s approval.'
+
+/** MOD-15: an owed row whose advice is a respawn: its spawn block is the brain's to make. */
+export const isRespawnOwed = (owed: string): boolean => /^[^\s:]+: respawn at \S+ — /.test(owed)
+
+/** MOD-15: is a row ready (a free slot waits for it) or a respawn block pending? */
+export const actPending = (s: Pick<StateSnapshot, 'queued' | 'owed'>): boolean => s.queued.some(q => q.ready !== undefined) || s.owed.some(isRespawnOwed)
+
 export const emptySnapshot = (): StateSnapshot => ({ running: [], pending: [], recent: [], queued: [], owed: [], prs: [] })
 
 export const isEmptyState = (s: StateSnapshot): boolean => s.running.length === 0 && s.pending.length === 0 && s.queued.length === 0 && s.owed.length === 0 && (s.owedOlder ?? []).length === 0
@@ -127,10 +141,14 @@ export function compactBlock(s: StateSnapshot, scratchpad?: string): string {
  * The system prompt's section: present while something runs, waits or is owed,
  * and, with `posture` (GH-113: a premium brain under delegateOnly), always, with
  * the posture lines right under the header; the 40-line cap holds either way.
+ * MOD-15: while a row is ready or a respawn block is pending, one more posture
+ * line (ACT_POSTURE) says to make the call without asking.
  */
 export function composeSection(s: StateSnapshot, posture: readonly string[] = []): { id: string; text: string; scope: 'session' } | undefined {
-  if (isEmptyState(s) && posture.length === 0) return undefined
-  const body = isEmptyState(s) && s.recent.length === 0 ? [HEADER, '- nothing running, nothing owed.'] : renderState(s, posture.length)
+  // MOD-15: one more posture line while a row is ready or a respawn block is pending
+  const lines = actPending(s) ? [...posture, ACT_POSTURE] : posture
+  if (isEmptyState(s) && lines.length === 0) return undefined
+  const body = isEmptyState(s) && s.recent.length === 0 ? [HEADER, '- nothing running, nothing owed.'] : renderState(s, lines.length)
   const [head, ...rest] = body as [string, ...string[]]
-  return { id: SECTION_ID, text: [head, ...posture, ...rest].join('\n'), scope: 'session' }
+  return { id: SECTION_ID, text: [head, ...lines, ...rest].join('\n'), scope: 'session' }
 }

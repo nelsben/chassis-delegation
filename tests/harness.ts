@@ -64,6 +64,13 @@ export type World = {
   spawnedBy: Map<string, string>
   /** MOD-13: the `turn.step` requests that reached the engine, with the effort they carried after the mod's hooks (the bottom of the chain). */
   steps: { agentId?: string; effort?: unknown }[]
+  /**
+   * MOD-15: the prompts the mod submitted with `$.prompt.submit` (a turn of the
+   * brain's own once the session is idle), with the origin the engine would
+   * stamp: `{ kind: 'plugin', name }`, and `asUser: true` when it asked to be
+   * read as the person's own words.
+   */
+  submitted: { text: string; origin?: unknown }[]
 }
 
 export type WorldOptions = {
@@ -124,6 +131,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     model: options.model ?? 'claude-sonnet-5-5',
     spawnedBy: new Map(),
     steps: [],
+    submitted: [],
   }
   const dirs = new Map(Object.entries(options.dirs ?? {}))
   let spawnCount = 0
@@ -196,6 +204,8 @@ export function world(on: On, options: WorldOptions = {}): World {
     w.appended.push({ type: e.message.type, text: e.message.content.map(b => b.text).join('\n'), agentId: e.agentId })
     return next(e)
   })
+  // MOD-15: the bottom of prompt.submit records what the mod submitted
+  hook('prompt.submit', (e: { text: string; origin?: unknown }) => (w.submitted.push({ text: e.text, origin: e.origin }), { text: e.text }))
   hook('session.send', (e: { to: unknown; text: string }) => (w.sent.push({ to: e.to, text: e.text }), { isDelivered: true }))
   if (!options.skip?.includes('agent.spawn')) {
     ;(on as unknown as (n: string, h: unknown) => void)('agent.spawn', ($: unknown, e: Record<string, unknown>, next: { origin?: { plugin?: string } }) => {
