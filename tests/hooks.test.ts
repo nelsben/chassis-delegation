@@ -451,7 +451,7 @@ describe('GH-20: the report names its red evidence (red=) and the verifier reads
     expect(records(w, 'T-4')[0]?.redHash).toBeUndefined()
   })
 
-  test("a resume that re-uses attempt 1's bytes is refuted on red", { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+  test("a resume that re-uses attempt 1's held bytes is held on red (one proof per task, MOD-1)", { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
     let gate = 1
     const repo = nativeRun({ gate: 0 })
     const w = world(on, {
@@ -468,9 +468,9 @@ describe('GH-20: the report names its red evidence (red=) and the verifier reads
     gate = 0
     w.files.set(`${WT}/${RED_2}`, RED_TEXT)
     await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('5678abcd', RED_2)))
-    expect(rows(w)[1]).toContain('verdict=refuted task=T-4 attempt=2/3')
-    expect(rows(w)[1]).toContain("claim red: failed — red evidence is attempt 1's file again (red=.delegation/T-4/red-2.txt is byte-identical to it)")
-    expect(records(w, 'T-4').map(r => [r.attempt, r.verdict, r.red])).toEqual([[1, 'refuted', RED_1], [2, 'refuted', RED_2], [3, 'pending', undefined]])
+    expect(rows(w)[1]).toContain('verdict=verified task=T-4 attempt=2/3')
+    expect(rows(w)[1]).toContain("claim red: held — attempt 1's proof, reused (one proof per task)")
+    expect(records(w, 'T-4').map(r => [r.attempt, r.verdict, r.red])).toEqual([[1, 'refuted', RED_1], [2, 'verified', RED_2]])
   })
 
   test('a brief with red_test=none yields no red claim', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
@@ -1310,6 +1310,58 @@ describe('GH-101: the queue never holds a phantom', () => {
     const res = await $.agent.spawn(spawnInput({ prompt: brief('BE-314'), tool_use_id: 'toolu_B0000002' }))
     expect(res.deny).toBe('queued by chassis-delegation: BE-314 starts when a worker slot frees (1 live: BE-310; 1 queued: BE-314)')
     expect(w.spawns).toHaveLength(1)
+  })
+})
+
+describe('MOD-1: one proof of red per task, and --verify at the last attempt\'s own sha re-judges it', () => {
+  const BRIEF = `${ROOT}/.delegation/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** red_test="npx vitest run a/x.test.ts" gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const CARD_NAME = 'T-4-the-thing.md'
+  const CARD = '---\nid: T-4\ntitle: The thing\ndomain: frontend\ntier: standard\nstatus: queued\nscope: [a/**]\nforbid: [b/**]\nred_test: npx vitest run a/x.test.ts\ngate: prettier\nbudget: 3-attempts\n---\n## Why\nA card for the red proof.\n'
+  const WT = `${ROOT}-T-4`
+  const RED_1 = '.delegation/T-4/red-1.txt'
+  const RED_TEXT = 'FAIL a/x.test.ts\n  ✗ adds two numbers\n    AssertionError: expected 3 to be 4\n'
+  const REPORT = (sha: string, red: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass red=${red} files=a/x.ts]]`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const rows = (w: { appended: { type: string; text: string }[]; logs: string[] }) =>
+    [...w.appended.filter(a => a.type === 'user').map(a => a.text), ...w.logs].filter(t => t.startsWith('chassis-delegation: verdict='))
+  const setup = (on: Parameters<typeof world>[0], gate: { v: number }) => {
+    const repo = nativeRun({ gate: 0 })
+    return world(on, {
+      files: { [BRIEF]: HEADER + '\nbody', [`${WT}/${RED_1}`]: RED_TEXT, [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD },
+      dirs: { [WT]: [], [`${WT}/.delegation/T-4`]: ['red-1.txt'], [`${ROOT}/agents/tasks`]: [CARD_NAME] },
+      run: argv => (argv[0] === 'npx' ? { exitCode: gate.v, stdout: gate.v ? 'a/x.ts: not formatted\n' : '' } : argv[3] === 'diff' && !argv.includes('--name-status') ? { exitCode: 0, stdout: 'a/x.ts\n' } : repo(argv)),
+      agentId: 'agent-4',
+    })
+  }
+
+  test('--verify at the sha attempt 1 handed back re-judges attempt 1: no attempt 2, red held, no budget line', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const gate = { v: 1 }
+    const w = setup(on, gate)
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd', RED_1)))
+    expect(rows(w)[0]).toContain('verdict=refuted task=T-4 attempt=1/3')
+    gate.v = 0
+    const out = String((await $.command.run(commandInput('T-4 --verify 1234abcd'))).text)
+    expect(out.split('\n')[0]).toBe('re-judging attempt 1/3 at 1234abcd')
+    expect(out).toContain('claim red: held')
+    expect(out).toContain('verdict=verified task=T-4 attempt=1/3')
+    expect(out).not.toContain('budget exhausted')
+    expect(records(w, 'T-4').map(r => [r.attempt, r.verdict])).toEqual([[1, 'verified']])
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test("a resume hand-back at a new sha whose red= is attempt 1's held file is held on red", { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
+    const gate = { v: 1 }
+    const w = setup(on, gate)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd', RED_1)))
+    expect(rows(w)[0]).toContain('claim red: held')
+    gate.v = 0
+    await $.turn.complete(turnInput('agent-4', 'Docs.\n' + REPORT('5678abcd', RED_1)))
+    expect(rows(w)[1]).toContain("claim red: held — attempt 1's proof, reused (one proof per task)")
+    expect(rows(w)[1]).toContain('verdict=verified task=T-4 attempt=2/3')
   })
 })
 

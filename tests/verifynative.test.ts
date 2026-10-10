@@ -317,7 +317,7 @@ describe('GH-20: verifyNative reads the red evidence in the worker tree, after t
     const r = await verifyNative(input(), t)
     expect(r.verdict).toBe('verified')
     expect(t.reads).toEqual([`${REPO}/${RED_PATH}`])
-    expect(r.red).toEqual({ path: RED_PATH, hash: fakeHash(RED_TEXT) })
+    expect(r.red).toEqual({ path: RED_PATH, hash: fakeHash(RED_TEXT), held: true })
   })
   test('no red= while the brief has a red test: unverified, naming the missing evidence; nothing is read', async () => {
     const t = io(happy())
@@ -337,11 +337,22 @@ describe('GH-20: verifyNative reads the red evidence in the worker tree, after t
     expect(r.verdict).toBe('verified')
     expect(r.lines.some(l => l.startsWith('claim red:'))).toBe(false)
   })
-  test("a resume whose red file is byte-identical to attempt 1's: refuted on red", async () => {
+  test("a resume whose red file is byte-identical to attempt 1's, whose red claim did not hold: refuted on red", async () => {
     const files = { [`${REPO}/.delegation/T-1/red-2.txt`]: RED_TEXT }
-    const r = await verifyNative(input({ report: report({ red: '.delegation/T-1/red-2.txt' }), priorRed: [{ attempt: 1, hash: fakeHash(RED_TEXT) }] }), io(happy(), files))
+    const r = await verifyNative(input({ report: report({ red: '.delegation/T-1/red-2.txt' }), priorRed: [{ attempt: 1, hash: fakeHash(RED_TEXT), held: false }] }), io(happy(), files))
     expect(r.verdict).toBe('refuted')
     expect(r.lines).toContain("claim red: failed — red evidence is attempt 1's file again (red=.delegation/T-1/red-2.txt is byte-identical to it)")
+  })
+})
+
+describe('MOD-1: one proof of red per task', () => {
+  const ev = { redTest: 'npm test', path: RED_PATH, repo: REPO, exists: true, bytes: 70, text: RED_TEXT, hash: 'h1' }
+  test("a file byte-identical to one an earlier attempt's red claim held with is held again, as that attempt's proof reused", () => {
+    expect(redClaim({ ...ev, priorHashes: [{ attempt: 1, hash: 'h1', held: true }] })).toEqual({ status: 'held', detail: "attempt 1's proof, reused (one proof per task)" })
+  })
+  test("a byte-identical file whose earlier attempt's red claim did not hold (or says nothing) is still failed", () => {
+    expect(redClaim({ ...ev, priorHashes: [{ attempt: 1, hash: 'h1', held: false }] })?.status).toBe('failed')
+    expect(redClaim({ ...ev, priorHashes: [{ attempt: 1, hash: 'h1' }] })).toEqual({ status: 'failed', detail: `red evidence is attempt 1's file again (red=${RED_PATH} is byte-identical to it)` })
   })
 })
 

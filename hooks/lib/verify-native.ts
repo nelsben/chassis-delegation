@@ -79,7 +79,7 @@ export type NativeResult = {
   verdict: NativeVerdict
   lines: string[]
   /** The red file read for this attempt: its red= path as written, and its hash, for the attempt record. */
-  red?: { path: string; hash?: string }
+  red?: { path: string; hash?: string; held?: boolean }
 }
 
 /** What the mod read at a report's red= path (register.ts, through `$.fs`). */
@@ -95,7 +95,8 @@ export type RedEvidence = {
 }
 
 /** An earlier attempt's red hash, same task and subtask. */
-export type RedPrior = { attempt: number; hash: string }
+/** `held`: that attempt's own red claim held, so its file is the task's proof of red (MOD-1). */
+export type RedPrior = { attempt: number; hash: string; held?: boolean }
 
 export type RedClaimInput = RedEvidence & {
   /** The brief's red_test=, as written. */
@@ -387,7 +388,11 @@ export function redClaim(i: RedClaimInput): RedClaim | undefined {
   if (line === undefined) return { status: 'unchecked', detail: `no failure marker found in red=${path} (${bytes} bytes)` }
   const priors = i.priorHashes ?? []
   if (i.hash !== undefined) {
-    const same = priors.filter(p => p.hash === i.hash).sort((a, b) => a.attempt - b.attempt)[0]
+    const sames = priors.filter(p => p.hash === i.hash).sort((a, b) => a.attempt - b.attempt)
+    // MOD-1: one proof of red per task; a file an earlier attempt passed the check with is held again
+    const proof = sames.find(p => p.held === true)
+    if (proof) return { status: 'held', detail: `attempt ${proof.attempt}'s proof, reused (one proof per task)` }
+    const same = sames[0]
     if (same) return { status: 'failed', detail: `red evidence is attempt ${same.attempt}'s file again (red=${path} is byte-identical to it)` }
   } else if (priors.length > 0) {
     return { status: 'unchecked', detail: `red=${path} could not be hashed, so whether it is this attempt's own is unknown` }
@@ -625,6 +630,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     }
     const c = redClaim({ ...ev, redTest: contract.redTest, path: named, repo, priorHashes: input.priorRed ?? [] })
     if (c) claim('red', c.status, c.detail)
+    if (c?.status === 'held' && red) red = { ...red, held: true }
   }
 
   // 7. the PR, when one is claimed, exists
