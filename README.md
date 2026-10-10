@@ -348,6 +348,22 @@ A compaction keeps the delegation loop's position. While anything runs or is
 owed, the system prompt carries a short "Delegation state" section, at most 40
 lines.
 
+Three rules keep that section about what is still live:
+
+- **An owed row retires by itself when the task's work is on the default
+  branch.** The last attempt's sha is an ancestor of `origin/main`, or the
+  task's card on `origin/main` (in the configured `cardDir`) reads `status:
+  merged`. The check runs at most once per 15 minutes per task, and a check that
+  gets no answer leaves the row as it is. The attempt record keeps `retired:
+  merged`.
+- **`/delegation accept <id> [note]` closes one by hand.** It records
+  `accepted` and the note on the task's last attempt, retires its row and
+  prints one line; an unknown id prints one line and changes nothing.
+- **The block keeps the live rows and counts the rest.** Running workers,
+  pending verdicts and owed rows not yet checked or younger than 24 hours print
+  in full; the older checked ones become one line, `n older owed rows: <ids>`.
+  The 40-line cap holds.
+
 ## The card
 
 Each card is one file, `agents/tasks/<ID>-<slug>.md`: YAML frontmatter, then

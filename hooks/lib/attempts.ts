@@ -62,6 +62,14 @@ export type AttemptRecord = {
   /** A `/dispatch --replay` run of an already-merged card, from `base`. */
   replay?: true
   base?: string
+  /** MOD-4: why this task's owed row is gone: its work reached the default branch (`merged`), or the brain closed it by hand (`accepted`). */
+  retired?: 'merged' | 'accepted'
+  /** MOD-4: `/delegation accept <id> [note]` — accepted by hand, with the note. */
+  accepted?: { note?: string; at: number }
+  /** MOD-4: when the retire check last ran (answered or not): it runs at most once per 15 minutes. */
+  retireTriedAt?: number
+  /** MOD-4: when a retire check last got an answer (not merged yet): the owed row has been looked at. */
+  retireCheckedAt?: number
 }
 
 /** Which attempts count together: real runs, or the replays from one base commit. */
@@ -155,3 +163,31 @@ export const laneFields = (lane?: Lane): Pick<AttemptRecord, 'replay' | 'base'> 
   lane?.replay ? { replay: true, ...(lane.base ? { base: lane.base } : {}) } : {}
 
 export const taskLabel = (task: string, subtask: string): string => (subtask === 'main' ? task : `${task}/${subtask}`)
+
+/** MOD-4: a task's retire check runs at most this often. */
+export const RETIRE_EVERY_MS = 15 * 60 * 1000
+
+/** MOD-4: is the retire check due for this subtask: its last attempt is not retired and was not tried in the last 15 minutes. */
+export function retireDue(records: readonly AttemptRecord[], subtask: string, now: number, lane?: Lane): boolean {
+  const last = attemptsFor(records, subtask, lane).at(-1)
+  if (!last || last.retired) return false
+  return last.retireTriedAt === undefined || now - last.retireTriedAt >= RETIRE_EVERY_MS
+}
+
+/** MOD-4: does a card's frontmatter read `status: merged`? (A line in the body does not.) */
+export function cardReadsMerged(text: string): boolean {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
+  return m !== null && /^status:\s*["']?merged["']?\s*$/m.test(m[1] as string)
+}
+
+/**
+ * MOD-4: what one retire check leaves on the last attempt. `ancestor` is what
+ * `git merge-base --is-ancestor <sha> origin/main` said (undefined: it could not
+ * say), `card` the card's text on origin/main (undefined: not read). Merged on
+ * either; with neither answered the row is left as it is (only the try is noted).
+ */
+export function retirePatch(probe: { ancestor?: boolean; card?: string }, now: number): Partial<AttemptRecord> {
+  if (probe.ancestor === true || (probe.card !== undefined && cardReadsMerged(probe.card))) return { retired: 'merged', retireTriedAt: now, retireCheckedAt: now }
+  if (probe.ancestor === undefined && probe.card === undefined) return { retireTriedAt: now }
+  return { retireTriedAt: now, retireCheckedAt: now }
+}

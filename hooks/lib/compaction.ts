@@ -13,6 +13,8 @@ export type StateSnapshot = {
   queued: { task: string; position: number }[]
   /** Advice the brain (or Ben) has not acted on: `<task>: <next>`. */
   owed: string[]
+  /** MOD-4: owed tasks checked and older than 24 hours: counted on one line, not printed. */
+  owedOlder?: string[]
   debrief?: { at: number; agentId?: string; path?: string; finishedAt?: number }
   eval?: { tier: string; sha: string; pass?: number; total?: number; at: number; running?: boolean; agentId?: string }
   /** PRs the workers' reports named. */
@@ -22,11 +24,33 @@ export type StateSnapshot = {
 /** One `delegation.recent.<session>` row: a verdict as the one line has it, and what it leaves owed. */
 export type RecentVerdict = { task: string; attempt: number; verdict: string; line: string; at: number; owed?: string; pr?: string }
 
-/** What is owed: each task's latest verdict that left advice undone, unless the task is running, pending or queued again. */
-export function owedFrom(recent: readonly RecentVerdict[], busy: ReadonlySet<string>): string[] {
+/**
+ * What is owed: each task's latest verdict that left advice undone, unless the
+ * task is running, pending or queued again, or (MOD-4) retired: its work is on
+ * the default branch, or the brain accepted it by hand.
+ */
+export function owedRowsFrom(recent: readonly RecentVerdict[], busy: ReadonlySet<string>, retired: ReadonlySet<string> = new Set()): RecentVerdict[] {
   const latest = new Map<string, RecentVerdict>()
   for (const r of recent) latest.set(r.task, r)
-  return [...latest.values()].filter(r => r.owed !== undefined && !busy.has(r.task)).map(r => r.owed as string)
+  return [...latest.values()].filter(r => r.owed !== undefined && !busy.has(r.task) && !retired.has(r.task))
+}
+
+export function owedFrom(recent: readonly RecentVerdict[], busy: ReadonlySet<string>, retired: ReadonlySet<string> = new Set()): string[] {
+  return owedRowsFrom(recent, busy, retired).map(r => r.owed as string)
+}
+
+/** MOD-4: an owed row's age past which, once it has been checked, it is only counted. */
+export const OWED_LIVE_MS = 24 * 60 * 60 * 1000
+
+/** MOD-4: owed rows not yet checked or younger than 24 hours print in full (`live`); the rest are named by task (`older`). */
+export function splitOwed(rows: readonly { task: string; text: string; at: number; checked?: boolean }[], now: number): { live: string[]; older: string[] } {
+  const live: string[] = []
+  const older: string[] = []
+  for (const r of rows) {
+    if (r.checked && now - r.at >= OWED_LIVE_MS) older.push(r.task)
+    else live.push(r.text)
+  }
+  return { live, older }
 }
 
 /** The PRs the reports named (`pr=` other than none), each once. */
@@ -35,7 +59,7 @@ export const prsFrom = (recent: readonly RecentVerdict[]): string[] =>
 
 export const emptySnapshot = (): StateSnapshot => ({ running: [], pending: [], recent: [], queued: [], owed: [], prs: [] })
 
-export const isEmptyState = (s: StateSnapshot): boolean => s.running.length === 0 && s.pending.length === 0 && s.queued.length === 0 && s.owed.length === 0
+export const isEmptyState = (s: StateSnapshot): boolean => s.running.length === 0 && s.pending.length === 0 && s.queued.length === 0 && s.owed.length === 0 && (s.owedOlder ?? []).length === 0
 
 export const SECTION_ID = 'chassis-delegation:state'
 export const HEADER = 'Delegation state (chassis-delegation):'
@@ -61,6 +85,9 @@ export function renderState(s: StateSnapshot, reserve = 0): string[] {
     ...s.queued.map(q => `- queued: ${q.task} (position ${q.position})`),
     ...s.owed.map(o => `- owed: ${o}`),
   ]
+  const older = s.owedOlder ?? []
+  // the count line is the last live line and is never cut for room
+  const tail = older.length > 0 ? [`- ${older.length} older owed rows: ${older.join(', ')}`] : []
   const history = [
     ...s.recent.slice(-RECENT).map(r => `- verdict: ${r.line}`),
     ...(s.debrief
@@ -75,12 +102,12 @@ export function renderState(s: StateSnapshot, reserve = 0): string[] {
       : []),
     ...(s.prs.length > 0 ? [`- PRs named in reports: ${s.prs.join(', ')}`] : []),
   ]
-  const room = MAX_LINES - 1 - reserve
+  const room = MAX_LINES - 1 - reserve - tail.length
   // History keeps at least its verdicts when live lines would crowd it out.
   const keepHistory = Math.min(history.length, Math.max(RECENT, room - live.length))
   const keepLive = Math.min(live.length, room - keepHistory)
   const liveShown = live.length > keepLive ? [...live.slice(0, keepLive - 1), `- … ${live.length - keepLive + 1} more`] : live
-  return [HEADER, ...liveShown, ...history.slice(0, keepHistory)]
+  return [HEADER, ...liveShown, ...tail, ...history.slice(0, keepHistory)]
 }
 
 export const appendInstructions = (existing: string | undefined, block: string): string => (existing ?? '') + '\n' + block

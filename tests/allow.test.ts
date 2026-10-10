@@ -40,6 +40,18 @@ describe('allowlist accepts', () => {
     ok(['git', '-C', R, 'show', '96014e3b:agents/tasks/BE-101-the-rate-ladder-loads-the-current-tables.md'])
     ok(['git', '-C', R, 'worktree', 'add', '-q', '-b', 'agent/ops/OPS-269-replay', R + '-OPS-269-replay', '96014e3b'])
   })
+  test('MOD-4: the merged-card read: origin/main, and the configured cardDir only', () => {
+    const cfg: AllowConfig = { ...ALLOW, cardDir: 'docs/cards' }
+    ok(['git', '-C', R, 'ls-tree', '--name-only', 'origin/main', 'docs/cards/'], cfg)
+    ok(['git', '-C', R, 'show', 'origin/main:docs/cards/MOD-4-owed-rows.md'], cfg)
+    ok(['git', '-C', R, 'ls-tree', '--name-only', 'origin/main', 'agents/tasks/'])
+    ok(['git', '-C', R, 'merge-base', '--is-ancestor', '96014e3b', 'origin/main'])
+    no(['git', '-C', R, 'ls-tree', '--name-only', 'origin/main', 'docs/cards/'])
+    no(['git', '-C', R, 'ls-tree', '--name-only', 'origin/main', 'src/'], cfg)
+    no(['git', '-C', R, 'show', 'origin/main:docs/cards/../../.env'], cfg)
+    no(['git', '-C', R, 'show', 'origin/main:docs/other/MOD-4-x.md'], cfg)
+    no(['git', '-C', R, 'show', 'HEAD~1:docs/cards/MOD-4-x.md'], cfg)
+  })
   test('the default six domains, or the repo own; worktreeRoot moves the path', () => {
     for (const domain of ['frontend', 'backend', 'ops', 'dispatcher', 'cross', 'shared']) {
       ok(['git', '-C', R, 'worktree', 'add', '-q', '-b', `agent/${domain}/OPS-230`, R + '-OPS-230', 'origin/main'])
