@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.1 — 2026-10-10
 
 - **A breadcrumbs-mode debrief is bounded to its window and validated at
   hand-back (MOD-10).** Both prompts carry the window (breadcrumb lines
