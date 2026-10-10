@@ -11,7 +11,7 @@ changed files, scope, gate, PR) and hands the brain one verdict line with what
 to do next. At a quiet stop it can write a debrief in the background, and it
 can run your eval when `origin/main` moves. It is a Claude Code mod (a plugin
 of function hooks). It needs nothing from any other repo: no scripts, no
-harness, no network. Version 0.6.0, MIT.
+harness, no network. Version 0.6.1, MIT.
 
 ## Install on a new machine
 
@@ -125,6 +125,40 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.6.0 to 0.6.1
+
+What the brain will see:
+
+- **`/delegation debrief` runs now and ends with scrubbed findings (MOD-6).**
+  The command starts the background debrief at once, one at a time, and prints
+  the agent id, the mode and the folder. Every debrief writes
+  `<name>.findings.json` with the mod's own findings, scrubbed of home paths,
+  the repo, its origin, the git user and the `redact` words.
+- **`/delegation debrief post` and `issueRepo` (MOD-7).** With `issueRepo` set
+  (`owner/name`), `post` prints the findings as they would be filed, `new` or
+  `covered by #k`; `post 1,3` or `post all` files the new ones. The allowlist
+  gains `gh issue create`, `gh issue comment` and `gh issue list` for that repo
+  only. `/delegation` prints `issues: <repo>` when it is set; empty is off.
+- **`delegateOnly` resolves `~`, `$HOME`, `$PWD` and earlier variables (MOD-8).**
+  A write to `$M/p.md` after `M=~/.claude/m` is a write outside the repo and
+  runs, not a denied source edit.
+- **`delegateOnly` follows `cd` and `git -C` and judges `git commit` (MOD-9).**
+  A relative write after `cd <worktree>` is read against that folder. A commit
+  outside the root is never an edit; in the root, a commit of only card,
+  `docs/`, `.delegation/`, repo-file or CHANGELOG paths runs. BSD
+  `sed -i ''` is read right.
+- **A debrief is bounded to its window and validated (MOD-10, public issue
+  #50).** Entries outside the window are stripped and a list the window cannot
+  contain is flagged; the record moves only on a clean check. Findings about
+  the host go to `host_findings`, which `post` never files.
+- **The upgrade is `/delegation update`.** It prints the CHANGELOG slice newer
+  than your version.
+
+What to do:
+
+- Nothing in `.chassis-delegation.json` has to change; `issueRepo` is off until
+  you set it.
 
 ### From 0.5.0 to 0.6.0
 
