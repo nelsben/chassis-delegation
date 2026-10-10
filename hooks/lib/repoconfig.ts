@@ -57,6 +57,10 @@ export const isGitRef = (s: string): boolean => /^(?!-)[A-Za-z0-9._/@^~{}+-]+$/.
 /** An ignore glob the brief header can carry: no whitespace, quote or `]]`. */
 const IGNORE_GLOB = /^[^\s"]+$/
 
+/** GH-113: what a premium brain may do itself: off, warn (a row), deny. */
+export type DelegateOnly = 'off' | 'warn' | 'deny'
+const DELEGATE_ONLY: readonly string[] = ['off', 'warn', 'deny']
+
 export type SpendTier = 'economy' | 'standard' | 'frontier'
 
 export type RepoConfig = {
@@ -79,9 +83,11 @@ export type RepoConfig = {
   ignore?: string[]
   /** GH-106: dollars one attempt may spend, per tier (economy, standard, frontier); 0 = no ceiling. */
   spendByTier?: Partial<Record<SpendTier, number>>
+  /** GH-113: the brain on opus or fable may not edit source (warn: a row; deny: refused); default off. */
+  delegateOnly?: DelegateOnly
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier'] as const
+export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'delegateOnly'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -100,6 +106,7 @@ export type Effective = {
   baseRef: string
   ignore: string[]
   spendByTier: Record<SpendTier, number>
+  delegateOnly: DelegateOnly
   /** Which layer each key came from. */
   sources: Record<RepoKey, 'default' | 'repo' | 'settings'>
 }
@@ -238,6 +245,11 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         if (m) config.spendByTier = m
         break
       }
+      case 'delegateOnly':
+        if (typeof v !== 'string' || !DELEGATE_ONLY.includes(v.trim())) errors.push(`delegateOnly${where}: needs off, warn or deny (ignored)`)
+        // in /config "off" is the manifest default: unset, so the repo file's value shows through
+        else if (strict || v.trim() !== 'off') config.delegateOnly = v.trim() as DelegateOnly
+        break
       case 'domains': {
         const d = domainsOf(v, errors, where)
         if (d) config.domains = d
@@ -322,6 +334,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig): Effective {
     baseRef: pick('baseRef', ''),
     ignore: [...pick('ignore', [...DEFAULT_IGNORE])],
     spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...settings.spendByTier },
+    delegateOnly: pick('delegateOnly', 'off'),
     sources,
   }
 }

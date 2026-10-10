@@ -11,8 +11,9 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { bandTree } from './lib/band'
+import { bashWrites, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
 import { paneTree, type PaneTable } from './lib/pane'
-import { dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, type LiveView, type SpendPoint } from './lib/live'
+import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
 import { checkArgv, refusedLine, type AllowConfig } from './lib/allow'
 import {
@@ -197,6 +198,7 @@ const STATUS = { plugin: 'chassis-delegation', key: 'status' } as const
 const LAST_VERDICT = { plugin: 'chassis-delegation', key: 'lastVerdict' } as const
 const QUEUE = { plugin: 'chassis-delegation', key: 'queue' } as const
 const SPEND = { plugin: 'chassis-delegation', key: 'spend' } as const
+const BRAIN = { plugin: 'chassis-delegation', key: 'brain' } as const
 /** GH-112: the pane `/delegation dashboard` and the band's `[ details ]` open. */
 const DASH_PANE = 'delegation-dash'
 
@@ -368,6 +370,8 @@ type Config = {
   ignore: string[]
   /** GH-106: dollars one attempt may spend, per tier; 0 = no ceiling. */
   spendByTier: Record<'economy' | 'standard' | 'frontier', number>
+  /** GH-113: what an opus or fable brain may do itself. */
+  delegateOnly: 'off' | 'warn' | 'deny'
 }
 
 function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: string[] } {
@@ -421,6 +425,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       baseRef: eff.baseRef,
       ignore: eff.ignore,
       spendByTier: eff.spendByTier,
+      delegateOnly: eff.delegateOnly,
     },
   }
 }
@@ -619,6 +624,78 @@ async function readSpend($: Host): Promise<SpendPoint[]> {
   }
 }
 
+// ---- GH-113: the brain's own spend and edits ------------------------------------------
+async function readBrain($: Host): Promise<BrainRecord | undefined> {
+  try {
+    const { value } = await $.state.get(BRAIN)
+    return value && typeof value === 'object' ? (value as BrainRecord) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function updateBrain($: Host, fn: (r: BrainRecord | undefined) => BrainRecord) {
+  try {
+    await $.state.set(BRAIN, fn(await readBrain($)))
+  } catch (err) {
+    debug($, `brain record not kept: ${String(err)}`)
+  }
+  redraw($)
+}
+
+/** The family of the model in the brain's seat: `$.session.model()`, else the one a prompt render names. */
+async function brainSeat($: Host, fallback?: string): Promise<BrainFamily> {
+  try {
+    return brainFamily(await $.session.model())
+  } catch {
+    return brainFamily(fallback)
+  }
+}
+
+/** The brain's split against the workers' this session: its record, the session's worker attempts, the session dollars. */
+async function brainView($: Host): Promise<{ summary: ReturnType<typeof brainSummary>; hasBrain: boolean; hasEdits: boolean }> {
+  let since = 0
+  let usd: number | undefined
+  try {
+    const u = await $.session.usage()
+    since = u.startedAt ?? 0
+    usd = u.cost?.usd
+  } catch {
+    // unknown: the split is brain + workers
+  }
+  const records = sessionRecords(await allRecords($), since)
+  const rec = await readBrain($)
+  return { summary: brainSummary(rec, workersUsdOf(records), attemptsOf(records), usd !== undefined && usd > 0 ? usd : undefined), hasBrain: (rec?.turns ?? 0) > 0, hasEdits: (rec?.edits ?? 0) > 0 }
+}
+
+/** One warn row per main-loop turn. */
+let brainWarnedThisTurn = false
+
+/** GH-113 delegateOnly: the brain's own writes are counted, and (opus, fable) warned or denied. Undefined = go on. */
+async function brainGuard($: Host, e: { tool: unknown; agentId?: string }): Promise<{ deny: string } | undefined> {
+  const tool = String(e.tool)
+  if (e.agentId || !(WRITE_TOOLS.includes(tool) || tool === 'Bash')) return undefined
+  try {
+    const input = e as unknown as Record<string, unknown>
+    const root = await $.session.root()
+    const bash = tool === 'Bash' ? bashWrites(typeof input.command === 'string' ? input.command : '', root) : undefined
+    const paths = bash ? bash.paths : toolPath(input)
+    if (paths.length === 0 && !bash?.commit) return undefined
+    await loadRepoConfig($)
+    const family = cfg.delegateOnly === 'off' ? 'other' : await brainSeat($)
+    const d = delegateDecision({ mode: cfg.delegateOnly, brainFamily: family, tool, paths, root, cardDir: cfg.cardDir, ...(bash?.commit ? { commit: true } : {}) })
+    if (d.edit) await updateBrain($, brainEdit)
+    if (d.action === 'deny') return { deny: DELEGATE_DENY }
+    if (d.action === 'warn' && d.path !== undefined && !brainWarnedThisTurn) {
+      brainWarnedThisTurn = true
+      await appendRow($, warnRow(d.path))
+    }
+  } catch (err) {
+    debug($, `delegateOnly not checked: ${String(err)}`)
+  }
+  return undefined
+}
+
 /** `git worktree list --porcelain`, from the cache while it is under 15 s old. */
 async function worktreeList($: Host, root: string, t: number): Promise<string> {
   if (worktreeCache && t - worktreeCache.at < 15_000) return worktreeCache.text
@@ -649,6 +726,7 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     // no repo: no worktree rows
   }
   const records = await allRecords($)
+  const brain = await readBrain($)
   const liveAt: Record<string, number> = {}
   for (const w of live.workers) liveAt[w.label] = w.spawn.at ?? t
   const view = liveView({
@@ -664,6 +742,7 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     usd,
     series: await readSpend($),
     owed: live.pending.length,
+    ...(brain ? { brain } : {}),
   })
   return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t })) }
 }
@@ -2535,9 +2614,12 @@ async function statusReport($: Host): Promise<string> {
   const s = await snapshot($)
   const state = isEmptyState(s) && s.recent.length === 0 ? ['Delegation state (chassis-delegation): nothing running, queued or owed.'] : renderState(s)
   const root = await $.session.root()
+  const split = await brainView($)
   return [
     ...state,
     '',
+    ...(split.hasBrain ? [brainLine(split.summary)] : []),
+    ...(split.hasEdits ? [`brain edits: ${split.summary.edits}`] : []),
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
@@ -2843,6 +2925,11 @@ export const register: Register = (on, opts) => {
 
   // ---- every tool call: the worker's SubagentHandback text; denials as friction (5E) ---
   on('tool.call', async ($, e, next) => {
+    const refused = await brainGuard($, e)
+    if (refused) {
+      void noteFriction($, { kind: 'denial', detail: `${String(e.tool)}: ${refused.deny.slice(0, 160)}`, at: await now($) })
+      return refused
+    }
     if (e.agentId && String(e.tool) === 'SubagentHandback') {
       const message = (e as unknown as { message?: unknown }).message
       if (typeof message === 'string') handbacks.set(e.agentId, message)
@@ -2975,6 +3062,12 @@ export const register: Register = (on, opts) => {
       if (!inTurn) armIdle($)
     } else {
       inTurn = false
+      brainWarnedThisTurn = false
+      // GH-113: the brain's own turn, priced apart from the workers'
+      if (e.usage) {
+        const u = e.usage
+        await updateBrain($, r => brainTurn(r, u))
+      }
       armIdle($)
     }
     await refreshStatus($)
@@ -3208,7 +3301,8 @@ export const register: Register = (on, opts) => {
     if (!(e.tools ?? []).includes('Agent')) return out
     let section: ReturnType<typeof composeSection>
     try {
-      section = composeSection(await snapshot($))
+      const posture = cfg.delegateOnly !== 'off' && (await brainSeat($, e.model)) === 'fable' ? PREMIUM_POSTURE : []
+      section = composeSection(await snapshot($), posture)
     } catch (err) {
       debug($, `delegation state section not built: ${String(err)}`)
       return out

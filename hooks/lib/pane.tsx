@@ -9,7 +9,9 @@ import type { Elements, RenderNode } from 'claude-code'
 
 import type { DashboardBlock } from '../types'
 import { sparkCells, sparkSvg, sparkValues } from './dashboard'
-import { chartCells, chartSvg, modelColor, modelLabel, tokText, verdictMark, type LiveView, type Scheme, type WorktreeRow } from './live'
+import type { BrainSummary } from './brain'
+import { brainTileText } from './brain'
+import { brainModelLabel, chartCells, chartSvg, FABLE_COLOR, modelColor, modelLabel, tokText, verdictMark, type LiveView, type Scheme, type WorktreeRow } from './live'
 
 /** The surface's table, narrowed: the terminal draws a Raster, the rest an Svg. */
 export type PaneTable =
@@ -77,6 +79,7 @@ function kpiRow(p: PaneTable, v: LiveView): RenderNode {
       {tile('kpi-queued', 'queued', String(v.queued))}
       {tile('kpi-spend', 'spend', `$${v.usd.toFixed(2)}`, true)}
       {tile('kpi-first', 'verified 1st try', `${v.firstTry.n} of ${v.firstTry.m}`)}
+      {v.brain ? tile('kpi-brain', 'spend split', brainTileText(v.brain)) : null}
     </Box>
   )
 }
@@ -168,14 +171,28 @@ function worktreeTable(p: PaneTable, v: LiveView, scheme: Scheme, columns: numbe
   )
 }
 
+/** GH-113: the brain's own row, labelled `brain`, so a premium model's spend is never mistaken for a worker's. */
+function brainBar(p: PaneTable, b: BrainSummary, scheme: Scheme, top: number): RenderNode {
+  const { Box, Text } = p.t
+  const cells = b.brain > 0 ? Math.max(1, Math.round((b.brain / top) * 20)) : 0
+  const c = b.family === 'fable' ? FABLE_COLOR[scheme] : modelColor(b.family, scheme)
+  return (
+    <Box key="brain-row" flexDirection="row" gap={1}>
+      <Box width={20}>{c ? <Text color={c}>{'█'.repeat(cells)}</Text> : <Text dimColor>{'█'.repeat(cells)}</Text>}</Box>
+      <Text wrap="truncate-end">{brainModelLabel(b)}</Text>
+    </Box>
+  )
+}
+
 /** Up to three bars plus "other", each direct-labelled `sonnet · $3.10 · 412k tok · 4 verified`. */
 function modelBars(p: PaneTable, v: LiveView, scheme: Scheme): RenderNode {
   const { Box, Text } = p.t
   const shown = v.byModel.filter(m => m.family !== 'other' || m.usd > 0 || m.tokens > 0)
-  const top = Math.max(0.0001, ...shown.map(m => m.usd))
+  const top = Math.max(0.0001, v.brain?.brain ?? 0, ...shown.map(m => m.usd))
   return (
     <Box key="dash-models" flexDirection="column">
       <Text bold>Spend by model</Text>
+      {v.brain ? brainBar(p, v.brain, scheme, top) : null}
       {shown.map(m => {
         const c = modelColor(m.family, scheme)
         const cells = m.usd > 0 ? Math.max(1, Math.round((m.usd / top) * 20)) : 0

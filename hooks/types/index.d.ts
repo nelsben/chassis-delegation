@@ -81,6 +81,18 @@ export type DashboardBlock = {
 /** What the pane draws besides the open items (which it reads from `band`). */
 export type DashboardModel = { blocks: DashboardBlock[]; sessions: number }
 
+/** GH-113: the brain's own (main-loop) spend this session. */
+export type DelegationBrain = {
+  tokens: { in: number; out: number; cacheRead: number; cacheWrite: number }
+  usd: number
+  unpriced: boolean
+  turns: number
+  /** The brain's own writes, allowed or not. */
+  edits: number
+  /** Dollars, tokens and turns by the model id each turn reported. */
+  byModel: Record<string, { usd: number; tokens: number; turns: number }>
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'chassis-delegation': {
@@ -92,6 +104,8 @@ declare module 'claude-code' {
       dashboard: DashboardModel | null
       /** GH-112: cumulative session dollars sampled every 15 s while a worker is live or queued, every 60 s otherwise; the last 240 points. */
       spend: { t: number; usd: number }[]
+      /** GH-113: the brain's own spend and edits, from its main-loop turns. */
+      brain: DelegationBrain
     }
   }
 }

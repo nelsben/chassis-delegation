@@ -12,6 +12,8 @@ export const CACHE_READ = 0.1
 export const CACHE_WRITE = 1.25
 
 const TABLE: readonly [string, Price][] = [
+  ['fable-5-1', { in: 10, out: 50 }],
+  ['fable-5', { in: 10, out: 50 }],
   ['opus-5-5', { in: 4, out: 20 }],
   ['opus-5', { in: 5, out: 25 }],
   ['sonnet-5-5', { in: 2, out: 10 }],

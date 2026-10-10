@@ -54,7 +54,7 @@ export const stamp = (ms: number): string => `${new Date(ms).toISOString().slice
  * are what the brain acts on), then the last 5 verdicts, then the last debrief
  * and eval and the PRs reports named.
  */
-export function renderState(s: StateSnapshot): string[] {
+export function renderState(s: StateSnapshot, reserve = 0): string[] {
   const live = [
     ...s.running.map(r => `- running: ${r.task} ${r.tier} agent ${r.agentId}${r.at !== undefined ? ` since ${stamp(r.at)}` : ''}`),
     ...s.pending.map(p => `- pending verdict: ${p.task}${p.agentId ? ` agent ${p.agentId}` : ''}`),
@@ -75,7 +75,7 @@ export function renderState(s: StateSnapshot): string[] {
       : []),
     ...(s.prs.length > 0 ? [`- PRs named in reports: ${s.prs.join(', ')}`] : []),
   ]
-  const room = MAX_LINES - 1
+  const room = MAX_LINES - 1 - reserve
   // History keeps at least its verdicts when live lines would crowd it out.
   const keepHistory = Math.min(history.length, Math.max(RECENT, room - live.length))
   const keepLive = Math.min(live.length, room - keepHistory)
@@ -92,8 +92,14 @@ export function compactBlock(s: StateSnapshot, scratchpad?: string): string {
   return [KEEP_VERBATIM, ...recipe, ...state].join('\n')
 }
 
-/** The system prompt's section: present only while something runs, waits or is owed. */
-export function composeSection(s: StateSnapshot): { id: string; text: string; scope: 'session' } | undefined {
-  if (isEmptyState(s)) return undefined
-  return { id: SECTION_ID, text: renderState(s).join('\n'), scope: 'session' }
+/**
+ * The system prompt's section: present while something runs, waits or is owed,
+ * and, with `posture` (GH-113: a premium brain under delegateOnly), always, with
+ * the posture lines right under the header; the 40-line cap holds either way.
+ */
+export function composeSection(s: StateSnapshot, posture: readonly string[] = []): { id: string; text: string; scope: 'session' } | undefined {
+  if (isEmptyState(s) && posture.length === 0) return undefined
+  const body = isEmptyState(s) && s.recent.length === 0 ? [HEADER, '- nothing running, nothing owed.'] : renderState(s, posture.length)
+  const [head, ...rest] = body as [string, ...string[]]
+  return { id: SECTION_ID, text: [head, ...posture, ...rest].join('\n'), scope: 'session' }
 }

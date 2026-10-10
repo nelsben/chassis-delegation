@@ -1832,3 +1832,113 @@ describe('GH-111: the card tool', () => {
     expect(w.spawns).toHaveLength(0)
   })
 })
+
+describe('GH-113: the brain spend and delegate-only', () => {
+  const FABLE = 'claude-fable-5-1'
+  const SONNET = 'claude-sonnet-5-5'
+  const delegation = { command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never
+  const mainTurn = (u: ReturnType<typeof usage>) => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: u }) as never
+  const passed = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+  const OPTS = { options: { delegateOnly: 'deny' } }
+
+  test('a main-loop turn.complete on fable adds to the brain spend; /delegation splits brain from workers', async ($, on) => {
+    world(on, { model: FABLE })
+    await $.session.start(sessionStart)
+    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000))) // $2.25
+    await $.turn.complete(mainTurn(usage(FABLE, 0, 0)))
+    const out = await $.command.run(delegation)
+    expect(out.text).toContain('brain: fable $2.25 over 2 turns · workers $0.00 (0 attempts) · brain share 100%')
+  })
+
+  test('a worker turn.complete never counts as the brain', async ($, on) => {
+    const w = world(on, { model: FABLE })
+    await $.session.start(sessionStart)
+    await $.turn.complete(turnInput('agent-9', 'working', usage(SONNET, 1_000_000, 0)))
+    expect(w.state.get('chassis-delegation.brain')).toBeUndefined()
+  })
+
+  test('delegateOnly deny: the main loop cannot edit source, and the denial names the card tool', OPTS, async ($, on) => {
+    const w = world(on, { model: FABLE })
+    on('tool.call', { tool: 'Edit' }, passed)
+    on('tool.call', { tool: 'Write' }, passed)
+    await $.session.start(sessionStart)
+    const r = await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/hooks/lib/a.ts`, old_string: 'a', new_string: 'b' } as never)
+    expect(r.deny).toBe('chassis-delegation: delegateOnly is on: the brain does not edit source. Describe the task and call the card tool, or set delegateOnly off.')
+    expect(r.deny).toContain('card tool')
+    // under the card folder, docs/ and .delegation/ it runs
+    const card = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/agents/tasks/T-1.md`, content: 'x' } as never)
+    expect(card.deny).toBeUndefined()
+    const doc = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/docs/a.md`, content: 'x' } as never)
+    expect(doc.deny).toBeUndefined()
+    // every brain edit counts, allowed or not
+    expect((w.state.get('chassis-delegation.brain') as { edits: number }).edits).toBe(3)
+    const out = await $.command.run(delegation)
+    expect(out.text).toContain('brain edits: 3')
+  })
+
+  test('delegateOnly deny: a Bash write into the root is denied, a read is not', OPTS, async ($, on) => {
+    world(on, { model: FABLE })
+    on('tool.call', { tool: 'Bash' }, passed)
+    await $.session.start(sessionStart)
+    expect((await $.tool.call({ tool: 'Bash', command: 'echo x > src/a.ts' } as never)).deny).toContain('delegateOnly is on')
+    expect((await $.tool.call({ tool: 'Bash', command: "sed -i 's/a/b/' src/a.ts" } as never)).deny).toContain('delegateOnly is on')
+    expect((await $.tool.call({ tool: 'Bash', command: 'cat src/a.ts | head' } as never)).deny).toBeUndefined()
+  })
+
+  test('a worker tool.call is untouched, and so is a sonnet brain', OPTS, async ($, on) => {
+    const w = world(on, { model: FABLE })
+    on('tool.call', { tool: 'Edit' }, passed)
+    await $.session.start(sessionStart)
+    const edit = { tool: 'Edit', file_path: `${ROOT}/hooks/lib/a.ts`, old_string: 'a', new_string: 'b' }
+    expect((await $.tool.call({ ...edit, agentId: 'agent-3' } as never)).deny).toBeUndefined()
+    expect(w.state.get('chassis-delegation.brain')).toBeUndefined()
+    w.model = SONNET
+    expect((await $.tool.call(edit as never)).deny).toBeUndefined()
+  })
+
+  test('delegateOnly off (the default): nothing is denied', async ($, on) => {
+    world(on, { model: FABLE })
+    on('tool.call', { tool: 'Edit' }, passed)
+    await $.session.start(sessionStart)
+    expect((await $.tool.call({ tool: 'Edit', file_path: `${ROOT}/hooks/lib/a.ts`, old_string: 'a', new_string: 'b' } as never)).deny).toBeUndefined()
+  })
+
+  test('delegateOnly warn: the edit runs and one row per turn says so', { options: { delegateOnly: 'warn' } }, async ($, on) => {
+    const w = world(on, { model: FABLE })
+    on('tool.call', { tool: 'Edit' }, passed)
+    await $.session.start(sessionStart)
+    const edit = { tool: 'Edit', file_path: `${ROOT}/hooks/lib/a.ts`, old_string: 'a', new_string: 'b' } as never
+    expect((await $.tool.call(edit)).deny).toBeUndefined()
+    expect((await $.tool.call(edit)).deny).toBeUndefined()
+    const text = delivered(w)
+    expect(text).toContain('chassis-delegation: the brain edited hooks/lib/a.ts itself; a card would have delegated it (delegateOnly=warn)')
+    expect(text.split('the brain edited').length - 1).toBe(1)
+    await $.turn.complete(mainTurn(usage(FABLE, 1, 1)))
+    await $.tool.call(edit)
+    expect(delivered(w).split('the brain edited').length - 1).toBe(2)
+  })
+
+  test('posture: a fable brain with delegateOnly on is told so at the top of the delegation state; off or a sonnet brain is not', OPTS, async ($, on) => {
+    const w = world(on, { model: FABLE })
+    await $.session.start(sessionStart)
+    const section = (await $.prompt.compose(composeInput(['Agent']))).sections.at(-1)
+    expect(section?.text.split('\n').slice(0, 3)).toEqual([
+      'Delegation state (chassis-delegation):',
+      'You are the brain on a premium model. Build work goes to workers through the card tool; you read the repo to write cards, verify hand-backs, and read diffs.',
+      'Do not edit source or run the test suite yourself.',
+    ])
+    expect((section?.text.split('\n').length ?? 99)).toBeLessThanOrEqual(40)
+    w.model = SONNET
+    const none = (await $.prompt.compose(composeInput(['Agent']))).sections.map(s => s.text).join('\n')
+    expect(none).not.toContain('You are the brain on a premium model')
+  })
+
+  test('the dashboard text carries the split and a brain row in spend by model', async ($, on) => {
+    world(on, { model: FABLE, panesUnplaced: 'no panes here' })
+    await $.session.start(sessionStart)
+    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000)))
+    const out = await $.command.run({ command: 'delegation', args: 'dashboard', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    expect(out.text).toContain('Spend split: brain $2.25 / workers $0.00')
+    expect(out.text).toContain('brain · fable · $2.25 · 630k tok · 1 turn')
+  })
+})

@@ -14,7 +14,7 @@ describe('3B: the price table', () => {
   test('per MTok in/out, matched by model id prefix, longest first', () => {
     const lengths = PRICES.map(([p]) => p.length)
     expect(lengths).toEqual([...lengths].sort((a, b) => b - a))
-    expect(PRICES.map(([p]) => p).sort()).toEqual(['haiku-4-5', 'haiku-5-5', 'opus-5', 'opus-5-5', 'sonnet-5', 'sonnet-5-5'])
+    expect(PRICES.map(([p]) => p).sort()).toEqual(['fable-5', 'fable-5-1', 'haiku-4-5', 'haiku-5-5', 'opus-5', 'opus-5-5', 'sonnet-5', 'sonnet-5-5'])
     expect(priceFor('claude-opus-5-5')).toEqual({ in: 4, out: 20 })
     expect(priceFor('claude-opus-5')).toEqual({ in: 5, out: 25 })
     expect(priceFor('claude-opus-5-20260101')).toEqual({ in: 5, out: 25 })
