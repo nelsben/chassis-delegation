@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A dispatch that names a base writes it into an existing brief (MOD-2, public
+  issue #37).** Dispatching with `--base <sha>` (or the tool's `base`) against a
+  brief already on disk now sets or replaces `base=` in its header
+  (`setHeaderField` in `hooks/lib/brief.ts`; the amend blocks and body stay
+  byte-identical) and says `reused, base= set to <sha>` or `reused, base=
+  replaced <old> → <new>`, instead of the note that the verifier diffs against
+  origin/main. A dispatch with no base against a reused brief that carries
+  `base=` cuts the worktree from it, so the cut point and the verifier's base are
+  the same ref.
+
 - **Spend ceilings that fit the host (GH-116, public issue #34).** The defaults
   are now economy 3, standard 10, frontier 25 dollars (were 2, 6, 15). Setup
   proposes economy 5, standard 15, frontier 35 when a gate command is `sf`,

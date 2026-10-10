@@ -50,6 +50,7 @@ import {
   noBriefLine,
   parseBudget,
   parseHeader,
+  setHeaderField,
   parseReport,
   scopeOverlap,
   spendOf,
@@ -2117,7 +2118,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (parsed.error !== undefined) return parsed.error
   if (parsed.verify !== undefined) return runVerifyDispatch($, parsed.id, parsed.verify)
   await loadRepoConfig($)
-  const { id, dryRun, base, scope, forbid } = parsed
+  const { id, dryRun, scope, forbid } = parsed
+  let base = parsed.base
   const replay = parsed.replay === true
   const out: string[] = []
   const root = await $.session.root()
@@ -2142,6 +2144,9 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const reusedHeader = reusedText !== undefined ? parseHeader(reusedText) : undefined
   const wantHere = !replay && (parsed.here === true || card.repo === 'here')
   const here = !replay && (reusedHeader ? reusedHeader.repo === 'here' : wantHere)
+  // MOD-2: no base named, a reused worktree brief that carries one: the cut point is that base, the verifier's base too
+  const reusedBase = (reusedHeader?.fields.base ?? '').trim()
+  if (!replay && !here && base === 'origin/main' && reusedBase && isGitRef(reusedBase)) base = reusedBase
 
   const worktree = here ? root : worktreePath(root, id, replay, cfg.worktreeRoot)
   let branch = branchName(card.domain, id, replay)
@@ -2197,10 +2202,15 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (reuse) {
     briefPath = reuse
     shown = reusedHeader?.raw ?? header
-    out.push(`2. brief ${briefPath} exists — reused, not overwritten${scope || forbid ? ' (--scope/--forbid not applied to it)' : ''}`)
-    if (base !== 'origin/main' && !reusedHeader?.fields.base) {
-      out.push(`   note: the reused brief has no base=; the verifier diffs against ${cfg.baseRef || 'origin/main → main → origin/master → master'}`)
+    // MOD-2: a dispatch that names a base writes it into the reused brief's header; the rest of the file is untouched
+    let baseNote = ''
+    if (!here && !replay && reusedText !== undefined && parsed.base !== 'origin/main' && reusedHeader && reusedBase !== parsed.base) {
+      const set = setHeaderField(reusedText, 'base', parsed.base)
+      await $.fs.write(briefPath, set.text)
+      shown = parseHeader(set.text)?.raw ?? shown
+      baseNote = set.previous !== undefined ? `, base= replaced ${set.previous} → ${parsed.base}` : `, base= set to ${parsed.base}`
     }
+    out.push(`2. brief ${briefPath} exists — reused${baseNote || ', not overwritten'}${scope || forbid ? ' (--scope/--forbid not applied to it)' : ''}`)
     if (here !== wantHere && !replay) out.push(`   note: the reused brief is ${here ? 'repo=here' : 'a worktree brief'}, so it decides the mode (remove it to re-render)`)
   } else {
     let template: string

@@ -16,6 +16,7 @@ import {
   noBriefLine,
   lacksLine,
   scopeOverlap,
+  setHeaderField,
 } from '../hooks/lib/brief'
 
 const FE205 =
@@ -242,5 +243,28 @@ describe('GH-16: repo=here header fields, ignore+= and scope overlap', () => {
     expect(scopeOverlap(['src/**'], ['docs/**', 'README.md'])).toBeUndefined()
     expect(scopeOverlap(['src/a/**'], ['src/b/**'])).toBeUndefined()
     expect(scopeOverlap([], ['src/**'])).toBeUndefined()
+  })
+})
+
+describe('MOD-2: setHeaderField sets or replaces one field in the brief header', () => {
+  const NEW = 'e'.repeat(40)
+  const OLD = 'd'.repeat(40)
+  const BODY = '\n\n# body\n[[amend v=1 scope+=x reason=y]]\nbase=zzz in prose\n'
+  const H = '[[brief v=1 task=T-1 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** red_test="none" gate=prettier spend=10 budget=3-attempts report=chassis.report.v1]]'
+  test('a header with no base= gains exactly one, the rest byte-identical', () => {
+    const r = setHeaderField(H + BODY, 'base', NEW)
+    expect(r.previous).toBeUndefined()
+    expect(r.text).toBe(H.replace(' spend=10', ` base=${NEW} spend=10`) + BODY)
+    expect(r.text.split('base=').length).toBe(3) // header + the prose line
+    expect(parseHeader(r.text)?.fields.base).toBe(NEW)
+  })
+  test('a header with base=<old> has it replaced, the rest byte-identical, and names the old one', () => {
+    const withOld = H.replace(' spend=10', ` base=${OLD} spend=10`) + BODY
+    const r = setHeaderField(withOld, 'base', NEW)
+    expect(r.previous).toBe(OLD)
+    expect(r.text).toBe(withOld.replace(OLD, NEW))
+  })
+  test('text with no header comes back unchanged', () => {
+    expect(setHeaderField('no header', 'base', NEW)).toEqual({ text: 'no header' })
   })
 })
