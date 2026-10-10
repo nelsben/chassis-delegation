@@ -2,6 +2,8 @@
 // friction worth writing down, a background agent runs the /debrief skill.
 // Pure: no `$`.
 
+import { redact, type RedactRules } from './redact'
+
 const H = 60 * 60 * 1000
 
 export const DEFAULT_DEBRIEF_IDLE_MINUTES = 20
@@ -70,8 +72,17 @@ export function cleanStop(i: CleanStopInput): { ok: true } | { ok: false; why: s
   return { ok: true }
 }
 
-export const debriefPrompt = (skillPath: string, sessionId: string): string =>
-  `Run the /debrief skill exactly as written in ${skillPath}. Session id ${sessionId}. Write only what the skill allows.`
+/** MOD-6: the one more top-level key both prompts ask the debrief JSON to carry, about the mod itself. */
+export const MOD_FINDINGS_ASK =
+  'Also add one more top-level key to the JSON you write, mod_findings: an array of { kind: went_well | went_wrong, surface (the command, hook or file of chassis-delegation it is about), fault_class: bug | design | docs | cost | performance, severity: P1 | P2 | P3, title, body, evidence: [strings] } about chassis-delegation itself, not the project, grounded in the facts above (verdict lines, refutes, by-hand accepts, denials, corrections); [] when there is nothing to say. Name no product, repo, customer, person or path in it.'
+
+/** The skill-wrapping prompt: the person's own skill file, unedited, plus the mod_findings ask and the facts it rests on. */
+export const debriefPrompt = (skillPath: string, sessionId: string, facts: readonly string[] = []): string =>
+  [
+    `Run the /debrief skill exactly as written in ${skillPath}. Session id ${sessionId}. Write only what the skill allows.`,
+    ...(facts.length > 0 ? ['What chassis-delegation saw since the last debrief:', ...facts.map(f => `- ${f}`)] : []),
+    MOD_FINDINGS_ASK,
+  ].join('\n')
 
 /** The debrief file the agent's answer names: `…/harness/debriefs/<date>-<slug>.json` or `<root>/.delegation/debriefs/…`. */
 export function debriefPathOf(answer: string): string | undefined {
@@ -99,6 +110,7 @@ export const builtInDebriefPrompt = (templatePath: string, sessionId: string, ro
     `Session id ${sessionId}. Repo root ${root}.`,
     facts.length > 0 ? 'What chassis-delegation saw since the last debrief:' : 'chassis-delegation saw no friction events beyond the verdicts below.',
     ...facts.map(f => `- ${f}`),
+    MOD_FINDINGS_ASK,
     'Write only what it allows.',
   ].join('\n')
 
@@ -123,4 +135,68 @@ export const frictionFacts = (events: readonly FrictionEvent[]): string[] => eve
 export const debriefToast = (answer: string): string => {
   const path = debriefPathOf(answer)
   return path ? `debrief written: ${path}` : 'debrief finished'
+}
+
+// ---- MOD-6: the findings about the mod itself --------------------------------------
+
+export type ModFinding = {
+  kind: 'went_well' | 'went_wrong'
+  surface: string
+  fault_class: 'bug' | 'design' | 'docs' | 'cost' | 'performance'
+  severity: 'P1' | 'P2' | 'P3'
+  title: string
+  body: string
+  evidence: string[]
+}
+
+const KINDS = ['went_well', 'went_wrong'] as const
+const FAULTS = ['bug', 'design', 'docs', 'cost', 'performance'] as const
+const SEVERITIES = ['P1', 'P2', 'P3'] as const
+const pick = <T extends string>(list: readonly T[], v: unknown, fallback: T): T => (list.includes(v as T) ? (v as T) : fallback)
+const text = (v: unknown): string => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '')
+
+/**
+ * The mod_findings of a debrief file's text, every string scrubbed with `redact`.
+ * undefined: the text is not a JSON object. An entry with no title is dropped; an
+ * unknown kind, class or severity falls to went_wrong, design, P3.
+ */
+export function scrubbedFindings(json: string, rules: RedactRules): ModFinding[] | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return undefined
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+  const list = (parsed as Record<string, unknown>).mod_findings
+  if (!Array.isArray(list)) return []
+  const out: ModFinding[] = []
+  for (const raw of list) {
+    if (raw === null || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const title = redact(text(r.title), rules)
+    if (title === '') continue
+    out.push({
+      kind: pick(KINDS, r.kind, 'went_wrong'),
+      surface: redact(text(r.surface), rules),
+      fault_class: pick(FAULTS, r.fault_class, 'design'),
+      severity: pick(SEVERITIES, r.severity, 'P3'),
+      title,
+      body: redact(typeof r.body === 'string' ? r.body.trim() : '', rules),
+      evidence: (Array.isArray(r.evidence) ? r.evidence : []).filter((e): e is string => typeof e === 'string').map(e => redact(e.trim(), rules)),
+    })
+  }
+  return out
+}
+
+/** `…/2026-10-03-mod-build.json` → `…/2026-10-03-mod-build.findings.json`, beside it. */
+export const findingsPathOf = (debriefPath: string): string => debriefPath.replace(/\.json$/, '') + '.findings.json'
+
+/** The file the mod writes: what a poster reads. */
+export const findingsFile = (debrief: string, modVersion: string, findings: readonly ModFinding[]) => ({ debrief, modVersion, scrubbed: true as const, findings })
+
+/** One line per finding, then where the drafts are; nothing to say prints `no findings`. */
+export function findingsLines(findings: readonly ModFinding[], draftsPath: string): string[] {
+  if (findings.length === 0) return ['no findings']
+  return [...findings.map((f, i) => `[${i + 1}] ${f.kind} · ${f.severity} · ${f.surface || '(no surface)'} · ${f.title}`), `drafts: ${draftsPath}`]
 }

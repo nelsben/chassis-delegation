@@ -40,8 +40,49 @@ One JSON file, `<root>/.delegation/debriefs/YYYY-MM-DD-<slug>.json` (the slug is
     }
   ],
   "harness_wins": ["<a moment a rule or the mod's verification actively helped>"],
-  "harness_gaps": ["<a moment a rule would have prevented friction>"]
+  "harness_gaps": ["<a moment a rule would have prevented friction>"],
+  "mod_findings": [
+    {
+      "kind": "went_well | went_wrong",
+      "surface": "<the chassis-delegation command, hook or file it is about>",
+      "fault_class": "bug | design | docs | cost | performance",
+      "severity": "P1 | P2 | P3",
+      "title": "<one line>",
+      "body": "<what happened and what would fix or keep it>",
+      "evidence": ["<a verdict line, refute, by-hand accept, denial or correction from your prompt>"]
+    }
+  ]
 }
+```
+
+`mod_findings` is about chassis-delegation itself, not the project: what the mod
+did well and what it got wrong this session, from the facts in your prompt
+(verdict lines, refutes, by-hand accepts, denials, corrections). Leave it `[]`
+when there is nothing to say. Name no product, repo, customer, person or path in
+it: the mod scrubs the file before it is posted, but write it clean. One example
+of each kind:
+
+```json
+[
+  {
+    "kind": "went_well",
+    "surface": "the verifier",
+    "fault_class": "design",
+    "severity": "P3",
+    "title": "A claimed-green gate was caught red at the worker's own sha",
+    "body": "The worker reported gate=pass; the verifier re-ran the gate in its worktree and refuted the attempt, so the resume went to the right fix.",
+    "evidence": ["verdict: T-4 attempt 1/3 refuted on gate (gate=pass claimed but the gate is RED)"]
+  },
+  {
+    "kind": "went_wrong",
+    "surface": "/delegation accept",
+    "fault_class": "bug",
+    "severity": "P2",
+    "title": "An owed row stayed in the state block after a by-hand accept",
+    "body": "The task was accepted by hand but its row was still listed as owed on the next turn.",
+    "evidence": ["accepted T-2 by hand (attempt 1)", "the next state block still listed T-2 as owed"]
+  }
+]
 ```
 
 Classification: `completed_cleanly` verified on the first attempt; `required_rework`

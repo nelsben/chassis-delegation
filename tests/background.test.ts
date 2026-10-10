@@ -235,8 +235,9 @@ describe('2C: the clean-stop debrief', () => {
     expect(w.spawns[0]).toMatchObject({
       description: 'debrief',
       model: 'sonnet',
-      prompt: `Run the /debrief skill exactly as written in ${SKILL}. Session id sess-1. Write only what the skill allows.`,
     })
+    expect(String(w.spawns[0]?.prompt).split('\n')[0]).toBe(`Run the /debrief skill exactly as written in ${SKILL}. Session id sess-1. Write only what the skill allows.`)
+    expect(String(w.spawns[0]?.prompt)).toContain('mod_findings')
     expect(typeOf(w.spawns[0])).toBe('general-purpose')
     expect(w.toasts).toContain('debrief running in the background')
     expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ lastAt: NOW + 20 * MIN, agentId: 'agent-1', watermark: 10, lines: 40 })

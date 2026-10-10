@@ -275,6 +275,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/delegation setup` | you type it | checks the repo and tools, names the fixes, then scaffolds and asks for your first task (see [Setup](#setup)) |
 | `/delegation init` | you type it | the bare scaffold, no checks (step 4 above) |
 | `/delegation update` | you type it | brings the loaded copy of the mod to origin/main (fast-forward only), migrates this repo's config and says whether the session reloaded or needs a restart (see [Upgrading](#upgrading)) |
+| `/delegation debrief` | you type it | runs the background debrief now and ends with scrubbed findings about the mod, ready to post (see [The debrief now](#the-debrief-now)) |
 | `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card; the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
@@ -844,6 +845,7 @@ Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `s
 | `evalAgent` | `general-purpose` | the eval runner's subagent type |
 | `probeModels` | `false` | once a day, ask each of `candidateIds` one token and toast the first answer |
 | `candidateIds` | `""` | comma-separated model ids to probe |
+| `redact` | `""` | comma-separated words the debrief findings scrub replaces with `<redacted>` (see [The debrief now](#the-debrief-now)); `/config` only |
 
 **The debrief.** When `~/.claude/commands/debrief.md` exists, the mod runs it.
 Otherwise it runs the built-in `hooks/templates/debrief.md`. That template writes
@@ -856,6 +858,40 @@ Otherwise it runs the built-in `hooks/templates/debrief.md`. That template write
   - a prompt whose first word is no, stop, don't or actually;
   - a denied tool call;
   - a refuted verdict.
+
+### The debrief now
+
+`/delegation debrief` starts the same background debrief the clean stop starts,
+now. It skips the idle, cooldown and minimum-friction tests, keeps one debrief at
+a time (a second call while one runs says so in one line and names its agent),
+and runs even while a worker is running, saying so in one line and in the
+prompt. It prints the agent id, the mode (`breadcrumbs` or `events`) and the
+folder the file will land in. The automatic path and the `last debrief:` line
+of `/delegation` are unchanged.
+
+Both prompts (your `~/.claude/commands/debrief.md`, which is never edited, and
+the built-in template) ask for one more top-level key in the debrief JSON,
+`mod_findings`: an array of `{ kind: went_well | went_wrong, surface,
+fault_class: bug | design | docs | cost | performance, severity: P1 | P2 | P3,
+title, body, evidence: [strings] }` about chassis-delegation itself, not the
+project, grounded in the facts the prompt gives; empty when there is nothing to
+say. When the agent hands back, the mod reads the JSON, scrubs every string of
+`mod_findings` and writes `<same folder>/<same name>.findings.json`, holding `{
+debrief, modVersion, scrubbed: true, findings }`. It prints one line per finding,
+`[1] went_wrong · P2 · <surface> · <title>`, then `drafts: <path>`; with nothing
+to say it prints `no findings`. Posting them is a separate step.
+
+The scrub (`redact` in `hooks/lib/redact.ts`) turns every `/Users/<name>/…` or
+`/home/<name>/…` prefix into `<home>/…`; the session root's folder name and its
+origin URL (both `owner/name` and the full URL) into `<repo>`; the git
+`user.name` and `user.email` into `<person>`; and every word of the `redact`
+list into `<redacted>`, whole words in any case. The origin and the git user are
+read from `.git/config` and `~/.gitconfig`.
+
+The `redact` list is a `/config` option and nothing else. It is never read from
+`.chassis-delegation.json`: that file is committed, and often public, so a list
+of the names you do not want public would publish them. Put the product,
+customer, employer and repo names there once, in your own settings.
 
 ## The host-command allowlist
 

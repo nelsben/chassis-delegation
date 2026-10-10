@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **`/delegation debrief` runs the debrief now, and every debrief ends with
+  scrubbed findings about the mod (MOD-6).** The command starts the background
+  debrief at once (no idle, cooldown or minimum-friction test; one at a time;
+  it runs while a worker runs and says so) and prints the agent id, the mode and
+  the folder. Both debrief prompts ask for a `mod_findings` key (went_well /
+  went_wrong, surface, fault_class, severity, title, body, evidence); at
+  hand-back the mod scrubs every string with `redact` (new `hooks/lib/redact.ts`:
+  home paths, the repo and its origin, the git user, and the new `redact`
+  `/config` list, which is never read from the public repo file) and writes
+  `<name>.findings.json` beside the debrief, printing one line per finding.
+
 ## 0.6.0 — 2026-10-10
 
 - **Owed rows retire by themselves, `/delegation accept <id>` closes one, and
