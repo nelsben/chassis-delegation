@@ -2165,6 +2165,28 @@ describe('GH-113: the brain spend and delegate-only', () => {
     expect(pwd.deny).toContain('card tool')
   })
 
+  test('MOD-9: delegateOnly deny: a cd out of the root, then a relative write, is no write in the root; a cd into it is', OPTS, async ($, on) => {
+    world(on, { model: FABLE })
+    on('tool.call', { tool: 'Bash' }, passed)
+    await $.session.start(sessionStart)
+    const out = `cd ${ROOT}-MOD-8 && rm -rf .claude-plugin/types && cp -R ${ROOT}/.claude-plugin/types .claude-plugin/ && echo x > hooks/x.ts`
+    expect((await $.tool.call({ tool: 'Bash', command: out } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Bash', command: 'cd /elsewhere/wt && echo x > a.md' } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Bash', command: `cd ${ROOT} && echo x > hooks/x.ts` } as never)).deny).toContain('card tool')
+  })
+
+  test('MOD-9: delegateOnly deny: git -C outside the root commits freely; in the root the staged paths are judged', OPTS, async ($, on) => {
+    let staged = 'docs/cards/X.md\n'
+    const w = world(on, { model: FABLE, run: argv => (argv.slice(0, 4).join(' ') === `git -C ${ROOT} diff` && argv.includes('--cached') ? { exitCode: 0, stdout: staged } : undefined) })
+    on('tool.call', { tool: 'Bash' }, passed)
+    await $.session.start(sessionStart)
+    expect((await $.tool.call({ tool: 'Bash', command: 'git -C /elsewhere/repo commit -m x' } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)).deny).toBeUndefined()
+    expect(argvs(w).some(a => a.includes('--cached'))).toBe(true)
+    staged = 'hooks/lib/brain.ts\n'
+    expect((await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never)).deny).toContain('card tool')
+  })
+
   test('a worker tool.call is untouched, and so is a sonnet brain', OPTS, async ($, on) => {
     const w = world(on, { model: FABLE })
     on('tool.call', { tool: 'Edit' }, passed)

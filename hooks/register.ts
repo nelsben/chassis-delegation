@@ -11,7 +11,7 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { bandTree } from './lib/band'
-import { bashWrites, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
+import { bashCommits, bashWrites, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
 import { paneTree, type PaneTable } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
@@ -710,12 +710,26 @@ async function brainGuard($: Host, e: { tool: unknown; agentId?: string }): Prom
     const input = e as unknown as Record<string, unknown>
     const root = await $.session.root()
     const home = (await $.env.get('HOME')) || undefined
-    const bash = tool === 'Bash' ? bashWrites(typeof input.command === 'string' ? input.command : '', root, home) : undefined
-    const paths = bash ? bash.paths : toolPath(input)
+    const command = typeof input.command === 'string' ? input.command : ''
+    const bash = tool === 'Bash' ? bashWrites(command, root, home) : undefined
+    const paths = bash ? [...bash.paths] : toolPath(input)
     if (paths.length === 0 && !bash?.commit) return undefined
     await loadRepoConfig($)
     const family = cfg.delegateOnly === 'off' ? 'other' : await brainSeat($)
-    const d = delegateDecision({ mode: cfg.delegateOnly, brainFamily: family, tool, paths, root, cardDir: cfg.cardDir, ...(bash?.commit ? { commit: true } : {}) })
+    if (bash?.commit && cfg.delegateOnly !== 'off' && isRestricted(family)) {
+      // MOD-9: a commit is judged by the paths it takes, read with the allowed read-only forms
+      const top = root.replace(/\/+$/, '')
+      for (const c of bashCommits(command, root, home)) {
+        const reads = [['diff', '--cached', '--name-only'], ...(c.all ? [['diff', '--name-only']] : [])]
+        for (const r of reads) {
+          const got = await run($, ['git', '-C', c.dir, ...r])
+          if (got.ok && got.exitCode === 0) for (const name of got.stdout.split('\n')) if (name.trim() !== '') paths.push(`${top}/${name.trim()}`)
+        }
+        paths.push(...c.pathspecs)
+      }
+    }
+    if (paths.length === 0) return undefined
+    const d = delegateDecision({ mode: cfg.delegateOnly, brainFamily: family, tool, paths, root, cardDir: cfg.cardDir })
     if (d.edit) await updateBrain($, brainEdit)
     if (d.action === 'deny') return { deny: DELEGATE_DENY }
     if (d.action === 'warn' && d.path !== undefined && !brainWarnedThisTurn) {
