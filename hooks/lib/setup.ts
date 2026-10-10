@@ -6,6 +6,7 @@
 // register.ts gathers the probe with allowlisted reads and does the writes.
 import { REPO_CONFIG_FILE } from './repoconfig'
 import { PLUGIN_CARD_DIR } from './init'
+import { DEFAULT_SPEND_BY_TIER } from './cost'
 
 /** The tool names register.ts looks for on PATH. */
 export const PATH_TOOLS = ['git', 'node', 'npm', 'pnpm', 'yarn', 'python3', 'pytest', 'cargo', 'go', 'gh'] as const
@@ -169,8 +170,15 @@ export function setupText(root: string, lines: readonly SetupLine[]): string {
   return out.join('\n')
 }
 
+/** GH-116: the ceilings for a host whose gate deploys or runs tests remotely (sf, sfdx, deploy, --target-org, gcloud, aws, az, terraform); else the defaults. */
+export function proposedSpend(gateCommands: string | readonly string[]): Record<'economy' | 'standard' | 'frontier', number> {
+  const cmds = typeof gateCommands === 'string' ? [gateCommands] : gateCommands
+  const cloud = cmds.some(c => /(^|[\s;&|(])(sf|sfdx|gcloud|aws|az|terraform)(\s|$)/.test(c) || /\bdeploy/i.test(c) || /--target-org\b/.test(c))
+  return cloud ? { economy: 5, standard: 15, frontier: 35 } : { ...DEFAULT_SPEND_BY_TIER }
+}
+
 /** What setup found that the config should carry. */
-export type Found = { gate: string; baseRef?: string; cardDir?: string }
+export type Found = { gate: string; baseRef?: string; cardDir?: string; spendByTier?: Readonly<Record<'economy' | 'standard' | 'frontier', number>> }
 
 export function foundOf(p: SetupProbe): Found {
   const gate = detectGate(p)
@@ -187,6 +195,7 @@ export function scaffoldConfig(template: string, found: Found): string {
   o.gateMap = { test: found.gate }
   if (found.cardDir) o.cardDir = found.cardDir
   if (found.baseRef) o.baseRef = found.baseRef
+  if (found.spendByTier) o.spendByTier = found.spendByTier
   return `${JSON.stringify(o, null, 2)}\n`
 }
 
@@ -198,7 +207,9 @@ export function wouldSet(found: Found): string {
 
 /** One line per key setup set in a fresh config. */
 export function configLines(found: Found): string[] {
-  return [`config: gateMap.test = ${found.gate}`, ...(found.baseRef ? [`config: baseRef = ${found.baseRef}`] : []), ...(found.cardDir ? [`config: cardDir = ${found.cardDir}`] : [])]
+  const s = found.spendByTier
+  const spend = s ? [`config: spendByTier = economy ${s.economy}, standard ${s.standard}, frontier ${s.frontier} (${s.standard === DEFAULT_SPEND_BY_TIER.standard ? 'the defaults' : 'the gate deploys or runs remote tests'})`] : []
+  return [`config: gateMap.test = ${found.gate}`, ...(found.baseRef ? [`config: baseRef = ${found.baseRef}`] : []), ...(found.cardDir ? [`config: cardDir = ${found.cardDir}`] : []), ...spend]
 }
 
 /** A first task the person could say, by the detected stack. */

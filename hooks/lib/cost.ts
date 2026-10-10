@@ -95,7 +95,7 @@ export const totalTokens = (t: Tokens): number => t.in + t.out + t.cacheRead + t
 // ---- GH-106: the per-attempt spend ceiling ---------------------------------------
 
 /** Config `spendByTier` default: dollars one attempt may spend, per tier; 0 = no ceiling. */
-export const DEFAULT_SPEND_BY_TIER: Readonly<Record<'economy' | 'standard' | 'frontier', number>> = { economy: 2, standard: 6, frontier: 15 }
+export const DEFAULT_SPEND_BY_TIER: Readonly<Record<'economy' | 'standard' | 'frontier', number>> = { economy: 3, standard: 10, frontier: 25 }
 
 /** The ceiling a tier gets when the card names none: the tier's entry, premium and unknown tiers the frontier's. */
 export const spendForTier = (tier: string, table: Readonly<Record<string, number>>): number =>

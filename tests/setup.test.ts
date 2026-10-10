@@ -1,5 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { allRequiredHold, BRAIN_HANDOVER, configLines, detectGate, foundOf, handoverText, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from '../hooks/lib/setup'
+import { DEFAULT_SPEND_BY_TIER } from '../hooks/lib/cost'
+import { allRequiredHold, proposedSpend, BRAIN_HANDOVER, configLines, detectGate, foundOf, handoverText, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from '../hooks/lib/setup'
 import { CONFIG_TEMPLATE } from '../hooks/lib/init'
 import { parseCard } from '../hooks/lib/dispatch'
 import { parseRepoConfig } from '../hooks/lib/repoconfig'
@@ -175,5 +176,25 @@ describe('GH-110: config lines', () => {
   test('one per key set', () => {
     expect(configLines({ gate: 'pytest', baseRef: 'main', cardDir: 'docs/cards' })).toEqual(['config: gateMap.test = pytest', 'config: baseRef = main', 'config: cardDir = docs/cards'])
     expect(configLines({ gate: 'cargo test' })).toEqual(['config: gateMap.test = cargo test'])
+  })
+})
+
+describe('GH-116: spend ceilings that fit the host', () => {
+  test('the defaults are economy 3, standard 10, frontier 25', () => {
+    expect(DEFAULT_SPEND_BY_TIER).toEqual({ economy: 3, standard: 10, frontier: 25 })
+  })
+  test('a cloud gate proposes economy 5, standard 15, frontier 35; any other gate the defaults', () => {
+    for (const c of ['sf project deploy start', 'sfdx force:source:deploy', 'npm run deploy && npm test', 'sf apex run test --target-org dev', 'gcloud builds submit', 'aws s3 ls', 'az deployment group create', 'terraform plan']) {
+      expect(proposedSpend(c)).toEqual({ economy: 5, standard: 15, frontier: 35 })
+    }
+    expect(proposedSpend(['npm test', 'sf apex run test']).standard).toBe(15)
+    for (const c of ['npm test', 'pytest', 'cargo test', 'go test ./...', 'python3 -m unittest discover -s tests']) expect(proposedSpend(c)).toEqual(DEFAULT_SPEND_BY_TIER)
+  })
+  test('a fresh config carries the proposal, and setup names it with a reason', () => {
+    const found = { gate: 'sf apex run test', spendByTier: proposedSpend('sf apex run test') }
+    expect(parseRepoConfig(scaffoldConfig(CONFIG_TEMPLATE, found)).config.spendByTier).toEqual({ economy: 5, standard: 15, frontier: 35 })
+    const lines = configLines(found)
+    expect(lines).toContain('config: spendByTier = economy 5, standard 15, frontier 35 (the gate deploys or runs remote tests)')
+    expect(configLines({ gate: 'npm test', spendByTier: proposedSpend('npm test') })).toContain('config: spendByTier = economy 3, standard 10, frontier 25 (the defaults)')
   })
 })
