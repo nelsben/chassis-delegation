@@ -35,7 +35,7 @@ export type QueuedSpawn = {
   prompt: string
   description: string
   subagentType: string
-  /** The caller's model, kept for the record; the start omits it so the spawn hook picks. */
+  /** The caller's model, kept for the record; the brain's Agent call names the model the spawn block gives, and the spawn hook keeps it when it matches the tier. */
   model?: string
   cwd?: string
   task: string

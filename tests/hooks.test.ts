@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, brainSpawn, spawnCallOf, workerCall, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
+import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, brainSpawn, spawnCallOf, workerCall, stepInput, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 import { MOD_VERSION } from '../hooks/lib/version'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
@@ -1541,7 +1541,7 @@ describe('GH-104: spend guards', () => {
     await $.turn.complete(turnInput('agent-4', 'Working on it.'))
     expect(w.sent).toHaveLength(1)
     await $.turn.complete(turnInput('agent-4', 'Still working on it.'))
-    expect(posted(w)[1]?.split('\n')[0]).toBe(`chassis-delegation: verdict=no-report task=T-4 attempt=2/3 usd=~0.00 model=claude-sonnet-5-5 next=respawn at standard — same brief ${BRIEF}, model omitted so the mod picks`)
+    expect(posted(w)[1]?.split('\n')[0]).toBe(`chassis-delegation: verdict=no-report task=T-4 attempt=2/3 usd=~0.00 model=claude-sonnet-5-5 next=respawn at standard — same brief ${BRIEF}, make the spawn block below (it names the model)`)
     // the row carries the spawn block at the same tier; the brain makes it
     expect(spawnCallOf(posted(w)[1] ?? '')).toMatchObject({ model: 'sonnet', description: 'T-4 standard sonnet' })
     expect(w.spawns).toHaveLength(1)
@@ -2614,7 +2614,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(w.spawns[0]).toMatchObject({ cwd: ROOT })
     const commit = await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'git commit -m x' })
     expect(commit.seen).toBe(true)
-    expect(commit.seen ? commit.result.deny : undefined).toBe('chassis-delegation: no commit on main; branch first (git checkout -b agent/<domain>/<id>)')
+    expect(commit.seen ? commit.result.deny : undefined).toBe('chassis-delegation: no commit on main (BE-101); branch first (git checkout -b agent/<domain>/<id>)')
     // a turn ends mid-run (no report yet): its usage is the attempt's own cost, the attempt still pending
     await $.turn.complete(turnInput('agent-1', 'Still working.', usage('claude-opus-5-5', 10_000, 2_000)))
     expect(w.store.get('delegation.cost.agent-1')).toMatchObject({ attempt: 1, spend: { tokens: { in: 10_000, out: 2_000 }, turns: 1 } })
@@ -2689,5 +2689,87 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
       [2, 'resume', 1, 'standard', 'resume'],
       [3, 'spawn', 3, 'frontier', 'escalated'],
     ])
+  })
+})
+
+describe('MOD-13: workers under the mod hooks', () => {
+  const HEAD = (task: string, over = '') => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier${over} spend=2 budget=3-attempts report=chassis.report.v1]]`
+  const briefOf = (task: string) => `${SCRATCH}/briefs/${task}.brief.md`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const onMain = (argv: string[]): RunAnswer | undefined => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined)
+  const boot = async ($: Parameters<Parameters<typeof test>[2]>[0], on: Parameters<Parameters<typeof test>[2]>[1], task: string, header: string, agentId: string, run = onMain) => {
+    const w = world(on, { files: { [briefOf(task)]: header + '\nbody' }, run, agentId })
+    ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async () => ({ result: 'ok' })) // the engine's tool, at the bottom
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${briefOf(task)}.` }))
+    return w
+  }
+  const runStep = async ($: { turn: { step: (e: never) => AsyncIterable<unknown> } }, input: never) => {
+    for await (const chunk of $.turn.step(input)) void chunk
+  }
+  const SONNET = 'claude-sonnet-5-5' // $2 in, $10 out per million
+  const wrapRows = (w: { appended: { text: string }[]; logs: string[] }) => delivered(w).split('\n').filter(l => l.includes('wrap up') || l.includes('spend warning'))
+
+  test('git guard: a repo=here worker `git push origin main` is denied naming its task; a worktree worker pushing its own branch passes', { options: { ...GM } }, async ($, on) => {
+    const here = await boot($, on, 'T-7', HEAD('T-7', ' repo=here'), 'agent-7')
+    const push = await workerCall($, here, 'agent-7', { tool: 'Bash', command: 'git push origin main' })
+    expect(push.seen ? push.result.deny : undefined).toBe('chassis-delegation: no push on main (T-7); branch first (git checkout -b agent/<domain>/<id>)')
+    const commit = await workerCall($, here, 'agent-7', { tool: 'Bash', command: 'git commit -m x' })
+    expect(commit.seen ? commit.result.deny : undefined).toContain('(T-7)')
+  })
+
+  test('git guard: a worktree worker on its own agent/mod/X branch is untouched', { options: { ...GM } }, async ($, on) => {
+    const w = await boot($, on, 'T-8', HEAD('T-8'), 'agent-8', argv => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'agent/mod/T-8\n' } : undefined))
+    const ok = await workerCall($, w, 'agent-8', { tool: 'Bash', command: 'git push origin agent/mod/T-8' })
+    expect(ok.seen ? ok.result.deny : 'unseen').toBeUndefined()
+    const commit = await workerCall($, w, 'agent-8', { tool: 'Bash', command: 'git commit -m x' })
+    expect(commit.seen ? commit.result.deny : 'unseen').toBeUndefined()
+  })
+
+  test('spend: crossing spend= posts one warning row naming the task and the dollars; twice it denies the next tool call and the attempt reads over-spend', { options: { ...GM } }, async ($, on) => {
+    const w = await boot($, on, 'T-6', HEAD('T-6'), 'agent-6', nativeRun())
+    await $.turn.complete(turnInput('agent-6', 'working', usage(SONNET, 600_000, 100_000))) // $2.20
+    const warned = wrapRows(w).filter(l => l.includes('T-6') && l.includes('$2.20') && l.startsWith('chassis-delegation:'))
+    expect(warned).toHaveLength(1)
+    expect(warned[0]).toContain('$2 ceiling')
+    const fine = await workerCall($, w, 'agent-6', { tool: 'Read', file_path: '/x' })
+    expect(fine.seen ? fine.result.deny : 'unseen').toBeUndefined()
+    await $.turn.complete(turnInput('agent-6', 'more', usage(SONNET, 1_000_000, 0))) // $4.20
+    expect(wrapRows(w).filter(l => l.includes('reached its'))).toHaveLength(1) // once
+    expect(records(w, 'T-6')[0]).toMatchObject({ verdict: 'over-spend' })
+    const denied = await workerCall($, w, 'agent-6', { tool: 'Read', file_path: '/x' })
+    expect(denied.seen ? denied.result.deny : undefined).toBe('chassis-delegation: T-6 is over twice its $2 ceiling; hand back now with what you have (SubagentHandback)')
+    // the hand-back itself is never refused
+    const back = await workerCall($, w, 'agent-6', { tool: 'SubagentHandback', message: 'done' })
+    expect(back.seen ? back.result.deny : 'unseen').toBeUndefined()
+    // the brain is never held to a worker's ceiling
+    expect((await $.tool.call({ tool: 'Read', file_path: '/x' } as never) as { deny?: string }).deny).toBeUndefined()
+  })
+
+  test('effort: a standard worker steps at medium, a frontier worker at high; the brain and an unrecorded agent are left alone; the attempt records it', { options: { ...GM } }, async ($, on) => {
+    const w = await boot($, on, 'T-6', HEAD('T-6'), 'agent-6', nativeRun())
+    await runStep($, stepInput('agent-6', 'xhigh'))
+    await runStep($, stepInput(undefined, 'xhigh'))
+    await runStep($, stepInput('agent-zz'))
+    expect(w.steps).toEqual([{ agentId: 'agent-6', effort: 'medium' }, { effort: 'xhigh' }, { agentId: 'agent-zz' }])
+    expect(records(w, 'T-6')[0]).toMatchObject({ effort: 'medium' })
+  })
+
+  test('effort: a frontier worker is rewritten to high; the tier default beats the engine own', { options: { ...GM } }, async ($, on) => {
+    const w = await boot($, on, 'T-9', HEAD('T-9').replace('tier=standard model=sonnet', 'tier=frontier model=opus'), 'agent-9', nativeRun())
+    await runStep($, stepInput('agent-9', 'low'))
+    expect(w.steps).toEqual([{ agentId: 'agent-9', effort: 'high' }])
+  })
+
+  test('effort: the card effort: written at /dispatch wins over the tier entry', { options: { ...GM } }, async ($, on) => {
+    const w = await boot($, on, 'T-6', HEAD('T-6'), 'agent-6', nativeRun())
+    w.store.set('delegation.effort.T-6', 'xhigh')
+    await runStep($, stepInput('agent-6', 'low'))
+    expect(w.steps).toEqual([{ agentId: 'agent-6', effort: 'xhigh' }])
+  })
+
+  test('effort: effortByTier standard 0 leaves the engine default', { options: { ...GM, effortByTier: '{"standard":0}' } }, async ($, on) => {
+    const w = await boot($, on, 'T-6', HEAD('T-6'), 'agent-6', nativeRun())
+    await runStep($, stepInput('agent-6', 'xhigh'))
+    expect(w.steps).toEqual([{ agentId: 'agent-6', effort: 'xhigh' }])
   })
 })

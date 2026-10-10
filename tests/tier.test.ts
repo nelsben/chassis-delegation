@@ -14,7 +14,11 @@ import {
   TIER_LABEL_GUIDE,
   CLASSIFIER_LABELS,
   BUILTIN_TIER_MAP,
+  DEFAULT_EFFORT_BY_TIER,
+  effortFor,
+  effortText,
 } from '../hooks/lib/tier'
+import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
 
 describe('precedence', () => {
   test('header tier beats the caller model beats the classifier', () => {
@@ -138,5 +142,38 @@ describe('tierOf (GH-108)', () => {
     expect(tierWarning('standard')).toBeUndefined()
     expect(tierWarning(undefined)).toBeUndefined()
     expect(tierWarning('  ')).toBeUndefined()
+  })
+})
+
+describe('MOD-13: effort by tier', () => {
+  test('the defaults: economy low, standard medium, frontier high', () => {
+    expect(DEFAULT_EFFORT_BY_TIER).toEqual({ economy: 'low', standard: 'medium', frontier: 'high' })
+    expect(effortFor('economy', undefined, DEFAULT_EFFORT_BY_TIER)).toBe('low')
+    expect(effortFor('standard', undefined, DEFAULT_EFFORT_BY_TIER)).toBe('medium')
+    expect(effortFor('frontier', undefined, DEFAULT_EFFORT_BY_TIER)).toBe('high')
+    expect(effortFor('premium', undefined, DEFAULT_EFFORT_BY_TIER)).toBe('high') // premium reads the frontier's entry
+  })
+  test('a card effort: wins; an unknown one is ignored; 0 leaves the engine default', () => {
+    expect(effortFor('standard', 'high', DEFAULT_EFFORT_BY_TIER)).toBe('high')
+    expect(effortFor('frontier', ' XHIGH ', DEFAULT_EFFORT_BY_TIER)).toBe('xhigh')
+    expect(effortFor('standard', 'wild', DEFAULT_EFFORT_BY_TIER)).toBe('medium')
+    expect(effortFor('standard', '0', DEFAULT_EFFORT_BY_TIER)).toBeUndefined()
+    expect(effortFor('standard', '', DEFAULT_EFFORT_BY_TIER)).toBe('medium')
+  })
+  test('a tier set to 0 or empty in the table leaves the engine default', () => {
+    expect(effortFor('standard', undefined, { economy: 'low', standard: 0, frontier: 'high' })).toBeUndefined()
+    expect(effortFor('frontier', undefined, { economy: 'low', standard: 'medium', frontier: '' })).toBeUndefined()
+  })
+  test('the /delegation line', () => {
+    expect(effortText(DEFAULT_EFFORT_BY_TIER)).toBe('effort: economy low · standard medium · frontier high')
+    expect(effortText({ economy: 'low', standard: 0, frontier: 'max' })).toBe('effort: economy low · standard default · frontier max')
+  })
+  test('effortByTier merges per tier: repo file, then /config (JSON string); a bad entry is named', () => {
+    expect(mergeConfig({}, {}).effortByTier).toEqual(DEFAULT_EFFORT_BY_TIER)
+    const repo = parseRepoConfig('{"effortByTier":{"standard":"high","bogus":"low","frontier":"loud"}}')
+    expect(repo.errors.join()).toContain('effortByTier.bogus')
+    expect(repo.errors.join()).toContain('effortByTier.frontier')
+    const settings = settingsLayer({ effortByTier: '{"economy":"medium","frontier":0}' })
+    expect(mergeConfig(repo.config, settings.config).effortByTier).toEqual({ economy: 'medium', standard: 'high', frontier: 0 })
   })
 })

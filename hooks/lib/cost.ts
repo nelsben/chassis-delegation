@@ -112,6 +112,14 @@ export const ceilingState = (usd: number, spend: number): CeilingState => (usd >
 export const warnText = (usd: number, spend: number): string =>
   `chassis-delegation: you have spent about $${usd.toFixed(2)} of a ${dollars(spend)} ceiling; wrap up now and hand back with the report line`
 
+/** The one row posted when a worker first reaches its ceiling (MOD-13): it names the task and the dollars. */
+export const spendWarnRow = (label: string, usd: number, spend: number): string =>
+  `chassis-delegation: ${label} spend $${usd.toFixed(2)} reached its ${dollars(spend)} ceiling; the worker was told to wrap up and hand back`
+
+/** The refusal a worker gets for each tool call once it has spent twice its ceiling (MOD-13); the hand-back itself is never refused. */
+export const overSpendDeny = (label: string, spend: number): string =>
+  `chassis-delegation: ${label} is over twice its ${dollars(spend)} ceiling; hand back now with what you have (SubagentHandback)`
+
 /** `next=` of the over-spend row. */
 export const OVER_SPEND_NEXT = (task: string): string => `check the worktree (work may be present: /dispatch ${task} --verify <sha>)`
 

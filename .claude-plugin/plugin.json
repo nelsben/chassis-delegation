@@ -10,7 +10,7 @@
     "autoEscalate": {
       "type": "boolean",
       "title": "Auto-escalate",
-      "description": "On a failing verdict, resume the worker (first failure) or respawn it one tier up (second) without asking",
+      "description": "On a failing verdict, resume the worker (first failure) without asking; a second failure prints the next spawn block (one tier up) for the brain to make, as the mod no longer spawns workers itself",
       "default": false
     },
     "applyAmends": {
@@ -73,6 +73,12 @@
       "description": "Dollars one attempt may spend, per tier, e.g. {\"standard\":8}; built in: economy 3, standard 10, frontier 25; 0 means no ceiling. /dispatch writes it as spend= in the brief (a card's own spend: wins); the mod warns the worker once at the ceiling and records over-spend at twice it. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
       "default": ""
     },
+    "effortByTier": {
+      "type": "string",
+      "title": "Effort per tier (JSON)",
+      "description": "How hard a worker thinks at each step, per tier, e.g. {\"standard\":\"high\"}; built in: economy low, standard medium, frontier high; low, medium, high, xhigh or max, and 0 or empty leaves the engine's default. A card's own effort: wins. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
     "domains": {
       "type": "string",
       "title": "Domains",
@@ -105,7 +111,7 @@
     "maxWorkers": {
       "type": "number",
       "title": "Max workers",
-      "description": "Briefed workers that run at once (built in: 2); a briefed spawn past it is queued and starts when a slot frees (ad hoc spawns never wait). Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "description": "Briefed workers that run at once (built in: 2); a briefed spawn past it is queued; the hand-back that frees a slot says ready: <id> and the brain makes the spawn (ad hoc spawns never wait). Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
       "default": 0
     },
     "autoDebrief": {

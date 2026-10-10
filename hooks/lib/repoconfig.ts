@@ -12,7 +12,7 @@
 // repo's autoEval off.
 import { DEFAULT_SPEND_BY_TIER } from './cost'
 import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
-import type { Alias, Tier } from './tier'
+import { DEFAULT_EFFORT_BY_TIER, isEffort, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
 
 export const REPO_CONFIG_FILE = '.chassis-delegation.json'
 
@@ -83,13 +83,15 @@ export type RepoConfig = {
   ignore?: string[]
   /** GH-106: dollars one attempt may spend, per tier (economy, standard, frontier); 0 = no ceiling. */
   spendByTier?: Partial<Record<SpendTier, number>>
+  /** MOD-13: the effort a worker steps at, per tier. */
+  effortByTier?: Partial<Record<SpendTier, EffortSetting>>
   /** GH-113: the brain on opus or fable may not edit source (warn: a row; deny: refused); default off. */
   delegateOnly?: DelegateOnly
   /** MOD-7: owner/name of the repo /delegation debrief post files issues in; empty = posting is off. */
   issueRepo?: string
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'delegateOnly', 'issueRepo'] as const
+export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'delegateOnly', 'issueRepo'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -108,6 +110,7 @@ export type Effective = {
   baseRef: string
   ignore: string[]
   spendByTier: Record<SpendTier, number>
+  effortByTier: Record<SpendTier, EffortSetting>
   delegateOnly: DelegateOnly
   issueRepo: string
   /** Which layer each key came from. */
@@ -205,6 +208,23 @@ function spendByTierOf(v: unknown, errors: string[], where: string): Partial<Rec
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+/** MOD-13: `effortByTier` as tier → low…max, or 0 / "" for the engine's default; a bad entry is named and dropped. */
+function effortByTierOf(v: unknown, errors: string[], where: string): Partial<Record<SpendTier, EffortSetting>> | undefined {
+  if (!isObject(v)) {
+    errors.push(`effortByTier${where}: not an object (ignored)`)
+    return undefined
+  }
+  const out: Partial<Record<SpendTier, EffortSetting>> = {}
+  for (const [k, x] of Object.entries(v)) {
+    if (k.startsWith('_')) continue
+    if (!(['economy', 'standard', 'frontier'] as readonly string[]).includes(k)) errors.push(`effortByTier.${k}${where}: not a tier (economy, standard, frontier) (ignored)`)
+    else if (x === 0 || x === '') out[k as SpendTier] = x
+    else if (typeof x === 'string' && isEffort(x.trim().toLowerCase())) out[k as SpendTier] = x.trim().toLowerCase() as Effort
+    else errors.push(`effortByTier.${k}${where}: needs low, medium, high, xhigh or max (or 0 for the engine's default) (ignored)`)
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 /** One layer's values from a plain object (the repo file, or settings after JSON strings are parsed). */
 function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): Parsed {
   const errors: string[] = []
@@ -246,6 +266,11 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
       case 'spendByTier': {
         const m = spendByTierOf(v, errors, where)
         if (m) config.spendByTier = m
+        break
+      }
+      case 'effortByTier': {
+        const m = effortByTierOf(v, errors, where)
+        if (m) config.effortByTier = m
         break
       }
       case 'delegateOnly':
@@ -311,7 +336,7 @@ export function settingsLayer(options: Readonly<Record<string, unknown>>): Parse
   for (const key of REPO_KEYS) {
     const v = options[key]
     if (v === undefined || v === '' || v === 0 || v === false) continue
-    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier') && typeof v === 'string') {
+    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'effortByTier') && typeof v === 'string') {
       try {
         obj[key] = JSON.parse(v)
       } catch {
@@ -344,6 +369,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig): Effective {
     baseRef: pick('baseRef', ''),
     ignore: [...pick('ignore', [...DEFAULT_IGNORE])],
     spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...settings.spendByTier },
+    effortByTier: { ...DEFAULT_EFFORT_BY_TIER, ...repo.effortByTier, ...settings.effortByTier },
     delegateOnly: pick('delegateOnly', 'off'),
     issueRepo: pick('issueRepo', ''),
     sources,

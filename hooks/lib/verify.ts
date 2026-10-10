@@ -108,7 +108,7 @@ export function advise(input: AdviseInput): Advice {
   const tier = escalatesOn(input.verdict, input.reportGate) && held === undefined ? nextTier(input.tier) : input.tier
   const brief = input.briefPath ? `same brief ${input.briefPath}` : 'same prompt'
   const heldNote = held !== undefined && (held === 'scope' || held === 'files') ? ` (held: a ${held} refute)` : ''
-  return { kind: 'respawn', tier, next: `respawn at ${tier} — ${brief}, model omitted so the mod picks${heldNote}` }
+  return { kind: 'respawn', tier, next: `respawn at ${tier} — ${brief}, make the spawn block below (it names the model)${heldNote}` }
 }
 
 // ---- GH-104: look before you respawn ---------------------------------------------

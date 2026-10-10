@@ -64,12 +64,12 @@ describe('verdict, advice and budgets', () => {
     const a = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' })
     expect(a.kind).toBe('respawn')
     expect(a.tier).toBe('frontier')
-    expect(a.next).toBe('respawn at frontier — same brief /s/briefs/FE-1.brief.md, model omitted so the mod picks')
+    expect(a.next).toBe('respawn at frontier — same brief /s/briefs/FE-1.brief.md, make the spawn block below (it names the model)')
   })
   test('GH-104: a no-report is a reporting defect: the first resumes, the second respawns at the SAME tier', () => {
     expect(advise({ ...base, verdict: 'no-report', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard' }).next).toBe('resume agent=agent-7 — SendMessage it the verifier lines below')
     const a = advise({ ...base, verdict: 'no-report', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' })
-    expect(a).toEqual({ kind: 'respawn', tier: 'standard', next: 'respawn at standard — same brief /s/briefs/FE-1.brief.md, model omitted so the mod picks' })
+    expect(a).toEqual({ kind: 'respawn', tier: 'standard', next: 'respawn at standard — same brief /s/briefs/FE-1.brief.md, make the spawn block below (it names the model)' })
     // escalation stays for a confirmed gate=fail; an unconfirmed one (unverified) holds the tier
     expect(advise({ ...base, verdict: 'verified', reportGate: 'fail', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' }).tier).toBe('frontier')
     expect(advise({ ...base, verdict: 'unverified', reportGate: 'fail', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' }).tier).toBe('standard')
@@ -84,7 +84,7 @@ describe('verdict, advice and budgets', () => {
     expect(a.kind).toBe('resume')
     expect(a.next).toBe('resume agent=agent-7 — amend: [[amend v=1 scope+=hooks/x.ts reason=…]] (the path is outside scope; a scope refute never escalates)')
     const again = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines: scope })
-    expect(again).toEqual({ kind: 'respawn', tier: 'standard', next: 'respawn at standard — same brief /s/briefs/FE-1.brief.md, model omitted so the mod picks (held: a scope refute)' })
+    expect(again).toEqual({ kind: 'respawn', tier: 'standard', next: 'respawn at standard — same brief /s/briefs/FE-1.brief.md, make the spawn block below (it names the model) (held: a scope refute)' })
     const files = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', lines: ['claim files: failed — extra paths: a.ts'] })
     expect(files.next).toBe('resume agent=agent-7 — list the paths named above in files= (or revert the extras)')
     const gate = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines: ['claim gate: failed — x'] })

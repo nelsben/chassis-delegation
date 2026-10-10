@@ -52,6 +52,8 @@ export type AttemptRecord = {
   /** True when `usd` is the session delta, not the worker's own cost. */
   usdApprox?: true
   tokens?: number
+  /** MOD-13: the effort the worker's steps were rewritten to (low … max); absent when the engine's default ran. */
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** ms since the epoch at spawn (or resume). */
   at: number
   verdictAt?: number

@@ -173,3 +173,36 @@ export function classifierText(prompt: string): string {
   const cut = prompt.length > 6000 ? prompt.slice(0, 6000) + '\n[…cut]' : prompt
   return `${TIER_LABEL_GUIDE}\n\nThe task:\n${cut}`
 }
+
+// ---- MOD-13: the effort a worker steps at ----------------------------------------
+/** The levels `turn.step` names (the engine's ModelEffort). */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
+/** One entry of `effortByTier`: a level, or 0 / empty for the engine's own default. */
+export type EffortSetting = Effort | 0 | ''
+export type EffortTier = 'economy' | 'standard' | 'frontier'
+
+/** Config `effortByTier` default: a standard card runs at medium, a frontier one at high. */
+export const DEFAULT_EFFORT_BY_TIER: Readonly<Record<EffortTier, EffortSetting>> = { economy: 'low', standard: 'medium', frontier: 'high' }
+
+const effortLevel = (v: unknown): Effort | undefined => {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : ''
+  return (EFFORTS as readonly string[]).includes(s) ? (s as Effort) : undefined
+}
+export const isEffort = (v: unknown): v is Effort => typeof v === 'string' && (EFFORTS as readonly string[]).includes(v)
+
+/**
+ * The effort a worker's `turn.step` is rewritten to: the card's own `effort:`
+ * when it names a level (`0` there keeps the engine's), else the tier's entry
+ * (premium reads the frontier's). Undefined: leave the engine's default.
+ */
+export function effortFor(tier: Tier, cardEffort: string | undefined, table: Readonly<Record<EffortTier, EffortSetting>>): Effort | undefined {
+  const own = effortLevel(cardEffort)
+  if (own) return own
+  if (cardEffort?.trim() === '0') return undefined
+  return effortLevel(table[tier === 'premium' ? 'frontier' : tier])
+}
+
+/** The `/delegation` line: `effort: economy low · standard medium · frontier high`. */
+export const effortText = (table: Readonly<Record<EffortTier, EffortSetting>>): string =>
+  `effort: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t} ${effortLevel(table[t]) ?? 'default'}`).join(' · ')}`

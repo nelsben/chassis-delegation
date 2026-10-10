@@ -62,6 +62,8 @@ export type World = {
    * hook called `$.agent.spawn` (the kit's `next.origin`, read at the bottom).
    */
   spawnedBy: Map<string, string>
+  /** MOD-13: the `turn.step` requests that reached the engine, with the effort they carried after the mod's hooks (the bottom of the chain). */
+  steps: { agentId?: string; effort?: unknown }[]
 }
 
 export type WorldOptions = {
@@ -121,6 +123,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     aborted: [],
     model: options.model ?? 'claude-sonnet-5-5',
     spawnedBy: new Map(),
+    steps: [],
   }
   const dirs = new Map(Object.entries(options.dirs ?? {}))
   let spawnCount = 0
@@ -217,6 +220,13 @@ export function world(on: On, options: WorldOptions = {}): World {
     if (a) a.status = 'completed'
     return { text: e.answer }
   })
+  // MOD-13: the bottom of the step chain records what it was about to send
+  if (!options.skip?.includes('turn.step')) {
+    ;(on as unknown as (n: string, h: unknown) => void)('turn.step', async function* (_$: unknown, e: { turnId: string; index: number; agentId?: string; effort?: unknown }) {
+      w.steps.push({ ...(e.agentId ? { agentId: e.agentId } : {}), ...(e.effort !== undefined ? { effort: e.effort } : {}) })
+      return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }
+    })
+  }
   hook('session.compact', (e: { instructions?: string; messages: unknown[] }) => (w.compactions.push(e.instructions), { messages: e.messages }))
   hook('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' }] }))
   return w
@@ -327,3 +337,7 @@ export async function workerCall(
   if (w.spawnedBy.get(agentId) === 'chassis-delegation') return { seen: false, why: STEPPED_PAST }
   return { seen: true, result: (await $.tool.call({ ...input, agentId } as never)) as { deny?: string; text?: string } }
 }
+
+/** MOD-13: a `turn.step` request, as the engine raises it before it is sent. */
+export const stepInput = (agentId: string | undefined, effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | number): never =>
+  ({ turnId: 'turn-s', index: 0, model: 'claude-sonnet-5-5', messageCount: 3, ...(effort !== undefined ? { effort } : {}), ...(agentId ? { agentId } : {}) }) as never
