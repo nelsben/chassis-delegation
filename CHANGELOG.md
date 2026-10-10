@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **`/delegation update` brings the loaded copy to origin/main (MOD-3).** It
+  classifies the loaded folder (`classifyRoot` in `hooks/lib/update.ts`): a git
+  clone is fetched and fast-forwarded (`git -C <root> merge --ff-only
+  origin/main`, the one new allowlist form, only for the loaded folder); any
+  other folder is left alone and the clone command that replaces it is printed.
+  The output is `update: <old> (<sha>) → <new> (<sha>), n commits`, the
+  CHANGELOG sections newer than the old version (40 lines at most, with a
+  pointer to the README's `From <old> to <new>`), the keys added to
+  `.chassis-delegation.json` (every defaulted key it lacked, with a `_<key>`
+  note; every other byte unchanged), and the reload story: a folder under
+  `~/.claude/dev-mods` reloads when the turn ends; any other needs the window
+  reloaded. It refuses while a worker runs. `/delegation` adds `update: n
+  commits behind origin/main` when the loaded clone is behind (one fetch per ten
+  minutes, cached in the store).
+
 - **One proof of red per task; `--verify` at the last attempt's own sha
   re-judges it (MOD-1, public issue #35).** A red file byte-identical to one an
   earlier attempt of the task held with is held again (`attempt n's proof,
