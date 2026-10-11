@@ -408,6 +408,9 @@ export function redTarget(path: string, repo: string): { abs: string } | { outsi
  */
 export const RED_MARKER = /fail|error|not ok|\u2717|exit code [1-9]|exit 1|expected/i
 
+/** MOD-59: the tail of the no-marker detail; a state check's red file ends with an expected/got line. */
+export const RED_NO_MARKER_HINT = '; a state check\'s red file ends with an "expected: …; got: …" line'
+
 /** The first failure line a held red claim quotes is cut to this many characters. */
 export const RED_LINE_CAP = 100
 
@@ -442,7 +445,7 @@ export function redClaim(i: RedClaimInput): RedClaim | undefined {
   const bytes = i.bytes ?? i.text.length
   if (bytes === 0 || i.text.trim() === '') return { status: 'failed', detail: `red=${path} is empty` }
   const markers = i.text.split(/\r?\n/).filter(l => RED_MARKER.test(l))
-  if (markers.length === 0) return { status: 'unchecked', detail: `no failure marker found in red=${path} (${bytes} bytes)` }
+  if (markers.length === 0) return { status: 'unchecked', detail: `no failure marker found in red=${path} (${bytes} bytes)${RED_NO_MARKER_HINT}` }
   const line = quotedRedLine(markers)
   const priors = i.priorHashes ?? []
   if (i.hash !== undefined) {
