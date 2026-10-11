@@ -103,10 +103,16 @@ the breadcrumb line number or ISO timestamp it came from. The mod checks the fil
 when you hand back: an entry whose `at` is outside the window is stripped, one
 with no `at` is kept and counted, and a `corrections` or `tool_denials` list that
 reports something the window's breadcrumbs do not contain is flagged. The mod
-then prints `debrief check: clean` or says what it stripped or flagged. Mark the
-breadcrumb watermark (`<session>.done`), if your instructions have you do that,
-only after that line reads clean; otherwise leave it, so the next debrief covers
-the window again. The mod never writes the watermark file itself.
+then prints `debrief check: clean` or says what it stripped or flagged. When it
+is clean the mod sends you one message, `debrief check: clean. Mark your watermark
+now, as your instructions say, and stop.`: only then mark the breadcrumb watermark
+(`<session>.done`), if your instructions have you do that. If no such message
+comes, leave it, so the next debrief covers the window again. The mod never writes
+the watermark file itself.
+
+A verdict fact that says a refute was then re-judged consistent at the same sha is
+a false refute (the verifier or the gate was wrong, often a test timing out under
+load): file it as a `went_wrong` for the verifier or the gate, never a `went_well`.
 
 ## Findings about the host
 

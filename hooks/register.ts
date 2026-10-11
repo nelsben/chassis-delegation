@@ -76,6 +76,7 @@ import {
   debriefPrompt,
   debriefSkillPath,
   debriefSource,
+  MARK_WATERMARK_MESSAGE,
   debriefToast,
   findingsFile,
   findingsLines,
@@ -1361,10 +1362,13 @@ async function wakeBrain($: Host, text: string): Promise<void> {
 }
 
 /** This session's verdict lines (2E reads them). */
-async function noteRecent($: Host, entry: RecentVerdict) {
+/** MOD-32: a recent row also keeps the sha it was judged at and whether it was a re-judge in place, so the debrief can tell a false refute. */
+type RecentRow = RecentVerdict & { sha?: string; rejudge?: boolean }
+
+async function noteRecent($: Host, entry: RecentRow) {
   const sid = await sessionIdOf($)
   if (!sid) return
-  const list = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
+  const list = (await storeGet<RecentRow[]>($, K.recent(sid))) ?? []
   await storeSet($, K.recent(sid), [...list, entry].slice(-RECENT_CAP))
 }
 
@@ -1987,21 +1991,21 @@ async function redactRules($: Host): Promise<RedactRules> {
  * MOD-6 + MOD-10: the debrief agent handed back. Read its JSON and check it against its window
  * (out-of-window entries stripped, kinds the window lacks flagged), set the host's findings aside,
  * scrub every string of mod_findings, write <same folder>/<same name>.findings.json and print one
- * line per finding. Returns false when the check stripped or flagged something: the record must not move.
+ * line per finding. Returns moved: false when the check stripped or flagged something (the record must not move); MOD-32: clean: true only when the check ran and printed clean.
  */
-async function writeFindings($: Host, debriefPath: string, window: DebriefWindow | undefined): Promise<boolean> {
+async function writeFindings($: Host, debriefPath: string, window: DebriefWindow | undefined): Promise<{ moved: boolean; clean: boolean }> {
   try {
     const home = await homeOf($)
     const path = debriefPath.startsWith('~/') ? `${home.replace(/\/+$/, '')}${debriefPath.slice(1)}` : debriefPath
     const text = await readText($, path)
     if (text === undefined) {
-      await appendRow($, `findings: could not read ${path}; no findings file written`)
-      return true
+      await appendRow($, `findings: could not read ${path}; no findings file written; the .done watermark was left as is`)
+      return { moved: true, clean: false }
     }
     const check = checkDebrief(text, window)
     if (!check.parsed) {
-      await appendRow($, `findings: ${path} is not a JSON object; no findings file written`)
-      return true
+      await appendRow($, `findings: ${path} is not a JSON object; no findings file written; the .done watermark was left as is`)
+      return { moved: true, clean: false }
     }
     await appendRow($, check.lines.join('\n'))
     let body = text
@@ -2010,18 +2014,18 @@ async function writeFindings($: Host, debriefPath: string, window: DebriefWindow
       await $.fs.write(path, body)
     }
     if (!check.clean) {
-      await appendRow($, 'debrief record not moved: the previous record stands, so the next debrief covers this window again; the .done watermark is not to be marked')
-      return false
+      await appendRow($, 'debrief record not moved: the previous record stands, so the next debrief covers this window again; the .done watermark was left as is (not to be marked)')
+      return { moved: false, clean: false }
     }
     const findings = scrubbedFindings(body, await redactRules($))
-    if (findings === undefined) return true
+    if (findings === undefined) return { moved: true, clean: true }
     const { mod, host } = splitModFindings(findings)
     // MOD-18: after the findings lines, the agent's own proposals; they stay in the debrief file and are never posted
     const proposals = proposalsLines(body)
     if (findings.length === 0) {
       await appendRow($, findingsLines(findings, '').join('\n'))
       if (proposals.length > 0) await appendRow($, proposals.join('\n'))
-      return true
+      return { moved: true, clean: true }
     }
     const out = findingsPathOf(path)
     await $.fs.write(out, JSON.stringify(findingsFile(path, MOD_VERSION, mod, host), null, 2) + '\n')
@@ -2030,8 +2034,9 @@ async function writeFindings($: Host, debriefPath: string, window: DebriefWindow
     await afterFindings($, out, mod.length)
   } catch (err) {
     debug($, `findings not written: ${String(err)}`)
+    return { moved: true, clean: false }
   }
-  return true
+  return { moved: true, clean: true }
 }
 
 /**
@@ -2163,12 +2168,22 @@ async function onRunnerComplete($: Host, agentId: string, said: () => Promise<st
     const answer = await said()
     handbacks.delete(agentId)
     const path = debriefPathOf(answer)
-    const moved = path ? await writeFindings($, path, debrief.window) : true
+    const written = path ? await writeFindings($, path, debrief.window) : { moved: true, clean: false }
+    const moved = written.moved
     if (moved) {
       const { prior: _prior, window: _window, ...rest } = debrief
       await storeSet($, K.debrief(sid), { ...rest, finishedAt: t, ...(path ? { path } : {}) })
     } else await storeSet($, K.debrief(sid), debrief.prior ?? null)
     $.ui.toast(moved ? debriefToast(answer) : 'debrief check failed: the debrief record was not moved')
+    // MOD-32: the check prints after the agent handed back, so it is told, as autoEscalate resumes a worker, to mark its watermark
+    if (written.clean) {
+      try {
+        const sent = await $.session.send({ to: { agentId }, text: MARK_WATERMARK_MESSAGE })
+        if (!sent.isDelivered) debug($, `watermark message not delivered to ${agentId}: ${sent.reason}`)
+      } catch (err) {
+        debug($, `watermark message not delivered to ${agentId}: ${String(err)}`)
+      }
+    }
     return
   }
   const inflight = await storeGet<EvalInflight>($, K.evalInflight)
@@ -2927,7 +2942,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   // a cardless hand-back is posted, kept and ledgered like any other (GH-1 item 2)
   if (!spawn.adhoc || cardless) {
     const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${shownLabel}: ${shortNext(next)}` : undefined
-    await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line: quiet, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}) })
+    await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line: quiet, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}), ...(report?.sha ? { sha: report.sha } : {}), ...(spawn.key.includes('-rejudge-') ? { rejudge: true } : {}) })
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
     await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, next: shortNext(next), sessionId: await sessionIdOf($) })
   }
