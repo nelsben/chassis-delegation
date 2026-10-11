@@ -10,11 +10,14 @@ import { globMatches } from './verify-native'
 
 export const BRIEF_FIELDS = [
   'v', 'task', 'subtask', 'purpose', 'tier', 'model', 'scope', 'forbid', 'scope_globs', 'forbid_globs',
-  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'context', 'note',
+  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'outdir', 'scratch', 'context', 'note',
 ] as const
 
-/** `red=` (GH-20): the red test's failing output, a path relative to the worker's tree, or `none`. */
-export const REPORT_FIELDS = ['v', 'task', 'subtask', 'branch', 'pr', 'sha', 'gate', 'red', 'files', 'tokens', 'note'] as const
+/**
+ * `red=` (GH-20): the red test's failing output, a path relative to the worker's tree, or `none`.
+ * `artefacts=` and `metrics=` (MOD-22): what a research card delivered outside the repo, and numbers worth recording.
+ */
+export const REPORT_FIELDS = ['v', 'task', 'subtask', 'branch', 'pr', 'sha', 'gate', 'red', 'files', 'artefacts', 'metrics', 'tokens', 'note'] as const
 
 export type BriefHeader = {
   /** The header as written, `[[brief` to `]]`. */

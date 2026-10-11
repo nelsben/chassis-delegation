@@ -31,9 +31,16 @@
 // sha, files= against the delta, pr); scope, gate and red have nothing to be
 // checked against and are unchecked, so a cardless verdict is refuted or
 // unverified, never consistent. No files.txt is written and no gate runs.
+//
+// MOD-22, research cards: a brief that names absolute scope or forbid entries (and an outdir=)
+// has outputs outside the repo. The scope claim then covers two deltas: the git paths against
+// the repo entries, and the outside delta, the absolute roots listed at dispatch and again at
+// hand-back (norepo.ts outsideCheck) against the absolute entries. The report's artefacts= are
+// stat'ed, a gate may name {outdir}, and metrics= are shown, never judged.
 // Pure apart from `io`: no `$`.
 import { effectiveList, parseAmends, parseHeader, type Report } from './brief'
 import { isEngineGate, resolveGateRuns, type GateResolution, type GateRun } from './gates'
+import { artefactsCheck, isAbsolute, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
 import { isGitRef } from './repoconfig'
 
 export type ExecOut = { ok: true; exitCode: number; stdout: string; stderr: string } | { ok: false; why: string }
@@ -48,6 +55,8 @@ export type NativeIo = {
    * until `release`; `line` says how long it waited and for whom. Called for engine gates only.
    */
   turn?: (argv: readonly string[]) => Promise<{ line?: string; release: () => Promise<void> }>
+  /** MOD-22: what is at a path the report's artefacts= names (exists, size, folder or not); absent, artefacts are unchecked. */
+  stat?: (path: string) => Promise<ArtefactStat>
 }
 
 export type NativeInput = {
@@ -75,6 +84,8 @@ export type NativeInput = {
   priorRed?: readonly RedPrior[]
   /** GH-1 item 2: no brief at all; `briefText` is ignored (see verifyCardless). */
   cardless?: boolean
+  /** MOD-22: the listings taken at dispatch and a way to list a root now; absent, the outside delta is no part of the scope claim. */
+  outside?: OutsideInput
 }
 
 /** The reason a cardless verify gives for the claims only a brief can check. */
@@ -87,6 +98,8 @@ export type NativeResult = {
   lines: string[]
   /** The red file read for this attempt: its red= path as written, and its hash, for the attempt record. */
   red?: { path: string; hash?: string; held?: boolean }
+  /** MOD-22: the report's metrics=, for the attempt record; never judged. */
+  metrics?: Record<string, string>
 }
 
 /** What the mod read at a report's red= path (register.ts, through `$.fs`). */
@@ -156,7 +169,7 @@ export function globMatches(path: string, glob: string): boolean {
 export const pathMatchesAny = (path: string, globs: readonly string[]): boolean => globs.some(g => g !== '' && globMatches(path, g))
 
 export type BriefContract =
-  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; base?: string; gate?: string; redTest?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
+  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; base?: string; gate?: string; redTest?: string; /** MOD-22: the brief's outdir=. */ outdir?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
   | { ok: false; line: string }
 
 /** True when a scope= reads as prose: two or more words and no entry shaped like a path or glob. */
@@ -191,6 +204,8 @@ export function briefContract(briefText: string): BriefContract {
   }
   const gate = header.gate
   const redTest = f.red_test !== undefined ? { redTest: f.red_test } : {}
+  const outdirField = (f.outdir ?? '').trim()
+  const outdir = outdirField !== '' ? { outdir: outdirField } : {}
   const amends = parseAmends(briefText)
   if (amends.malformed !== undefined) {
     return {
@@ -202,6 +217,7 @@ export function briefContract(briefText: string): BriefContract {
       ...(base ? { base } : {}),
       ...(gate ? { gate } : {}),
       ...redTest,
+      ...outdir,
       amendments: 0,
       amendBad: true,
       amendWhy: amends.malformed,
@@ -217,6 +233,7 @@ export function briefContract(briefText: string): BriefContract {
     ...(base ? { base } : {}),
     ...(gate ? { gate } : {}),
     ...redTest,
+    ...outdir,
     amendments: amends.amends.length,
     lines: amends.amends.map((a, i) => `amendment: #${i + 1} ${a.ops.join(' ')} — reason: ${a.reason}`),
   }
@@ -625,24 +642,41 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     }
   }
 
-  // 3. the diff stays inside scope, forbid untouched
+  // 3. the diff stays inside scope, forbid untouched: the repo delta against the repo entries, then
+  //    (MOD-22) the outside delta against the absolute ones; the claim names the delta a refute came from
+  const absScope = contract.scope.filter(isAbsolute)
+  const absForbid = contract.forbid.filter(isAbsolute)
+  const repoScope = contract.scope.filter(e => !isAbsolute(e))
+  const repoForbid = contract.forbid.filter(e => !isAbsolute(e))
+  const watched = outsideRoots(absScope, absForbid)
+  const outsideChecked = !cardless && !contract.scopeProse && !contract.amendBad && watched.length + (input.outside?.before.length ?? 0) > 0
+  const outside = outsideChecked ? await outsideCheck(absScope, absForbid, input.outside) : undefined
   if (cardless) claim('scope', 'unchecked', NO_BRIEF_REASON)
   else if (contract.scopeProse) claim('scope', 'unchecked', 'scope= reads as prose; add scope_globs= to the brief to check it')
   else if (contract.amendBad) {
     claim('scope', 'unchecked', `AMEND-MALFORMED: ${contract.amendWhy} — the EFFECTIVE scope is unknowable, so the diff is neither cleared nor refuted; fix the amend block and re-verify`)
-  } else if (!delta) claim('scope', 'unchecked', noDelta)
-  else {
-    let bad: string | undefined
-    for (const p of delta) {
-      if (pathMatchesAny(p, contract.forbid)) bad = `touches forbid path: ${p}`
-      else if (!pathMatchesAny(p, contract.scope)) bad = `out-of-scope path: ${p}`
-      if (bad) break
-    }
-    if (bad) claim('scope', 'failed', bad)
+  } else {
+    let git: ClaimResult
+    if (!delta) git = { status: 'unchecked', detail: noDelta }
     else {
-      const amended = contract.amendments > 0 ? ` (effective scope: the brief header ± ${contract.amendments} disclosed amendment(s) above)` : ''
-      claim('scope', 'held', `every changed path${sinceBase ? ` since ${sinceBase}` : ''} is within scope=[${contract.scope.join(',')}], forbid=[${contract.forbid.join(',')}] untouched${amended}`)
+      let bad: string | undefined
+      for (const p of delta) {
+        if (pathMatchesAny(p, repoForbid)) bad = `touches forbid path: ${p}`
+        else if (!pathMatchesAny(p, repoScope)) bad = `out-of-scope path: ${p}`
+        if (bad) break
+      }
+      if (bad) git = { status: 'failed', detail: `${bad}${watched.length > 0 ? ' (repo delta)' : ''}` }
+      else {
+        const amended = contract.amendments > 0 ? ` (effective scope: the brief header ± ${contract.amendments} disclosed amendment(s) above)` : ''
+        git = { status: 'held', detail: `every changed path${sinceBase ? ` since ${sinceBase}` : ''} is within scope=[${contract.scope.join(',')}], forbid=[${contract.forbid.join(',')}] untouched${amended}` }
+      }
     }
+    if (git.status === 'failed') claim('scope', 'failed', git.detail)
+    else if (outside?.status === 'failed') claim('scope', 'failed', outside.detail)
+    else if (git.status === 'unchecked') claim('scope', 'unchecked', git.detail)
+    else if (outside?.status === 'unchecked') claim('scope', 'unchecked', outside.detail)
+    else claim('scope', 'held', outside ? `${git.detail}; ${outside.detail}` : git.detail)
+    if (outsideChecked && outside === undefined && watched.length > 0) notes.push(`note: outside delta not checked: no listing of ${watched.join(', ')} was taken at dispatch`)
   }
 
   // 4. files= is the delta, exactly
@@ -653,9 +687,19 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     if (line.startsWith('claim files: failed')) anyFailed = true
   }
 
+  // 4b. artefacts= (MOD-22): each named path exists and is not empty; a relative one is read against outdir=, else the tree
+  const artefacts = cardless ? [] : reportArtefacts(report.artefacts)
+  if (artefacts.length > 0) {
+    if (!io.stat) claim('artefacts', 'unchecked', 'the verifier has no file reader')
+    else {
+      const c = await artefactsCheck(artefacts, contract.outdir ?? repo, io.stat)
+      if (c) claim('artefacts', c.status, c.detail)
+    }
+  }
+
   // 5. the gate, re-run in the worker's own worktree at the sha (an honest gate=fail is never punished);
   //    repo=here: in the shared checkout as it stands, uncommitted changes and all
-  const gates: GateResolution = cardless ? { runs: [], notRerun: [] } : resolveGateRuns(contract.gate, input.gateMap, input.allowed ?? (() => false), input.filesPath, input.repo)
+  const gates: GateResolution = cardless ? { runs: [], notRerun: [] } : resolveGateRuns(contract.gate, input.gateMap, input.allowed ?? (() => false), input.filesPath, input.repo, contract.outdir)
   if (cardless) claim('gate', 'unchecked', NO_BRIEF_REASON)
   else if (gates.none) claim('gate', 'unchecked', 'no gate command available (the brief has no gate=)')
   for (const n of gates.notRerun) claim('gate', 'unchecked', `gate not re-run: ${n.id} (${n.why})`)
@@ -770,6 +814,11 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     else claim('pr', 'unchecked', `gh could not resolve ${pr} (offline / auth / not found)`)
   }
 
+  // MOD-22: the report's metrics are shown and recorded, never judged
+  const metrics = cardless ? {} : reportMetrics(report.metrics)
+  const hasMetrics = Object.keys(metrics).length > 0
+  if (hasMetrics) lines.push(metricsLine(metrics))
+
   const verdict: NativeVerdict = anyFailed ? 'refuted' : anyUnchecked ? 'unverified' : 'consistent'
-  return { verdict, lines: [...lines, ...notes], ...(red ? { red } : {}) }
+  return { verdict, lines: [...lines, ...notes], ...(red ? { red } : {}), ...(hasMetrics ? { metrics } : {}) }
 }

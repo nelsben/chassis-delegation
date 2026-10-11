@@ -148,7 +148,7 @@ describe('MOD-22: the outside delta, a before-and-after listing of the absolute 
   })
 
   test('a * in an absolute entry stays inside one folder, as for a repo=none brief', () => {
-    const after = [listing('/out/a', entry('x.png'), entry('deep/y.png')), listing('/out/b')]
+    const after = [listing('/out/a', entry('old.txt', 3, 100), entry('x.png'), entry('deep/y.png')), listing('/out/b')]
     const c = outsideClaim({ before, after, scope: ['/out/a/*.png'], forbid: [] })
     expect(c?.detail).toBe('out-of-scope path: /out/a/deep/y.png (outside delta)')
   })
@@ -193,6 +193,11 @@ describe('MOD-22: the outside delta, a before-and-after listing of the absolute 
     expect(more).toEqual({ status: 'unchecked', detail: 'outside delta: no listing of /out/c was taken at dispatch' })
     // no baseline at all: not part of the claim
     expect(await outsideCheck(['/out/a/**'], [], undefined)).toBeUndefined()
+    // an amendment that names a path inside a folder listed at dispatch adds no root of its own
+    asked.length = 0
+    const inside = await outsideCheck(['/out/a/**', '/out/a/sub/x.txt'], [], { before: [listing('/out/a')], list })
+    expect(inside?.status).toBe('held')
+    expect(asked).toEqual(['/out/a'])
   })
 })
 

@@ -26,8 +26,12 @@ export type Card = {
   budget?: string
   /** GH-106: the card's `spend:` ceiling in dollars, as written. */
   spend?: string
-  /** GH-16: `repo: here` dispatches into the session's own checkout (no worktree). */
+  /** GH-16: `repo: here` dispatches into the session's own checkout (no worktree). MOD-22: `repo: none` has no repo at all. */
   repo?: string
+  /** MOD-22: the card's output folder, when it names one; else the first absolute scope entry's folder. */
+  outdir?: string
+  /** MOD-22: where the worker puts helper files, when the card names it; else a folder under the system temp dir. */
+  scratch?: string
   /** The card's markdown below the frontmatter, verbatim. */
   body: string
   fields: Record<string, FieldValue>
@@ -153,6 +157,8 @@ export function parseCard(text: string): Card | { error: string } {
     budget: asText(f.budget).trim() || undefined,
     spend: asText(f.spend).trim() || undefined,
     repo: asText(f.repo).trim() || undefined,
+    outdir: asText(f.outdir).trim() || undefined,
+    scratch: asText(f.scratch).trim() || undefined,
     body: fm.body,
     fields: f,
   }
@@ -185,7 +191,8 @@ const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
  * The brief header, exactly as SPEC amendment 1 A writes it. `scope` and
  * `forbid`, when given (from `/dispatch --scope/--forbid`), replace the card's.
  * GH-16: a repo=here brief adds `repo=here`, `base=<ref>` when one is named,
- * and `ignore=<globs>` after the gate.
+ * and `ignore=<globs>` after the gate. MOD-22: `repo=none` likewise, and a card
+ * with an output folder adds `outdir=<abs>` and `scratch=<abs>` after those.
  */
 export function renderHeader(input: {
   card: Card
@@ -199,6 +206,9 @@ export function renderHeader(input: {
   repo?: string
   base?: string
   ignore?: readonly string[]
+  /** MOD-22: the output folder and the scratch folder, absolute. */
+  outdir?: string
+  scratch?: string
 }): string {
   const c = input.card
   const scope = input.scope ?? c.scope
@@ -206,7 +216,9 @@ export function renderHeader(input: {
   const here =
     (input.repo ? ` repo=${input.repo}` : '') +
     (input.base ? ` base=${input.base}` : '') +
-    (input.ignore && input.ignore.length > 0 ? ` ignore=${input.ignore.join(',')}` : '')
+    (input.ignore && input.ignore.length > 0 ? ` ignore=${input.ignore.join(',')}` : '') +
+    (input.outdir ? ` outdir=${input.outdir}` : '') +
+    (input.scratch ? ` scratch=${input.scratch}` : '')
   return (
     `[[brief v=1 task=${c.id} subtask=main purpose=build tier=${input.tier} model=${input.alias}` +
     ` scope=${scope.map(oneLine).join(',')} forbid=${forbid.map(oneLine).join(',')}` +
@@ -216,18 +228,25 @@ export function renderHeader(input: {
   )
 }
 
+/** MOD-22: which sections a brief keeps: a worktree brief, a repo=here one, or a repo=none one. */
+export type BriefMode = 'worktree' | 'here' | 'none'
+
 /**
  * GH-16: a template's mode sections. `{{#here}}…{{/here}}` is kept for a
  * repo=here brief and `{{#worktree}}…{{/worktree}}` otherwise; the other
  * section goes, markers and all (a marker's own line break with it).
+ * MOD-22: `{{#none}}…{{/none}}` is the third, for a repo=none brief, and
+ * `{{#repo}}…{{/repo}}` is kept for the two modes that have a repo. `mode` is
+ * a BriefMode, or the boolean the first callers pass (true: here, false: worktree).
  */
-export function renderSections(template: string, here: boolean): string {
-  const on = here ? 'here' : 'worktree'
-  const off = here ? 'worktree' : 'here'
-  return template
-    .replace(new RegExp(`\\{\\{#${off}\\}\\}[\\s\\S]*?\\{\\{/${off}\\}\\}\\n?`, 'g'), '')
-    .replace(new RegExp(`\\{\\{[#/]${on}\\}\\}\\n?`, 'g'), '')
-    .replace(/\{\{[#/]spend\}\}\n?/g, '')
+export function renderSections(template: string, mode: BriefMode | boolean): string {
+  const on: BriefMode = mode === true ? 'here' : mode === false ? 'worktree' : mode
+  // `{{#repo}}` is kept for a worktree or a repo=here brief and dropped for a repo=none one
+  const off: string[] = [...(['worktree', 'here', 'none'] as const).filter(m => m !== on), ...(on === 'none' ? ['repo'] : [])]
+  const kept = [on, ...(on === 'none' ? [] : ['repo']), 'spend', 'outdir', 'scratch']
+  let out = template
+  for (const m of off) out = out.replace(new RegExp(`\\{\\{#${m}\\}\\}[\\s\\S]*?\\{\\{/${m}\\}\\}\\n?`, 'g'), '')
+  return out.replace(new RegExp(`\\{\\{[#/](?:${kept.join('|')})\\}\\}\\n?`, 'g'), '')
 }
 
 /**
@@ -261,11 +280,17 @@ export const overlapWarning = (id: string, mine: string, card: string, theirs: s
  * GH-16: `here` keeps the template's `{{#here}}` sections (`{{worktree}}` is
  * then the shared checkout) and drops its `{{#worktree}}` ones; else the reverse.
  */
-export function renderBrief(template: string, v: { card: Card; worktree: string; branch: string; cardPath: string; install?: string; extra?: string; here?: boolean; spend?: number }): string {
+export function renderBrief(
+  template: string,
+  v: { card: Card; worktree: string; branch: string; cardPath: string; install?: string; extra?: string; here?: boolean; mode?: BriefMode; spend?: number; outdir?: string; scratch?: string; reportExtra?: string },
+): string {
   const values: Record<string, string> = {
     install: v.install ?? "the repo's own install step, if a lockfile is present",
     extra: v.extra ?? '',
     spend: String(v.spend ?? 0),
+    outdir: v.outdir ?? '',
+    scratch: v.scratch ?? '',
+    reportExtra: v.reportExtra ?? '',
     id: v.card.id,
     title: v.card.title,
     domain: v.card.domain,
@@ -278,7 +303,10 @@ export function renderBrief(template: string, v: { card: Card; worktree: string;
   }
   // GH-106: `{{#spend}}…{{/spend}}` is kept only when the brief carries a ceiling
   const withSpend = template.replace(/\{\{#spend\}\}([\s\S]*?)\{\{\/spend\}\}\n?/g, (_, inner: string) => (v.spend && v.spend > 0 ? inner : ''))
-  return renderSections(withSpend, v.here === true).replace(/\{\{(\w+)\}\}/g, (whole, key: string) => (key in values ? (values[key] as string) : whole))
+  // MOD-22: `{{#outdir}}…{{/outdir}}` and `{{#scratch}}…{{/scratch}}` are kept only when the brief names the folder
+  const keep = (text: string, name: string, on: boolean) => text.replace(new RegExp(`\\{\\{#${name}\\}\\}\\n?([\\s\\S]*?)\\{\\{/${name}\\}\\}\\n?`, 'g'), (_, inner: string) => (on ? inner : ''))
+  const withFolders = keep(keep(withSpend, 'outdir', !!v.outdir), 'scratch', !!v.scratch)
+  return renderSections(withFolders, v.mode ?? (v.here === true ? 'here' : 'worktree')).replace(/\{\{(\w+)\}\}/g, (whole, key: string) => (key in values ? (values[key] as string) : whole))
 }
 
 export type DispatchArgs =

@@ -1050,7 +1050,7 @@ describe('/dispatch', () => {
     await brainSpawn($, String(out.text))
     const brief = w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? ''
     const header = brief.split('\n')[0] ?? ''
-    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/**,agents/tasks/** spend=25 budget=3-attempts report=chassis.report.v1]]')
+    expect(header).toContain(' gate=G2,G8p repo=here ignore=.delegation/**,agents/tasks/** scratch=/tmp/td/chassis-delegation/BE-101 spend=25 budget=3-attempts report=chassis.report.v1]]') // MOD-22: a repo=here brief names its scratch folder
     expect(header).not.toContain(' base=')
     // no worktree, no fetch: the only git the dispatch runs reads the current branch
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD']])
@@ -1083,7 +1083,7 @@ describe('/dispatch', () => {
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput(`BE-101 --scope ${LLM}`))
     const header = (w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0] ?? ''
-    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,agents/tasks/**,src/b.ts spend=25 budget=3-attempts`)
+    expect(header).toContain(` gate=G2,G8p repo=here base=${HEAD_SHA} ignore=.delegation/**,traces/**,agents/tasks/**,src/b.ts scratch=/tmp/td/chassis-delegation/BE-101 spend=25 budget=3-attempts`)
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD'],
       ['git', '-C', ROOT, 'rev-parse', 'HEAD'],
@@ -3911,9 +3911,11 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
   const BRIEF = `${SCRATCH}/briefs/OPS-9.brief.md`
   const run = (argv: string[]): RunAnswer | undefined => (argv[0] === 'checker' ? { exitCode: 0, stdout: 'checked\n' } : undefined)
   const REPORT = (extra: string) => `[[report v=1 task=OPS-9 subtask=main branch=none pr=none sha=none gate=pass red=none files=none ${extra}]]`
+  // the harness answers the shipped template with a stub; a template of the test's own shows the sections
+  const TEMPLATE = '{{#none}}\nrepo=none in {{worktree}}\n{{/none}}\n{{#outdir}}\nOutput folder: {{outdir}}\n{{/outdir}}\n{{#scratch}}\nScratch: {{scratch}} (never in the repo)\n{{/scratch}}\n{{body}}'
   const setup = (on: Parameters<typeof world>[0]) =>
     world(on, {
-      files: { [`${ROOT}/agents/tasks/${NAME}`]: CARD, '/out/hair/old.txt': 'x' },
+      files: { [`${ROOT}/agents/tasks/${NAME}`]: CARD, '/out/hair/old.txt': 'x', [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ briefTemplate: '/tpl/brief.md' }), '/tpl/brief.md': TEMPLATE },
       dirs: { [`${ROOT}/agents/tasks`]: [NAME] },
       trees: ['/out/hair', '/out/notes'],
       run,
@@ -3931,9 +3933,9 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     expect(out).toContain(`3. no worktree (repo=none): the worker runs in ${ROOT} and writes outside the repo`)
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([])
     const brief = w.files.get(BRIEF) ?? ''
+    expect(brief).toContain(`repo=none in ${ROOT}`)
     expect(brief).toContain('Output folder: /out/hair')
-    expect(brief).toContain('Scratch: /tmp/td/chassis-delegation/OPS-9')
-    expect(brief).toContain('never in the repo')
+    expect(brief).toContain('Scratch: /tmp/td/chassis-delegation/OPS-9 (never in the repo)')
     expect(w.store.get('delegation.outside.OPS-9')).toMatchObject({
       roots: [
         { root: '/out/hair', entries: [{ path: 'old.txt', size: 1, mtimeMs: 0 }] },

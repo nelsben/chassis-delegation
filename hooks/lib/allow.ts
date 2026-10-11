@@ -20,7 +20,7 @@
 //   gh pr list|view …                                        (no --web)
 //   gh issue create|comment|list, for the configured issueRepo only (MOD-7; the body file under <root>/.delegation/debriefs/)
 //   claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
-//   a gate-map command, word for word, `{files}` and `{worktree}` filled by absolute paths
+//   a gate-map command, word for word, `{files}`, `{worktree}` and `{outdir}` filled by absolute paths
 //                                                            (./gates.ts holds what a map may name)
 // <id> is a dispatchable task id, <PREFIX>-<number>[letter]: BE-101, OPS-195b.
 // Notably refused: sf, curl, git push|commit|reset|checkout, any other git
@@ -205,17 +205,18 @@ export const refusedLine = (argv: readonly string[], reason: string): string =>
 
 const SAMPLE_FILES = '/sample/.delegation/T-1/files.txt'
 const SAMPLE_TREE = '/sample/worktree'
+const SAMPLE_OUTDIR = '/sample/out'
 
 /**
  * A gate-map entry at config load: the shape rules, then every part of it with
- * `{files}` and `{worktree}` filled by a sample absolute path through the
+ * `{files}`, `{worktree}` and `{outdir}` filled by a sample absolute path through the
  * allowlist itself, so what would be refused at verify time is refused now.
  */
 export function checkGateEntry(cmd: string): Check {
   const t = gateCommandTemplates(cmd)
   if ('reason' in t) return refuse(t.reason)
   for (const words of t.templates) {
-    const argv = fillPlaceholders(words, SAMPLE_FILES, SAMPLE_TREE)
+    const argv = fillPlaceholders(words, SAMPLE_FILES, SAMPLE_TREE, SAMPLE_OUTDIR)
     const c = checkArgv(argv, { gateTemplates: t.templates })
     if (!c.ok) return refuse(`${c.reason.includes('not an absolute folder') ? `${c.reason}; write {worktree}` : c.reason}`)
   }

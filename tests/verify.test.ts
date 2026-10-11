@@ -85,6 +85,9 @@ describe('verdict, advice and budgets', () => {
     expect(a.next).toBe('resume agent=agent-7 — amend: [[amend v=1 scope+=hooks/x.ts reason=…]] (the path is outside scope; a scope refute never escalates)')
     const again = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines: scope })
     expect(again).toEqual({ kind: 'respawn', tier: 'standard', next: 'respawn at standard — same brief /s/briefs/FE-1.brief.md, make the spawn block below (it names the model) (held: a scope refute)' })
+    // MOD-22: a stray file in a folder outside the repo is to be removed first
+    const outside = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', lines: ['claim scope: failed — out-of-scope path: /out/notes/scratch.txt (outside delta, +1 more)'] })
+    expect(outside.next).toBe('resume agent=agent-7 — remove /out/notes/scratch.txt, or amend: [[amend v=1 scope+=/out/notes/scratch.txt reason=…]] (the path is outside scope; a scope refute never escalates)')
     const files = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', lines: ['claim files: failed — extra paths: a.ts'] })
     expect(files.next).toBe('resume agent=agent-7 — list the paths named above in files= (or revert the extras)')
     const gate = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines: ['claim gate: failed — x'] })

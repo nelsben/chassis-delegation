@@ -5,11 +5,12 @@
 // A gate map (`gateMap`: id → command) is config the person writes (the repo
 // file or /config). A command is run by argv, never through a shell: it is
 // split on whitespace, every word must be free of shell syntax, `{files}`
-// (the files.txt path) and `{worktree}` (the absolute path of the tree the gate
-// runs in) are the two placeholders, and several commands may be chained with
+// (the files.txt path), `{worktree}` (the absolute path of the tree the gate
+// runs in) and `{outdir}` (MOD-22: the card's output folder, outside the repo)
+// are the placeholders, and several commands may be chained with
 // ` && ` (run in order, the first non-zero exit is the result). The allowlist
-// accepts an argv only when it is EXACTLY one of those commands with `{files}`
-// and `{worktree}` filled by absolute paths.
+// accepts an argv only when it is EXACTLY one of those commands with `{files}`,
+// `{worktree}` and `{outdir}` filled by absolute paths.
 
 /** First words a gate command may never start with: deploys, network, privilege, deletion, git and gh. */
 export const GATE_DENY = [
@@ -24,6 +25,7 @@ const PUBLISH_VERBS = ['publish', 'unpublish', 'login', 'logout', 'adduser', 'ow
 const WORD = /^[A-Za-z0-9_./@%+=:,-]+$/
 const FILES = '{files}'
 const TREE = '{worktree}'
+const OUTDIR = '{outdir}'
 /** An absolute path with no `..` and nothing a shell or a flag parser would read. */
 const ABS_PATH = /^\/[A-Za-z0-9._@%+=:,/-]*$/
 
@@ -38,9 +40,10 @@ const base = (word: string): string => word.slice(word.lastIndexOf('/') + 1)
 export function checkGateWords(words: readonly string[]): GateCheck {
   if (words.length === 0) return { ok: false, reason: 'an empty command' }
   for (const w of words) {
-    const bare = w.split(FILES).join('').split(TREE).join('')
+    const bare = w.split(FILES).join('').split(TREE).join('').split(OUTDIR).join('')
     if (w.split(FILES).length > 2) return { ok: false, reason: `${w} holds {files} twice` }
     if (w.split(TREE).length > 2) return { ok: false, reason: `${w} holds {worktree} twice` }
+    if (w.split(OUTDIR).length > 2) return { ok: false, reason: `${w} holds {outdir} twice` }
     if (bare !== '' && !WORD.test(bare)) return { ok: false, reason: `${w} holds shell syntax` }
   }
   const first = base(words[0] as string)
@@ -73,14 +76,14 @@ export function gateTemplatesOf(map: Readonly<Record<string, string>>): string[]
 const isAbs = (path: string): boolean => ABS_PATH.test(path) && !path.split('/').includes('..')
 const escapeRe = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** True when `argv` is the template with `{files}` and `{worktree}` filled by absolute paths (no `..`). */
+/** True when `argv` is the template with `{files}`, `{worktree}` and `{outdir}` filled by absolute paths (no `..`). */
 export function matchesTemplate(argv: readonly string[], template: readonly (string)[]): boolean {
   if (argv.length !== template.length) return false
   return template.every((t, i) => {
     const a = argv[i] as string
-    if (!t.includes(FILES) && !t.includes(TREE)) return a === t
-    const pieces = t.split(/(\{files\}|\{worktree\})/)
-    const re = new RegExp(`^${pieces.map(p => (p === FILES || p === TREE ? '(.+)' : escapeRe(p))).join('')}$`)
+    if (!t.includes(FILES) && !t.includes(TREE) && !t.includes(OUTDIR)) return a === t
+    const pieces = t.split(/(\{files\}|\{worktree\}|\{outdir\})/)
+    const re = new RegExp(`^${pieces.map(p => (p === FILES || p === TREE || p === OUTDIR ? '(.+)' : escapeRe(p))).join('')}$`)
     const m = re.exec(a)
     return m !== null && m.slice(1).every(isAbs)
   })
@@ -89,9 +92,9 @@ export function matchesTemplate(argv: readonly string[], template: readonly (str
 export const matchesAnyTemplate = (argv: readonly string[], templates: readonly (readonly string[])[]): boolean =>
   templates.some(t => matchesTemplate(argv, t))
 
-/** Fill `{files}` (and `{worktree}`, when given) in a command's words. */
-export const fillPlaceholders = (words: readonly string[], filesPath: string, worktree?: string): string[] =>
-  words.map(w => (worktree === undefined ? w : w.split(TREE).join(worktree)).split(FILES).join(filesPath))
+/** Fill `{files}` (and `{worktree}` and `{outdir}`, when given) in a command's words. */
+export const fillPlaceholders = (words: readonly string[], filesPath: string, worktree?: string, outdir?: string): string[] =>
+  words.map(w => (outdir === undefined ? w : w.split(OUTDIR).join(outdir))).map(w => (worktree === undefined ? w : w.split(TREE).join(worktree)).split(FILES).join(filesPath))
 export const fillFiles = fillPlaceholders
 
 export type GateResolution = {
@@ -105,11 +108,12 @@ export type GateResolution = {
 /**
  * What a brief's `gate=` runs: the whole value as a bare command when the
  * allowlist takes it (`claude plugin validate <folder>`, or a gate-map command
- * written out); else each comma id the gate map has (its command, `{files}`
- * and `{worktree}` filled, chained parts in order); an id the map lacks, or whose command is
- * refused, is named and never run.
+ * written out); else each comma id the gate map has (its command, `{files}`,
+ * `{worktree}` and `{outdir}` filled, chained parts in order); an id the map lacks,
+ * whose command is refused, or whose command names `{outdir}` when the brief has
+ * none (MOD-22), is named and never run.
  */
-export function resolveGateRuns(gate: string | undefined, map: Readonly<Record<string, string>>, allowed: (argv: readonly string[]) => boolean, filesPath: string, worktree?: string): GateResolution {
+export function resolveGateRuns(gate: string | undefined, map: Readonly<Record<string, string>>, allowed: (argv: readonly string[]) => boolean, filesPath: string, worktree?: string, outdir?: string): GateResolution {
   if (!gate || !gate.trim()) return { runs: [], notRerun: [], none: true }
   const whole = splitCommand(gate)
   if (whole.length > 1 && !gate.includes(',') && allowed(whole)) return { runs: [{ label: whole.join(' '), argv: whole }], notRerun: [] }
@@ -126,8 +130,12 @@ export function resolveGateRuns(gate: string | undefined, map: Readonly<Record<s
       notRerun.push({ id, why: `gateMap command refused: ${t.reason}` })
       continue
     }
+    if (outdir === undefined && t.templates.some(words => words.some(w => w.includes(OUTDIR)))) {
+      notRerun.push({ id, why: 'the command names {outdir} and the brief has no outdir=' })
+      continue
+    }
     for (const words of t.templates) {
-      const argv = fillPlaceholders(words, filesPath, worktree)
+      const argv = fillPlaceholders(words, filesPath, worktree, outdir)
       if (!runs.some(r => r.argv.join(' ') === argv.join(' '))) runs.push({ label: words.join(' '), argv })
     }
   }
