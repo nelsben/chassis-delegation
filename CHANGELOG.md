@@ -11,6 +11,13 @@
   false`, `seems wrong/off/silly`, `looks wrong`). A priority reversal with no marker is still not
   caught. Thirteen benign prompts are pinned as not caught. The mod's own submits remain ignored.
 
+- **A worker the brain resumes after a consistent verdict is judged when it hands back again (MOD-41).**
+  A hand-back from a worker whose last attempt was already judged, with a report at a different sha,
+  is recorded as the next attempt (kind resume, same lineage, counted against `budget=`) and judged
+  like an advised resume's: the verdict row posts and the ledger gains its row. A hand-back at the
+  same sha stays the MOD-1 re-judge and changes nothing. Past `budget=` it is still judged; the row
+  says the budget is spent. The brain's own `SendMessage` needs no new command.
+
 - **A card's frontmatter value that holds a space and a hash is no longer cut there (MOD-40).**
   The card tool double-quotes a title or red_test that contains ` #` (or starts with `#`), with
   inner quotes and backslashes escaped, so it round-trips byte for byte. The card reader treats a

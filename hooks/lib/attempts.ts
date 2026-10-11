@@ -169,6 +169,17 @@ const sameSha = (a: string, b: string): boolean => {
 }
 
 /**
+ * MOD-41: is a hand-back whose report names `sha` a new attempt? Yes when the last
+ * attempt was judged (not pending) at a sha other than this one: the brain resumed
+ * the worker after a verdict the mod had not advised a resume for. The same sha is
+ * the MOD-1 re-judge and a record that named no sha is left alone.
+ */
+export function isResumeAfterJudged(records: readonly AttemptRecord[], subtask: string, sha: string, lane?: Lane): boolean {
+  const last = attemptsFor(records, subtask, lane).at(-1)
+  return last !== undefined && last.verdict !== 'pending' && last.sha !== undefined && !sameSha(last.sha, sha)
+}
+
+/**
  * MOD-1: which attempt `/dispatch <id> --verify <sha>` judges. The last attempt
  * when it is a work-present one (GH-104), or when it was already judged at this
  * very sha (`rejudge`: same attempt number, no new record, no budget spent);

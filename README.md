@@ -1189,6 +1189,14 @@ brain makes it, and with `autoEscalate` on as well: `autoEscalate` performs a
 resume itself (a message to the worker), never a spawn. The budget counts spawns,
 resumes and verify attempts per task. Past it the next spawn is denied.
 
+Resuming after accept: the brain may also resume a worker whose last attempt was judged
+consistent (or unverified), with a `SendMessage` of its own, when reading the diff shows
+a problem the claims could not. When that worker hands back a report at a different sha,
+the mod records the next attempt (kind resume, same lineage, counted against `budget=`)
+and judges it like an advised resume's: the verdict row posts and the ledger gains its
+row. A hand-back at the same sha is the `--verify` re-judge and changes nothing. Past
+`budget=` it is still judged, and the row says the budget is spent.
+
 Unverified is actionable too. While the budget lasts, an unverified verdict
 advises a resume naming each unchecked claim and its reason (cut to 160
 characters):
