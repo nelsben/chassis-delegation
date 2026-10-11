@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.1 — 2026-10-11
 
 - **The legacy verdict reader is removed (MOD-49).** `hooks/lib/legacy.ts` is gone; the old verdict word
   `verified` is no longer read as a verdict. A stored attempt record or recent-verdict row written before

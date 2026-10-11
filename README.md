@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.9.0, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.1, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,16 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.9.0 to 0.9.1
+
+What the brain will see:
+
+- **The brain and worker cost figures follow each model's own price (MOD-47).** `/delegation` and the dashboard now follow each model's own cache-read price, and 1-hour cache writes at 2x, so the money line can read higher than before on the same session.
+- **The brain sees what driving costs it (MOD-48).** `/delegation` and the dashboard show a brain calls row and a warn row, on by default, with the options `driveWarn` and `driveWarnTokens`.
+- **The legacy verdict word `verified` is no longer read by a reader of its own (MOD-49).** A stored record or row that still carries it is read as `consistent` by one normaliser, with no further deadline.
+
+What to do: nothing in an existing repo's config needs to change; set `driveWarn` to `false` in `/config` to silence the warn row.
 
 ### From 0.8.3 to 0.9.0
 
@@ -1067,15 +1077,14 @@ declares `gate=fail` honestly is never accepted, whatever else holds: its row
 reads `consistent (report gate=fail)` and `next=` resumes the worker.
 
 **Deprecated: `verified`.** Up to 0.7.0 this verdict was called `verified`. The
-mod no longer writes that word (the verdict row, the `verdict=` line, the
-attempt records, the ledger lines, the dashboard, the state block and the
-debrief all say `consistent`), and reads it, as `consistent`, until 0.9.0: an
-attempt record, a verdict line or a metrics count from before the change
-escalates, retires, accepts and counts as a success exactly as a consistent
-one does. A ledger line already written keeps its word, because the file is
-append-only. A script that parses the row text, `verdict=` or
-`.delegation/ledger.jsonl` should accept both words until 0.9.0, when the old
-one is dropped.
+mod stopped writing that word at 0.8.0 (the verdict row, the `verdict=` line,
+the attempt records, the ledger lines, the dashboard, the state block and the
+debrief all say `consistent`). One read-only normaliser reads a stored attempt
+record, verdict line or metrics count that still carries the old word as
+`consistent` (MOD-49), so it escalates, retires, accepts and counts as a
+success exactly as a consistent one does. A ledger line already written keeps
+its word, because the file is append-only. A script that parses the row text,
+`verdict=` or `.delegation/ledger.jsonl` should accept both words.
 
 `repo=none` changes the check (and the row says `(no repo)`). The verifier
 then checks only these things:
