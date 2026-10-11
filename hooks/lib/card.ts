@@ -390,13 +390,19 @@ function collides(entry: string, forbid: string): boolean {
   return mine.some(x => theirs.some(y => globsCollide(x, y)))
 }
 
-/** MOD-52: a word with its markdown emphasis (`*`, `_`) and trailing punctuation off, in either order: `**a/b.md:**` and `**a/b.md**:` both give `a/b.md`. */
+/**
+ * MOD-52: a word with its trailing punctuation and leading quotes off, and its emphasis off only in pairs: a run of `*` or `_`
+ * at the start and the same run at the end (`**x**`, `*x*`, `__x__`) goes together. `**a/b.md:**` and `**a/b.md**:` both give
+ * `a/b.md`; a glob word with a star inside (a double star then a folder, a star before a dot) comes through unchanged.
+ */
 const cleanWord = (w: string): string => {
   let s = w
   for (;;) {
-    const next = s.replace(/^["'(*_]+/, '').replace(/["'),;:!?.*_]+$/, '')
-    if (next === s) return s
-    s = next
+    s = s.replace(/^["'(]+/, '').replace(/["'),;:!?.]+$/, '')
+    const lead = /^[*_]+/.exec(s)?.[0] ?? ''
+    const trail = /[*_]+$/.exec(s)?.[0] ?? ''
+    if (lead === '' || lead !== trail || s.length <= 2 * lead.length) return s
+    s = s.slice(lead.length, s.length - trail.length)
   }
 }
 
