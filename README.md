@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.8.2, MIT.
+any other repo: no scripts, no harness, no network. Version 0.8.3, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,17 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.8.2 to 0.8.3
+
+What the brain will see:
+
+- **A verdict wake for a task merged before it is delivered no longer arrives (MOD-42).** While the brain's turn is open, a consistent verdict's task is checked for merged again at delivery; a merged one is dropped with `wake skipped: <id> merged before delivery`. Refuted, over-spend, no-report and `ready:` wakes always arrive.
+- **The correction detector catches pushback and challenge questions, not only an opening "no" or "stop" (MOD-39, public issue #89).** Messages such as `i don't agree`, `shouldn't it …?` or `looks wrong` are caught wherever they appear in the message.
+- **A card's frontmatter value with a space and a hash is no longer cut there (MOD-40).** A title or red_test holding ` #` is double-quoted and read back whole.
+- **A worker resumed after a consistent verdict is judged again when it hands back (MOD-41).** A hand-back at a new sha is recorded as the next attempt and gets a verdict row; a hand-back at the same sha changes nothing.
+- **The debrief check accepts a correction the transcript holds (MOD-38, public issue #90).** A correction the session transcript holds at its time no longer counts toward the flag.
+- **The session's money figures count only its own attempts (MOD-37, public issue #91).** Ad hoc spawns get their own figure, and an unattributed remainder closes the sum.
 
 ### From 0.8.1 to 0.8.2
 
