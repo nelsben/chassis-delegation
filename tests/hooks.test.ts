@@ -2774,6 +2774,102 @@ describe('MOD-13: workers under the mod hooks', () => {
   })
 })
 
+describe('MOD-16: each worker gets its own identity in its Bash environment', () => {
+  const HEAD = (task: string, over = '', subtask = 'main') => `[[brief v=1 task=${task} subtask=${subtask} purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier${over} budget=3-attempts report=chassis.report.v1]]`
+  const briefOf = (task: string, subtask = 'main') => `${SCRATCH}/briefs/${task}${subtask === 'main' ? '' : '.' + subtask}.brief.md`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const branchRun = (branch: string) => (argv: string[]): RunAnswer | undefined => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: `${branch}\n` } : undefined)
+  const PREFIX = (session: string, task: string, attempt: number) => `export CHASSIS_SESSION_ID=${session} CHASSIS_TASK=${task} CHASSIS_ATTEMPT=${attempt}; `
+  type Seen = { tool: string; command?: string; file_path?: string }
+  /** The engine's own tool, at the bottom: it records what reaches it, which is what would run. */
+  const bottom = (on: Parameters<Parameters<typeof test>[2]>[1]): Seen[] => {
+    const seen: Seen[] = []
+    ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async (_$: unknown, e: Seen) => {
+      seen.push({ tool: e.tool, ...(e.command !== undefined ? { command: e.command } : {}), ...(e.file_path !== undefined ? { file_path: e.file_path } : {}) })
+      return { result: 'ok' }
+    })
+    return seen
+  }
+  const spawnBrief = ($: Parameters<Parameters<typeof test>[2]>[0], path: string, id: string) => $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${path}.`, tool_use_id: id }))
+
+  test('a recorded worker\'s Bash command reaches the tool behind the export prefix, typed text whole; its other tools are untouched', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-6')]: HEAD('T-6') + '\nbody' }, run: branchRun('agent/mod/T-6'), agentId: 'agent-6' })
+    const seen = bottom(on)
+    await spawnBrief($, briefOf('T-6'), 'toolu_W0000006')
+    await workerCall($, w, 'agent-6', { tool: 'Bash', command: 'lock acquire --org one' })
+    await workerCall($, w, 'agent-6', { tool: 'Bash', command: 'cd /w && make test\nls' })
+    await workerCall($, w, 'agent-6', { tool: 'Read', file_path: '/w/a.md' })
+    expect(seen).toEqual([
+      { tool: 'Bash', command: PREFIX('T-6-a1', 'T-6', 1) + 'lock acquire --org one' },
+      { tool: 'Bash', command: PREFIX('T-6-a1', 'T-6', 1) + 'cd /w && make test\nls' },
+      { tool: 'Read', file_path: '/w/a.md' },
+    ])
+  })
+
+  test('two siblings of one task are told apart: BE-101 main is BE-101-a1, its ui subtask BE-101.ui-a1', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('BE-101')]: HEAD('BE-101') + '\nbody', [briefOf('BE-101', 'ui')]: HEAD('BE-101', '', 'ui') + '\nbody' }, run: branchRun('agent/mod/BE-101') })
+    const seen = bottom(on)
+    await spawnBrief($, briefOf('BE-101'), 'toolu_W0000001')
+    await spawnBrief($, briefOf('BE-101', 'ui'), 'toolu_W0000002')
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'lock acquire' })
+    await workerCall($, w, 'agent-2', { tool: 'Bash', command: 'lock acquire' })
+    expect(seen.map(s => s.command)).toEqual([PREFIX('BE-101-a1', 'BE-101', 1) + 'lock acquire', PREFIX('BE-101.ui-a1', 'BE-101', 1) + 'lock acquire'])
+  })
+
+  test('a resume moves the identity on: the worker\'s next Bash call is attempt 2', { options: { ...GM, autoEscalate: true } }, async ($, on) => {
+    const T4 = `${SCRATCH}/briefs/T-4.brief.md`
+    const w = world(on, { files: { [T4]: HEAD('T-4') + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
+    const seen = bottom(on)
+    await spawnBrief($, T4, 'toolu_W0000004')
+    await workerCall($, w, 'agent-4', { tool: 'Bash', command: 'ls' })
+    await $.turn.complete(turnInput('agent-4', 'Done.\n[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'))
+    expect(w.sent).toHaveLength(1) // refuted on the gate: the mod resumes the same worker
+    await workerCall($, w, 'agent-4', { tool: 'Bash', command: 'ls' })
+    expect(seen.map(s => s.command)).toEqual([PREFIX('T-4-a1', 'T-4', 1) + 'ls', PREFIX('T-4-a2', 'T-4', 2) + 'ls'])
+  })
+
+  test('never rewritten: the brain\'s own Bash, an ad hoc agent, an agent the mod never recorded, and a command that sets CHASSIS_SESSION_ID itself', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-6')]: HEAD('T-6') + '\nbody' }, run: branchRun('agent/mod/T-6') })
+    const seen = bottom(on)
+    await spawnBrief($, briefOf('T-6'), 'toolu_W0000006') // agent-1, recorded
+    await $.agent.spawn(spawnInput({ prompt: 'Look around and tell me what you find.', tool_use_id: 'toolu_ADHOC0002' })) // agent-2, ad hoc: no brief header
+    await $.tool.call({ tool: 'Bash', command: 'lock acquire' } as never) // the brain
+    await workerCall($, w, 'agent-2', { tool: 'Bash', command: 'lock acquire' })
+    await workerCall($, w, 'agent-zz', { tool: 'Bash', command: 'lock acquire' })
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'CHASSIS_SESSION_ID=mine lock acquire' })
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'export CHASSIS_SESSION_ID=mine; lock acquire' })
+    expect(seen.map(s => s.command)).toEqual([
+      'lock acquire',
+      'lock acquire',
+      'lock acquire',
+      'CHASSIS_SESSION_ID=mine lock acquire',
+      'export CHASSIS_SESSION_ID=mine; lock acquire',
+    ])
+  })
+
+  test('the git guard still judges the command as typed: a repo=here worker\'s `git commit` on main is refused with the same text, and never reaches the tool', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-7')]: HEAD('T-7', ' repo=here') + '\nbody' }, run: branchRun('main'), agentId: 'agent-7' })
+    const seen = bottom(on)
+    await spawnBrief($, briefOf('T-7'), 'toolu_W0000007')
+    const commit = await workerCall($, w, 'agent-7', { tool: 'Bash', command: 'git commit -m x' })
+    expect(commit.seen ? commit.result.deny : undefined).toBe('chassis-delegation: no commit on main (T-7); branch first (git checkout -b agent/<domain>/<id>)')
+    const push = await workerCall($, w, 'agent-7', { tool: 'Bash', command: 'git push origin main' })
+    expect(push.seen ? push.result.deny : undefined).toBe('chassis-delegation: no push on main (T-7); branch first (git checkout -b agent/<domain>/<id>)')
+    expect(seen).toEqual([])
+    // the guard's own log line carries the command it read: the typed one, no prefix
+    expect(w.debugLogs.filter(l => l.includes('git guard:')).map(l => l.split(' — ').pop())).toEqual(['git commit -m x', 'git push origin main'])
+  })
+
+  test('the git guard passes a worker on its own branch, and the command that reaches the tool is the typed one behind the prefix', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-8')]: HEAD('T-8') + '\nbody' }, run: branchRun('agent/mod/T-8'), agentId: 'agent-8' })
+    const seen = bottom(on)
+    await spawnBrief($, briefOf('T-8'), 'toolu_W0000008')
+    const ok = await workerCall($, w, 'agent-8', { tool: 'Bash', command: 'git commit -m x' })
+    expect(ok.seen ? ok.result.deny : 'unseen').toBeUndefined()
+    expect(seen.map(s => s.command)).toEqual([PREFIX('T-8-a1', 'T-8', 1) + 'git commit -m x'])
+  })
+})
+
 describe('MOD-15: work keeps moving without the person', () => {
   const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
   const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'

@@ -569,6 +569,9 @@ The body comes from `hooks/templates/brief.md`. It tells the worker to:
   output to `.delegation/<ID>/red-<attempt>.txt` in the worktree (a new file
   for each attempt);
 - get the gate green and leave the tree clean;
+- know its identity: `CHASSIS_SESSION_ID`, `CHASSIS_TASK` and
+  `CHASSIS_ATTEMPT` are already set in every Bash call it makes (see "A worker's
+  identity"), so it never sets them;
 - commit and hold: never push, never open a PR, never commit on main;
 - end with the report line.
 
@@ -1313,6 +1316,44 @@ for the task. An entry of `0` or empty leaves the engine's default. The brain's
 own steps and an ad hoc agent's are never touched. The effort used is recorded
 on the attempt (`effort`), and `/delegation` prints
 `effort: economy low · standard medium · frontier high`.
+
+## A worker's identity
+
+A worker inherits the brain's session id. A lock keyed on role plus session id
+(a vendored lock script, public issue #24) then gave two sibling workers on
+one shared environment the same identity, and one could release the other's
+live hold. Telling every worker in `briefExtra` to prefix its lock calls by hand
+failed silently the first time a worker forgot. Since the mod sees every
+worker's Bash calls (MOD-12), it now sets the identity itself: the `tool.call`
+hook runs a recorded worker's Bash command behind an export,
+
+    export CHASSIS_SESSION_ID=BE-101-a2 CHASSIS_TASK=BE-101 CHASSIS_ATTEMPT=2; <the command as typed>
+
+| Variable | Value |
+| --- | --- |
+| `CHASSIS_SESSION_ID` | `<task>-a<attempt>`; for a subtask other than `main`, `<task>.<subtask>-a<attempt>` (`BE-101.ui-a1`) |
+| `CHASSIS_TASK` | the task id (`BE-101`) |
+| `CHASSIS_ATTEMPT` | the attempt number (`2`) |
+
+- **Per attempt.** The attempt is the one the worker is on, counted per task and
+  subtask across spawns and resumes, so a resume moves it on and two siblings,
+  or two attempts of one task, never share an id.
+- **Every command of a line.** It is an `export`, so `a && b` and a script the
+  command starts all see the variables. The values are shell-quoted.
+- **What is never rewritten.** The brain's own Bash; an ad hoc agent and any
+  agent with no attempt record; the debrief and eval runners (the mod's own
+  subagents, whose calls its hooks do not see); a worker the mod started itself
+  after `readyFallbackMinutes` (MOD-15), which runs outside the hooks and keeps
+  the inherited id; and a command that already assigns `CHASSIS_SESSION_ID`
+  (`CHASSIS_SESSION_ID=x cmd`, `export CHASSIS_SESSION_ID=x`, `env
+  CHASSIS_SESSION_ID=x cmd`), which is left as typed. A command that only reads
+  it is rewritten.
+- **Nothing else changes.** The git guard, `delegateOnly` and the spend check
+  judge the command as the worker typed it, and the rewrite is the last link
+  before the engine's tool, so no refusal text or decision moves.
+- **No option.** The brief tells the worker its identity and that it is already
+  set. A `briefExtra` line asking workers to prefix their lock calls by hand is
+  no longer needed; one a worker follows is left as typed.
 
 ## The cost formula
 

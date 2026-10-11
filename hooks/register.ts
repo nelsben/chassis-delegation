@@ -153,6 +153,7 @@ import {
 import { gateTemplatesOf, resolveGateRuns } from './lib/gates'
 import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
+import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardFromFields, cardSummary, sayGo } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
@@ -3727,6 +3728,20 @@ export const register: Register = (on, opts) => {
       }
     }
     return next(e)
+  })
+
+  // ---- MOD-16: a recorded worker's Bash runs with its own identity ----------------
+  // Registered after the git guard on purpose: hooks nest in registration order, so the
+  // guard (and delegateOnly and the spend check above) judge the command as the worker
+  // typed it, and this is the last link before the engine's tool. The brain (no agentId),
+  // an ad hoc agent and an agent the mod never recorded are passed on as they are.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const command = typeof e.command === 'string' ? e.command : ''
+    if (!e.agentId || command === '') return next(e)
+    const worker = await spawnByAgent($, e.agentId)
+    if (!worker || worker.adhoc) return next(e)
+    const run = withIdentity(command, worker)
+    return next(run === command ? e : { ...e, command: run })
   })
 
   // ---- tool.call on Agent: capture the report, verify, hand the verdict back ------
