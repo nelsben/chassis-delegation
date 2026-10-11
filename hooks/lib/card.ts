@@ -8,7 +8,7 @@
 // and each lane's own scope.
 import { RESOURCE_NAME, scopeOverlap } from './brief'
 import { dollars, spendCeiling } from './cost'
-import { scopeLooksProse } from './dispatch'
+import { scopeLooksProse, yamlScalar } from './dispatch'
 import { matchGlob } from './norepo'
 import { tierOf, type Tier } from './tier'
 import { globMatches } from './verify-native'
@@ -190,13 +190,13 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   const id = `${prefix}-${nextNumber(ctx.names, prefix) + at}`
   const body = `---
 id: ${id}
-title: ${title}
+title: ${yamlScalar(title)}
 domain: ${domain}
 tier: ${tier}
 status: queued
 ${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.join(', ')}]
 forbid: [${forbid.join(', ')}]
-${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}red_test: ${redTest}
+${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
 gate: ${gate.join(', ')}
 budget: ${budget}-attempts
 spend: ${spend}

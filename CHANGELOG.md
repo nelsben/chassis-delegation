@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A card's frontmatter value that holds a space and a hash is no longer cut there (MOD-40).**
+  The card tool double-quotes a title or red_test that contains ` #` (or starts with `#`), with
+  inner quotes and backslashes escaped, so it round-trips byte for byte. The card reader treats a
+  hash as a comment only as ` # ` outside quotes: an unquoted `#89` or `#n` reads whole, so a card
+  written before this change reads whole too. The brief header carries the whole red_test.
+
 - **The session's brain and worker figures count only this session's own attempts; ad hoc
   spawns get their own figure; an unattributed remainder closes the sum (MOD-37, public
   issue #91).** Every attempt record now carries `sessionId` (the session whose brain made
