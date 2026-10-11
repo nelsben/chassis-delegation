@@ -2023,8 +2023,8 @@ async function acceptTask($: Host, rest: string): Promise<string> {
 
 /**
  * MOD-35: is this hand-back's task already on the default branch (or accepted)? MOD-4's retire check answers: the
- * attempt's sha an ancestor of origin/main, the card there reading merged, or an accept already recorded. On arrival only a
- * consistent verdict of a real worker is asked about; MOD-51's delivery-time check (`anyVerdict`) asks for any verdict.
+ * attempt's sha an ancestor of origin/main, the card there reading merged, or an accept already recorded. A verdict of any kind (`anyVerdict`)
+ * is asked about, on arrival (MOD-60) and at delivery (MOD-51); a caller may still ask only about a consistent one.
  */
 async function alreadyMerged($: Host, spawn: SpawnRecord, force = false, anyVerdict = false): Promise<boolean> {
   if (spawn.adhoc || spawn.review || spawn.replay) return false
@@ -5477,7 +5477,7 @@ export const register: Register = (on, opts) => {
         await appendRow($, text)
         // MOD-15: the verdict wakes the brain as a turn of its own (a foreground worker's rides its Agent result: no row here)
         // MOD-35: not for a task already on the default branch: its next=accept is stale; a `ready:` line still wakes
-        if (row !== undefined && spawn && (await alreadyMerged($, spawn))) {
+        if (row !== undefined && spawn && (await alreadyMerged($, spawn, false, true))) {
           debug($, `wake skipped: ${taskLabel(spawn.task, spawn.subtask)} already merged`)
           await wakeBrain($, '', undefined, ready.join('\n'))
         } else if (row !== undefined) await wakeBrain($, row, spawn, ready.join('\n'))
