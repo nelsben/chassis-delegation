@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { DEFAULT_DOMAINS, DEFAULT_IGNORE, isGitRef, mergeConfig, parseRepoConfig, settingsLayer, REPO_CONFIG_FILE } from '../hooks/lib/repoconfig'
+import { DEFAULT_DOMAINS, DEFAULT_IGNORE, isGitRef, manifestRepo, mergeConfig, parseRepoConfig, resolveIssueRepo, settingsLayer, REPO_CONFIG_FILE } from '../hooks/lib/repoconfig'
 
 describe('5B: the repo file .chassis-delegation.json', () => {
   test('is named .chassis-delegation.json; _comment keys are ignored at every level', () => {
@@ -137,6 +137,47 @@ describe('MOD-7: issueRepo', () => {
     const bad = parseRepoConfig('{"issueRepo":"not a repo"}')
     expect(bad.config.issueRepo).toBeUndefined()
     expect(bad.errors.join('\n')).toContain('issueRepo')
-    expect(parseRepoConfig('{"issueRepo":""}').config.issueRepo).toBeUndefined()
+    // MOD-18: an explicit empty string is kept, so it can turn posting off (unset takes the mod's own tracker)
+    expect(parseRepoConfig('{"issueRepo":""}').config.issueRepo).toBe('')
+    expect(parseRepoConfig('{}').config.issueRepo).toBeUndefined()
+  })
+})
+
+describe("MOD-18: issueRepo defaults to the mod's own tracker", () => {
+  const manifest = (over: Record<string, unknown>) => JSON.stringify({ name: 'chassis-delegation', version: '0.7.0', ...over })
+  test('the manifest names it by repository (a string or {url}) or homepage, github.com only', () => {
+    expect(manifestRepo(manifest({ repository: 'https://github.com/acme/mod' }))).toBe('acme/mod')
+    expect(manifestRepo(manifest({ repository: 'https://github.com/acme/mod.git' }))).toBe('acme/mod')
+    expect(manifestRepo(manifest({ repository: { type: 'git', url: 'git+https://github.com/acme/mod.git' } }))).toBe('acme/mod')
+    expect(manifestRepo(manifest({ repository: 'git@github.com:acme/mod.git' }))).toBe('acme/mod')
+    expect(manifestRepo(manifest({ repository: 'github:acme/mod' }))).toBe('acme/mod')
+    expect(manifestRepo(manifest({ homepage: 'https://github.com/acme/mod#readme' }))).toBe('acme/mod')
+    expect(manifestRepo(manifest({ repository: 'https://github.com/acme/mod', homepage: 'https://github.com/acme/other' }))).toBe('acme/mod')
+    expect(manifestRepo(manifest({ repository: 'https://example.org/docs/page', homepage: 'https://github.com/acme/mod' }))).toBe('acme/mod')
+  })
+  test('no field, a foreign host, junk or no manifest gives empty', () => {
+    expect(manifestRepo(manifest({}))).toBe('')
+    expect(manifestRepo(manifest({ repository: 'https://example.org/docs/page' }))).toBe('')
+    expect(manifestRepo(manifest({ repository: 42 }))).toBe('')
+    expect(manifestRepo('not json')).toBe('')
+    expect(manifestRepo(undefined)).toBe('')
+  })
+  const own = manifest({ repository: 'https://github.com/acme/mod' })
+  test('a repo file that leaves issueRepo unset gets the manifest\'s owner/name, marked as the default', () => {
+    const e = mergeConfig(parseRepoConfig('{"maxWorkers":2}').config, {})
+    expect(resolveIssueRepo(e, own)).toEqual({ repo: 'acme/mod', own: true })
+    expect(resolveIssueRepo(mergeConfig({}, {}), own)).toEqual({ repo: 'acme/mod', own: true })
+  })
+  test('a repo file that says "" turns posting off, whatever the manifest says', () => {
+    const e = mergeConfig(parseRepoConfig('{"issueRepo":""}').config, {})
+    expect(resolveIssueRepo(e, own)).toEqual({ repo: '', own: false })
+  })
+  test('a repo file that names a repo keeps it; the default is not offered then', () => {
+    const e = mergeConfig(parseRepoConfig('{"issueRepo":"owner/other"}').config, {})
+    expect(resolveIssueRepo(e, own)).toEqual({ repo: 'owner/other', own: false })
+  })
+  test('the manifest names none and the repo file is silent: empty', () => {
+    expect(resolveIssueRepo(mergeConfig({}, {}), manifest({}))).toEqual({ repo: '', own: false })
+    expect(resolveIssueRepo(mergeConfig({}, {}), undefined)).toEqual({ repo: '', own: false })
   })
 })

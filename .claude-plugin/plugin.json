@@ -5,6 +5,7 @@
   "author": {
     "name": "Ben Nelsen"
   },
+  "repository": "https://github.com/nelsben/chassis-delegation",
   "types": "./hooks/types/index.d.ts",
   "userConfig": {
     "autoEscalate": {

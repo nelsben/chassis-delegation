@@ -16,6 +16,7 @@ import {
   DEFAULT_DEBRIEF_MIN_EVENTS,
   frictionFacts,
   isCorrection,
+  proposalsLines,
   type FrictionEvent,
 } from '../hooks/lib/cleanstop'
 
@@ -117,5 +118,33 @@ describe('5E: the debrief without the harness', () => {
   test('the debrief file the agent names, in either place', () => {
     expect(debriefPathOf('Wrote /w/app/.delegation/debriefs/2026-10-03-guard-day.json and the ledger line.')).toBe('/w/app/.delegation/debriefs/2026-10-03-guard-day.json')
     expect(debriefPathOf('see ~/.claude/harness/debriefs/2026-10-03-x.json')).toBe('~/.claude/harness/debriefs/2026-10-03-x.json')
+  })
+})
+
+describe("MOD-18: the agent's own proposals, shown to you and never posted", () => {
+  const change = (target: string, proposed_diff_summary: string) => ({ target, rationale: 'why', proposed_diff_summary })
+  test('two proposed_harness_changes give the header and one line each, target · summary', () => {
+    const json = JSON.stringify({ proposed_harness_changes: [change('CLAUDE.md', 'Add a rule that a card names its gate.'), change('memory/feedback.md', 'Note that the verdict row is read first.')] })
+    expect(proposalsLines(json)).toEqual(['proposals: 2 for you to review (never posted)', 'CLAUDE.md · Add a rule that a card names its gate.', 'memory/feedback.md · Note that the verdict row is read first.'])
+  })
+  test('a long or many-line summary is cut to one line', () => {
+    const json = JSON.stringify({ proposed_harness_changes: [change('other', `first line\nsecond   line ${'x'.repeat(400)}`)] })
+    const lines = proposalsLines(json)
+    expect(lines).toHaveLength(2)
+    expect(lines[1]).toContain('other · first line second line xxx')
+    expect(lines[1]).not.toContain('\n')
+    expect((lines[1] ?? '').length).toBeLessThanOrEqual(200)
+  })
+  test('harness_gaps and stale_memory are counted, not listed', () => {
+    const json = JSON.stringify({ proposed_harness_changes: [change('CLAUDE.md', 'one')], harness_gaps: ['a', 'b'], stale_memory: ['c'] })
+    expect(proposalsLines(json)).toEqual(['proposals: 1 for you to review (never posted)', 'CLAUDE.md · one', 'harness_gaps: 2 · stale_memory: 1'])
+    expect(proposalsLines(JSON.stringify({ proposed_harness_changes: [change('CLAUDE.md', 'one')], stale_memory: ['c'] })).at(-1)).toBe('stale_memory: 1')
+  })
+  test('none prints nothing: no key, empty lists, junk entries, text that is not a JSON object', () => {
+    expect(proposalsLines('{}')).toEqual([])
+    expect(proposalsLines(JSON.stringify({ proposed_harness_changes: [], harness_gaps: [], stale_memory: [] }))).toEqual([])
+    expect(proposalsLines(JSON.stringify({ proposed_harness_changes: [null, 3, 'x', {}] }))).toEqual([])
+    expect(proposalsLines('not json')).toEqual([])
+    expect(proposalsLines('[1]')).toEqual([])
   })
 })

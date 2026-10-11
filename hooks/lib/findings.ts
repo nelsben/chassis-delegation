@@ -58,3 +58,6 @@ export const issueNumberOf = (stdout: string): number | undefined => {
   const m = /\/issues\/(\d+)\s*$/m.exec(stdout.trim())
   return m ? Number(m[1]) : undefined
 }
+
+/** MOD-18: what a post says while the person's own redact list is empty: the automatic scrub cannot know a product name that differs from the folder name. */
+export const REDACT_EMPTY = 'set redact in /config to the product, customer, employer and repo names this session must never publish, then post again'

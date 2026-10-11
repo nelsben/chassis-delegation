@@ -207,3 +207,43 @@ export function findingsLines(findings: readonly ModFinding[], draftsPath: strin
 
 /** MOD-10: the scrubbed findings split into the mod's and the host's. */
 export const splitModFindings = (findings: readonly ModFinding[]): { mod: ModFinding[]; host: ModFinding[] } => splitFindings(findings)
+
+// ---- MOD-18: the agent's own proposals --------------------------------------------
+
+/** A proposal line is cut to this many characters. */
+export const PROPOSAL_LINE_CAP = 160
+
+const oneLine = (v: unknown): string => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '')
+const cut = (s: string, cap: number): string => (s.length <= cap ? s : `${s.slice(0, cap - 1).trimEnd()}\u2026`)
+
+/**
+ * What the debrief JSON hands the person about the agent's own process, shown and never posted:
+ * `proposals: n for you to review (never posted)`, one `target · summary` line per
+ * proposed_harness_changes entry, then a count of harness_gaps and stale_memory. Nothing to
+ * show (or text that is not a JSON object) is no lines.
+ */
+export function proposalsLines(json: string): string[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return []
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return []
+  const d = parsed as Record<string, unknown>
+  const lines: string[] = []
+  for (const raw of Array.isArray(d.proposed_harness_changes) ? d.proposed_harness_changes : []) {
+    if (raw === null || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const target = oneLine(r.target)
+    const summary = oneLine(r.proposed_diff_summary) || oneLine(r.rationale)
+    if (target === '' && summary === '') continue
+    lines.push(cut(`${target || '(no target)'} \u00b7 ${summary || '(no summary)'}`, PROPOSAL_LINE_CAP))
+  }
+  const count = (v: unknown): number => (Array.isArray(v) ? v.filter(e => oneLine(e) !== '').length : 0)
+  const gaps = count(d.harness_gaps)
+  const stale = count(d.stale_memory)
+  const counts = [...(gaps > 0 ? [`harness_gaps: ${gaps}`] : []), ...(stale > 0 ? [`stale_memory: ${stale}`] : [])]
+  if (lines.length === 0 && counts.length === 0) return []
+  return [`proposals: ${lines.length} for you to review (never posted)`, ...lines, ...(counts.length > 0 ? [counts.join(' \u00b7 ')] : [])]
+}

@@ -78,6 +78,7 @@ import {
   findingsFile,
   findingsLines,
   findingsPathOf,
+  proposalsLines,
   scrubbedFindings,
   DEFAULT_DEBRIEF_AGENT,
   DEFAULT_DEBRIEF_COOLDOWN_HOURS,
@@ -160,7 +161,7 @@ import { CARD_TOOL, cardFromFields, cardSummary, sayGo } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
-import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, settingsLayer, type RepoConfig } from './lib/repoconfig'
+import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type RepoConfig } from './lib/repoconfig'
 import { alreadyQueuedDeny, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, promptKey, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, runningDeny, startingOthers, waitedMinutes, type FallbackKind } from './lib/scheduler'
 import {
   aliasOf,
@@ -211,7 +212,7 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
-import { coveredBy, issueNumberOf, parsePostArg, renderPost, survivingWord, type IssueRow, type PostFinding } from './lib/findings'
+import { coveredBy, issueNumberOf, parsePostArg, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding } from './lib/findings'
 import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
 import { behindLine, changelogSlice, classifyRoot, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
@@ -412,6 +413,8 @@ type Config = {
   delegateOnly: 'off' | 'warn' | 'deny'
   /** MOD-7: owner/name /delegation debrief post files issues in; '' = posting is off. */
   issueRepo: string
+  /** MOD-18: issueRepo is the mod's own repository, from the manifest (the repo file left it unset). */
+  issueRepoOwn: boolean
   /** MOD-15: a verdict row is followed by a `$.prompt.submit`, a turn of the brain's own. */
   wakeOnVerdict: boolean
   /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
@@ -427,6 +430,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
   }
   const settings = settingsLayer(o)
   const eff = mergeConfig(repo, settings.config)
+  const issues = resolveIssueRepo(eff, modManifest ?? undefined)
   return {
     errors: settings.errors,
     cfg: {
@@ -472,7 +476,8 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       spendByTier: eff.spendByTier,
       effortByTier: eff.effortByTier,
       delegateOnly: eff.delegateOnly,
-      issueRepo: eff.issueRepo,
+      issueRepo: issues.repo,
+      issueRepoOwn: issues.own,
       wakeOnVerdict: o.wakeOnVerdict !== false,
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
     },
@@ -484,6 +489,8 @@ let options: PluginOptions = {}
 let repoLayer: RepoConfig = {}
 /** The repo file's text as last read: undefined = not read yet, null = no file. */
 let repoText: string | null | undefined
+/** MOD-18: the loaded copy's manifest as last read, which names the mod's own repository: undefined = not read yet, null = unreadable. */
+let modManifest: string | null | undefined
 let cfg: Config = readConfig({}, {}).cfg
 const waiting = new Set<string>() // Agent tool calls still awaiting their result
 const handbacks = new Map<string, string>() // agentId → a SubagentHandback message a tool.call hook saw (the transcript is the live source: GH-2)
@@ -619,8 +626,16 @@ async function loadRepoConfig($: Host): Promise<void> {
     return
   }
   const text = (await readText($, `${root}/${REPO_CONFIG_FILE}`)) ?? null
-  if (text === repoText) return
+  // MOD-18: the manifest is read beside the repo file, so a moved issueRepo default (after an update) is seen
+  let manifest: string | null = null
+  try {
+    manifest = (await readText($, `${$.plugin.root}/${PLUGIN_MANIFEST}`)) ?? null
+  } catch {
+    manifest = null
+  }
+  if (text === repoText && manifest === modManifest) return
   repoText = text
+  modManifest = manifest
   const parsed = text === null ? { config: {}, errors: [] } : parseRepoConfig(text)
   repoLayer = parsed.config
   const next = readConfig(options, repoLayer)
@@ -1592,7 +1607,10 @@ async function runDebrief($: Host): Promise<string> {
 async function runDebriefPost($: Host, argText: string): Promise<string> {
   await loadRepoConfig($)
   const repo = cfg.issueRepo
-  if (repo === '') return 'debrief post: issueRepo is empty, so posting is off. Set issueRepo (owner/name) in .chassis-delegation.json to turn it on; nothing was posted.'
+  if (repo === '') return 'debrief post: issueRepo is empty, so posting is off (the repo file says "", or the mod\'s manifest names no repository). Set issueRepo (owner/name) in .chassis-delegation.json to turn it on; nothing was posted.'
+  const arg = argText.trim()
+  // MOD-18: nothing is filed while the person's own redact list is empty; the read-only form still shows the drafts, with the warning on top
+  if (arg !== '' && cfg.redact.length === 0) return `debrief post refused, nothing posted: ${REDACT_EMPTY}`
   const root = (await $.session.root()).replace(/\/+$/, '')
   const folder = `${root}/.delegation/debriefs`
   let names: string[] = []
@@ -1616,7 +1634,10 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
   // MOD-10: the findings about the host are never listed or filed; the count is all post says of them
   const setAside = Array.isArray(parsed.host_findings) ? parsed.host_findings.length : 0
   const asideLine = setAside > 0 ? `${setAside} host_findings set aside (never posted)` : ''
-  if (rawList.length === 0) return [`debrief post: ${path} holds no findings`, ...(asideLine ? [asideLine] : [])].join('\n')
+  // MOD-18: the agent's own proposals, from the debrief this findings file was cut from; shown, never posted
+  const proposals = await proposalsOf($, parsed.debrief)
+  const underFindings = proposals.length > 0 ? ['', ...proposals] : []
+  if (rawList.length === 0) return [`debrief post: ${path} holds no findings`, ...(asideLine ? [asideLine] : []), ...underFindings].join('\n')
   const rules = await redactRules($)
   // scrubbed again, now: what the file says is not trusted to be clean
   const scrubbed = scrubbedFindings(JSON.stringify({ mod_findings: rawList }), rules) ?? []
@@ -1638,14 +1659,13 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
     }
   }
   const statusOf = (f: PostFinding): string => (f.issue !== undefined ? `posted as #${f.issue}` : trackerWhy !== '' ? `unchecked (${trackerWhy})` : (() => { const k = coveredBy(f, issues); return k === undefined ? 'new' : `covered by #${k}` })())
-  const arg = argText.trim()
   if (arg === '') {
-    const out = [`debrief post: ${path} -> ${repo} (nothing is posted by this form; /delegation debrief post all|1,3 posts)`, ...(asideLine ? [asideLine] : [])]
+    const out = [...(cfg.redact.length === 0 ? [`warning: ${REDACT_EMPTY}`] : []), `debrief post: ${path} -> ${repo}${cfg.issueRepoOwn ? " (the mod's own tracker)" : ''} (nothing is posted by this form; /delegation debrief post all|1,3 posts)`, ...(asideLine ? [asideLine] : [])]
     findings.forEach((f, i) => {
       const { title, body } = renderPost(f, MOD_VERSION)
       out.push('', `[${i + 1}] ${statusOf(f)}`, `title: ${title}`, '', body.trimEnd(), '------')
     })
-    return out.join('\n')
+    return [...out, ...underFindings].join('\n')
   }
   const want = parsePostArg(arg, findings.length)
   if ('error' in want) return `debrief post: ${want.error}`
@@ -1697,7 +1717,16 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
   } catch (err) {
     out.push(`could not record the issue numbers in ${path}: ${String(err).slice(0, 100)}`)
   }
-  return out.join('\n')
+  return [...out, ...underFindings].join('\n')
+}
+
+/** MOD-18: the agent's own proposals out of the debrief file a findings file names (a leading ~/ is the home folder); [] when there is none to read. */
+async function proposalsOf($: Host, debriefPath: unknown): Promise<string[]> {
+  if (typeof debriefPath !== 'string' || debriefPath.trim() === '') return []
+  const home = (await homeOf($)).replace(/\/+$/, '')
+  const path = debriefPath.startsWith('~/') ? `${home}${debriefPath.slice(1)}` : debriefPath
+  const text = await readText($, path)
+  return text === undefined ? [] : proposalsLines(text)
 }
 
 /** The scrub rules of this session: the repo folder and origin, the git user (read from the git config files, which the allowlist need not run), the /config list. */
@@ -1760,13 +1789,17 @@ async function writeFindings($: Host, debriefPath: string, window: DebriefWindow
     const findings = scrubbedFindings(body, await redactRules($))
     if (findings === undefined) return true
     const { mod, host } = splitModFindings(findings)
+    // MOD-18: after the findings lines, the agent's own proposals; they stay in the debrief file and are never posted
+    const proposals = proposalsLines(body)
     if (findings.length === 0) {
       await appendRow($, findingsLines(findings, '').join('\n'))
+      if (proposals.length > 0) await appendRow($, proposals.join('\n'))
       return true
     }
     const out = findingsPathOf(path)
     await $.fs.write(out, JSON.stringify(findingsFile(path, MOD_VERSION, mod, host), null, 2) + '\n')
     await appendRow($, findingsLines(mod, out, host.length).join('\n'))
+    if (proposals.length > 0) await appendRow($, proposals.join('\n'))
   } catch (err) {
     debug($, `findings not written: ${String(err)}`)
   }
@@ -3143,7 +3176,7 @@ async function statusReport($: Host): Promise<string> {
     ...(split.hasEdits ? [`brain edits: ${split.summary.edits}`] : []),
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
     ...(await updateStatusLines($)),
-    ...(cfg.issueRepo ? [`issues: ${cfg.issueRepo}`] : []),
+    ...(cfg.issueRepo ? [`issues: ${cfg.issueRepo}${cfg.issueRepoOwn ? " (the mod's own tracker)" : ''}`] : []),
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
@@ -3659,6 +3692,7 @@ const INIT_TOOL = {
 export const register: Register = (on, opts) => {
   options = opts
   repoText = undefined
+  modManifest = undefined
   repoLayer = {}
   cfg = readConfig(options, repoLayer).cfg
   // A (re)load starts the per-process memory over; the store keeps what must last.

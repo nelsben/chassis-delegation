@@ -1015,7 +1015,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `autoEval` | boolean | boolean | `false` | run `evalCommand` once per new `origin/main` sha while idle (needs `evalCommand`) |
 | `baseRef` | string | string | `""` (the chain: `origin/main`, `main`, `origin/master`, `master`) | where the delta starts when a brief names no `base=`. Used as given (`main`, `develop`, `HEAD~2`); a repo=here dispatch writes it into the brief as `base=`, and pins `HEAD` to its sha |
 | `ignore` | array | comma string | `[".delegation/**"]` | globs always taken off a repo=here delta (the card folder is always added to them); `[]` in the repo file ignores nothing |
-| `issueRepo` | `owner/name` | string | `""` | the repo `/delegation debrief post` files the mod findings in; empty = posting is off (see [Posting the findings](#posting-the-findings)) |
+| `issueRepo` | `owner/name` | string | the mod's own repository (the manifest's `repository`) | the repo `/delegation debrief post` files the mod findings in; `""` in the repo file = posting is off (see [Posting the findings](#posting-the-findings)) |
 | `delegateOnly` | `off` \| `warn` \| `deny` | string (`off` = unset) | `off` | keeps an opus or fable brain from doing worker work itself (GH-113; see [The brain's spend](#the-brains-spend)) |
 
 Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `settings.json`):
@@ -1083,6 +1083,23 @@ debrief, modVersion, scrubbed: true, findings }`. It prints one line per finding
 `[1] went_wrong · P2 · <surface> · <title>`, then `drafts: <path>`; with nothing
 to say it prints `no findings`. Posting them is a separate step, and two.
 
+The debrief JSON holds three kinds of list, each for one reader, and the mod
+keeps them apart (MOD-18):
+
+| list | for | what the mod does with it |
+|---|---|---|
+| `mod_findings` | the mod's tracker, after your go | scrubbed, written to the `.findings.json`, filed by `/delegation debrief post` |
+| `host_findings` | no one public | set aside in the `.findings.json`, counted on the findings lines, never listed or filed |
+| the agent's own proposals: `proposed_harness_changes`, `harness_gaps`, `stale_memory` | you | printed after the findings lines, never written to the `.findings.json`, never posted |
+
+The proposals block reads `proposals: n for you to review (never posted)`, then
+one line per `proposed_harness_changes` entry, `<target> · <proposed_diff_summary>`
+cut to one line, then `harness_gaps: n · stale_memory: n` for the two lists it
+only counts. A debrief with none of them prints nothing. `/delegation debrief
+post` shows the same block under the findings, read from the debrief the
+`.findings.json` was cut from. Whether to change `CLAUDE.md`, a memory file or
+a card is yours to decide; the mod only puts the proposals in front of you.
+
 The scrub (`redact` in `hooks/lib/redact.ts`) turns every `/Users/<name>/…` or
 `/home/<name>/…` prefix into `<home>/…`; the session root's folder name and its
 origin URL (both `owner/name` and the full URL) into `<repo>`; the git
@@ -1122,9 +1139,14 @@ In breadcrumbs mode a debrief is held to four rules (MOD-10):
 
 ### Posting the findings
 
-Set `issueRepo` (`owner/name`, in `.chassis-delegation.json` or `/config`; empty
-means posting is off) and `/delegation` prints `issues: <owner/name>`. Posting is
-two steps on purpose:
+`issueRepo` defaults to the mod's own repository, read from the `repository` (or
+else `homepage`) field of the mod's `.claude-plugin/plugin.json` as `owner/name`,
+so a finding about the mod can be posted from any repo the mod runs in, with no
+setting. `/delegation` prints `issues: <owner/name> (the mod's own tracker)` for
+the default and `issues: <owner/name>` when the repo file names one. Set
+`issueRepo` (`owner/name`) in `.chassis-delegation.json` to post somewhere else;
+an explicit `"issueRepo": ""` turns posting off (leaving the key out does not).
+Posting is two steps on purpose:
 
 1. `/delegation debrief post` reads the latest `.findings.json` under
    `<root>/.delegation/debriefs/` and prints every finding in full, scrubbed
@@ -1142,6 +1164,15 @@ two steps on purpose:
    that issue as a comment. Every body is scrubbed once more at post time, and
    the post is refused, naming the finding, if any word of the `redact` list
    survives.
+
+**The redact list must be set first.** The automatic scrub only knows the repo's
+folder name, its origin and the git identity; a product name that differs from
+the folder name would pass straight into a public issue. So while the `redact`
+option in `/config` is empty, `/delegation debrief post <n|all>` files nothing
+and says: `set redact in /config to the product, customer, employer and repo
+names this session must never publish, then post again`. The read-only
+`/delegation debrief post` still shows the drafts, with the same warning on its
+first line.
 
 Why two steps: the public tracker already carries product, repo, employer and
 home-path names that sessions typed from memory. Nothing leaves the machine

@@ -87,7 +87,7 @@ export type RepoConfig = {
   effortByTier?: Partial<Record<SpendTier, EffortSetting>>
   /** GH-113: the brain on opus or fable may not edit source (warn: a row; deny: refused); default off. */
   delegateOnly?: DelegateOnly
-  /** MOD-7: owner/name of the repo /delegation debrief post files issues in; empty = posting is off. */
+  /** MOD-7: owner/name of the repo /delegation debrief post files issues in. MOD-18: unset = the mod's own repository (the manifest's); "" = posting is off. */
   issueRepo?: string
 }
 
@@ -120,6 +120,7 @@ export type Effective = {
 const TIER_NAMES = ['economy', 'standard', 'frontier', 'premium'] as const
 const ALIASES = ['haiku', 'sonnet', 'opus', 'fable'] as const
 const DOMAIN = /^[a-z][a-z0-9-]*$/
+const OWNER_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
 type Parsed = { config: RepoConfig; errors: string[] }
 
@@ -281,9 +282,9 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
       case 'issueRepo':
         if (typeof v !== 'string') errors.push(`issueRepo${where}: not a string (ignored)`)
         else if (v.trim() !== '') {
-          if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(v.trim())) config.issueRepo = v.trim()
+          if (OWNER_NAME.test(v.trim())) config.issueRepo = v.trim()
           else errors.push(`issueRepo${where}: ${JSON.stringify(v)} is not owner/name (ignored)`)
-        }
+        } else if (strict) config.issueRepo = '' // MOD-18: the repo file's own "" turns posting off; in /config an empty string is "unset"
         break
       case 'domains': {
         const d = domainsOf(v, errors, where)
@@ -374,4 +375,44 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig): Effective {
     issueRepo: pick('issueRepo', ''),
     sources,
   }
+}
+
+// ---- MOD-18: the mod's own tracker ---------------------------------------------------
+
+/** `owner/name` out of a manifest URL field: github.com in any form (https, ssh, git+, `github:`), or a bare owner/name; '' otherwise. */
+function githubOwnerName(url: string): string {
+  const u = url.trim().replace(/^git\+/, '')
+  const short = /^(?:github:)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.exec(u)
+  const web = /^(?:[a-z+]+:\/\/(?:[^@/]+@)?|[^@/\s]+@)github\.com[:/]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:[/#?].*)?$/i.exec(u)
+  const found = web ? `${web[1]}/${web[2]}` : (short?.[1] ?? '').replace(/\.git$/, '')
+  return OWNER_NAME.test(found) ? found : ''
+}
+
+/** The mod's own repository, owner/name, out of the manifest's `repository` (a string or {url}) or `homepage`; '' = it names none on github.com. */
+export function manifestRepo(manifestText: string | undefined): string {
+  let m: unknown
+  try {
+    m = JSON.parse(manifestText ?? '')
+  } catch {
+    return ''
+  }
+  if (!isObject(m)) return ''
+  const repository = isObject(m.repository) ? m.repository.url : m.repository
+  for (const field of [repository, m.homepage]) {
+    if (typeof field !== 'string') continue
+    const found = githubOwnerName(field)
+    if (found !== '') return found
+  }
+  return ''
+}
+
+/**
+ * The repo `/delegation debrief post` files in. A value the repo file or /config set wins, an
+ * explicit "" in the repo file turns posting off, and a key left unset takes the mod's own
+ * repository (`own: true`), so a finding can be posted from any repo the mod runs in.
+ */
+export function resolveIssueRepo(eff: Pick<Effective, 'issueRepo' | 'sources'>, manifestText: string | undefined): { repo: string; own: boolean } {
+  if (eff.sources.issueRepo !== 'default') return { repo: eff.issueRepo, own: false }
+  const repo = manifestRepo(manifestText)
+  return { repo, own: repo !== '' }
 }
