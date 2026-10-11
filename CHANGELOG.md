@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- **The verdict says what it checked: `verified` becomes `consistent`
+  (MOD-19; public issue #1).** Two adopters reported it independently: when
+  every claim held, the row said `verified` and `next=accept`, which reads as
+  review, yet nothing reads the diff, and a worker that cleanly builds the wrong
+  thing got the same row. The word is now `consistent`: the report is consistent
+  with git. It means every machine-checkable claim of the report matches git
+  (branch, sha, files, scope, gate, red evidence); it is not a review, and the
+  brain still reads the diff. The README says so in a verdict table and one
+  plain paragraph. What changed in what the mod writes:
+  - the verdict row (`attempt 1/2 consistent · sonnet · $0.19 · next=accept`),
+    the long line (`verdict=consistent`), the `(no repo)` form and the
+    `consistent (report gate=fail)` form;
+  - attempt records and ledger lines, the dashboard (the tile reads
+    `consistent 1st try`, spend by model `4 consistent`, the Verdicts block and
+    its text fallback), the compaction and prompt state sections, the debrief
+    prompts and the template's classification rubric, and the settings-hook
+    fallback's row (`bin/chassis-hook.mjs`);
+  - the TypeScript verdict types gain `consistent`; `verified` stays only as a
+    legacy input, in `hooks/lib/legacy.ts`.
+
+  **Deprecated: `verified` is read until 0.9.0.** The row text is a contract
+  adopters parse, so the old word stays readable for one minor version. An
+  attempt record, a recent-verdict row or a metrics count saying `verified` is
+  read exactly as `consistent`: escalation, owed rows and their retire check,
+  accept, the spend and success counts, the dashboard (a pre-rename verdict
+  line is shown with the new word). A ledger line already written keeps its word
+  and is never rewritten. A script that parses the row, `verdict=` or
+  `.delegation/ledger.jsonl` should accept both words until 0.9.0, when
+  `hooks/lib/legacy.ts` goes. An honestly declared `gate=fail` is still never
+  accepted. New `tests/consistent.test.ts` holds the new word and the legacy
+  reads; `tests/node/consistent.node.mjs` fails on any `verified` in `hooks/` or
+  `bin/` outside the legacy reader; `tests/hooks.test.ts` proves a store and a
+  ledger written before the rename still retire an owed row and count as a
+  success. The optional reviewer stage is the next card, written against the new
+  word.
+
 - **A settings.json fallback for hosts that do not load the mod (MOD-17, #2).**
   The mod is a function-hook plugin: where the engine's rollout switch serves
   off, or a host cannot load a hooks module, none of it runs. New

@@ -17,14 +17,14 @@ describe('4C: one session metrics object', () => {
     expect(emptyMetrics(T0)).toEqual({
       firstSeen: T0,
       dispatches: 0,
-      verdicts: { verified: 0, unverified: 0, refuted: 0, falseRefuted: 0 },
+      verdicts: { consistent: 0, unverified: 0, refuted: 0, falseRefuted: 0 },
       spawns: { haiku: 0, sonnet: 0, opus: 0 },
       escalations: { resume: 0, respawn: 0 },
       debriefs: 0,
       evals: { run: 0, failed: 0 },
       compactions: 0,
       usd: 0,
-      verifiedBy: { haiku: 0, sonnet: 0, opus: 0 },
+      consistentBy: { haiku: 0, sonnet: 0, opus: 0 },
     })
   })
   test('each event increments its counter, nothing else', () => {
@@ -35,7 +35,7 @@ describe('4C: one session metrics object', () => {
     m = applyMetric(m, { kind: 'spawn', alias: 'claude-haiku-4-5' }, T0 + 3)
     m = applyMetric(m, { kind: 'resume' }, T0)
     m = applyMetric(m, { kind: 'verdict', verdict: 'refuted', alias: 'sonnet' }, T0)
-    m = applyMetric(m, { kind: 'verdict', verdict: 'verified', alias: 'sonnet', falseRefute: true }, T0)
+    m = applyMetric(m, { kind: 'verdict', verdict: 'consistent', alias: 'sonnet', falseRefute: true }, T0)
     m = applyMetric(m, { kind: 'verdict', verdict: 'unverified', alias: 'opus' }, T0)
     m = applyMetric(m, { kind: 'verdict', verdict: 'no-report', alias: 'opus' }, T0)
     m = applyMetric(m, { kind: 'debrief' }, T0)
@@ -47,23 +47,23 @@ describe('4C: one session metrics object', () => {
     expect(m).toEqual({
       firstSeen: T0,
       dispatches: 1,
-      verdicts: { verified: 1, unverified: 1, refuted: 1, falseRefuted: 1 },
+      verdicts: { consistent: 1, unverified: 1, refuted: 1, falseRefuted: 1 },
       spawns: { haiku: 1, sonnet: 1, opus: 1 },
       escalations: { resume: 1, respawn: 1 },
       debriefs: 1,
       evals: { run: 1, failed: 1 },
       compactions: 1,
       usd: 1.75,
-      verifiedBy: { haiku: 0, sonnet: 1, opus: 0 },
+      consistentBy: { haiku: 0, sonnet: 1, opus: 0 },
     })
   })
   test('a refute is false when the same sha later verifies, or an amend made the difference', () => {
-    expect(isFalseRefute({ verdict: 'refuted', reportSha: 'abc1234' }, { verdict: 'verified', reportSha: 'abc1234', amended: false })).toBe(true)
-    expect(isFalseRefute({ verdict: 'refuted', reportSha: 'abc1234' }, { verdict: 'verified', reportSha: 'def5678', amended: true })).toBe(true)
-    expect(isFalseRefute({ verdict: 'refuted', reportSha: 'abc1234' }, { verdict: 'verified', reportSha: 'def5678', amended: false })).toBe(false)
-    expect(isFalseRefute({ verdict: 'verified', reportSha: 'abc1234' }, { verdict: 'verified', reportSha: 'abc1234', amended: false })).toBe(false)
-    expect(isFalseRefute(undefined, { verdict: 'verified', reportSha: 'abc1234', amended: true })).toBe(false)
-    expect(isFalseRefute({ verdict: 'refuted' }, { verdict: 'verified', amended: false })).toBe(false)
+    expect(isFalseRefute({ verdict: 'refuted', reportSha: 'abc1234' }, { verdict: 'consistent', reportSha: 'abc1234', amended: false })).toBe(true)
+    expect(isFalseRefute({ verdict: 'refuted', reportSha: 'abc1234' }, { verdict: 'consistent', reportSha: 'def5678', amended: true })).toBe(true)
+    expect(isFalseRefute({ verdict: 'refuted', reportSha: 'abc1234' }, { verdict: 'consistent', reportSha: 'def5678', amended: false })).toBe(false)
+    expect(isFalseRefute({ verdict: 'consistent', reportSha: 'abc1234' }, { verdict: 'consistent', reportSha: 'abc1234', amended: false })).toBe(false)
+    expect(isFalseRefute(undefined, { verdict: 'consistent', reportSha: 'abc1234', amended: true })).toBe(false)
+    expect(isFalseRefute({ verdict: 'refuted' }, { verdict: 'consistent', amended: false })).toBe(false)
   })
 })
 
@@ -86,13 +86,13 @@ describe('4C: the session index and the last 14 sessions', () => {
 
 describe('4B: the six sparkline series', () => {
   const m = (over: Partial<Metrics>): Metrics => ({ ...emptyMetrics(T0), ...over })
-  test('dispatches, refuted share, cheapest verified tier share, owed work, compactions, dollars', () => {
-    const a = m({ dispatches: 3, verdicts: { verified: 3, unverified: 0, refuted: 1, falseRefuted: 0 }, spawns: { haiku: 0, sonnet: 4, opus: 2 }, verifiedBy: { haiku: 0, sonnet: 2, opus: 1 }, debriefs: 1, evals: { run: 2, failed: 1 }, compactions: 2, usd: 4.5 })
+  test('dispatches, refuted share, cheapest consistent tier share, owed work, compactions, dollars', () => {
+    const a = m({ dispatches: 3, verdicts: { consistent: 3, unverified: 0, refuted: 1, falseRefuted: 0 }, spawns: { haiku: 0, sonnet: 4, opus: 2 }, consistentBy: { haiku: 0, sonnet: 2, opus: 1 }, debriefs: 1, evals: { run: 2, failed: 1 }, compactions: 2, usd: 4.5 })
     const empty = m({})
     expect(SERIES.map(s => s.key)).toEqual(['steps', 'verdicts', 'tiers', 'owed', 'compaction', 'spend'])
     const values = (x: Metrics) => SERIES.map(s => s.value(x))
     expect(values(a)).toEqual([3, 0.25, 4 / 6, 3, 2, 4.5])
-    // no verdict, no verified spawn: no share at all (not a zero)
+    // no verdict, no consistent spawn: no share at all (not a zero)
     expect(values(empty)).toEqual([0, null, null, 0, 0, 0])
   })
 })

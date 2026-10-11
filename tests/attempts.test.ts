@@ -18,8 +18,8 @@ describe('MOD-1: which attempt a --verify judges', () => {
   const X = '1234abcd'
   test('the last attempt, judged at sha X, is re-judged at X: same attempt, rejudge true', () => {
     expect(verifyTarget([rec(1, 'refuted', X)], 'main', X)).toEqual({ attempt: 1, rejudge: true })
-    expect(verifyTarget([rec(1, 'refuted', 'ffff000'), rec(2, 'verified', X)], 'main', X.slice(0, 7))).toEqual({ attempt: 2, rejudge: true })
-    for (const v of ['verified', 'unverified', 'refuted', 'no-report', 'refused', 'over-spend'] as const) expect(verifyTarget([rec(1, v, X)], 'main', X).rejudge).toBe(true)
+    expect(verifyTarget([rec(1, 'refuted', 'ffff000'), rec(2, 'consistent', X)], 'main', X.slice(0, 7))).toEqual({ attempt: 2, rejudge: true })
+    for (const v of ['consistent', 'unverified', 'refuted', 'no-report', 'refused', 'over-spend'] as const) expect(verifyTarget([rec(1, v, X)], 'main', X).rejudge).toBe(true)
   })
   test('a sha no attempt recorded opens the next attempt, rejudge false', () => {
     expect(verifyTarget([rec(1, 'refuted', X)], 'main', 'abcdef1')).toEqual({ attempt: 2, rejudge: false })

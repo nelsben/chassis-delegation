@@ -63,7 +63,7 @@ function spark(p: PaneTable, b: DashboardBlock, columns: number): RenderNode {
 const pad = (text: string, w: number) => (text.length >= w ? text.slice(0, Math.max(0, w - 1)) + (text.length > w ? '…' : '') : text.padEnd(w))
 const usdCell = (n: number | undefined) => (n === undefined ? '$–' : `$${n.toFixed(2)}`)
 
-/** Stat tiles: live workers, queued, spend this session (the hero), verified on first attempt. */
+/** Stat tiles: live workers, queued, spend this session (the hero), consistent on first attempt. */
 function kpiRow(p: PaneTable, v: LiveView): RenderNode {
   const { Box, Text } = p.t
   const tile = (key: string, label: string, value: string, hero?: boolean) => (
@@ -78,7 +78,7 @@ function kpiRow(p: PaneTable, v: LiveView): RenderNode {
       {tile('kpi-live', 'live', String(v.live))}
       {tile('kpi-queued', 'queued', String(v.queued))}
       {tile('kpi-spend', 'spend', `$${v.usd.toFixed(2)}`, true)}
-      {tile('kpi-first', 'verified 1st try', `${v.firstTry.n} of ${v.firstTry.m}`)}
+      {tile('kpi-first', 'consistent 1st try', `${v.firstTry.n} of ${v.firstTry.m}`)}
       {v.brain ? tile('kpi-brain', 'spend split', brainTileText(v.brain)) : null}
     </Box>
   )
@@ -184,7 +184,7 @@ function brainBar(p: PaneTable, b: BrainSummary, scheme: Scheme, top: number): R
   )
 }
 
-/** Up to three bars plus "other", each direct-labelled `sonnet · $3.10 · 412k tok · 4 verified`. */
+/** Up to three bars plus "other", each direct-labelled `sonnet · $3.10 · 412k tok · 4 consistent`. */
 function modelBars(p: PaneTable, v: LiveView, scheme: Scheme): RenderNode {
   const { Box, Text } = p.t
   const shown = v.byModel.filter(m => m.family !== 'other' || m.usd > 0 || m.tokens > 0)

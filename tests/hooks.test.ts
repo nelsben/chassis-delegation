@@ -385,8 +385,8 @@ describe('tool.call on Agent: report capture and verify', () => {
     await $.turn.complete(turnInput('agent-4', 'Handed back.'))
     expect(delivered(w)).not.toContain('verdict=no-report')
     expect(verifyStarts(w)).toHaveLength(1)
-    expect(rows(w)[0]?.text.split('\n')[0]).toBe('chassis-delegation: verdict=verified task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=accept')
-    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'verified' })
+    expect(rows(w)[0]?.text.split('\n')[0]).toBe('chassis-delegation: verdict=consistent task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=accept')
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'consistent' })
   })
 
   test('GH-2: the last report wins across the answer and the hand-back', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
@@ -401,7 +401,7 @@ describe('tool.call on Agent: report capture and verify', () => {
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', answer))
     expect(verifyStarts(w).map(x => x.argv.at(-1))).toEqual(['5678abcd^{commit}'])
-    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'verified' })
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'consistent' })
   })
 
   test('GH-2: a resumed run that hands back nothing is not judged on the run before it', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
@@ -437,10 +437,10 @@ describe('GH-20: the report names its red evidence (red=) and the verifier reads
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd', RED_1)))
     const row = rows(w)[0] ?? ''
-    expect(row.split('\n')[0]).toBe('chassis-delegation: verdict=verified task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=accept')
+    expect(row.split('\n')[0]).toBe('chassis-delegation: verdict=consistent task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=accept')
     expect(row).toContain('claim red: held — .delegation/T-4/red-1.txt, 79 bytes, first failure line: FAIL a/x.test.ts')
     const rec = records(w, 'T-4')[0] ?? {}
-    expect(rec).toMatchObject({ verdict: 'verified', red: RED_1 })
+    expect(rec).toMatchObject({ verdict: 'consistent', red: RED_1 })
     expect(String(rec.redHash)).toMatch(/^[0-9a-f]{64}$/)
   })
 
@@ -471,9 +471,9 @@ describe('GH-20: the report names its red evidence (red=) and the verifier reads
     gate = 0
     w.files.set(`${WT}/${RED_2}`, RED_TEXT)
     await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('5678abcd', RED_2)))
-    expect(rows(w)[1]).toContain('verdict=verified task=T-4 attempt=2/3')
+    expect(rows(w)[1]).toContain('verdict=consistent task=T-4 attempt=2/3')
     expect(rows(w)[1]).toContain("claim red: held — attempt 1's proof, reused (one proof per task)")
-    expect(records(w, 'T-4').map(r => [r.attempt, r.verdict, r.red])).toEqual([[1, 'refuted', RED_1], [2, 'verified', RED_2]])
+    expect(records(w, 'T-4').map(r => [r.attempt, r.verdict, r.red])).toEqual([[1, 'refuted', RED_1], [2, 'consistent', RED_2]])
   })
 
   test('a brief with red_test=none yields no red claim', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
@@ -482,7 +482,7 @@ describe('GH-20: the report names its red evidence (red=) and the verifier reads
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
     const row = rows(w)[0] ?? ''
-    expect(row.split('\n')[0]).toContain('verdict=verified task=T-4')
+    expect(row.split('\n')[0]).toContain('verdict=consistent task=T-4')
     expect(row).not.toContain('claim red:')
   })
 })
@@ -1109,7 +1109,7 @@ describe('/dispatch', () => {
   })
 
   test('GH-16: not in flight here: a card with a verdict, a worktree card, a card in another checkout', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
-    const done = inFlight('GH-19', 'app/**', { verdict: 'verified' })
+    const done = inFlight('GH-19', 'app/**', { verdict: 'consistent' })
     const tree = inFlight('GH-20', 'app/**', { here: null })
     const away = inFlight('GH-21', 'app/**', { here: '/repo/elsewhere' })
     const w = world(on, { files: { ...files(), ...done.files, ...tree.files, ...away.files }, dirs, run: onMain, store: { ...offered, ...done.store, ...tree.store, ...away.store } })
@@ -1139,7 +1139,7 @@ describe('/dispatch', () => {
     const REPORT = `[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=app/billing/RateA.ts]]`
     await $.turn.complete(turnInput('agent-h', `Done.\n${AMEND}\n${REPORT}`))
     const row = delivered(w)
-    expect(row).toContain('chassis-delegation: verdict=verified task=BE-101 attempt=1/3')
+    expect(row).toContain('chassis-delegation: verdict=consistent task=BE-101 attempt=1/3')
     expect(row).toContain('claim branch: held — main is the current branch of ' + ROOT)
     expect(row).toContain('ignored: 1 path by ignore= (.delegation/briefs/BE-101.brief.md), 1 path belonging to GH-19 (src/b.ts)')
     expect(row).toContain('claim files: held — files= matches the dirty-tree delta exactly')
@@ -1150,7 +1150,7 @@ describe('/dispatch', () => {
     expect(w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').not.toContain('[[amend')
     expect(w.runs.filter(x => x.argv[0] === 'npx').map(x => x.cwd)).toEqual([ROOT, ROOT])
     expect(argvs(w).some(a => a.includes('worktree') || a.includes('fetch'))).toBe(false)
-    expect(records(w, 'BE-101')[0]).toMatchObject({ here: ROOT, files: ['app/billing/RateA.ts'], verdict: 'verified' })
+    expect(records(w, 'BE-101')[0]).toMatchObject({ here: ROOT, files: ['app/billing/RateA.ts'], verdict: 'consistent' })
   })
 })
 
@@ -1454,9 +1454,9 @@ describe('MOD-1: one proof of red per task, and --verify at the last attempt\'s 
     const out = String((await $.command.run(commandInput('T-4 --verify 1234abcd'))).text)
     expect(out.split('\n')[0]).toBe('re-judging attempt 1/3 at 1234abcd')
     expect(out).toContain('claim red: held')
-    expect(out).toContain('verdict=verified task=T-4 attempt=1/3')
+    expect(out).toContain('verdict=consistent task=T-4 attempt=1/3')
     expect(out).not.toContain('budget exhausted')
-    expect(records(w, 'T-4').map(r => [r.attempt, r.verdict])).toEqual([[1, 'verified']])
+    expect(records(w, 'T-4').map(r => [r.attempt, r.verdict])).toEqual([[1, 'consistent']])
     expect(w.spawns).toHaveLength(1)
   })
 
@@ -1469,7 +1469,7 @@ describe('MOD-1: one proof of red per task, and --verify at the last attempt\'s 
     gate.v = 0
     await $.turn.complete(turnInput('agent-4', 'Docs.\n' + REPORT('5678abcd', RED_1)))
     expect(rows(w)[1]).toContain("claim red: held — attempt 1's proof, reused (one proof per task)")
-    expect(rows(w)[1]).toContain('verdict=verified task=T-4 attempt=2/3')
+    expect(rows(w)[1]).toContain('verdict=consistent task=T-4 attempt=2/3')
   })
 })
 
@@ -1634,7 +1634,7 @@ describe('GH-104: spend guards', () => {
     expect(records(w, 'T-4').at(-1)).toMatchObject({ attempt: 2, verdict: 'work-present' })
     const out = String((await $.command.run(commandInput(`T-4 --verify ${HEAD}`))).text)
     expect(out).toContain(`[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass files=a/x.ts]]`)
-    expect(out).toContain('chassis-delegation: verdict=verified task=T-4 attempt=2/3')
+    expect(out).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=2/3')
     expect(out).toContain('next=accept')
     expect(out).toContain('claim files: held — files= matches the sha delta exactly')
     expect(w.runs.filter(x => x.argv[0] === 'npx').map(x => x.cwd)).toEqual([WT])
@@ -1642,7 +1642,7 @@ describe('GH-104: spend guards', () => {
     expect(w.sent).toHaveLength(0)
     expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.verdict])).toEqual([
       [1, 'spawn', 'no-report'],
-      [2, 'verify', 'verified'],
+      [2, 'verify', 'consistent'],
     ])
   })
 
@@ -1838,7 +1838,7 @@ describe('GH-105: a dispatch given --base <sha> writes base= into the brief, and
     const REPORT = `[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=a/x.ts]]`
     await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
     const row = delivered(w)
-    expect(row).toContain('chassis-delegation: verdict=verified task=T-4 attempt=1/3')
+    expect(row).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=1/3')
     expect(row).toContain(`claim scope: held — every changed path since ${BASE.slice(0, 7)} is within scope=[a/**], forbid=[b/**] untouched`)
     expect(row).toContain('claim files: held — files= matches the sha delta exactly')
   })
@@ -1927,7 +1927,7 @@ describe('MOD-2: a dispatch that names a base writes it into an existing brief',
     const REPORT = `[[report v=1 task=T-4 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=a/x.ts]]`
     await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
     const row = delivered(w)
-    expect(row).toContain('verdict=verified task=T-4')
+    expect(row).toContain('verdict=consistent task=T-4')
     expect(row).toContain(`claim scope: held — every changed path since ${BASE.slice(0, 7)} is within scope=[a/**]`)
   })
 })
@@ -2560,7 +2560,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     }
   }
 
-  // the GH-16 verified hand-back, with the spawn path swapped: the brain makes the spawn the dispatch handed it
+  // the GH-16 consistent hand-back, with the spawn path swapped: the brain makes the spawn the dispatch handed it
   test('a hand-back from the brain-spawned worker verifies exactly as before (GH-16 repo=here)', { options: { ...BRIEFS, verdictVerbosity: 'full', gateMap: '{"G2":"npx g2","G8p":"npx g8p"}' } }, async ($, on) => {
     const gh19 = inFlight('GH-19', 'src/**')
     const PORCELAIN = [' M app/billing/RateA.ts', '?? .delegation/briefs/BE-101.brief.md', ' M src/b.ts', ''].join('\0')
@@ -2581,7 +2581,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     const REPORT = `[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=app/billing/RateA.ts]]`
     await $.turn.complete(turnInput('agent-h', `Done.\n${AMEND}\n${REPORT}`))
     const row = delivered(w)
-    expect(row).toContain('chassis-delegation: verdict=verified task=BE-101 attempt=1/3')
+    expect(row).toContain('chassis-delegation: verdict=consistent task=BE-101 attempt=1/3')
     expect(row).toContain('claim branch: held — main is the current branch of ' + ROOT)
     expect(row).toContain('ignored: 1 path by ignore= (.delegation/briefs/BE-101.brief.md), 1 path belonging to GH-19 (src/b.ts)')
     expect(row).toContain('claim files: held — files= matches the dirty-tree delta exactly')
@@ -2589,10 +2589,10 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(row).toContain(`claim gate: held — gate green in the shared checkout ${ROOT} (gate=pass confirmed; repo=here: the dirty tree is allowed, the clean-tree rule does not apply)`)
     expect(row).toContain(`amend needs approval: ${AMEND} — append it to ${SCRATCH}/briefs/BE-101.brief.md and re-verify to accept it`)
     expect(w.runs.filter(x => x.argv[0] === 'npx').map(x => x.cwd)).toEqual([ROOT, ROOT])
-    expect(records(w, 'BE-101')[0]).toMatchObject({ here: ROOT, files: ['app/billing/RateA.ts'], verdict: 'verified', source: 'brief' })
+    expect(records(w, 'BE-101')[0]).toMatchObject({ here: ROOT, files: ['app/billing/RateA.ts'], verdict: 'consistent', source: 'brief' })
     // the ledger line is the one a mod-spawned worker wrote
     const ledger = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
-    expect(ledger.at(-1)).toMatchObject({ task: 'BE-101', attempt: 1, kind: 'spawn', verdict: 'verified', next: 'accept' })
+    expect(ledger.at(-1)).toMatchObject({ task: 'BE-101', attempt: 1, kind: 'spawn', verdict: 'consistent', next: 'accept' })
   })
 
   test('#22 evidence: a repo=here worker the brain spawned is seen by the mod — the git guard denies its `git commit` on main, and its turn usage lands on the attempt mid-run', { options: BRIEFS }, async ($, on) => {
@@ -2891,18 +2891,18 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(queueOf(w).map(q => q.task)).toEqual([queued])
   }
 
-  test('a verified hand-back wakes the brain once: one prompt.submit holding the verdict row and next=accept, never asUser', { options: { ...GM } }, async ($, on) => {
+  test('a consistent hand-back wakes the brain once: one prompt.submit holding the verdict row and next=accept, never asUser', { options: { ...GM } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     expect(w.submitted).toEqual([])
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
     expect(w.submitted).toHaveLength(1)
     const sent = w.submitted[0]
-    expect(sent?.text).toContain('chassis-delegation: T-4 attempt 1/3 verified')
+    expect(sent?.text).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
     expect(sent?.text).toContain('next=accept')
     expect((sent?.origin as { asUser?: true } | undefined)?.asUser).toBeUndefined()
     // the row is in the conversation too, and a late repeat fire of the same turn neither posts nor wakes again
-    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 verified')
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
     expect(w.submitted).toHaveLength(1)
   })
@@ -2911,7 +2911,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
-    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 verified')
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
     expect(w.submitted).toEqual([])
   })
 
@@ -2969,7 +2969,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     await $.turn.complete(turnInput('agent-4', 'All done.')) // no report: a verdict the mod posts in the background, so one wake
     expect(w.submitted).toHaveLength(1)
     const out = String((await $.command.run(commandInput(`T-4 --verify ${HEAD}`))).text)
-    expect(out).toContain('chassis-delegation: verdict=verified task=T-4')
+    expect(out).toContain('chassis-delegation: verdict=consistent task=T-4')
     expect(w.submitted).toHaveLength(1) // the verdict the brain produced itself in its own turn wakes nobody
   })
 
@@ -3147,8 +3147,8 @@ describe('MOD-15: work keeps moving without the person', () => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4', skip: ['prompt.submit'] })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
-    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 verified')
-    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'verified' })
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'consistent' })
     expect(w.debugLogs.some(l => l.startsWith('chassis-delegation: brain not woken:'))).toBe(true)
   })
 })

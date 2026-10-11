@@ -45,29 +45,29 @@ describe('GH-112: model families and spend by model', () => {
     expect(familyOf('fable')).toBe('other')
     expect(familyOf(undefined)).toBe('other')
   })
-  test('dollars, tokens and cards verified per family; anything not haiku/sonnet/opus folds into other', () => {
+  test('dollars, tokens and cards consistent per family; anything not haiku/sonnet/opus folds into other', () => {
     const rows = spendByModel([
-      rec({ task: 'A', alias: 'sonnet', usd: 1.5, tokens: 1000, verdict: 'verified' }),
+      rec({ task: 'A', alias: 'sonnet', usd: 1.5, tokens: 1000, verdict: 'consistent' }),
       rec({ task: 'B', alias: 'sonnet', usd: 1.6, tokens: 2000, verdict: 'refuted' }),
-      rec({ task: 'B', attempt: 2, alias: 'opus', resolvedModel: 'claude-opus-5', usd: 3, tokens: 500, verdict: 'verified' }),
-      rec({ task: 'C', alias: 'fable', usd: 2, tokens: 10, verdict: 'verified' }),
+      rec({ task: 'B', attempt: 2, alias: 'opus', resolvedModel: 'claude-opus-5', usd: 3, tokens: 500, verdict: 'consistent' }),
+      rec({ task: 'C', alias: 'fable', usd: 2, tokens: 10, verdict: 'consistent' }),
       rec({ task: 'D', alias: 'gizmo', usd: 1, tokens: 5, verdict: 'unverified' }),
     ])
     expect(rows.map(r => r.family)).toEqual(['haiku', 'sonnet', 'opus', 'other'])
-    expect(rows.find(r => r.family === 'sonnet')).toMatchObject({ usd: 3.1, tokens: 3000, verified: 1 })
-    expect(rows.find(r => r.family === 'opus')).toMatchObject({ usd: 3, tokens: 500, verified: 1 })
-    expect(rows.find(r => r.family === 'haiku')).toMatchObject({ usd: 0, tokens: 0, verified: 0 })
-    expect(rows.find(r => r.family === 'other')).toMatchObject({ usd: 3, tokens: 15, verified: 1 })
+    expect(rows.find(r => r.family === 'sonnet')).toMatchObject({ usd: 3.1, tokens: 3000, consistent: 1 })
+    expect(rows.find(r => r.family === 'opus')).toMatchObject({ usd: 3, tokens: 500, consistent: 1 })
+    expect(rows.find(r => r.family === 'haiku')).toMatchObject({ usd: 0, tokens: 0, consistent: 0 })
+    expect(rows.find(r => r.family === 'other')).toMatchObject({ usd: 3, tokens: 15, consistent: 1 })
   })
 })
 
 describe('GH-112: events', () => {
   test('a spawn and a verdict time per attempt, with task, family and verdict', () => {
-    const ev = events([rec({ task: 'A', at: NOW - 500, verdict: 'verified', verdictAt: NOW - 100 }), rec({ task: 'B', alias: 'opus', at: NOW - 300 })], 0)
+    const ev = events([rec({ task: 'A', at: NOW - 500, verdict: 'consistent', verdictAt: NOW - 100 }), rec({ task: 'B', alias: 'opus', at: NOW - 300 })], 0)
     expect(ev).toEqual([
       { t: NOW - 500, kind: 'spawn', task: 'A', family: 'sonnet' },
       { t: NOW - 300, kind: 'spawn', task: 'B', family: 'opus' },
-      { t: NOW - 100, kind: 'verdict', task: 'A', family: 'sonnet', verdict: 'verified' },
+      { t: NOW - 100, kind: 'verdict', task: 'A', family: 'sonnet', verdict: 'consistent' },
     ])
   })
   test('nothing before the session began', () => {
@@ -92,13 +92,13 @@ describe('GH-112: the worktree rows', () => {
     queue: [{ task: 'T-3', subtask: 'main' }],
     records: [
       rec({ task: 'T-1', resolvedModel: 'claude-sonnet-5-5', tokens: 1000, usd: 1.5 }),
-      rec({ task: 'T-2', alias: 'haiku', resolvedModel: 'claude-haiku-5-5', verdict: 'verified', usd: 0.2, tokens: 500, at: NOW - 900_000 }),
+      rec({ task: 'T-2', alias: 'haiku', resolvedModel: 'claude-haiku-5-5', verdict: 'consistent', usd: 0.2, tokens: 500, at: NOW - 900_000 }),
     ],
   }
   test('task, model, state, folder and branch, tokens, cost, attempt', () => {
     const rows = worktreeRows(input)
     expect(rows[0]).toMatchObject({ task: 'T-1', family: 'sonnet', model: 'claude-sonnet-5-5', state: 'live 04:12', folder: 'acme-app-T-1', branch: 'agent/mod/T-1', tokens: 1000, usd: 1.5, attempt: '1/3' })
-    expect(rows.find(r => r.task === 'T-2')).toMatchObject({ family: 'haiku', state: 'verified', folder: '–', attempt: '1/3' })
+    expect(rows.find(r => r.task === 'T-2')).toMatchObject({ family: 'haiku', state: 'consistent', folder: '–', attempt: '1/3' })
   })
   test('a queued task and a worktree on disk with no record each get a row; the main checkout and strangers do not', () => {
     const rows = worktreeRows(input)

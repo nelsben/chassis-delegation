@@ -6,6 +6,8 @@
 //   full            part 1's multi-line row (the verdict line + claim lines)
 //   silent          no row at all; a toast; the brain reads the store
 
+import { currentVerdict, isConsistent } from './legacy'
+
 export type Verbosity = 'line' | 'full' | 'silent'
 export const VERBOSITIES: readonly Verbosity[] = ['line', 'full', 'silent']
 
@@ -106,15 +108,15 @@ export type QuietInput = {
 }
 
 /**
- * `chassis-delegation: OPS-232 attempt 2/3 verified · sonnet · $2.26 · next=accept`,
+ * `chassis-delegation: OPS-232 attempt 2/3 consistent · sonnet · $2.26 · next=accept`,
  * or `… refuted on scope (out-of-scope path: x) · sonnet · next=resume agent=<id>`.
  * Amends ride in one clause each; `next=` stays last.
  */
 export function quietLine(v: QuietInput): string {
   const reason = verdictReason(v.verdict, v.lines)
-  const gateNote = v.verdict === 'verified' && v.reportGate === 'fail' ? ' (report gate=fail)' : ''
+  const gateNote = isConsistent(v.verdict) && v.reportGate === 'fail' ? ' (report gate=fail)' : ''
   const label = v.noRepo ? ' (no repo)' : ''
-  const parts = [`chassis-delegation: ${v.task} attempt ${v.attempt}/${v.budget} ${v.verdict}${label}${gateNote}${reason ? ` ${reason}` : ''}`]
+  const parts = [`chassis-delegation: ${v.task} attempt ${v.attempt}/${v.budget} ${currentVerdict(v.verdict)}${label}${gateNote}${reason ? ` ${reason}` : ''}`]
   if (v.alias) parts.push(v.alias)
   if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
   parts.push(...amendClauses(v.lines))

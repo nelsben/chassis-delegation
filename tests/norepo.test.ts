@@ -120,12 +120,12 @@ describe('3A: the gate of a no-repo brief (resolveGateRuns, shared with the nati
 
 describe('3A: the no-repo verdict', () => {
   const base = { root: MOD, files: [`${MOD}/hooks/a.ts`], missing: [], outOfScope: [], forbidden: [], gates: [{ label: `claude plugin validate ${MOD}`, exitCode: 0 }], notRerun: [], noGate: false }
-  test('files there, in scope, the gate exits 0: verified (no repo)', () => {
+  test('files there, in scope, the gate exits 0: consistent (no repo)', () => {
     const v = noRepoVerdict(base)
-    expect(v.verdict).toBe('verified')
+    expect(v.verdict).toBe('consistent')
     expect(v.lines).toContain(`claim files: held — 1 file under ${MOD}`)
     expect(v.lines).toContain(`claim gate: held — claude plugin validate ${MOD} exited 0`)
-    expect(noRepoVerdictText(v)).toBe('verified (no repo)')
+    expect(noRepoVerdictText(v)).toBe('consistent (no repo)')
   })
   test('a file outside scope: refuted (no repo) and says which', () => {
     const v = noRepoVerdict({ ...base, outOfScope: ['/etc/passwd'], gates: [] })
@@ -140,7 +140,7 @@ describe('3A: the no-repo verdict', () => {
     expect(red.verdict).toBe('refuted')
     expect(red.why).toBe('gate claude plugin validate /m exited 1')
   })
-  test('a gate that could not run, or none: unverified, never verified', () => {
+  test('a gate that could not run, or none: unverified, never consistent', () => {
     expect(noRepoVerdict({ ...base, gates: [], notRerun: ['G2'] })).toMatchObject({ verdict: 'unverified', why: 'gate not re-run: G2' })
     expect(noRepoVerdict({ ...base, gates: [], noGate: true })).toMatchObject({ verdict: 'unverified', why: 'no gate= in the brief' })
     expect(noRepoVerdict({ ...base, gates: [{ label: 'x', error: 'timed out' }] })).toMatchObject({ verdict: 'unverified', why: 'gate x did not run: timed out' })

@@ -3,6 +3,7 @@
 // The trees themselves are band.tsx and pane.tsx. Pure: no `$`.
 import type { BandItem, DashboardBlock } from '../types'
 import { usdText } from './cost'
+import { currentVerdict } from './legacy'
 import { SERIES, type Metrics } from './metrics'
 
 export type { BandItem } from '../types'
@@ -40,7 +41,7 @@ const ADVICE: Record<string, string> = {
  */
 export function decisionText(r: { verdict: string; reason?: string; advice?: string; approval?: boolean; noRepo?: boolean }): string {
   const claim = r.reason ? (r.noRepo ? `: ${r.reason}` : ` ${r.reason.replace(/ \(.*$/, '')}`) : ''
-  const verdict = `${r.verdict}${r.noRepo ? ' (no repo)' : ''}${claim}`
+  const verdict = `${currentVerdict(r.verdict)}${r.noRepo ? ' (no repo)' : ''}${claim}`
   const advice = r.approval ? 'amend needs approval' : (r.advice && ADVICE[r.advice]) || r.advice
   return advice ? `${verdict} · ${advice}` : verdict
 }
@@ -146,7 +147,7 @@ export function blocksFor(input: {
     {
       key: 'verdicts',
       heading: 'Verdicts',
-      number: `${v.verified} verified · ${v.unverified} unverified · ${v.refuted} refuted${v.falseRefuted > 0 ? ` (${v.falseRefuted} false)` : ''}`,
+      number: `${v.consistent} consistent · ${v.unverified} unverified · ${v.refuted} refuted${v.falseRefuted > 0 ? ` (${v.falseRefuted} false)` : ''}`,
       detail: [],
       series: series('verdicts'),
       alt: 'refuted share per session',
@@ -157,7 +158,7 @@ export function blocksFor(input: {
       number: `haiku ${m.spawns.haiku} · sonnet ${m.spawns.sonnet} · opus ${m.spawns.opus} · resume ${m.escalations.resume} · respawn ${m.escalations.respawn}`,
       detail: [],
       series: series('tiers'),
-      alt: 'share of spawns on the cheapest tier that verified, per session',
+      alt: 'share of spawns on the cheapest tier that was consistent, per session',
     },
     {
       key: 'owed',

@@ -63,19 +63,19 @@ describe('4A: the band lines', () => {
     expect(decisionText({ verdict: 'refuted', advice: 'respawn' })).toBe('refuted · respawn advised')
     expect(decisionText({ verdict: 'unverified', reason: 'on gate (x)', advice: 'check' })).toBe('unverified on gate · check by hand')
     expect(decisionText({ verdict: 'refuted', advice: 'exhausted' })).toBe('refuted · budget exhausted')
-    expect(decisionText({ verdict: 'verified', advice: 'accept', approval: true })).toBe('verified · amend needs approval')
+    expect(decisionText({ verdict: 'consistent', advice: 'accept', approval: true })).toBe('consistent · amend needs approval')
     expect(decisionText({ verdict: 'refuted', noRepo: true, reason: 'out of scope: /etc/passwd', advice: 'resume' })).toBe('refuted (no repo): out of scope: /etc/passwd · resume advised')
   })
 })
 
 describe('4B: the pane', () => {
   test('six blocks, each a heading, one number line and a series', () => {
-    const cur = { ...emptyMetrics(NOW), dispatches: 3, verdicts: { verified: 4, unverified: 1, refuted: 2, falseRefuted: 1 }, spawns: { haiku: 1, sonnet: 4, opus: 2 }, escalations: { resume: 1, respawn: 0 }, debriefs: 1, evals: { run: 2, failed: 1 }, compactions: 2, usd: 4.21, verifiedBy: { haiku: 0, sonnet: 3, opus: 1 } }
+    const cur = { ...emptyMetrics(NOW), dispatches: 3, verdicts: { consistent: 4, unverified: 1, refuted: 2, falseRefuted: 1 }, spawns: { haiku: 1, sonnet: 4, opus: 2 }, escalations: { resume: 1, respawn: 0 }, debriefs: 1, evals: { run: 2, failed: 1 }, compactions: 2, usd: 4.21, consistentBy: { haiku: 0, sonnet: 3, opus: 1 } }
     const blocks = blocksFor({ history: [emptyMetrics(1), cur], current: cur, rateLimits: [{ kind: 'five_hour', percentUsed: 37 }], owedRows: ['debrief 14:02 — /h/d.json'] })
     expect(blocks.map(b => b.heading)).toEqual(['Steps saved', 'Verdicts', 'Tiers', 'Owed work that ran itself', 'Compaction', 'Spend'])
     expect(blocks.map(b => b.number)).toEqual([
       '3 dispatches · ~30 hand steps saved',
-      '4 verified · 1 unverified · 2 refuted (1 false)',
+      '4 consistent · 1 unverified · 2 refuted (1 false)',
       'haiku 1 · sonnet 4 · opus 2 · resume 1 · respawn 0',
       '1 debrief · 2 evals (1 failed)',
       '2 compactions served, state block attached',
@@ -147,14 +147,14 @@ describe('3D: the status tool', () => {
     expect(Object.keys(STATUS_TOOL.inputSchema.properties)).toEqual(['open'])
   })
   test('the compose section, then the last 10 verdicts and the last eval and debrief rows', () => {
-    const verdicts = Array.from({ length: 12 }, (_, i) => `chassis-delegation: T-${i} attempt 1/3 verified · sonnet · next=accept`)
+    const verdicts = Array.from({ length: 12 }, (_, i) => `chassis-delegation: T-${i} attempt 1/3 consistent · sonnet · next=accept`)
     const text = statusToolText('Delegation state (chassis-delegation):\n- running: X', { verdicts, eval: 'T1 63/63 at abcdef12 (2026-10-03 14:00Z)', debrief: '2026-10-03 14:00Z — /h/d.json' })
     const lines = text.split('\n')
     expect(lines.slice(0, 2)).toEqual(['Delegation state (chassis-delegation):', '- running: X'])
     expect(lines).toContain('Last 10 verdicts:')
     expect(lines.filter(l => l.startsWith('- chassis-delegation: T-'))).toHaveLength(10)
-    expect(lines).toContain('- chassis-delegation: T-11 attempt 1/3 verified · sonnet · next=accept')
-    expect(lines).not.toContain('- chassis-delegation: T-1 attempt 1/3 verified · sonnet · next=accept')
+    expect(lines).toContain('- chassis-delegation: T-11 attempt 1/3 consistent · sonnet · next=accept')
+    expect(lines).not.toContain('- chassis-delegation: T-1 attempt 1/3 consistent · sonnet · next=accept')
     expect(lines).toContain('Last eval: T1 63/63 at abcdef12 (2026-10-03 14:00Z)')
     expect(lines).toContain('Last debrief: 2026-10-03 14:00Z — /h/d.json')
   })

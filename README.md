@@ -1,6 +1,6 @@
 # chassis-delegation
 
-![chassis-delegation: the brain writes the task card; dispatch spawns a worker at the opus, sonnet or haiku tier; the verified hand-back comes back](docs/chassis-delegation.png)
+![chassis-delegation: the brain writes the task card; dispatch spawns a worker at the opus, sonnet or haiku tier; the hand-back comes back with its verdict](docs/chassis-delegation.png)
 
 Brain-seat delegation for Claude Code. The main model (the "brain") hands a
 task card to a worker subagent with one tool call, `dispatch`, then makes the
@@ -307,7 +307,7 @@ A live view of what delegation is doing and spending, in two places:
 The four blocks:
 
 1. **Tiles**: live workers, queued, spend this session, and how many cards
-   verified on the first attempt (n of m).
+   came back consistent on the first attempt (n of m).
 2. **Spend over time**: cumulative session dollars as one line with a light
    area, in the surface's text colour (it is the total, not a model), with a
    tick on the time axis for each spawn and verdict. On desktop, VS Code and
@@ -319,7 +319,7 @@ The four blocks:
    `queued #2`, `verdict owed`, or the verdict with its icon), worktree folder
    and branch, tokens, cost, and attempt over budget.
 4. **Spend by model**: a bar each for haiku, sonnet and opus (anything else is
-   "other"), labelled `sonnet · $3.10 · 412k tok · 4 verified`.
+   "other"), labelled `sonnet · $3.10 · 412k tok · 4 consistent`.
 
 What is live and what is not. The spend line samples the session's cost every
 15 seconds while a worker is live or queued and every 60 seconds otherwise
@@ -409,7 +409,7 @@ verbatim): that call starts the worker.` Setup prints
 init's file lines but not init's own "Next:" line. Nothing needs committing
 before a dispatch: a worktree dispatch reads the card from the main checkout,
 and in `repo=here` mode the card folder is in the always-applied `ignore=` set.
-A verified verdict means the report matches git, not that the work is right:
+A consistent verdict means the report matches git, not that the work is right:
 read the diff.
 `/delegation` in a root with no config adds `not set up here: run /delegation setup`.
 
@@ -451,7 +451,7 @@ read the diff.
 
 3. **The worker hands back.** The brain's conversation gains one row:
 
-       chassis-delegation: OPS-1 attempt 1/2 verified · sonnet · $0.41 · next=accept
+       chassis-delegation: OPS-1 attempt 1/2 consistent · sonnet · $0.41 · next=accept
 
    A failed check names its first failed claim, and `next=` tells the brain
    what to do:
@@ -755,11 +755,32 @@ with no `..`, once per word.
 
 The verdict:
 
-- any failed claim → **refuted**;
-- else any unchecked claim → **unverified**;
-- else **verified**;
-- an unusable brief → **refused**;
-- no report line → **no-report**.
+| Verdict | When | The row's `next=` |
+| --- | --- | --- |
+| **refuted** | any claim failed | `resume agent=<id>`, then a respawn |
+| **unverified** | no claim failed, but one could not be checked | `resume … — prove: <claims>` while the budget lasts, else `check by hand` |
+| **consistent** | every claim held | `accept` |
+| **refused** | the brief is unusable | `fix the brief` |
+| **no-report** | no report line | `resume`, then a respawn at the same tier |
+
+`consistent` means every machine-checkable claim of the report matches git:
+the branch, the sha, the files, the scope, the gate and the red evidence all
+held. It is not a review. Nothing in the check reads the diff, so a worker that
+cleanly builds the wrong thing gets the same row as one that builds the right
+thing, and the brain still reads the diff before it accepts. A report that
+declares `gate=fail` honestly is never accepted, whatever else holds: its row
+reads `consistent (report gate=fail)` and `next=` resumes the worker.
+
+**Deprecated: `verified`.** Up to 0.7.0 this verdict was called `verified`. The
+mod no longer writes that word (the verdict row, the `verdict=` line, the
+attempt records, the ledger lines, the dashboard, the state block and the
+debrief all say `consistent`), and reads it, as `consistent`, until 0.9.0: an
+attempt record, a verdict line or a metrics count from before the change
+escalates, retires, accepts and counts as a success exactly as a consistent
+one does. A ledger line already written keeps its word, because the file is
+append-only. A script that parses the row text, `verdict=` or
+`.delegation/ledger.jsonl` should accept both words until 0.9.0, when the old
+one is dropped.
 
 `repo=none` changes the check (and the row says `(no repo)`). The verifier
 then checks only three things:
@@ -780,11 +801,11 @@ and `red` are unchecked, with this reason:
     no brief: no scope=/gate=/red_test= to check against
 
 So a cardless verdict is refuted (a sha off the branch, a files= that invents
-a path) or unverified, never verified. No gate runs and no files.txt is
+a path) or unverified, never consistent. No gate runs and no files.txt is
 written. The row is posted like any other, the attempt is recorded under the
 report's `task=` (or `adhoc-<key>` when it names none) with `adhoc: true`, and
 the ledger line is written. No budget ladder applies: `next=` says `accept`
-for verified, `check the diff` otherwise, and never resume or respawn. A
+for consistent, `check the diff` otherwise, and never resume or respawn. A
 cardless attempt never counts toward a later dispatch of that task: the
 budget and the escalation ladder read only attempts that had a brief. An ad
 hoc spawn that hands back no report is judged as before: `no-report` in the
@@ -871,7 +892,7 @@ with `--here`, or with worktrees if the child has an `origin`.
 steps. The first failure advises `next=resume agent=<id>`, which means
 SendMessage the worker the claim lines. A later one advises a respawn with the
 same brief. After a refuted report, or a `gate=fail` the verifier confirmed
-(the verdict is verified), that is `next=respawn at <next tier>`, one tier up.
+(the verdict is consistent), that is `next=respawn at <next tier>`, one tier up.
 After a no-report it is `next=respawn at <same tier>`: a missing report line
 is a reporting defect, not a reason to pay for a bigger model, so a no-report
 never moves the tier up (a respawn after an attempt that was already
@@ -1418,13 +1439,13 @@ two verdict rows and two guards for one worker.
   nothing and exits 0. Otherwise it finds the brief the way the mod does: the
   `….brief.md` path the prompt names, else an inline `[[brief …]]` header in
   the prompt (a report with no brief is checked for what git alone can say, as
-  in a cardless hand-back, and is never verified). It finds the worker's tree
+  in a cardless hand-back, and is never consistent). It finds the worker's tree
   (the brief's `repo=`, the call's `cwd`, the worktree that has the report's
   branch checked out, the sibling `<repo>-<id>` worktree, else the repo the
   hook runs in), runs the verifier there, and prints the verdict row as the
   hook's additional context:
 
-      {"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"chassis-delegation: verdict=verified task=T-1 via=settings-hook next=accept\nclaim branch: held — …"}}
+      {"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"chassis-delegation: verdict=consistent task=T-1 via=settings-hook next=accept\nclaim branch: held — …"}}
 
   The row is the mod's own: the verdict line, then one line per claim. The
   gate can take minutes, hence the `timeout`.
@@ -1501,7 +1522,9 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
 ## Store and ledger
 
 - **`<root>/.delegation/ledger.jsonl`** gets one JSON line per judged attempt,
-  holding the attempt fields plus `verdict`, `next` and `sessionId`.
+  holding the attempt fields plus `verdict`, `next` and `sessionId`. A line
+  written before the `consistent` rename says `verified` and is never
+  rewritten (see the deprecation note under [How a report is verified](#how-a-report-is-verified)).
 - **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`, with
   these keys:
   - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named; a `work-present` attempt, kind `verify`, carries the branch head it found);
@@ -1537,10 +1560,10 @@ The code is laid out like this:
   dispatches or runs anything real.
 - **`tests/node/bin.node.mjs`** pipes hook input JSON into
   `node bin/chassis-hook.mjs` against real repositories under `tests/.tmp/`:
-  a matching report (verified), a file outside the delta (refuted), no report
+  a matching report (consistent), a file outside the delta (refuted), no report
   (nothing printed), a commit on `main` (denied) and on `agent/x/y` (passes).
 - **`tests/node/verify-native.git.node.mjs`** builds temporary git
-  repositories under `tests/.tmp/`. It checks these cases: verified, a sha off
+  repositories under `tests/.tmp/`. It checks these cases: consistent, a sha off
   the branch, a sha that does not exist, a dirty tree, a files mismatch, a red
   gate, a red file in the worktree (held, then refuted when named again), and a
   dirty repo=here checkout shared with another worker.

@@ -6,6 +6,7 @@
 import type { AttemptRecord } from './attempts'
 import { taskLabel } from './attempts'
 import { base64, elapsed } from './dashboard'
+import { currentVerdict, isConsistent, LEGACY_VERDICT } from './legacy'
 import { brainSummary, brainTileText, type BrainRecord, type BrainSummary } from './brain'
 import { worktreePath } from './paths'
 
@@ -47,20 +48,20 @@ const recordFamily = (r: Pick<AttemptRecord, 'alias' | 'resolvedModel'>): Family
 
 const round4 = (n: number) => Math.round(n * 10000) / 10000
 
-export type ModelSpend = { family: Family; usd: number; tokens: number; verified: number }
+export type ModelSpend = { family: Family; usd: number; tokens: number; consistent: number }
 
-/** Dollars and tokens per family from the records' own spend, and how many cards each verified. */
+/** Dollars and tokens per family from the records' own spend, and how many cards each came back consistent. */
 export function spendByModel(records: readonly AttemptRecord[]): ModelSpend[] {
   const out = new Map<Family, { usd: number; tokens: number; cards: Set<string> }>(FAMILIES.map(f => [f, { usd: 0, tokens: 0, cards: new Set<string>() }]))
   for (const r of records) {
     const row = out.get(recordFamily(r)) as { usd: number; tokens: number; cards: Set<string> }
     row.usd += r.usd ?? 0
     row.tokens += r.tokens ?? 0
-    if (r.verdict === 'verified') row.cards.add(taskLabel(r.task, r.subtask))
+    if (isConsistent(r.verdict)) row.cards.add(taskLabel(r.task, r.subtask))
   }
   return FAMILIES.map(family => {
     const row = out.get(family) as { usd: number; tokens: number; cards: Set<string> }
-    return { family, usd: round4(row.usd), tokens: row.tokens, verified: row.cards.size }
+    return { family, usd: round4(row.usd), tokens: row.tokens, consistent: row.cards.size }
   })
 }
 
@@ -79,7 +80,7 @@ export function events(records: readonly AttemptRecord[], since: number): LiveEv
     const task = taskLabel(r.task, r.subtask)
     const family = recordFamily(r)
     out.push({ t: r.at, kind: 'spawn', task, family })
-    if (r.verdict !== 'pending' && r.verdictAt !== undefined) out.push({ t: r.verdictAt, kind: 'verdict', task, family, verdict: r.verdict })
+    if (r.verdict !== 'pending' && r.verdictAt !== undefined) out.push({ t: r.verdictAt, kind: 'verdict', task, family, verdict: currentVerdict(r.verdict) })
   }
   return out.sort((a, b) => a.t - b.t || (a.kind === b.kind ? 0 : a.kind === 'spawn' ? -1 : 1))
 }
@@ -119,8 +120,9 @@ export type Mark = { icon: string; color: string; word: string }
 /** Verdict status: an icon, a colour and the word, never a colour alone. Undefined for a state that is no verdict. */
 export function verdictMark(verdict: string | undefined): Mark | undefined {
   switch (verdict) {
-    case 'verified':
-      return { icon: '✓', color: '#0ca30c', word: 'verified' }
+    case 'consistent':
+    case LEGACY_VERDICT: // a record written before the rename (MOD-19): read as consistent until 0.9.0
+      return { icon: '✓', color: '#0ca30c', word: 'consistent' }
     case 'unverified':
     case 'over-spend':
       return { icon: '!', color: '#fab219', word: verdict }
@@ -223,9 +225,9 @@ export function worktreeRows(input: WorktreeInput): WorktreeRow[] {
       state = `queued #${q + 1}`
       kind = 'queued'
     } else if (latest && latest.verdict !== 'pending') {
-      state = latest.verdict
+      state = currentVerdict(latest.verdict)
       kind = 'verdict'
-      verdict = latest.verdict
+      verdict = state
     } else {
       state = 'verdict owed'
       kind = 'owed'
@@ -269,12 +271,12 @@ export type LiveView = {
   brain?: BrainSummary
 }
 
-/** Cards judged on their first attempt this session: how many verified. */
+/** Cards judged on their first attempt this session: how many came back consistent. */
 export function firstTry(records: readonly AttemptRecord[]): { n: number; m: number } {
   const first = new Map<string, AttemptRecord>()
   for (const r of records) if (r.attempt === 1 && r.kind !== 'verify') first.set(taskLabel(r.task, r.subtask), r)
   const judged = [...first.values()].filter(r => r.verdict !== 'pending')
-  return { n: judged.filter(r => r.verdict === 'verified').length, m: judged.length }
+  return { n: judged.filter(r => isConsistent(r.verdict)).length, m: judged.length }
 }
 
 export type ViewInput = WorktreeInput & { since: number; usd: number; series: readonly SpendPoint[]; owed: number; brain?: BrainRecord }
@@ -327,8 +329,8 @@ export function tokText(n: number): string {
   return String(n)
 }
 
-/** `sonnet · $3.10 · 412k tok · 4 verified`. */
-export const modelLabel = (m: ModelSpend): string => `${m.family} · ${dollars(m.usd)} · ${tokText(m.tokens)} tok · ${m.verified} verified`
+/** `sonnet · $3.10 · 412k tok · 4 consistent`. */
+export const modelLabel = (m: ModelSpend): string => `${m.family} · ${dollars(m.usd)} · ${tokText(m.tokens)} tok · ${m.consistent} consistent`
 
 /** `brain · fable · $2.25 · 630k tok · 3 turns`: the brain's row of spend by model, labelled so Fable is never mistaken for a worker's. */
 export const brainModelLabel = (b: BrainSummary): string =>
@@ -354,7 +356,7 @@ const cell = (s: string) => s.replace(/\|/g, '\\|')
  * spend by model.
  */
 export function dashboardText(v: LiveView): string {
-  const ft = v.firstTry.m > 0 ? ` · ${v.firstTry.n} of ${v.firstTry.m} verified on the first attempt` : ''
+  const ft = v.firstTry.m > 0 ? ` · ${v.firstTry.n} of ${v.firstTry.m} consistent on the first attempt` : ''
   const lines = [`**Delegation** · ${v.live} live · ${v.queued} queued${v.owed > 0 ? ` · ${v.owed} owed` : ''} · ${dollars(v.usd)} this session${ft}`]
   const series = v.series
   if (series.length >= 2) {

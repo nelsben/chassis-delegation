@@ -1,6 +1,7 @@
 // Part 4C: the dashboard's per-session numbers, `delegation.metrics.<sessionId>`
 // in the store, updated by the hooks that already handle each event, and the
 // six series the pane's sparklines draw over the last 14 sessions. Pure: no `$`.
+import { currentVerdict, foldLegacyMetrics, isConsistent } from './legacy'
 import { aliasOf } from './tier'
 
 type ByAlias = { haiku: number; sonnet: number; opus: number }
@@ -10,7 +11,7 @@ export type Metrics = {
   firstSeen: number
   /** Dispatches made through the `dispatch` tool or `/dispatch` (spawned or queued). */
   dispatches: number
-  verdicts: { verified: number; unverified: number; refuted: number; falseRefuted: number }
+  verdicts: { consistent: number; unverified: number; refuted: number; falseRefuted: number }
   /** Briefed spawns by alias. */
   spawns: ByAlias
   escalations: { resume: number; respawn: number }
@@ -21,21 +22,21 @@ export type Metrics = {
   compactions: number
   /** Dollars the briefed workers spent (3B), summed as their turns complete. */
   usd: number
-  /** Verified verdicts by alias: which tiers proved enough (the Tiers sparkline). */
-  verifiedBy: ByAlias
+  /** Consistent verdicts by alias: which tiers proved enough (the Tiers sparkline). */
+  consistentBy: ByAlias
 }
 
 export const emptyMetrics = (firstSeen: number): Metrics => ({
   firstSeen,
   dispatches: 0,
-  verdicts: { verified: 0, unverified: 0, refuted: 0, falseRefuted: 0 },
+  verdicts: { consistent: 0, unverified: 0, refuted: 0, falseRefuted: 0 },
   spawns: { haiku: 0, sonnet: 0, opus: 0 },
   escalations: { resume: 0, respawn: 0 },
   debriefs: 0,
   evals: { run: 0, failed: 0 },
   compactions: 0,
   usd: 0,
-  verifiedBy: { haiku: 0, sonnet: 0, opus: 0 },
+  consistentBy: { haiku: 0, sonnet: 0, opus: 0 },
 })
 
 export type MetricEvent =
@@ -54,8 +55,13 @@ const tierKey = (alias: string): keyof ByAlias | undefined => {
   return a === 'haiku' || a === 'sonnet' || a === 'opus' ? a : undefined
 }
 
-/** A stored object read back whole: fields an older release did not write start at zero. */
-export function fillMetrics(m: Partial<Metrics> | undefined, now: number): Metrics {
+/**
+ * A stored object read back whole: fields an older release did not write start
+ * at zero, and one written before the rename (MOD-19, see ./legacy.ts) folds
+ * its counts into `consistent`.
+ */
+export function fillMetrics(stored: Partial<Metrics> | undefined, now: number): Metrics {
+  const m = foldLegacyMetrics(stored) as Partial<Metrics> | undefined
   const base = emptyMetrics(m?.firstSeen ?? now)
   if (!m) return base
   return {
@@ -65,7 +71,7 @@ export function fillMetrics(m: Partial<Metrics> | undefined, now: number): Metri
     spawns: { ...base.spawns, ...m.spawns },
     escalations: { ...base.escalations, ...m.escalations },
     evals: { ...base.evals, ...m.evals },
-    verifiedBy: { ...base.verifiedBy, ...m.verifiedBy },
+    consistentBy: { ...base.consistentBy, ...m.consistentBy },
   }
 }
 
@@ -84,11 +90,12 @@ export function applyMetric(prev: Partial<Metrics> | undefined, ev: MetricEvent,
     case 'resume':
       return { ...m, escalations: { ...m.escalations, resume: m.escalations.resume + 1 } }
     case 'verdict': {
-      if (ev.verdict !== 'verified' && ev.verdict !== 'unverified' && ev.verdict !== 'refuted') return m
-      const verdicts = { ...m.verdicts, [ev.verdict]: m.verdicts[ev.verdict] + 1, falseRefuted: m.verdicts.falseRefuted + (ev.falseRefute ? 1 : 0) }
+      const word = currentVerdict(ev.verdict)
+      if (word !== 'consistent' && word !== 'unverified' && word !== 'refuted') return m
+      const verdicts = { ...m.verdicts, [word]: m.verdicts[word] + 1, falseRefuted: m.verdicts.falseRefuted + (ev.falseRefute ? 1 : 0) }
       const k = tierKey(ev.alias)
-      const verifiedBy = ev.verdict === 'verified' && k ? { ...m.verifiedBy, [k]: m.verifiedBy[k] + 1 } : m.verifiedBy
-      return { ...m, verdicts, verifiedBy }
+      const consistentBy = word === 'consistent' && k ? { ...m.consistentBy, [k]: m.consistentBy[k] + 1 } : m.consistentBy
+      return { ...m, verdicts, consistentBy }
     }
     case 'debrief':
       return { ...m, debriefs: m.debriefs + 1 }
@@ -104,12 +111,12 @@ export function applyMetric(prev: Partial<Metrics> | undefined, ev: MetricEvent,
 }
 
 /**
- * A refute that was false: a refuted attempt whose task later verified at
+ * A refute that was false: a refuted attempt whose task later came back consistent at
  * the SAME report sha (the code did not change; a resume or a re-verify by
- * hand), or verified because an amend made the difference.
+ * hand), or consistent because an amend made the difference.
  */
 export function isFalseRefute(prev: { verdict: string; reportSha?: string } | undefined, cur: { verdict: string; reportSha?: string; amended: boolean }): boolean {
-  if (!prev || prev.verdict !== 'refuted' || cur.verdict !== 'verified') return false
+  if (!prev || prev.verdict !== 'refuted' || !isConsistent(cur.verdict)) return false
   if (cur.amended) return true
   return prev.reportSha !== undefined && prev.reportSha !== '' && prev.reportSha === cur.reportSha
 }
@@ -138,22 +145,22 @@ const CHEAP_FIRST: (keyof ByAlias)[] = ['haiku', 'sonnet', 'opus']
  * has nothing to measure, so the line does not read a zero into it).
  *
  * Tiers: the share of the session's briefed spawns that went to the cheapest
- * tier any of its verdicts verified on (all spawns on sonnet, sonnet verified:
- * 1; half on opus while sonnet verified: 0.5).
+ * tier any of its verdicts were consistent on (all spawns on sonnet, sonnet
+ * consistent: 1; half on opus while sonnet was consistent: 0.5).
  */
 export const SERIES: readonly { key: string; value: (m: Metrics) => number | null }[] = [
   { key: 'steps', value: m => m.dispatches },
   {
     key: 'verdicts',
     value: m => {
-      const total = m.verdicts.verified + m.verdicts.unverified + m.verdicts.refuted
+      const total = m.verdicts.consistent + m.verdicts.unverified + m.verdicts.refuted
       return total > 0 ? m.verdicts.refuted / total : null
     },
   },
   {
     key: 'tiers',
     value: m => {
-      const cheapest = CHEAP_FIRST.find(k => m.verifiedBy[k] > 0)
+      const cheapest = CHEAP_FIRST.find(k => m.consistentBy[k] > 0)
       const total = m.spawns.haiku + m.spawns.sonnet + m.spawns.opus
       return cheapest && total > 0 ? m.spawns[cheapest] / total : null
     },
@@ -178,9 +185,9 @@ export function metricsFromRecords(
     if (r.kind === 'spawn' && a) m.spawns[a] += 1
     if (r.kind === 'resume') m.escalations.resume += 1
     m.usd += r.usd ?? 0
-    if (r.verdict === 'verified') {
-      m.verdicts.verified += 1
-      if (a) m.verifiedBy[a] += 1
+    if (isConsistent(r.verdict)) {
+      m.verdicts.consistent += 1
+      if (a) m.consistentBy[a] += 1
     } else if (r.verdict === 'unverified') m.verdicts.unverified += 1
     else if (r.verdict === 'refuted') m.verdicts.refuted += 1
   }
