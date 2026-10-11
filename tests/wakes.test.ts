@@ -92,4 +92,40 @@ describe('MOD-51: a held verdict wake is dropped at delivery when its task has m
     expect(w.submitted[0]?.text).toContain('refuted')
   })
 })
+describe('MOD-57: a held wake is dropped when the brain already messaged its worker', () => {
+  const send = ($: any, to: string) => $.session.send({ to, text: 'carry on', origin: { kind: 'model' } } as never)
+
+  test('(1) attempt 1 consistent while the turn is open, the brain resumes the worker in the same turn: no wake is submitted', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(w.submitted).toEqual([])
+    await send($, 'agent-4')
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toEqual([])
+    expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 attempt 1: the brain already messaged its worker'))).toBe(true)
+  })
+
+  test('(2) control: the message went to a different agent: the wake is submitted', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    await send($, 'agent-9')
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('attempt 1')
+  })
+
+  test('(3) a message sent before the wake was held does not drop it', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await send($, 'agent-4')
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toHaveLength(1)
+  })
+})
 void ROOT
