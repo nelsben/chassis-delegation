@@ -1,7 +1,7 @@
 // MOD-48: what the brain's driving costs it: the call kinds, the split's lines, and the warn row (pure).
 import { test, expect, describe } from 'claude-code/testing'
 import { priceFor, usdOf } from '../hooks/lib/cost'
-import { callKind, commandKey, driveCall, driveLines, driveStep, driveTurn, emptyDrive, emptyWatch, DRIVE_THRESHOLD_TOKENS } from '../hooks/lib/drive'
+import { callKind, commandKey, driveCall, driveLines, driveStep, driveTurn, emptyDrive, emptyWatch, DRIVE_THRESHOLD_TOKENS, freshSessionRow } from '../hooks/lib/drive'
 
 describe('MOD-48: the kind of a call', () => {
   test('a background Bash call, an until loop and a sleep loop are run-or-poll', () => {
@@ -93,5 +93,20 @@ describe('MOD-48: the warn row', () => {
   test('a poll at or above the threshold fires on its own; off, it never does', () => {
     expect(run('until grep -q done /tmp/log; do sleep 5; done', 250_000).row).toContain('poll')
     expect(driveStep(emptyWatch(), { command: 'until x; do sleep 1; done', context: 250_000, threshold: 200_000, model: OPUS, enabled: false }).row).toBeUndefined()
+  })
+})
+
+describe('MOD-53: the fresh-session row', () => {
+  test('below the threshold, nothing', () => {
+    expect(freshSessionRow(399_999, 400_000)).toBeUndefined()
+  })
+  test('at the threshold, the row with both figures rounded to K', () => {
+    expect(freshSessionRow(400_000, 400_000)).toBe('chassis-delegation: brain context 400K (freshSessionTokens 400K): start a fresh session at the next phase boundary; cards, the ledger and lessons carry over')
+  })
+  test('above the threshold', () => {
+    expect(freshSessionRow(512_000, 400_000)).toBe('chassis-delegation: brain context 512K (freshSessionTokens 400K): start a fresh session at the next phase boundary; cards, the ledger and lessons carry over')
+  })
+  test('0 is off', () => {
+    expect(freshSessionRow(900_000, 0)).toBeUndefined()
   })
 })

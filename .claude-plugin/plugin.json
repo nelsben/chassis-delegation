@@ -310,6 +310,12 @@
       "title": "Drive warn context (tokens)",
       "description": "The brain context, in tokens, from which the drive warn row speaks",
       "default": 200000
+    },
+    "freshSessionTokens": {
+      "type": "number",
+      "title": "Fresh session context (tokens)",
+      "description": "The brain context, in tokens, at or above which the brain is told once a session to start a fresh session at the next phase boundary; 0 turns it off",
+      "default": 400000
     }
   }
 }

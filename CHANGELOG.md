@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The brain is told once a session to start a fresh one (MOD-53).** When the brain's own turn ends with its
+  context at or above the new `/config` option `freshSessionTokens` (default 400000; `0` turns it off), the mod
+  appends one row: `brain context 512K (freshSessionTokens 400K): start a fresh session at the next phase
+  boundary; cards, the ledger and lessons carry over`. A marker keyed by the session id keeps it to once a
+  session, across a hot reload. The decision is `freshSessionRow` in `hooks/lib/drive.ts`.
+
 - **A held verdict wake is dropped at delivery when its task has moved on (MOD-51).** MOD-42 holds a wake while
   the brain's turn is open; at the turn's end it dropped only a consistent wake whose task was merged, so a refuted,
   no-report, unverified or over-spend wake for attempt 1 reached the brain after attempt 2 had passed. Now
