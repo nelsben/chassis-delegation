@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.9.2, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.3, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,15 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.9.2 to 0.9.3
+
+What the brain will see:
+
+- **A state check's red file ends with a marker line (MOD-59).** A red test that is a query or state check now ends its red file with an `expected: …; got: …` line. A red file with no failure marker is advised `check red by hand` instead of a resume that cannot help.
+- **A verdict for a merged or accepted task wakes the brain only when it can act (MOD-60).** A refuted or unverified verdict for a task already merged or accepted no longer wakes the brain. A worker's sha being on origin/main no longer counts as merged for a verdict that is not consistent, so a refuted hand-back with no commits is never retired as merged.
+
+What to do: nothing in an existing repo's config needs to change.
 
 ### From 0.9.1 to 0.9.2
 
