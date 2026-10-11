@@ -158,7 +158,7 @@ What the brain will see:
 
 - **The brain can delegate into another local git repo (MOD-44, public issue 95).** `card` and `dispatch` take `repo` as the absolute path of another git checkout, and the task's card, base, worktree, gate and verifier are that repo's. Run `setup` with that path first when the repo has no `.chassis-delegation.json`.
 - **`init` and `setup` take a path (MOD-45).** The brain can scaffold a sibling repo before delegating into it, without writing anything in the session's own root.
-- **The old verdict word `verified` is still read in this release, and will stop being read in the next.** Until then a record or row carrying it reads as `consistent`.
+- **The old verdict word `verified` stopped being read in this release (MOD-49).** A stored record or recent row that still carries it is read as `consistent` once, and the ledger keeps it as written.
 
 What to do: nothing in an existing repo's config needs to change.
 
@@ -205,10 +205,7 @@ What the brain will see:
   the attempt records, the ledger, the dashboard and the debrief. It means every
   claim of the report that the mod can check matches git (branch, sha, files,
   scope, gate, red evidence). Consistent is not a review: nothing in the check
-  reads the diff, so read it before you accept. The old word is still read until
-  0.9.0 (an old attempt record, ledger line or recent-verdict row counts exactly
-  as `consistent`), so a script that parses the row, `verdict=` or
-  `.delegation/ledger.jsonl` should accept both words until then.
+  reads the diff, so read it before you accept. The old word `verified` stopped being read in this release (MOD-49); a script that parses an old row should accept both words.
 - **A verdict wakes you, and the posture line says to act (MOD-15).** After the
   mod posts the row for a background worker's hand-back it submits that row with
   its next action as a turn of your own: the model reads "The

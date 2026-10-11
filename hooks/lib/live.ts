@@ -6,7 +6,6 @@
 import type { AttemptRecord } from './attempts'
 import { taskLabel } from './attempts'
 import { base64, elapsed } from './dashboard'
-import { currentVerdict, isConsistent, LEGACY_VERDICT } from './legacy'
 import { brainSummary, brainTileText, type AdHoc, type BrainRecord, type BrainSummary } from './brain'
 import { withRepoName, worktreePath } from './paths'
 
@@ -57,7 +56,7 @@ export function spendByModel(records: readonly AttemptRecord[]): ModelSpend[] {
     const row = out.get(recordFamily(r)) as { usd: number; tokens: number; cards: Set<string> }
     row.usd += r.usd ?? 0
     row.tokens += r.tokens ?? 0
-    if (isConsistent(r.verdict)) row.cards.add(taskLabel(r.task, r.subtask))
+    if (r.verdict === 'consistent') row.cards.add(taskLabel(r.task, r.subtask))
   }
   return FAMILIES.map(family => {
     const row = out.get(family) as { usd: number; tokens: number; cards: Set<string> }
@@ -93,7 +92,7 @@ export function events(records: readonly AttemptRecord[], since: number): LiveEv
     const task = taskLabel(r.task, r.subtask)
     const family = recordFamily(r)
     out.push({ t: r.at, kind: 'spawn', task, family })
-    if (r.verdict !== 'pending' && r.verdictAt !== undefined) out.push({ t: r.verdictAt, kind: 'verdict', task, family, verdict: currentVerdict(r.verdict) })
+    if (r.verdict !== 'pending' && r.verdictAt !== undefined) out.push({ t: r.verdictAt, kind: 'verdict', task, family, verdict: r.verdict })
   }
   return out.sort((a, b) => a.t - b.t || (a.kind === b.kind ? 0 : a.kind === 'spawn' ? -1 : 1))
 }
@@ -134,7 +133,6 @@ export type Mark = { icon: string; color: string; word: string }
 export function verdictMark(verdict: string | undefined): Mark | undefined {
   switch (verdict) {
     case 'consistent':
-    case LEGACY_VERDICT: // a record written before the rename (MOD-19): read as consistent until 0.9.0
       return { icon: '✓', color: '#0ca30c', word: 'consistent' }
     case 'unverified':
     case 'over-spend':
@@ -245,7 +243,7 @@ export function worktreeRows(input: WorktreeInput): WorktreeRow[] {
       state = `queued #${q + 1}`
       kind = 'queued'
     } else if (latest && latest.verdict !== 'pending') {
-      state = currentVerdict(latest.verdict)
+      state = latest.verdict
       kind = 'verdict'
       verdict = state
     } else {
@@ -302,7 +300,7 @@ export function firstTry(records: readonly AttemptRecord[]): { n: number; m: num
   const first = new Map<string, AttemptRecord>()
   for (const r of records) if (r.attempt === 1 && r.kind !== 'verify') first.set(taskLabel(r.task, r.subtask), r)
   const judged = [...first.values()].filter(r => r.verdict !== 'pending')
-  return { n: judged.filter(r => isConsistent(r.verdict)).length, m: judged.length }
+  return { n: judged.filter(r => r.verdict === 'consistent').length, m: judged.length }
 }
 
 export type ViewInput = WorktreeInput & { since: number; usd: number; series: readonly SpendPoint[]; owed: number; brain?: BrainRecord; sessionId?: string; adhoc?: AdHoc }

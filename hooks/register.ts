@@ -40,6 +40,10 @@ import {
   type AttemptRecord,
   type Lane,
   isResumeAfterJudged,
+  readLine,
+  readRecord,
+  readVerdict,
+  isRetiredVerdict,
 } from './lib/attempts'
 import {
   amendNeedsApproval,
@@ -181,7 +185,6 @@ import {
   type EvalTier,
 } from './lib/evaltrigger'
 import { engineLockDecision, gateCommandTemplates, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
-import { currentLine } from './lib/legacy'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
@@ -932,7 +935,7 @@ async function allRecords($: Host): Promise<AttemptRecord[]> {
     if (!key.startsWith(K.tasks(''))) continue
     const list = await storeGet<AttemptRecord[]>($, key)
     // MOD-21: a reviewer's attempt is no worker attempt: the dashboard counts the workers
-    if (Array.isArray(list)) out.push(...list.filter(r => r.kind !== 'review'))
+    if (Array.isArray(list)) out.push(...readRetired($, key, list).filter(r => r.kind !== 'review'))
   }
   recordsCache = { at: t, records: out }
   return out
@@ -1019,7 +1022,7 @@ async function adhocSpend($: Host, since: number, who: { sessionId?: string; roo
   let usd = 0
   let agents = 0
   try {
-    const list = sessionRecords((await storeGet<AttemptRecord[]>($, K.adhoc)) ?? [], since, who)
+    const list = sessionRecords(readRetired($, K.adhoc, (await storeGet<AttemptRecord[]>($, K.adhoc)) ?? []), since, who)
     for (const r of list) {
       if (!r.agentId) continue
       const cost = await storeGet<CostRecord>($, K.cost(r.agentId))
@@ -1852,8 +1855,8 @@ async function snapshot($: Host): Promise<StateSnapshot> {
     s.queued.push({ task: shown, position: i + 1, ...(line !== undefined ? { ready: line } : {}), ...(waiting ? { waits: waitsText(waiting) } : {}) })
   }
   if (!sid) return s
-  const recent = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
-  s.recent = recent.map(r => ({ line: currentLine(r.line), at: r.at }))
+  const recent = readRecent($, (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? [])
+  s.recent = recent.map(r => ({ line: r.line, at: r.at }))
   const busy = new Set([...live.workers.map(w => w.label), ...live.pending.map(p => p.task), ...queue.map(q => queuedLabel(q))])
   const t = await now($)
   const rows: { task: string; text: string; at: number; checked?: boolean }[] = []
@@ -1930,7 +1933,7 @@ async function retireCheck($: Host, label: string, t: number, force = false): Pr
     if (last.retired) return { retired: true, checked: true }
     if (!force && !retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
     const patch = retirePatch(await retireProbe($, task, last.sha, last.root), t)
-    await storeSet($, K.tasks(task), patchRecord(await loadAttempts($, task), subtask, last.attempt, patch))
+    await storeSet($, K.tasks(task), patchRecord(await loadAttemptsRaw($, task), subtask, last.attempt, patch))
     if (patch.retired === 'merged') await appendLedger($, acceptRow(last, 'merged', t))
     return { retired: patch.retired !== undefined, checked: patch.retireCheckedAt !== undefined || last.retireCheckedAt !== undefined }
   } catch (err) {
@@ -1949,7 +1952,7 @@ async function acceptTask($: Host, rest: string): Promise<string> {
   if (!last) return `/delegation accept: no attempts recorded for ${id}; nothing changed`
   const note = words.join(' ')
   const at = await now($)
-  await storeSet($, K.tasks(task), patchRecord(records, subtask, last.attempt, { retired: 'accepted', accepted: { ...(note ? { note } : {}), at } }))
+  await storeSet($, K.tasks(task), patchRecord(await loadAttemptsRaw($, task), subtask, last.attempt, { retired: 'accepted', accepted: { ...(note ? { note } : {}), at } }))
   await appendLedger($, { ...acceptRow(last, 'accepted', at), sessionId: await sessionIdOf($) })
   return `accepted ${id} by hand (attempt ${last.attempt})${note ? `: ${note}` : ''}; its owed row is retired`
 }
@@ -1985,7 +1988,7 @@ async function noteMergeCommand($: Host, command: string): Promise<void> {
   }
   if (targets.prs.length > 0) {
     const sid = await sessionIdOf($)
-    const recent = sid ? ((await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []) : []
+    const recent = sid ? readRecent($, (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []) : []
     for (const r of recent) {
       if (r.pr && targets.prs.some(n => new RegExp(`(^|[/#])${n}$`).test(r.pr as string))) tasks.add(splitLabel(r.task).task)
     }
@@ -1994,9 +1997,10 @@ async function noteMergeCommand($: Host, command: string): Promise<void> {
   for (const id of tasks) {
     try {
       const records = await loadAttempts($, id)
+      const raw = await loadAttemptsRaw($, id)
       const last = attemptsFor(records, 'main').at(-1) ?? records.filter(r => r.kind !== 'review' && !r.replay).sort((a, b) => a.attempt - b.attempt).at(-1)
       if (!last) continue
-      if (!last.retired) await storeSet($, K.tasks(id), patchRecord(records, last.subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }))
+      if (!last.retired) await storeSet($, K.tasks(id), patchRecord(raw, last.subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }))
       await appendLedger($, { ...acceptRow(last, 'merged', t), sessionId: await sessionIdOf($) })
     } catch (err) {
       debug($, `${id}: merge not recorded: ${String(err)}`)
@@ -2103,7 +2107,7 @@ const debriefFolder = (builtIn: boolean, root: string, home: string): string => 
 async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: string[]): Promise<{ agentId?: string; deny?: string; skipped?: string; builtIn: boolean }> {
   const { sid, home, prev, mode, lines, watermark, friction, window } = basis
   const source = debriefSource(home, $.plugin.root, await exists($, debriefSkillPath(home)))
-  const recent = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
+  const recent = readRecent($, (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? [])
   // breadcrumbs: the window alone chooses the facts (none without one); events: the events past the last debrief and the verdicts since it
   const fresh = friction.events.slice(-Math.max(0, Math.min(friction.events.length, lines - watermark)))
   const facts = mode === 'breadcrumbs' ? (window ? windowFacts(friction.events, recent, window) : []) : [...frictionFacts(fresh), ...verdictFacts(recent.filter(r => prev === undefined || r.at > prev.lastAt))]
@@ -2743,8 +2747,32 @@ async function replayBase($: Host, briefPath: string): Promise<{ base?: string }
   return typeof base === 'string' && base ? { base } : {}
 }
 
-async function loadAttempts($: Host, task: string): Promise<AttemptRecord[]> {
+/** The task's records as stored: a write patches these, so a record written before the rename keeps its word. */
+async function loadAttemptsRaw($: Host, task: string): Promise<AttemptRecord[]> {
   return (await storeGet<AttemptRecord[]>($, K.tasks(task))) ?? []
+}
+
+async function loadAttempts($: Host, task: string): Promise<AttemptRecord[]> {
+  return readRetired($, K.tasks(task), await loadAttemptsRaw($, task))
+}
+
+/** MOD-19 (0.8.0): a stored record that still holds the retired verdict word reads as consistent; each one is logged at debug. */
+function readRetired($: Host, key: string, records: readonly AttemptRecord[]): AttemptRecord[] {
+  return records.map(r => {
+    if (!isRetiredVerdict(r.verdict)) return r
+    debug($, `${key} attempt ${r.attempt}: a record written before the rename reads as consistent`)
+    return readRecord(r)
+  })
+}
+
+/** MOD-19 (0.8.0): a recent-verdict row written before the rename reads as consistent; each one is logged at debug. */
+function readRecent($: Host, rows: readonly RecentVerdict[]): RecentVerdict[] {
+  return rows.map(r => {
+    const line = readLine(r.line)
+    if (line === r.line && !isRetiredVerdict(r.verdict)) return r
+    debug($, `${r.task} attempt ${r.attempt}: a row written before the rename reads as consistent`)
+    return { ...r, line, verdict: readVerdict(r.verdict) }
+  })
 }
 
 /**

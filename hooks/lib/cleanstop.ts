@@ -4,7 +4,6 @@
 
 import { redact, type RedactRules } from './redact'
 import { MOD_SURFACES, windowAsk, splitFindings, type DebriefWindow } from './debriefcheck'
-import { currentLine } from './legacy'
 
 const H = 60 * 60 * 1000
 
@@ -211,7 +210,7 @@ export function mergeRejudged(verdicts: readonly VerdictFact[]): VerdictFact[] {
       out.push(v)
       continue
     }
-    const head = /^(?:chassis-delegation: )?(\S+ attempt \d+\/\d+) (refuted(?: on [\w-]+)?)/.exec(currentLine(prior.line))
+    const head = /^(?:chassis-delegation: )?(\S+ attempt \d+\/\d+) (refuted(?: on [\w-]+)?)/.exec(prior.line)
     const said = head ? `${head[1]} ${head[2]}` : `${v.task ?? 'task'} attempt ${v.attempt ?? '?'} refuted`
     out.splice(j, 1)
     out.push({ line: `${said}, then re-judged ${v.verdict} at the same sha (a false refute)`, at: v.at, firstAt: prior.at, task: v.task as string, attempt: v.attempt as number, verdict: v.verdict as string })
@@ -220,7 +219,7 @@ export function mergeRejudged(verdicts: readonly VerdictFact[]): VerdictFact[] {
 }
 
 /** The verdict rows as fact lines: `verdict 2026-10-10T18:01:07Z: chassis-delegation: OPS-5 attempt 1/2 consistent …`. */
-export const verdictFacts = (verdicts: readonly VerdictFact[]): string[] => mergeRejudged(verdicts).map(v => factLine('verdict', v.at, currentLine(v.line)))
+export const verdictFacts = (verdicts: readonly VerdictFact[]): string[] => mergeRejudged(verdicts).map(v => factLine('verdict', v.at, v.line))
 
 /**
  * MOD-26: the facts a breadcrumbs debrief's prompt carries: the friction events and verdicts whose time lies

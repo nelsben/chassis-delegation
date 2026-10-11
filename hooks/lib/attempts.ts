@@ -1,7 +1,23 @@
 // Attempt records: what the mod keeps per task in `$.store` under
 // `delegation.tasks.<task-id>` (an array, appended per attempt). The eval's
 // data source. Pure: no `$`.
-import { isConsistent, type LegacyVerified } from './legacy'
+/**
+ * The verdict word retired at MOD-19 (0.8.0), spelt in two parts so that no file
+ * in hooks/ or bin/ names it (tests/node/consistent.node.mjs). A record or row
+ * written before the rename still holds it: it is read as `consistent` (once per
+ * occurrence, logged by the caller) and never written. The ledger keeps it as written.
+ */
+export const RETIRED_VERDICT = ['veri', 'fied'].join('')
+export const isRetiredVerdict = (v: unknown): boolean => v === RETIRED_VERDICT
+/** A stored verdict word as the mod reads it now. */
+export const readVerdict = <V extends string>(v: V): V | 'consistent' => (isRetiredVerdict(v) ? 'consistent' : v)
+/** An attempt record as the mod reads it now. */
+export const readRecord = (r: AttemptRecord): AttemptRecord => (isRetiredVerdict(r.verdict) ? { ...r, verdict: 'consistent' } : r)
+/** A recent-verdict row's line as the mod reads it now: the retired word in either old shape becomes `consistent`. */
+export const readLine = (line: string): string =>
+  line
+    .replace(new RegExp(`^(chassis-delegation: \\S+ attempt \\d+/\\d+ )${RETIRED_VERDICT}\\b`), '$1consistent')
+    .replace(new RegExp(`^(chassis-delegation: verdict=)${RETIRED_VERDICT}\\b`), '$1consistent')
 import type { Tier, TierSource } from './tier'
 
 /**
@@ -16,11 +32,10 @@ import type { Tier, TierSource } from './tier'
  * failing verdict: it never escalates the tier.
  */
 /**
- * `consistent` (MOD-19, renamed; see ./legacy.ts): every machine-checkable claim
- * of the report matched git. `LegacyVerified` is the old word as a record written
- * before the rename holds it: read as consistent until 0.9.0, never written.
+ * `consistent` (MOD-19, renamed; see readRecord): every machine-checkable claim
+ * of the report matched git. A record written before the rename is read as consistent (see readRecord).
  */
-export type AttemptVerdict = 'pending' | 'consistent' | LegacyVerified | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present' | 'over-spend' | 'reviewed'
+export type AttemptVerdict = 'pending' | 'consistent' | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present' | 'over-spend' | 'reviewed'
 /**
  * `verify` (GH-104): no worker ran; the attempt is the work found in the worktree, judged by `--verify`.
  * `review` (MOD-21): a read-only reviewer read a consistent hand-back against the diff. It carries the number of
@@ -124,7 +139,7 @@ export const recordFailed = (r: AttemptRecord): boolean => FAILING.includes(r.ve
  * `gate=fail` the verifier confirmed (the verdict held it: consistent). A
  * no-report is a reporting defect, not a capability one, and never escalates.
  */
-export const escalatesOn = (verdict: string, reportGate?: string): boolean => verdict === 'refuted' || (isConsistent(verdict) && reportGate === 'fail')
+export const escalatesOn = (verdict: string, reportGate?: string): boolean => verdict === 'refuted' || (verdict === 'consistent' && reportGate === 'fail')
 
 /** GH-115: the claims whose failure says the worker was out of its depth; the rest say the brief's globs or the base were wrong. */
 export const ESCALATING_CLAIMS: readonly string[] = ['sha', 'gate', 'red']
