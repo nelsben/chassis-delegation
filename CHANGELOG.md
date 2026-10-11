@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **The session's brain and worker figures count only this session's own attempts; ad hoc
+  spawns get their own figure; an unattributed remainder closes the sum (MOD-37, public
+  issue #91).** Every attempt record now carries `sessionId` (the session whose brain made
+  the spawn) and `root`. The live view, the dashboard tables, the brain line and the worker
+  counts keep a record only when its `sessionId` is this session's; a record from before
+  this change is kept only when its root is this session's and it began at or after the
+  session's start, so an old store no longer leaks other repos' attempts. An Agent spawn with
+  no brief header is counted from its `delegation.cost.<agentId>` record: the brain line
+  reads `brain: <family> $x over n turns · workers $y (n attempts) · ad hoc $z (n agents) ·
+  unattributed $u · brain share p%`, where unattributed is the session total less the other
+  three (never negative, left out under a cent) and the share is brain over the session total.
+  The ad hoc part shows once an ad hoc agent has run.
+
 ## 0.8.2 — 2026-10-11
 
 - **A merged task is not woken for, an accept is on the ledger, each verdict row is written

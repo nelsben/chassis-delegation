@@ -851,9 +851,30 @@ async function brainView($: Host): Promise<{ summary: ReturnType<typeof brainSum
   } catch {
     // unknown: the split is brain + workers
   }
-  const records = sessionRecords(await allRecords($), since)
+  const who = await ownerFields($)
+  const records = sessionRecords(await allRecords($), since, who)
   const rec = await readBrain($)
-  return { summary: brainSummary(rec, workersUsdOf(records), attemptsOf(records), usd !== undefined && usd > 0 ? usd : undefined), hasBrain: (rec?.turns ?? 0) > 0, hasEdits: (rec?.edits ?? 0) > 0 }
+  const adhoc = await adhocSpend($, since, who)
+  return { summary: brainSummary(rec, workersUsdOf(records), attemptsOf(records), usd !== undefined && usd > 0 ? usd : undefined, adhoc), hasBrain: (rec?.turns ?? 0) > 0, hasEdits: (rec?.edits ?? 0) > 0 }
+}
+
+/** MOD-37: what this session's ad hoc spawns (no brief header) cost, from their delegation.cost.<agentId> records. */
+async function adhocSpend($: Host, since: number, who: { sessionId?: string; root?: string }): Promise<{ usd: number; agents: number }> {
+  let usd = 0
+  let agents = 0
+  try {
+    const list = sessionRecords((await storeGet<AttemptRecord[]>($, K.adhoc)) ?? [], since, who)
+    for (const r of list) {
+      if (!r.agentId) continue
+      const cost = await storeGet<CostRecord>($, K.cost(r.agentId))
+      if (!cost) continue
+      agents += 1
+      usd += cost.spend?.usd ?? 0
+    }
+  } catch (err) {
+    debug($, `ad hoc spend not read: ${String(err)}`)
+  }
+  return { usd: Math.round(usd * 10000) / 10000, agents }
 }
 
 /** One warn row per main-loop turn. */
@@ -957,6 +978,8 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
   }
   const records = await allRecords($)
   const brain = await readBrain($)
+  const who = await ownerFields($)
+  const adhoc = brain ? await adhocSpend($, since, who) : undefined
   const liveAt: Record<string, number> = {}
   for (const w of live.workers) liveAt[w.label] = w.spawn.at ?? t
   // MOD-23: the resource a worker holds, and what a queued row waits for, ride the worktree rows
@@ -975,6 +998,8 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     now: t,
     budget: cfg.defaultBudget,
     since,
+    ...(who.sessionId ? { sessionId: who.sessionId } : {}),
+    ...(adhoc ? { adhoc } : {}),
     usd,
     series: await readSpend($),
     owed: live.pending.length,
@@ -1074,6 +1099,17 @@ async function sessionIdOf($: Host): Promise<string> {
   } catch {
     return ''
   }
+}
+/** MOD-37: who made an attempt: the session whose brain spawned it and that session's root. */
+async function ownerFields($: Host): Promise<{ sessionId?: string; root?: string }> {
+  const sessionId = await sessionIdOf($)
+  let root = ''
+  try {
+    root = await $.session.root()
+  } catch {
+    // no repo
+  }
+  return { ...(sessionId ? { sessionId } : {}), ...(root ? { root } : {}) }
 }
 async function readText($: Host, path: string): Promise<string | undefined> {
   try {
@@ -2588,6 +2624,7 @@ async function recordWorkPresent(
   const agentId = s.agentId ?? last?.agentId
   const briefPath = s.briefPath ?? last?.briefPath
   const rec: HereRecord = {
+    ...(await ownerFields($)),
     task: s.task,
     subtask: s.subtask,
     attempt,
@@ -3001,6 +3038,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
     const before = await loadAttempts($, task)
     const attempt = nextAttempt(before, subtask)
     const rec: HereRecord = {
+      ...(await ownerFields($)),
       task,
       subtask,
       attempt,
@@ -3705,6 +3743,7 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   const attempt = target.attempt
   if (!target.rejudge && last?.verdict !== 'work-present') {
     const rec: HereRecord = {
+      ...(await ownerFields($)),
       task: id,
       subtask,
       attempt,
@@ -4358,6 +4397,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
 
     const classifierTier = !adhoc && attempt === 1 ? (await storeGet<{ classifier?: Tier }>($, K.classifier(task)))?.classifier : undefined
     const rec: HereRecord = {
+      ...(await ownerFields($)),
       task,
       subtask,
       attempt,
@@ -4470,6 +4510,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
   if (res.deny !== undefined) return res
   const briefPath = worker?.briefPath ?? reviewed?.briefPath
   const rec: AttemptRecord = {
+    ...(await ownerFields($)),
     task: marker.task,
     subtask: marker.subtask,
     attempt: marker.attempt,
@@ -4942,6 +4983,7 @@ export const register: Register = (on, opts) => {
     const t = await now($)
     const attempt = nextAttempt(records, spawn.subtask, lane)
     const rec: HereRecord = {
+      ...(await ownerFields($)),
       task: spawn.task,
       subtask: spawn.subtask,
       attempt,
@@ -5096,7 +5138,7 @@ export const register: Register = (on, opts) => {
   on('ui.render', { component: 'Pane', requestId: DASH_PANE }, async ($, e, next) => {
     try {
       const { view, since, records, running, waits } = await liveModel($)
-      const mine = sessionRecords(records, since)
+      const mine = sessionRecords(records, since, await ownerFields($))
       const items: BandItem[] = [
         ...running.map((r): BandItem => ({ kind: 'running', task: r.label, tier: r.tier, alias: r.alias, at: r.at, phase: 'building' })),
         ...(await readQueue($)).map((q, i): BandItem => {

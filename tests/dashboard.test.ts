@@ -204,7 +204,7 @@ const worker = (w: ReturnType<typeof world>) => {
   w.agents.push({ id: 'ag1', type: 'general-purpose', description: 'T-1', status: 'running' })
   w.store.set('delegation.agent.ag1', 'k1')
   w.store.set('delegation.spawn.k1', { key: 'k1', task: 'T-1', subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 3, purpose: 'build', prompt: '', description: '', subagentType: 'general-purpose', agentId: 'ag1', at: WORLD_NOW - 60_000 })
-  w.store.set('delegation.tasks.T-1', [{ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', resolvedModel: 'claude-sonnet-5-5', verdict: 'pending', at: WORLD_NOW - 60_000 }])
+  w.store.set('delegation.tasks.T-1', [{ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', resolvedModel: 'claude-sonnet-5-5', verdict: 'pending', at: WORLD_NOW - 60_000, sessionId: 'sess-1' }])
 }
 const drawnBand = async ($: any) => {
   try {

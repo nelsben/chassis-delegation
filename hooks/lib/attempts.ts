@@ -73,6 +73,10 @@ export type AttemptRecord = {
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** ms since the epoch at spawn (or resume). */
   at: number
+  /** MOD-37: the id of the session whose brain made the spawn; absent on a record written before it. */
+  sessionId?: string
+  /** MOD-37: that session's root, so an old record can still be placed. */
+  root?: string
   verdictAt?: number
   agentId?: string
   toolUseId?: string
