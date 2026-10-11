@@ -717,6 +717,17 @@ covers `artifacts/kit/index.html`, and no repo glob stays in one folder (list th
 files); an absolute entry keeps `*` inside one folder. Fix the card (shrink the forbid
 or list the files) before you say go.
 
+Two more lines come from the same dry run and the real dispatch (MOD-54); nothing is refused or changed on the card:
+
+    warning: scope names 8 files (and 1 globs); cost tracks the files a card touches: split it
+    hint: tier economy would do: 2 files in scope, 3 done-when lines, a red test
+
+The warning fires when the scope holds more than 6 literal entries (an entry with no glob
+character); glob entries are counted in the line but never trigger it. The hint fires for
+a standard card whose scope (leaving out entries under `tests/` or `test/`) holds at most
+2 entries and none is a glob, whose `Done when` holds at most 3 statements, and whose
+`red_test` is not `none`. The card tool's dry-run summary carries the same two lines.
+
 An entry may also be an absolute path or glob (MOD-22), and a leading `~` is
 the home folder (expanded at dispatch, so the brief header holds the absolute
 path). It names a folder outside the repo; the first absolute scope entry is the

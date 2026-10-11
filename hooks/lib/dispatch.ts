@@ -248,6 +248,32 @@ export function renderHeader(input: {
   )
 }
 
+/** MOD-54: the most literal scope entries a card may name before dispatch warns (cost tracked the files a card touched). */
+export const SCOPE_FILES_MAX = 6
+/** MOD-54: the most scope entries (tests left out) and done-when statements a standard card may hold for the economy hint. */
+export const TIER_HINT_SCOPE_MAX = 2
+export const TIER_HINT_DONE_MAX = 3
+
+const hasGlobChar = (s: string): boolean => /[*?[\]{}]/.test(s)
+
+/** MOD-54: the warning when a scope holds more than SCOPE_FILES_MAX literal entries (globs are counted in the line, never trigger it). */
+export function scopeSizeWarning(scope: readonly string[]): string | undefined {
+  const entries = scope.filter(s => s.trim() !== '')
+  const globs = entries.filter(hasGlobChar).length
+  const files = entries.length - globs
+  return files > SCOPE_FILES_MAX ? `warning: scope names ${files} files (and ${globs} globs); cost tracks the files a card touches: split it` : undefined
+}
+
+/** MOD-54: the hint that economy would do for a small standard card; nothing is refused or changed. */
+export function tierHint(input: { tier: string; scope: readonly string[]; doneCount: number; redTest: string }): string | undefined {
+  if (input.tier !== 'standard') return undefined
+  if (input.redTest.trim().toLowerCase() === 'none') return undefined
+  const entries = input.scope.map(s => s.trim()).filter(s => s !== '' && !/^\.?\/?tests?\//.test(s))
+  if (entries.length > TIER_HINT_SCOPE_MAX || entries.some(hasGlobChar)) return undefined
+  if (input.doneCount > TIER_HINT_DONE_MAX) return undefined
+  return `hint: tier economy would do: ${entries.length} files in scope, ${input.doneCount} done-when lines, a red test`
+}
+
 /** MOD-22: which sections a brief keeps: a worktree brief, a repo=here one, or a repo=none one. */
 export type BriefMode = 'worktree' | 'here' | 'none'
 
