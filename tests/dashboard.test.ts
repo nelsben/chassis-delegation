@@ -95,6 +95,18 @@ describe('4B: the pane', () => {
       'debrief: running 00:30 — nothing to do',
     ])
   })
+  test('MOD-24: a queued item that waits for a resource says which and who holds it; one that waits for a slot reads as before', () => {
+    const waiting: BandItem[] = [
+      { kind: 'queued', task: 'OPS-9', position: 1, waits: { resource: 'blender-live', holder: 'OPS-8' } },
+      { kind: 'queued', task: 'BE-301', position: 2 },
+    ]
+    expect(openItemLines(waiting, NOW)).toEqual([
+      'OPS-9: queued (position 1) — waits for blender-live (held by OPS-8)',
+      'BE-301: queued (position 2) — starts when a worker slot frees',
+    ])
+    // the band's own line is unchanged
+    expect(bandLines(waiting, NOW, 100).map(l => l.text)).toEqual(['▸ queued: OPS-9 (pos 1)', '▸ queued: BE-301 (pos 2)'])
+  })
 })
 
 describe('4B: sparklines', () => {

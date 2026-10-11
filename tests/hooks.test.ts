@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
-import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, brainSpawn, spawnCallOf, workerCall, stepInput, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
+import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, brainSpawn, spawnCallOf, workerCall, stepInput, paneProps, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 import { MOD_VERSION } from '../hooks/lib/version'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
@@ -4138,7 +4138,7 @@ describe('MOD-23: exclusive resources and fan-out', () => {
     expect(state).toContain('- queued: T-3 (position 2) — waiting for resource blender-live (held by T-2)')
   })
 
-  test('the overlap check that guards repo=here cards treats a shared resource as overlap: refused naming the resource and the other card; --force-overlap dispatches with a warning', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+  test('MOD-24: a shared resource alone no longer refuses a repo=here dispatch: the in-flight card is not a live worker holding it, so the card is dispatched and its brief carries the resource', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const card = FIXTURE_CARD.replace('status: queued', 'status: queued\nrepo: here\nresources: [blender-live]')
     const path = `${ROOT}/.delegation/briefs/GH-19.brief.md`
     const w = world(on, {
@@ -4151,13 +4151,10 @@ describe('MOD-23: exclusive resources and fan-out', () => {
       },
     })
     await $.session.start(sessionStart)
-    const refused = String((await $.command.run(commandInput('BE-101 --scope app/billing/Rate*.ts'))).text)
-    expect(refused).toContain('/dispatch BE-101: refused — BE-101 holds resource blender-live, which in-flight GH-19 holds in the shared checkout; both would use it at once (pass --force-overlap to dispatch anyway; it then waits for the resource)')
-    expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(false)
-    expect(w.spawns).toHaveLength(0)
-    const forced = String((await $.command.run(commandInput('BE-101 --force-overlap --scope app/billing/Rate*.ts'))).text)
-    expect(forced).toContain('   warning: BE-101 holds resource blender-live, which in-flight GH-19 holds in the shared checkout (--force-overlap: dispatched anyway; it waits for the resource)')
-    expect(spawnCallOf(forced)).toBeDefined()
+    const out = String((await $.command.run(commandInput('BE-101 --scope app/billing/Rate*.ts'))).text)
+    expect(out).not.toContain('refused')
+    expect(out).not.toContain('--force-overlap')
+    expect(spawnCallOf(out)).toBeDefined()
     expect((w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0]).toContain(' resources=blender-live ')
   })
 
@@ -4266,5 +4263,72 @@ describe('MOD-23: exclusive resources and fan-out', () => {
       expect(second.deny).toBe('queued: OPS-2 — waiting for resource blender-live (held by OPS-1)')
       expect(w.spawns).toHaveLength(1)
     })
+  })
+})
+
+describe('MOD-24: a repo=here card that shares a resource is queued, not refused', () => {
+  const OPTIONS = { briefDir: `${SCRATCH}/briefs` }
+  const tasksDir = `${ROOT}/agents/tasks`
+  const onMain = (argv: string[]): RunAnswer | undefined => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined)
+  const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
+  const hereCard = (id: string, title: string, scope: string) =>
+    ['---', `id: ${id}`, `title: ${title}`, 'domain: ops', 'tier: standard', 'status: queued', 'repo: here', `scope: [${scope}]`, 'forbid: [docs/**]', 'resources: [blender-live]', 'red_test: none', 'gate: node', 'budget: 2-attempts', '---', '## Why', '', 'One live Blender, one open file.', ''].join('\n')
+  const HAIR = 'OPS-8-extract-the-hair-model.md'
+  const EYES = 'OPS-9-extract-the-eye-model.md'
+  const setup = (on: Parameters<typeof world>[0], hairScope: string, eyesScope: string) =>
+    world(on, {
+      files: { [`${tasksDir}/${HAIR}`]: hereCard('OPS-8', 'Extract the hair model', hairScope), [`${tasksDir}/${EYES}`]: hereCard('OPS-9', 'Extract the eye model', eyesScope) },
+      dirs: { [tasksDir]: [HAIR, EYES] },
+      run: onMain,
+      listAgents: true,
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+  const PANE_PROPS = paneProps(120)
+  const seen = async (ui: { find: (q: never) => Promise<unknown> }, text: RegExp): Promise<boolean> => {
+    try {
+      return (await ui.find({ type: 'Text', text } as never)) !== undefined
+    } catch {
+      return false
+    }
+  }
+
+  test('two repo=here cards with disjoint scopes that share blender-live: the second dispatch prints the waiting line, no refusal, no spawn block; the pane’s open item names the resource', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on, 'src/hair/**', 'src/eyes/**')
+    await $.session.start(sessionStart)
+    const first = String((await $.command.run(commandInput('OPS-8'))).text)
+    expect(first).not.toContain('refused')
+    await brainSpawn($, first)
+    expect(w.spawns).toHaveLength(1)
+    expect(records(w, 'OPS-8')[0]).toMatchObject({ here: ROOT })
+    // a free slot, an in-flight repo=here card with a disjoint scope, but the one Blender is in use: queued, not refused
+    const second = String((await $.command.run(commandInput('OPS-9'))).text)
+    expect(second).not.toContain('refused')
+    expect(second).not.toContain('--force-overlap')
+    expect(second).toContain('queued: OPS-9 — waiting for resource blender-live (held by OPS-8)')
+    expect(second).toContain('queued (position 1)')
+    expect(spawnCallOf(second)).toBeUndefined()
+    expect(w.spawns).toHaveLength(1)
+    expect(queueOf(w).map(q => q.task)).toEqual(['OPS-9'])
+    // the band's item for the queued card carries the resource it waits for, and not the slot wording
+    const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'Pane', requestId: 'delegation-dash', props: PANE_PROPS })
+    expect(await seen(ui, /OPS-9: queued \(position 1\) — waits for blender-live \(held by OPS-8\)/)).toBe(true)
+    expect(await seen(ui, /OPS-9: queued .*starts when a worker slot frees/)).toBe(false)
+  })
+
+  test('two repo=here cards with overlapping scopes are still refused, as before; --force-overlap dispatches with the scope warning and the card then waits for the resource', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on, 'src/**', 'src/eyes/**')
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text))
+    expect(w.spawns).toHaveLength(1)
+    const refused = String((await $.command.run(commandInput('OPS-9'))).text)
+    expect(refused).toContain('/dispatch OPS-9: refused — OPS-9 scope src/eyes/** overlaps in-flight OPS-8 scope src/** in the shared checkout; both would claim the same paths (pass --force-overlap to dispatch anyway)')
+    expect(refused).not.toContain('holds resource')
+    expect(refused).not.toContain('queued:')
+    expect(w.files.has(`${SCRATCH}/briefs/OPS-9.brief.md`)).toBe(false)
+    expect(queueOf(w)).toEqual([])
+    const forced = String((await $.command.run(commandInput('OPS-9 --force-overlap'))).text)
+    expect(forced).toContain('   warning: OPS-9 scope src/eyes/** overlaps in-flight OPS-8 scope src/** in the shared checkout (--force-overlap: dispatched anyway)')
+    expect(forced).toContain('queued: OPS-9 — waiting for resource blender-live (held by OPS-8)')
+    expect(queueOf(w).map(q => q.task)).toEqual(['OPS-9'])
   })
 })
