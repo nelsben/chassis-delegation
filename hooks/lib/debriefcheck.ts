@@ -48,7 +48,41 @@ export function windowAsk(w: DebriefWindow): string {
   ].join('\n')
 }
 
+/** MOD-38: one user message of the session transcript: its time in ms and its text. */
+export type UserMessage = { ms: number; text: string }
+
+/** MOD-38: how far from a correction's `at` a user message may be and still evidence it. */
+export const EVIDENCE_WINDOW_MS = 2 * 60 * 1000
+/** MOD-38: the fewest characters of a quote that evidence anything. */
+export const EVIDENCE_MIN_CHARS = 12
+
+/** Whitespace collapsed and case folded; apostrophes and other punctuation are left as written. */
+const squash = (s: string): string => s.replace(/\s+/g, ' ').trim().toLowerCase()
+
+/** The user messages (role user, with text and a usable time: `timestamp`, `at`, `ts` or `time`, an ISO string or ms) of transcript rows. */
+export function userMessagesOf(rows: readonly unknown[]): UserMessage[] {
+  const out: UserMessage[] = []
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object') continue
+    const r = row as Record<string, unknown>
+    if (r.role !== 'user' || typeof r.text !== 'string') continue
+    const raw = r.timestamp ?? r.at ?? r.ts ?? r.time
+    const ms = typeof raw === 'number' && Number.isFinite(raw) ? raw : typeof raw === 'string' ? Date.parse(raw) : Number.NaN
+    if (!Number.isNaN(ms)) out.push({ ms, text: squash(r.text) })
+  }
+  return out
+}
+
+/** MOD-38: the quote (surrounding quotes stripped, whitespace and case collapsed, 12+ characters) sits in a user message within two minutes of `atMs`. */
+export function quoteEvidenced(quote: string, atMs: number, users: readonly UserMessage[]): boolean {
+  const q = squash(quote.trim().replace(/^["'\u201c\u2018]+|["'\u201d\u2019]+$/g, ''))
+  if (q.length < EVIDENCE_MIN_CHARS) return false
+  return users.some(u => Math.abs(u.ms - atMs) <= EVIDENCE_WINDOW_MS && u.text.includes(q))
+}
+
 export type DebriefCheck = {
+  /** MOD-38: corrections the transcript evidenced (marked source: transcript, not counted toward the flag). */
+  evidenced: number
   /** false: the text is not a JSON object, nothing could be checked. */
   parsed: boolean
   /** The debrief with out-of-window entries removed. */
@@ -85,31 +119,41 @@ function atOf(entry: unknown): { line: number } | { ms: number } | undefined {
   return Number.isNaN(ms) ? undefined : { ms }
 }
 
+/** The quoted text of a corrections entry: the string itself, or an object's `text`. */
+function quoteOf(entry: unknown): string | undefined {
+  if (typeof entry === 'string') return entry
+  const t = entry !== null && typeof entry === 'object' ? (entry as Record<string, unknown>).text : undefined
+  return typeof t === 'string' ? t : undefined
+}
+
 /**
  * Checks the debrief JSON against its window. With no window (events mode) nothing is stripped
  * or flagged. An entry with `at` outside the window is removed; one with no `at` is kept and
  * counted; a corrections or tool_denials list that reports a kind the window's breadcrumbs lack is flagged.
  */
-export function checkDebrief(text: string, window: DebriefWindow | undefined): DebriefCheck {
+export function checkDebrief(text: string, window: DebriefWindow | undefined, users: readonly UserMessage[] = []): DebriefCheck {
   let j: unknown
   try {
     j = JSON.parse(text)
   } catch {
     j = undefined
   }
-  if (j === null || typeof j !== 'object' || Array.isArray(j)) return { parsed: false, debrief: {}, stripped: [], strippedCount: 0, flagged: [], noAt: 0, clean: true, lines: [] }
+  if (j === null || typeof j !== 'object' || Array.isArray(j)) return { parsed: false, evidenced: 0, debrief: {}, stripped: [], strippedCount: 0, flagged: [], noAt: 0, clean: true, lines: [] }
   const debrief: Record<string, unknown> = { ...(j as Record<string, unknown>) }
-  if (!window) return { parsed: true, debrief, stripped: [], strippedCount: 0, flagged: [], noAt: 0, clean: true, lines: ['debrief check: clean (no breadcrumb window to check against)'] }
+  if (!window) return { parsed: true, evidenced: 0, debrief, stripped: [], strippedCount: 0, flagged: [], noAt: 0, clean: true, lines: ['debrief check: clean (no breadcrumb window to check against)'] }
   const firstMs = Date.parse(window.firstTs)
   const lastMs = Date.parse(window.lastTs)
   const stripped: string[] = []
   const flagged: string[] = []
   let strippedCount = 0
   let noAt = 0
+  let evidenced = 0
+  let flaggedByEvidence = false
   for (const key of AT_LISTS) {
     const list = debrief[key]
     if (!Array.isArray(list)) continue
     const kept: unknown[] = []
+    let proven = 0
     const why: string[] = []
     for (const entry of list) {
       const at = atOf(entry)
@@ -121,24 +165,34 @@ export function checkDebrief(text: string, window: DebriefWindow | undefined): D
       if ('line' in at) {
         if (at.line > window.watermark && at.line <= window.end) kept.push(entry)
         else why.push(`line ${at.line} is ${at.line <= window.watermark ? 'before' : 'after'} lines ${window.firstLine}-${window.lastLine}`)
-      } else if (Number.isNaN(firstMs) || Number.isNaN(lastMs) || (at.ms >= firstMs && at.ms <= lastMs)) kept.push(entry)
-      else why.push(`${new Date(at.ms).toISOString()} is ${at.ms < firstMs ? 'before' : 'after'} ${window.firstTs} to ${window.lastTs}`)
+      } else if (Number.isNaN(firstMs) || Number.isNaN(lastMs) || (at.ms >= firstMs && at.ms <= lastMs)) {
+        // MOD-38: a correction whose quote the transcript holds at its time is evidence whatever the breadcrumbs say
+        const quote = key === 'corrections' ? quoteOf(entry) : undefined
+        if (quote !== undefined && quoteEvidenced(quote, at.ms, users)) {
+          proven += 1
+          kept.push({ ...(entry as Record<string, unknown>), source: 'transcript' })
+        } else kept.push(entry)
+      } else why.push(`${new Date(at.ms).toISOString()} is ${at.ms < firstMs ? 'before' : 'after'} ${window.firstTs} to ${window.lastTs}`)
     }
+    if (proven > 0) debrief[key] = kept
     if (why.length > 0) {
       strippedCount += why.length
       stripped.push(`stripped ${why.length} ${key} ${why.length === 1 ? 'entry' : 'entries'} outside the window: ${why.slice(0, 3).join('; ')}${why.length > 3 ? '; ...' : ''}`)
       debrief[key] = kept
     }
     const needs = KIND_NEEDS[key]
-    if (needs && kept.length > 0 && !needs.some(k => window.kinds.includes(k))) {
-      flagged.push(`flagged ${key}: it reports ${kept.length} but lines ${window.firstLine}-${window.lastLine} hold no ${needs.join(' or ')} breadcrumb`)
+    evidenced += proven
+    if (needs && proven > 0 && !needs.some(k => window.kinds.includes(k))) flaggedByEvidence = true
+    if (needs && kept.length - proven > 0 && !needs.some(k => window.kinds.includes(k))) {
+      flagged.push(`flagged ${key}: it reports ${kept.length - proven} but lines ${window.firstLine}-${window.lastLine} hold no ${needs.join(' or ')} breadcrumb`)
     }
   }
   const clean = strippedCount === 0 && flagged.length === 0
   const lines = [...stripped, ...flagged]
   if (noAt > 0) lines.push(`kept ${noAt} ${noAt === 1 ? 'entry' : 'entries'} with no usable at`)
-  lines.unshift(clean ? 'debrief check: clean' : `debrief check: ${strippedCount} stripped, ${flagged.length} flagged`)
-  return { parsed: true, debrief, stripped, strippedCount, flagged, noAt, clean, lines }
+  const onlyEvidence = clean && evidenced > 0 && flaggedByEvidence
+  lines.unshift(onlyEvidence ? `debrief check: clean (${evidenced} ${evidenced === 1 ? 'correction' : 'corrections'} evidenced by the transcript, none in the breadcrumbs)` : clean ? 'debrief check: clean' : `debrief check: ${strippedCount} stripped, ${flagged.length} flagged`)
+  return { parsed: true, evidenced, debrief, stripped, strippedCount, flagged, noAt, clean, lines }
 }
 
 const HOST_TEXT = /permission classifier|\bclassifier\b|safety check|\bengine\b|\bhost'?s?\b|\b(?:your|the user'?s|the person'?s|user|their|own) hooks?\b/i

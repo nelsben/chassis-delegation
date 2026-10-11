@@ -110,7 +110,7 @@ import {
   windowFacts,
   type FrictionEvent,
 } from './lib/cleanstop'
-import { checkDebrief, windowOf, type DebriefWindow } from './lib/debriefcheck'
+import { checkDebrief, windowOf, userMessagesOf, type DebriefWindow, type UserMessage } from './lib/debriefcheck'
 import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedRowsFrom, prsFrom, renderState, SECTION_ID, splitOwed, type RecentVerdict, type StateSnapshot } from './lib/compaction'
 import {
   agentTypeFor,
@@ -2223,6 +2223,18 @@ async function redactRules($: Host): Promise<RedactRules> {
   }
 }
 
+/** MOD-38: the user messages of the main conversation, read through the engine's session messages call (never by path); [] when it cannot be read. */
+async function sessionUsers($: Host): Promise<UserMessage[]> {
+  try {
+    const rows = await $.session.messages({})
+    if (Array.isArray(rows)) return userMessagesOf(rows)
+    debug($, `no session transcript for the debrief check: ${rows.deny}`)
+  } catch (err) {
+    debug($, `no session transcript for the debrief check: ${String(err)}`)
+  }
+  return []
+}
+
 /**
  * MOD-6 + MOD-10: the debrief agent handed back. Read its JSON and check it against its window
  * (out-of-window entries stripped, kinds the window lacks flagged), set the host's findings aside,
@@ -2238,14 +2250,14 @@ async function writeFindings($: Host, debriefPath: string, window: DebriefWindow
       await appendRow($, `findings: could not read ${path}; no findings file written; the .done watermark was left as is`)
       return { moved: true, clean: false }
     }
-    const check = checkDebrief(text, window)
+    const check = checkDebrief(text, window, await sessionUsers($))
     if (!check.parsed) {
       await appendRow($, `findings: ${path} is not a JSON object; no findings file written; the .done watermark was left as is`)
       return { moved: true, clean: false }
     }
     await appendRow($, check.lines.join('\n'))
     let body = text
-    if (check.strippedCount > 0) {
+    if (check.strippedCount > 0 || check.evidenced > 0) {
       body = JSON.stringify(check.debrief, null, 2) + '\n'
       await $.fs.write(path, body)
     }
