@@ -3140,7 +3140,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     const ready = await stateOf($)
     expect(ready).toContain('- ready: T-9 — run its spawn block')
     expect(postureLines(ready)).toHaveLength(1)
-    expect(postureLines(ready)[0]).toContain('make a ready: row’s spawn call or a respawn block’s Agent call')
+    expect(postureLines(ready)[0]).toContain('make a ready: row’s spawn call, a respawn block’s Agent call or a pending review block’s Agent call')
     expect(postureLines(ready)[0]).toContain('over-spend')
     expect(ready.indexOf(POSTURE)).toBeLessThan(ready.indexOf('- ready: T-9')) // right under the header
     // the brain makes the call: nothing is ready, T-2 and T-9 run
@@ -4036,5 +4036,232 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
     expect(header).toContain(` scope=${HOME}/out/hair/** forbid=${HOME}/secrets/** `)
     expect(header).toContain(` outdir=${HOME}/out/hair scratch=`)
+  })
+})
+
+describe('MOD-23: exclusive resources and fan-out', () => {
+  type Dollar = Parameters<NonNullable<Parameters<typeof test>[2]>>[0]
+  const OPTIONS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full' as const, gateMap: '{"check":"checker {outdir}"}' }
+  const run = (argv: string[]): RunAnswer | undefined => (argv[0] === 'checker' ? { exitCode: 0, stdout: 'checked\n' } : undefined)
+  const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
+  const stateOf = async ($: Dollar) => String((await $.prompt.compose(composeInput(['Agent']))).sections.find(x => x.id === 'chassis-delegation:state')?.text ?? '')
+  const POSTURE = 'without asking the person'
+  const postureLines = (text: string) => text.split('\n').filter(l => l.includes(POSTURE))
+  const tasksDir = `${ROOT}/agents/tasks`
+  // two research cards that both need the one live Blender
+  const cardText = (id: string, title: string, folder: string) =>
+    ['---', `id: ${id}`, `title: ${title}`, 'domain: ops', 'tier: standard', 'status: queued', 'repo: none', `scope: [${folder}/**]`, 'forbid: [/out/notes/shared.md]', 'resources: [blender-live]', 'red_test: none', 'gate: check', 'budget: 2-attempts', '---', '## Why', '', 'One live Blender, one open file.', ''].join('\n')
+  const HAIR = 'OPS-8-extract-the-hair-model.md'
+  const EYES = 'OPS-9-extract-the-eye-model.md'
+  const REPORT = (task: string) => `[[report v=1 task=${task} subtask=main branch=none pr=none sha=none gate=pass red=none files=none]]`
+  const setup = (on: Parameters<typeof world>[0]) =>
+    world(on, {
+      files: { [`${tasksDir}/${HAIR}`]: cardText('OPS-8', 'Extract the hair model', '/out/hair'), [`${tasksDir}/${EYES}`]: cardText('OPS-9', 'Extract the eye model', '/out/eyes') },
+      dirs: { [tasksDir]: [HAIR, EYES] },
+      trees: ['/out/hair', '/out/eyes'],
+      run,
+      listAgents: true,
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+
+  test('dispatching a second card that needs a held resource prints the waiting line and spawns nothing; the first card’s hand-back carries ready: for it', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const first = String((await $.command.run(commandInput('OPS-8'))).text)
+    expect((w.files.get(`${SCRATCH}/briefs/OPS-8.brief.md`) ?? '').split('\n')[0]).toContain(' resources=blender-live ')
+    await brainSpawn($, first)
+    expect(w.spawns).toHaveLength(1)
+    // a free slot, but the one Blender is in use: the second card waits, naming the first
+    const second = String((await $.command.run(commandInput('OPS-9'))).text)
+    expect(second).toContain('queued: OPS-9 — waiting for resource blender-live (held by OPS-8)')
+    expect(second).toContain('queued (position 1)')
+    expect(spawnCallOf(second)).toBeUndefined()
+    expect(w.spawns).toHaveLength(1)
+    expect(queueOf(w).map(q => q.task)).toEqual(['OPS-9'])
+    // asked again, it keeps its place
+    const again = String((await $.command.run(commandInput('OPS-9'))).text)
+    expect(again).toMatch(/queued: OPS-9 — waiting for resource blender-live \(held by OPS-8\); already queued since \d\d:\d\d \(position 1\)/)
+    expect(queueOf(w)).toHaveLength(1)
+    expect(delivered(w)).not.toContain('ready: OPS-9')
+    // the first card hands back: the hand-back that frees the resource says ready for the second
+    await $.turn.complete(turnInput('agent-1', `Done.\n${REPORT('OPS-8')}`))
+    expect(delivered(w)).toContain('ready: OPS-9 — run its spawn block (/dispatch OPS-9 prints it again)')
+    expect(w.submitted.at(-1)?.text).toContain('ready: OPS-9 — run its spawn block')
+    // the brain makes the spawn and the row leaves the queue
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    expect(w.spawns).toHaveLength(2)
+    expect(queueOf(w)).toEqual([])
+  })
+
+  test('a brain spawn of a brief whose resource is held is queued with the waiting line; a brief with no resources is not held up', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    const brief = (task: string, over = '') => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard${over}]]\nDo it.`
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1', ' resources=blender-live'), tool_use_id: 'toolu_A0000001' }))
+    const held = await $.agent.spawn(spawnInput({ prompt: brief('T-2', ' resources=blender-live'), tool_use_id: 'toolu_B0000002' }))
+    expect(held.deny).toBe('queued: T-2 — waiting for resource blender-live (held by T-1)')
+    expect(w.spawns).toHaveLength(1)
+    expect(records(w, 'T-2')).toEqual([])
+    // a slot is free, so nothing is ready, and the state names what the row waits for
+    const waiting = await stateOf($)
+    expect(waiting).toContain('- queued: T-2 (position 1) — waiting for resource blender-live (held by T-1)')
+    expect(waiting).not.toContain('ready: T-2')
+    expect(postureLines(waiting)).toEqual([])
+    // a card with no resources is not held up behind it
+    const free = await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_C0000003' }))
+    expect(free.deny).toBeUndefined()
+    expect(w.spawns).toHaveLength(2)
+    // T-1 hands back: T-2 is ready, and the posture line says to make its call
+    await $.turn.complete(turnInput('agent-1', `Done.\n${REPORT('T-1')}`))
+    expect(delivered(w)).toContain('ready: T-2 — run its spawn block (/dispatch T-2 prints it again)')
+    const ready = await stateOf($)
+    expect(ready).toContain('- ready: T-2 — run its spawn block')
+    expect(postureLines(ready)).toHaveLength(1)
+    // the brain spawns it; it now holds the resource, and a third card that wants it waits for T-2
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2', ' resources=blender-live'), tool_use_id: 'toolu_D0000002' }))
+    expect(w.spawns).toHaveLength(3)
+    expect(queueOf(w)).toEqual([])
+    const third = await $.agent.spawn(spawnInput({ prompt: brief('T-4', ' resources=blender-live'), tool_use_id: 'toolu_E0000004' }))
+    expect(third.deny).toBe('queued: T-4 — waiting for resource blender-live (held by T-2)')
+  })
+
+  test('two queued cards that both hold a resource: only the first is said ready when the holder hands back', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    const brief = (task: string, over = '') => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard${over}]]\nDo it.`
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1', ' resources=blender-live'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2', ' resources=blender-live'), tool_use_id: 'toolu_B0000002' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-3', ' resources=blender-live'), tool_use_id: 'toolu_C0000003' }))
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-2', 'T-3'])
+    await $.turn.complete(turnInput('agent-1', `Done.\n${REPORT('T-1')}`))
+    expect(delivered(w)).toContain('ready: T-2 — run its spawn block')
+    expect(delivered(w)).not.toContain('ready: T-3')
+    const state = await stateOf($)
+    expect(state).toContain('- queued: T-3 (position 2) — waiting for resource blender-live (held by T-2)')
+  })
+
+  test('the overlap check that guards repo=here cards treats a shared resource as overlap: refused naming the resource and the other card; --force-overlap dispatches with a warning', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const card = FIXTURE_CARD.replace('status: queued', 'status: queued\nrepo: here\nresources: [blender-live]')
+    const path = `${ROOT}/.delegation/briefs/GH-19.brief.md`
+    const w = world(on, {
+      files: { [`${tasksDir}/${FIXTURE_CARD_NAME}`]: card, [path]: '[[brief v=1 task=GH-19 subtask=main tier=standard scope=src/** forbid= gate=node repo=here resources=blender-live]]\nbody' },
+      dirs: { [tasksDir]: [FIXTURE_CARD_NAME] },
+      run: argv => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined),
+      store: {
+        'delegation.agentTypes': ['general-purpose', 'backend', 'frontend'],
+        'delegation.tasks.GH-19': [{ task: 'GH-19', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'pending', at: 1, briefPath: path, here: ROOT }],
+      },
+    })
+    await $.session.start(sessionStart)
+    const refused = String((await $.command.run(commandInput('BE-101 --scope app/billing/Rate*.ts'))).text)
+    expect(refused).toContain('/dispatch BE-101: refused — BE-101 holds resource blender-live, which in-flight GH-19 holds in the shared checkout; both would use it at once (pass --force-overlap to dispatch anyway; it then waits for the resource)')
+    expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(false)
+    expect(w.spawns).toHaveLength(0)
+    const forced = String((await $.command.run(commandInput('BE-101 --force-overlap --scope app/billing/Rate*.ts'))).text)
+    expect(forced).toContain('   warning: BE-101 holds resource blender-live, which in-flight GH-19 holds in the shared checkout (--force-overlap: dispatched anyway; it waits for the resource)')
+    expect(spawnCallOf(forced)).toBeDefined()
+    expect((w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').split('\n')[0]).toContain(' resources=blender-live ')
+  })
+
+  describe('the posture line covers a pending review spawn block', () => {
+    const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+    const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=2-attempts report=chassis.report.v1]]'
+    const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+
+    test('owed review: one posture line right under the header, naming the reviewer’s call; gone once the brain makes it', { options: { review: 'on', verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', 'Added the parser.\n[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'))
+      expect(delivered(w)).toContain('next=review')
+      const owed = await stateOf($)
+      expect(owed).toContain('- owed: T-4: review')
+      expect(postureLines(owed)).toHaveLength(1)
+      expect(postureLines(owed)[0]).toContain('a pending review block’s Agent call')
+      expect(owed.indexOf(POSTURE)).toBeLessThan(owed.indexOf('- owed: T-4: review')) // right under the header
+      // the brain makes the reviewer's call: the review is no longer owed, and the posture line goes
+      await brainSpawn($, delivered(w), { tool_use_id: 'toolu_REVIEW01' })
+      w.agents.push({ id: 'agent-2', type: 'general-purpose', description: 'T-4 review economy haiku', status: 'running' })
+      const running = await stateOf($)
+      expect(running).not.toContain('owed: T-4: review')
+      expect(postureLines(running)).toEqual([])
+    })
+  })
+
+  describe('the card tool writes lanes', () => {
+    const TOOL = 'mcp__chassis-delegation__card'
+    const lanesInput = {
+      title: 'Extract the avatar parts',
+      why: 'One live Blender with one open file: the lanes take turns.',
+      doneWhen: ['each part is in its lane folder'],
+      redTest: 'none',
+      repo: 'none',
+      gate: 'check',
+      forbid: ['/out/notes/shared.md'],
+      resources: ['blender-live'],
+      lanes: [
+        { title: 'Extract the hair model', scope: ['/out/hair/**'] },
+        { title: 'Extract the eye model', scope: ['/out/eyes/**'], doneWhen: ['eyes.glb is in /out/eyes'] },
+      ],
+    }
+    const empty = (on: Parameters<typeof world>[0]) =>
+      world(on, { dirs: { [tasksDir]: ['README.md'] }, trees: ['/out/hair', '/out/eyes'], run, store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+
+    test('the dry run writes one card per lane and prints every lane’s header, then says go for all of them', { options: OPTIONS }, async ($, on) => {
+      const w = empty(on)
+      await $.session.start(sessionStart)
+      const out = resultText(await $.tool.call({ tool: TOOL, ...lanesInput } as never))
+      const hair = w.files.get(`${tasksDir}/OPS-1-extract-the-hair-model.md`) ?? ''
+      const eyes = w.files.get(`${tasksDir}/OPS-2-extract-the-eye-model.md`) ?? ''
+      expect(hair).toContain('id: OPS-1\n')
+      expect(eyes).toContain('id: OPS-2\n')
+      for (const text of [hair, eyes]) {
+        expect(text).toContain('\nresources: [blender-live]\n')
+        expect(text).toContain('\nforbid: [/out/notes/shared.md]\n')
+        expect(text).toContain('\nrepo: none\n')
+        expect(text).toContain('One live Blender with one open file: the lanes take turns.')
+      }
+      expect(hair).toContain('\nscope: [/out/hair/**]\n')
+      expect(eyes).toContain('\nscope: [/out/eyes/**]\n')
+      expect(eyes).toContain('- eyes.glb is in /out/eyes')
+      expect(out).toContain(`wrote ${tasksDir}/OPS-1-extract-the-hair-model.md`)
+      expect(out).toContain(`wrote ${tasksDir}/OPS-2-extract-the-eye-model.md`)
+      // every lane's header, each with its own output folder and the shared forbid and resource
+      expect((out.match(/\[\[brief v=1 /g) ?? []).length).toBe(2)
+      expect(out).toContain('task=OPS-1 ')
+      expect(out).toContain('task=OPS-2 ')
+      expect(out).toContain(' scope=/out/hair/** forbid=/out/notes/shared.md ')
+      expect(out).toContain(' scope=/out/eyes/** forbid=/out/notes/shared.md ')
+      expect(out).toContain(' outdir=/out/hair ')
+      expect(out).toContain(' outdir=/out/eyes ')
+      expect((out.match(/ resources=blender-live /g) ?? []).length).toBe(2)
+      expect(out.trimEnd().endsWith('Say go and Claude dispatches OPS-1, OPS-2.')).toBe(true)
+      expect(w.spawns).toHaveLength(0)
+    })
+
+    test('overlapping lane scopes are refused naming both lanes, and nothing is written', { options: OPTIONS }, async ($, on) => {
+      const w = empty(on)
+      await $.session.start(sessionStart)
+      const before = w.files.size
+      const out = resultText(await $.tool.call({ tool: TOOL, ...lanesInput, lanes: [{ title: 'Extract the hair model', scope: ['/out/avatar/**'] }, { title: 'Extract the eye model', scope: ['/out/avatar/eyes/**'] }] } as never))
+      expect(out).toContain('card refused:')
+      expect(out).toContain('Extract the hair model')
+      expect(out).toContain('Extract the eye model')
+      expect(w.files.size).toBe(before)
+      expect(w.spawns).toHaveLength(0)
+    })
+
+    test('dispatch: true dispatches every lane: the first runs, and the second waits for the resource they share', { options: OPTIONS }, async ($, on) => {
+      const w = empty(on)
+      await $.session.start(sessionStart)
+      const out = resultText(await $.tool.call({ tool: TOOL, ...lanesInput, dispatch: true } as never))
+      const sections = out.split(/^--- OPS-\d+ ---$/m)
+      expect(sections).toHaveLength(3)
+      expect(spawnCallOf(sections[1] as string)).toMatchObject({ description: 'OPS-1 standard sonnet' })
+      expect(spawnCallOf(sections[2] as string)).toMatchObject({ description: 'OPS-2 standard sonnet' })
+      expect(w.spawns).toHaveLength(0)
+      await brainSpawn($, sections[1] as string)
+      expect(w.spawns).toHaveLength(1)
+      const second = await brainSpawn($, sections[2] as string)
+      expect(second.deny).toBe('queued: OPS-2 — waiting for resource blender-live (held by OPS-1)')
+      expect(w.spawns).toHaveLength(1)
+    })
   })
 })

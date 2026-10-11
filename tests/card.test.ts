@@ -151,7 +151,8 @@ describe('GH-111: cardFromFields', () => {
   test('the tool takes the spec schema', () => {
     expect(CARD_TOOL.name).toBe('card')
     expect(CARD_TOOL.inputSchema.additionalProperties).toBe(false)
-    expect(CARD_TOOL.inputSchema.required).toEqual(['title', 'why', 'doneWhen', 'scope', 'redTest'])
+    // MOD-23: scope is each lane's own on a call with lanes, so the schema no longer requires a shared one (the card still refuses a single card without it)
+    expect(CARD_TOOL.inputSchema.required).toEqual(['title', 'why', 'doneWhen', 'redTest'])
     expect(CARD_TOOL.description).toContain('Never ask the person to edit a card file.')
   })
 })
