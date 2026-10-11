@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.7.0, MIT.
+any other repo: no scripts, no harness, no network. Version 0.8.0, MIT.
 
 ## Install on a new machine
 
@@ -130,6 +130,105 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.7.0 to 0.8.0
+
+What the brain will see:
+
+- **The verdict word is `consistent`, not `verified` (MOD-19, public issue #1).**
+  Every row that said `verified` now says `consistent`:
+  `attempt 1/2 consistent · sonnet · $0.19 · next=accept`, `verdict=consistent`,
+  the attempt records, the ledger, the dashboard and the debrief. It means every
+  claim of the report that the mod can check matches git (branch, sha, files,
+  scope, gate, red evidence). Consistent is not a review: nothing in the check
+  reads the diff, so read it before you accept. The old word is still read until
+  0.9.0 (an old attempt record, ledger line or recent-verdict row counts exactly
+  as `consistent`), so a script that parses the row, `verdict=` or
+  `.delegation/ledger.jsonl` should accept both words until then.
+- **A verdict wakes you, and the posture line says to act (MOD-15).** After the
+  mod posts the row for a background worker's hand-back it submits that row with
+  its next action as a turn of your own: the model reads "The
+  chassis-delegation plugin sent a message", and you act on it without waiting
+  for the person to type. The "Delegation state" section carries one posture line
+  while a `ready:` row, a respawn block or a pending review block is out: make
+  that call without asking; ask only when a verdict is refuted on a claim you
+  cannot amend, a worker is over its spend, or an amend needs approval. A
+  `ready:` worktree row you leave unclaimed for 10 minutes is started by the mod
+  itself, outside its hooks; `repo=here` and `repo=none` rows always wait for
+  you. `wakeOnVerdict` and `readyFallbackMinutes` turn these off.
+- **An optional reviewer stage, off by default (MOD-21, public issue #1).** With
+  `review` set to `on` (or `on-frontier`), a consistent verdict says
+  `next=review` and ends with a spawn block for a fresh read-only reviewer, one
+  tier below the worker's: make that Agent call verbatim. It labels each claim of
+  the hand-back confirmed, refuted or unverifiable and edits nothing. With none
+  refuted the next is `next=accept`; with one refuted it is a resume of the
+  worker with the rows quoted, spent from its `budget=`. The reviewer never
+  counts against the budget. With `review` off, nothing about a verdict changes.
+  See [Review](#review).
+- **Research cards: `repo=none` and `repo=here` with outputs outside the repo
+  (MOD-22, public issues #32 and #33).** The `card` tool takes `repo`
+  (`worktree`, `here`, `none`); `scope` and `forbid` take absolute paths and
+  globs, and the first absolute scope entry is the output folder. The brief
+  header gains `outdir=` and `scratch=`: deliverables go in the output folder,
+  helper files in scratch, never in the repo. A `repo: none` card has no
+  worktree and no git. The verdict also checks the outside folder (a changed path
+  outside the scope is refuted) and the report's new `artefacts=` (each path must
+  exist and not be empty) and `metrics="k=v"` (recorded, never judged); a
+  gate-map command may name `{outdir}`. See [Research cards](#research-cards).
+- **Resources and lanes (MOD-23 and MOD-24, public issues #33 and #32).** A card
+  may name `resources: [blender-live]`. A dispatch, or your own Agent call, for a
+  card whose resource a running worker holds is queued, free slot or not:
+  `queued: OPS-9 — waiting for resource blender-live (held by OPS-8)`. The mod
+  prints no spawn block for it; the hand-back that frees the resource carries the
+  `ready:` line. A `repo=here` card that shares only a resource is queued the
+  same way; one whose scope overlaps an in-flight `repo=here` card is still
+  refused, and still needs `--force-overlap`. The `card` tool also takes
+  `lanes: [{ title, scope, doneWhen? }]` and writes one card per lane (all or
+  none, sequential ids, disjoint scopes, a shared forbid); `dispatch: true`
+  dispatches each in order. The dashboard shows the resource a worker holds. See
+  [Exclusive resources and fan-out](#exclusive-resources-and-fan-out).
+- **A worker's Bash carries its own identity (MOD-16, public issue #24).** Every
+  Bash call of a recorded worker runs behind
+  `export CHASSIS_SESSION_ID=<task>-a<attempt> CHASSIS_TASK=<task> CHASSIS_ATTEMPT=<n>`,
+  so a lock script keyed on the session id tells sibling workers apart. Your own
+  Bash, ad hoc agents and the debrief and eval runners are never rewritten. A
+  `briefExtra` line asking workers to prefix their lock calls by hand is no
+  longer needed. See [A worker's identity](#a-workers-identity).
+- **A settings.json fallback for hosts that do not load the mod (MOD-17, public
+  issue #2).** Where the engine's rollout switch serves off, two ordinary
+  `settings.json` command hooks from `bin/chassis-hook.mjs` still print the
+  verdict row (`via=settings-hook`, nothing recorded, `repo=here` and `repo=none`
+  briefs engine-only) and run the git guard. It needs node 22.18 or newer. See
+  [Without the engine: two settings.json hooks](#without-the-engine-two-settingsjson-hooks).
+- **The debrief shows the agent's own proposals, and a post refuses while
+  `redact` is empty (MOD-18).** When a debrief hands back, the mod prints
+  `proposals: n for you to review (never posted)`: the agent's process changes,
+  one line each, which are never written to the findings and never posted.
+  `issueRepo` now defaults to the mod's own repository, so mod findings can be
+  filed from any repo the mod runs in. `/delegation debrief post <n|all>` files
+  nothing while the `redact` option in `/config` is empty, and says to set it
+  first. See [Posting the findings](#posting-the-findings).
+- **A gate red only on timeouts is run once more (MOD-20).** When a gate fails
+  with nothing but the engine's `timed out after N ms` in tests the delta did not
+  touch, the verifier runs it again; the claim reads
+  `gate green on rerun (first run: 2 timeouts in untouched tests)`, and a second
+  red is refuted as before. Engine gates take turns (a verdict detail line says
+  `waited 40 s for MOD-x's engine gate`), so two workers no longer false-refute
+  each other under load.
+- **The upgrade is `/delegation update`.** It prints the CHANGELOG slice newer
+  than your version.
+
+What to do:
+
+- Nothing in `.chassis-delegation.json` has to change, and every new option is
+  off or has a default. You may want to set three things. To have a reviewer read
+  each consistent verdict, set `"review": "on"` in the repo file (`/config`
+  wins); leave it out and nothing reviews. Before you post any debrief finding,
+  set `redact` in `/config` to the product, customer, employer and repo names
+  this session must never publish, or `post` refuses. Set `issueRepo` only to
+  send findings somewhere other than the mod's own tracker. A repo file written
+  by an earlier init that already carries `"issueRepo": ""` keeps posting off
+  until you remove that line.
 
 ### From 0.6.1 to 0.7.0
 
