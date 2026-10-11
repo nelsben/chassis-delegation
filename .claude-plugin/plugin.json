@@ -298,6 +298,18 @@
       "title": "Ready fallback minutes",
       "description": "A queued row the mod said ready: for that the brain has not spawned after this many minutes is started by the mod itself, but only a worktree brief (repo=here and repo=none always wait for the brain, and the ready line says how long). A mod-started worker runs outside the mod's hooks: no git guard, no effort setting, cost known only at the end. 0 = off",
       "default": 10
+    },
+    "driveWarn": {
+      "type": "boolean",
+      "title": "Drive warn row",
+      "description": "Post one row a turn when the brain, at a large context, runs the same command a third time or polls a job, saying a standard card would drive it. Off hides the row; /delegation still counts the brain's calls by kind",
+      "default": true
+    },
+    "driveWarnTokens": {
+      "type": "number",
+      "title": "Drive warn context (tokens)",
+      "description": "The brain context, in tokens, from which the drive warn row speaks",
+      "default": 200000
     }
   }
 }
