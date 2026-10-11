@@ -62,6 +62,32 @@ describe('5C: hooks/templates/brief.md is repo-neutral', () => {
   })
 })
 
+describe('MOD-22: the brief template for research cards', () => {
+  test('it names the output folder and the scratch folder (helper files never in the repo), and artefacts= and metrics= in the report', async () => {
+    const t = read('hooks/templates/brief.md')
+    for (const want of ['{{#outdir}}', '{{outdir}}', '{{#scratch}}', '{{scratch}}', 'never in the repo', 'artefacts=', 'metrics=', '{{reportExtra}}', '{{#none}}']) {
+      expect(t.includes(want)).toBe(true)
+    }
+    const { renderBrief, parseCard } = await import('../../hooks/lib/dispatch.ts')
+    const card = parseCard('---\nid: OPS-9\ntitle: Extract the model\ndomain: ops\nrepo: none\nscope: [/out/a/**]\nred_test: none\ngate: check\n---\nThe body.\n')
+    const base = { card, worktree: '/w/main', branch: 'none', cardPath: '/w/cards/OPS-9.md' }
+    const none = renderBrief(t, { ...base, mode: 'none', outdir: '/out/a', scratch: '/tmp/cd/OPS-9', reportExtra: ' artefacts=<paths> metrics="<k=v,k=v>"' })
+    for (const want of ['repo=none', 'Output folder: /out/a', 'Scratch: /tmp/cd/OPS-9', 'never in the repo', 'branch=none pr=none sha=none', ' artefacts=<paths> metrics="<k=v,k=v>"]]']) {
+      expect(none.includes(want)).toBe(true)
+    }
+    for (const gone of ['Work ONLY there', 'Install first', 'sha=HEAD', 'sha=<short sha>', 'Leave the worktree clean', '{{#', '{{/', '{{']) expect(none.includes(gone)).toBe(false)
+    expect(none.split('\n').some(l => l.trim().startsWith('[[amend'))).toBe(false)
+    expect(none.split('\n').filter(l => l.startsWith('[[report v=1 task=OPS-9'))).toHaveLength(1)
+    // a plain worktree card renders none of it
+    const plain = renderBrief(t, { ...base, branch: 'agent/ops/OPS-9' })
+    for (const gone of ['Output folder', 'Scratch:', 'artefacts=', 'repo=none', '{{']) expect(plain.includes(gone)).toBe(false)
+    // repo=here with an output folder keeps its own sections and gains the folders
+    const here = renderBrief(t, { ...base, mode: 'here', outdir: '/out/a', scratch: '/tmp/cd/OPS-9', reportExtra: ' artefacts=<paths>' })
+    for (const want of ['repo=here: no worktree', 'Output folder: /out/a', 'Scratch: /tmp/cd/OPS-9', 'sha=HEAD', ' artefacts=<paths>]]']) expect(here.includes(want)).toBe(true)
+    expect(here.includes('repo=none')).toBe(false)
+  })
+})
+
 describe('5E: hooks/templates/debrief.md, the built-in debrief', () => {
   test('the harness schema, and where it writes', () => {
     const t = read('hooks/templates/debrief.md')
