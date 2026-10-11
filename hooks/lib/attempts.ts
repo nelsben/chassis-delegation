@@ -2,12 +2,12 @@
 // `delegation.tasks.<task-id>` (an array, appended per attempt). The eval's
 // data source. Pure: no `$`.
 /**
- * The verdict word retired at MOD-19 (0.8.0), spelt in two parts so that no file
- * in hooks/ or bin/ names it (tests/node/consistent.node.mjs). A record or row
+ * The verdict word retired at MOD-19 (0.8.0). The one line that spells it is marked
+ * for tests/node/consistent.node.mjs, which skips exactly that line. A record or row
  * written before the rename still holds it: it is read as `consistent` (once per
  * occurrence, logged by the caller) and never written. The ledger keeps it as written.
  */
-export const RETIRED_VERDICT = ['veri', 'fied'].join('')
+export const RETIRED_VERDICT = 'verified' // legacy word: read-only normaliser
 export const isRetiredVerdict = (v: unknown): boolean => v === RETIRED_VERDICT
 /** A stored verdict word as the mod reads it now. */
 export const readVerdict = <V extends string>(v: V): V | 'consistent' => (isRetiredVerdict(v) ? 'consistent' : v)
