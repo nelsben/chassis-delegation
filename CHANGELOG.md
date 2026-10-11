@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Per-domain lessons reach every brief in the domain (MOD-34).** A file beside the
+  cards, `<cardDir>/lessons/<domain>.md`, is appended to each brief for that domain under
+  `## Lessons (<domain>)`, after the card, as the file stands and capped at 40 lines (a
+  longer file is cut with `(n more lines not carried; prune <path>)` and the dispatch
+  warns). A missing file adds nothing. `/delegation lesson <domain> <text>` appends
+  `- <YYYY-MM-DD> <text>` (creating the file), refuses a domain not in `domains` naming the
+  list, and prints the line count and the cap; `/delegation lesson <domain>` prints the
+  file. The card tool's dry run and dispatch print `lessons: n lines from <path>` when a
+  file exists. The brief template tells the worker the Lessons section binds like the
+  Rules; the init scaffold's card README mentions the folder.
+
 - **`/delegation debrief apply` turns the agent's proposals into actions you approve
   (MOD-33).** `apply` lists the latest debrief's proposals numbered with target, a one-line
   summary and a status (open, done, dismissed); `apply <n>` prints one in full with a single

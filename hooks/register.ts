@@ -137,6 +137,10 @@ import {
   parseDispatchArgs,
   parseDispatchTool,
   renderBriefChecked,
+  LESSONS_CAP,
+  lessonLineCount,
+  lessonsCapWarning,
+  lessonsPath,
   renderHeader,
   scopeLooksProse,
   PROSE_SCOPE_STOP,
@@ -1970,6 +1974,36 @@ async function postCore($: Host, argText: string, opts: { path?: string; auto?: 
   return [...out, ...underFindings].join('\n')
 }
 
+// ---- MOD-34: /delegation lesson ------------------------------------------------------
+/**
+ * `/delegation lesson <domain> [text]`: with text, append `- <YYYY-MM-DD> <text>` to the domain's lessons file beside the
+ * cards (creating it) and say how many lines it holds against the cap; with the domain alone, print the file.
+ */
+async function runLesson($: Host, rest: string): Promise<string> {
+  await loadRepoConfig($)
+  const m = /^\s*(\S+)(?:\s+([\s\S]*))?$/.exec(rest)
+  if (m === null) return `usage: /delegation lesson <domain> [text] (domains: ${cfg.domains.join(', ')})`
+  const domain = m[1] as string
+  if (!cfg.domains.includes(domain)) return `lesson: ${domain} is not one of the repo's domains: ${cfg.domains.join(', ')}`
+  const path = lessonsPath(await $.session.root(), cfg.cardDir, domain)
+  let text = (m[2] ?? '').trim()
+  const q = /^(['"])([\s\S]*)\1$/.exec(text)
+  if (q !== null) text = (q[2] as string).trim()
+  const prev = await readText($, path)
+  if (text === '') {
+    return prev === undefined || lessonLineCount(prev) === 0 ? `no ${domain} lessons yet (${path}); /delegation lesson ${domain} <text> adds one` : `${path} (${lessonLineCount(prev)} lines, cap ${LESSONS_CAP}):\n${prev.replace(/\n+$/, '')}`
+  }
+  const date = new Date(await now($)).toISOString().slice(0, 10)
+  const body = `${prev ?? ''}${prev === undefined || prev === '' || prev.endsWith('\n') ? '' : '\n'}- ${date} ${text.replace(/\s*\n\s*/g, ' ')}\n`
+  try {
+    await $.fs.write(path, body)
+  } catch (err) {
+    return `lesson: could not write ${path}: ${String(err).slice(0, 100)}`
+  }
+  const n = lessonLineCount(body)
+  return `lesson added to ${path}: ${n} ${n === 1 ? 'line' : 'lines'}, cap ${LESSONS_CAP} lines${n > LESSONS_CAP ? ` (over the cap: the brief carries the first ${LESSONS_CAP}; prune the file)` : ''}`
+}
+
 // ---- MOD-33: /delegation debrief apply -----------------------------------------------
 
 type LatestProposals = { debrief: string; findings: string; proposals: ReturnType<typeof parseProposals>; statuses: ProposalStatus[]; doc: Record<string, unknown> | undefined }
@@ -3322,6 +3356,11 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const refusal = checkStatus(card) ?? checkDomain(card, cfg.domains)
   if (refusal) return `/dispatch ${id}: ${refusal}${replay ? ` (read at ${base})` : ''}`
 
+  // MOD-34: the domain's lessons file beside the cards, carried into a brief written now; the line is printed whether or not a brief is written
+  const lessonsAt = lessonsPath(root, cfg.cardDir, card.domain)
+  const lessonsText = await readText($, lessonsAt)
+  const lessons = lessonsText !== undefined && lessonLineCount(lessonsText) > 0 ? { text: lessonsText, path: lessonsAt } : undefined
+
   // An existing brief is reused, never overwritten, and it decides the mode.
   const fileName = briefFileName(id, replay)
   const reuse = await existingBrief($, root, fileName)
@@ -3442,13 +3481,18 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     }
     // MOD-22: the report line gains artefacts= and metrics= for a card that has an output folder
     const reportExtra = outdir ? ' artefacts=<comma list of the files you delivered, relative to the output folder or absolute> metrics="<k=v,k=v>"' : ''
-    const rendered = renderBriefChecked(template, { card, worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
+    const rendered = renderBriefChecked(template, { card, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
     // MOD-28: a brief with a marker left in it never reaches a worker; nothing is written, no worktree is made
     if (rendered.leftover !== undefined) return [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n')
     const written = await writeBrief($, root, fileName, `${header}\n\n${rendered.text}`)
     if ('error' in written) return [...out, `/dispatch ${id}: ${written.error}`].join('\n')
     briefPath = written.path
     out.push(`2. brief ${briefPath} written (tier=${tier}, model=${alias}, budget=${budget}-attempts${here ? ', repo=here' : none ? ', repo=none' : ''})`)
+  }
+  if (lessons !== undefined) {
+    const n = lessonLineCount(lessons.text)
+    out.push(`   note: lessons: ${n} lines from ${lessons.path}`)
+    if (n > LESSONS_CAP) out.push(`   ${lessonsCapWarning(card.domain, n, lessons.path)}`)
   }
   // GH-1 item 6: the budget the spawn will use, off the grammar, falls back to the default; say so once
   const budgetWarn = budgetWarning(reuse ? reusedHeader?.budget : card.budget, cfg.defaultBudget)
@@ -4933,6 +4977,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'debrief') return { text: await runDebrief($) }
     if (arg === 'debrief apply' || arg.startsWith('debrief apply ')) return { text: await runDebriefApply($, arg.slice('debrief apply'.length)) }
     if (arg === 'debrief post' || arg.startsWith('debrief post ')) return { text: await runDebriefPost($, arg.slice('debrief post'.length)) }
+    if (arg === 'lesson' || arg.startsWith('lesson ')) return { text: await runLesson($, arg.slice('lesson'.length)) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'dashboard') {
       let placed = false
@@ -4955,7 +5000,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view)].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|accept <id> [note]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|accept <id> [note]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async $ => ({ result: await runInit($) }))

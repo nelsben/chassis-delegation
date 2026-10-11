@@ -2787,6 +2787,54 @@ describe('MOD-7: /delegation debrief post', () => {
     })
   })
 
+  describe('MOD-34: per-domain lessons', () => {
+    const LDIR = `${ROOT}/agents/tasks`
+    const O34 = { options: { briefDir: `${SCRATCH}/briefs` } }
+    const lfiles = (): Record<string, string> => ({ [`${LDIR}/${FIXTURE_CARD_NAME}`]: FIXTURE_CARD })
+    const ldirs = { [LDIR]: [FIXTURE_CARD_NAME] }
+
+    test('/delegation lesson mod <text> creates the file with a dated line and prints the count and cap', O34, async ($, on) => {
+      const f = lfiles()
+      f[`${ROOT}/.chassis-delegation.json`] = JSON.stringify({ domains: ['mod', 'ops'] })
+      const w = world(on, { files: f, dirs: ldirs })
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(delegation("lesson mod 'never forbid tests/** on a bump'"))).text)
+      const file = w.files.get(`${LDIR}/lessons/mod.md`) ?? ''
+      expect(file).toMatch(/^- \d{4}-\d{2}-\d{2} never forbid tests\/\*\* on a bump\n$/)
+      expect(out).toContain('1 line')
+      expect(out).toContain('40')
+      const shown = String((await $.command.run(delegation('lesson mod'))).text)
+      expect(shown).toContain('never forbid tests/** on a bump')
+    })
+
+    test('a domain not in the list is refused naming the list', O34, async ($, on) => {
+      const w = world(on, { files: lfiles(), dirs: ldirs })
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(delegation('lesson nope some text'))).text)
+      expect(out).toContain('nope')
+      expect(out).toContain('ops')
+      expect(w.files.has(`${LDIR}/lessons/nope.md`)).toBe(false)
+    })
+
+    test('the dispatch dry run carries the file into the brief and prints lessons: n lines', O34, async ($, on) => {
+      const f = lfiles()
+      f[`${LDIR}/lessons/backend.md`] = '- 2026-10-10 restate the live-page lesson\n'
+      f[`${ROOT}/.chassis-delegation.json`] = JSON.stringify({ briefTemplate: '/tpl/brief.md' })
+      f['/tpl/brief.md'] = '{{id}}\n{{body}}\n{{#lessons}}\n\n{{lessons}}\n{{/lessons}}\n'
+      const w = world(on, { files: f, dirs: ldirs })
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(commandInput('BE-101 --dry-run'))).text)
+      expect(out).toContain(`lessons: 1 lines from ${LDIR}/lessons/backend.md`)
+      expect(w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').toContain('## Lessons (backend)')
+    })
+
+    test('no file prints no lessons line', O34, async ($, on) => {
+      world(on, { files: lfiles(), dirs: ldirs })
+      await $.session.start(sessionStart)
+      expect(String((await $.command.run(commandInput('BE-101 --dry-run'))).text)).not.toContain('lessons:')
+    })
+  })
+
   describe('MOD-33: /delegation debrief apply', () => {
     const DEBRIEF = `${FOLDER}/2026-10-10-mod-run.json`
     const SUMMARY = 'Add a rule that a card names its gate.'

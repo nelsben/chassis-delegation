@@ -51,6 +51,9 @@ You were started by the brain's own Agent call: the mod that dispatched you reco
 {{#spend}}
 - Spend: about ${{spend}} for this attempt. Do what the card asks and no more; when you are near it, stop and hand back what you have with the report line.
 {{/spend}}
+{{#lessons}}
+- The Lessons section after the card is this repo's own rules for this domain, learned from earlier cards; it binds like the Rules above.
+{{/lessons}}
 - Keep any single foreground wait under 5 minutes; kill anything hung and say so.
 - Your identity: the mod already exports `CHASSIS_SESSION_ID={{id}}-a<attempt>` (`{{id}}.<subtask>-a<attempt>` for a subtask other than main), `CHASSIS_TASK` and `CHASSIS_ATTEMPT` in every Bash call you make, so a lock keyed on the session id tells you from your sibling workers; do not set them yourself.
 {{extra}}
@@ -58,6 +61,10 @@ You were started by the brain's own Agent call: the mod that dispatched you reco
 ## The card
 
 {{body}}
+{{#lessons}}
+
+{{lessons}}
+{{/lessons}}
 
 ## Report (the last line of your hand-back, exactly)
 Any amend blocks go on their own lines just above it.

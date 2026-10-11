@@ -701,6 +701,29 @@ back to `defaultBudget`, and `/dispatch` says so once:
 spawn whose header carries such a budget logs the same line to debug. The
 `frontier` part is never taken as the tier: the card's `tier` stays the tier.
 
+## Lessons
+
+A lesson that lives only in the brain's context reaches a worker when the brain remembers
+to restate it on each card, and is gone after a compaction or in a new session. The first
+adopter's run (issue #65) showed what restating buys: driving the live page after each
+merge found bugs the verifier cannot see, and the two cards that restated those lessons as
+rules in their Why were consistent on attempt 1 and needed no fixes after merge, the first
+time in that run.
+
+So a lesson is a committed file beside the cards, one per domain:
+`<cardDir>/lessons/<domain>.md`. Dispatch appends it to every brief in that domain under
+`## Lessons (<domain>)`, after the card, as the file stands; the brief tells the worker it
+binds like the Rules. The cap is 40 lines: a longer file is cut at 40 with a last line
+`(n more lines not carried; prune <path>)`, and the dispatch output warns once. A missing
+file adds nothing.
+
+- `/delegation lesson <domain> <text>` appends `- <YYYY-MM-DD> <text>`, creating the folder
+  and file; a domain not in the repo's `domains` is refused, naming the list; it prints the
+  file's line count and the cap.
+- `/delegation lesson <domain>` prints the file.
+- The card tool's dry run and dispatch print `lessons: n lines from <path>` when a file
+  exists. The file is under the card folder, so it is writable under `delegateOnly`.
+
 ## The contracts
 
 **Brief.** `/dispatch` writes `<root>/.delegation/briefs/<ID>.brief.md`. It
