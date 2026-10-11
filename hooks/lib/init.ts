@@ -55,6 +55,11 @@ budget: 2-attempts
 Below the frontmatter, write the card as you would brief a colleague: why, what,
 and how you will know it is done. The worker reads it verbatim inside its brief.
 
+Lessons the repo has learned live beside the cards, one file per domain:
+\`agents/tasks/lessons/<domain>.md\`. \`/delegation lesson <domain> <text>\` adds a dated
+line; every brief in that domain carries the file (the first 40 lines) under a
+Lessons heading, so a rule learned once reaches each worker without the card restating it.
+
 A worker ends its hand-back with one line,
 \`[[report v=1 task=<id> subtask=main branch=<branch> pr=none sha=<sha> gate=pass|fail files=<a,b>]]\`,
 and when it had to touch a file outside its scope, an amend block on its own line,

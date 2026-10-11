@@ -114,6 +114,39 @@ describe('card parse (the sample card)', () => {
   })
 })
 
+describe('MOD-34: per-domain lessons in the brief', () => {
+  const card = () => {
+    const c = parseCard(FIXTURE_CARD)
+    if ('error' in c) throw new Error(c.error)
+    return c
+  }
+  const T = 'A\n{{body}}\n{{#lessons}}\n\n{{lessons}}\n{{/lessons}}\n\n## Report'
+  const vars = { worktree: '/w', branch: 'b', cardPath: '/c' }
+  const P = '/r/docs/cards/lessons/mod.md'
+  test('a 3-line lessons file is appended under its heading after the body, as it stands', () => {
+    const c = { ...card(), domain: 'mod', body: '## Done when\n\n- x' }
+    const text = '- 2026-10-10 one\n- 2026-10-10 two\n- 2026-10-10 three\n'
+    const out = renderBrief(T, { card: c, ...vars, lessons: { text, path: P } })
+    expect(out).toBe('A\n## Done when\n\n- x\n\n## Lessons (mod)\n\n- 2026-10-10 one\n- 2026-10-10 two\n- 2026-10-10 three\n\n## Report')
+  })
+  test('a 45-line file is cut at 40 with the prune line', () => {
+    const c = { ...card(), domain: 'mod', body: 'B' }
+    const text = Array.from({ length: 45 }, (_, i) => `- 2026-10-10 l${i + 1}`).join('\n') + '\n'
+    const out = renderBrief(T, { card: c, ...vars, lessons: { text, path: P } })
+    const lines = out.split('\n')
+    expect(lines).toContain('- 2026-10-10 l40')
+    expect(lines).not.toContain('- 2026-10-10 l41')
+    expect(lines).toContain(`(5 more lines not carried; prune ${P})`)
+  })
+  test('no file adds nothing', () => {
+    const c = { ...card(), domain: 'mod', body: 'B' }
+    expect(renderBrief(T, { card: c, ...vars })).toBe('A\nB\n\n## Report')
+    expect(renderBrief(T, { card: c, ...vars })).not.toContain('Lessons')
+    expect(dispatchLib.lessonLineCount('')).toBe(0)
+    expect(dispatchLib.lessonLineCount('a\nb\n')).toBe(2)
+  })
+})
+
 describe('default briefDir (the scratchpad convention)', () => {
   test('root /Users/x/repo and session abc', () => {
     expect(defaultBriefDir('/Users/x/repo', 'abc')).toBe('/private/tmp/claude-501/-Users-x-repo/abc/scratchpad/briefs')

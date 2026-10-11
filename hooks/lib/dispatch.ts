@@ -248,7 +248,7 @@ export function renderSections(template: string, mode: BriefMode | boolean): str
   const on: BriefMode = mode === true ? 'here' : mode === false ? 'worktree' : mode
   // `{{#repo}}` is kept for a worktree or a repo=here brief and dropped for a repo=none one
   const off: string[] = [...(['worktree', 'here', 'none'] as const).filter(m => m !== on), ...(on === 'none' ? ['repo'] : [])]
-  const kept = [on, ...(on === 'none' ? [] : ['repo']), 'spend', 'outdir', 'scratch']
+  const kept = [on, ...(on === 'none' ? [] : ['repo']), 'spend', 'outdir', 'scratch', 'lessons']
   let out = template
   for (const m of off) out = out.replace(new RegExp(`\\{\\{#${m}\\}\\}[\\s\\S]*?\\{\\{/${m}\\}\\}\\n?`, 'g'), '')
   return out.replace(new RegExp(`\\{\\{[#/](?:${kept.join('|')})\\}\\}\\n?`, 'g'), '')
@@ -300,7 +300,36 @@ export type BriefVars = {
   outdir?: string
   scratch?: string
   reportExtra?: string
+  /** MOD-34: the domain's lessons file (its text and the path it was read from); the brief carries it under `## Lessons (<domain>)`, capped. */
+  lessons?: { text: string; path: string }
 }
+
+/** MOD-34: the most lines of a domain's lessons file a brief carries. */
+export const LESSONS_CAP = 40
+
+/** MOD-34: the lines of a lessons file (a trailing newline is not a line). */
+export const lessonLines = (text: string): string[] => {
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  while (lines.length > 0 && (lines.at(-1) ?? '').trim() === '') lines.pop()
+  return lines
+}
+
+/** MOD-34: how many lines a lessons file holds. */
+export const lessonLineCount = (text: string): number => lessonLines(text).length
+
+/** MOD-34: the lessons section as the brief carries it: the file as it stands, cut at the cap with a last line saying how many were left out. */
+export function lessonsSection(domain: string, text: string, path: string): string {
+  const lines = lessonLines(text)
+  const kept = lines.length > LESSONS_CAP ? [...lines.slice(0, LESSONS_CAP), `(${lines.length - LESSONS_CAP} more lines not carried; prune ${path})`] : lines
+  return `## Lessons (${domain})\n\n${kept.join('\n')}`
+}
+
+/** MOD-34: where a domain's lessons file lives: beside the cards. */
+export const lessonsPath = (root: string, cardDir: string | undefined, domain: string): string => `${cardDirPath(root, cardDir)}/lessons/${domain}.md`
+
+/** MOD-34: the warning when a lessons file is over the cap. */
+export const lessonsCapWarning = (domain: string, n: number, path: string): string =>
+  `warning: the ${domain} lessons file holds ${n} lines; the brief carries the first ${LESSONS_CAP} (${n - LESSONS_CAP} not carried): prune ${path}`
 
 /**
  * The template with its sections decided and its `{{key}}`s still in place, and the values they take.
@@ -324,12 +353,13 @@ function stageBrief(template: string, v: BriefVars): { staged: string; values: R
     redTest: v.card.redTest,
     gate: v.card.gateText,
     body: v.card.body,
+    lessons: v.lessons && lessonLineCount(v.lessons.text) > 0 ? lessonsSection(v.card.domain, v.lessons.text, v.lessons.path) : '',
   }
   // GH-106: `{{#spend}}…{{/spend}}` is kept only when the brief carries a ceiling
   const withSpend = template.replace(/\{\{#spend\}\}([\s\S]*?)\{\{\/spend\}\}\n?/g, (_, inner: string) => (v.spend && v.spend > 0 ? inner : ''))
   // MOD-22: `{{#outdir}}…{{/outdir}}` and `{{#scratch}}…{{/scratch}}` are kept only when the brief names the folder
   const keep = (text: string, name: string, on: boolean) => text.replace(new RegExp(`\\{\\{#${name}\\}\\}\\n?([\\s\\S]*?)\\{\\{/${name}\\}\\}\\n?`, 'g'), (_, inner: string) => (on ? inner : ''))
-  const withFolders = keep(keep(withSpend, 'outdir', !!v.outdir), 'scratch', !!v.scratch)
+  const withFolders = keep(keep(keep(withSpend, 'outdir', !!v.outdir), 'scratch', !!v.scratch), 'lessons', values.lessons !== '')
   return { staged: renderSections(withFolders, v.mode ?? (v.here === true ? 'here' : 'worktree')), values }
 }
 
