@@ -2,6 +2,8 @@
 // lines, the instructions a compaction is given, and the system prompt's
 // "Delegation state" section. Pure: no `$`.
 
+import { askPosture } from './findings'
+
 export type StateSnapshot = {
   /** Briefed workers `$.agent.list()` says are running. */
   running: { task: string; tier: string; agentId: string; at?: number }[]
@@ -24,6 +26,8 @@ export type StateSnapshot = {
   eval?: { tier: string; sha: string; pass?: number; total?: number; at: number; running?: boolean; agentId?: string }
   /** PRs the workers' reports named. */
   prs: string[]
+  /** MOD-31: a debrief's post-findings question is waiting for the person's answer. */
+  postAsk?: { count: number; repo: string }
 }
 
 /** One `delegation.recent.<session>` row: a verdict as the one line has it, and what it leaves owed. */
@@ -151,7 +155,9 @@ export function compactBlock(s: StateSnapshot, scratchpad?: string): string {
  */
 export function composeSection(s: StateSnapshot, posture: readonly string[] = []): { id: string; text: string; scope: 'session' } | undefined {
   // MOD-15: one more posture line while a row is ready or a respawn block is pending
-  const lines = actPending(s) ? [...posture, ACT_POSTURE] : posture
+  const acting = actPending(s) ? [...posture, ACT_POSTURE] : posture
+  // MOD-31: while a post-findings question waits, one more posture line
+  const lines = s.postAsk ? [...acting, askPosture(s.postAsk.count, s.postAsk.repo)] : acting
   if (isEmptyState(s) && lines.length === 0) return undefined
   const body = isEmptyState(s) && s.recent.length === 0 ? [HEADER, '- nothing running, nothing owed.'] : renderState(s, lines.length)
   const [head, ...rest] = body as [string, ...string[]]

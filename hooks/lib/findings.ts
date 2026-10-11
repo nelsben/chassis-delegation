@@ -61,3 +61,28 @@ export const issueNumberOf = (stdout: string): number | undefined => {
 
 /** MOD-18: what a post says while the person's own redact list is empty: the automatic scrub cannot know a product name that differs from the folder name. */
 export const REDACT_EMPTY = 'set redact in /config to the product, customer, employer and repo names this session must never publish, then post again'
+
+// ---- MOD-31: the mod asks whether to post, or posts ------------------------------------
+
+/** The person's postFindings setting: ask (the default), auto or off. Never read from the repo file. */
+export type PostMode = 'ask' | 'auto' | 'off'
+
+/** Anything but auto or off is ask: the safe default. */
+export const parsePostMode = (v: unknown): PostMode => (v === 'auto' || v === 'off' ? v : 'ask')
+
+/** Findings auto posts from one debrief; the rest stay drafts. */
+export const AUTO_POST_CAP = 5
+
+/** The one question line a debrief ends with in ask mode. */
+export const askLine = (count: number, repo: string): string =>
+  `post ${count} findings to ${repo}? say yes to post them all, scrubbed, or name some (/delegation debrief post 1,3); nothing is posted without a yes`
+
+/** What the delegation-state section tells the brain while a question is waiting. */
+export const askPosture = (count: number, repo: string): string =>
+  `Posture: the debrief left ${count} new ${count === 1 ? 'finding' : 'findings'} for ${repo}. Ask the person once whether to post ${count === 1 ? 'it' : 'them'} (the question is in the debrief output); never post without an explicit yes in the person's own words, then run /delegation debrief post all, or the numbers they name.`
+
+/** `/delegation`: the mode beside the issues line. */
+export const postModeLine = (mode: PostMode, repo: string): string => `post findings: ${mode} → ${repo}`
+
+/** Auto's closing line when the cap left findings as drafts. */
+export const capLine = (left: number): string => `${left} more stay drafts (auto posts at most ${AUTO_POST_CAP} per debrief; /delegation debrief post all posts the rest)`

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **After a debrief the mod asks whether to post its findings (MOD-31).** A new
+  `/config` option, `postFindings` (`ask` | `auto` | `off`, default `ask`), declared in
+  the manifest and never read from `.chassis-delegation.json`: posting runs `gh` as the
+  person, so the setting is theirs. `/delegation` prints `post findings: <mode> →
+  <issueRepo>` beside the issues line.
+  - **ask.** A debrief that hands back with at least one new mod finding ends with
+    `post n findings to <issueRepo>? say yes to post them all, scrubbed, or name some
+    (/delegation debrief post 1,3); nothing is posted without a yes`. The delegation-state
+    section tells the brain to ask once and never post without an explicit yes; with
+    `wakeOnVerdict` on, the question is also the plugin's wake message. Host findings and
+    the agent's proposals are never in it.
+  - **auto.** Right after the scrub the mod posts each new mod finding through the path
+    of `/delegation debrief post all`, at most 5 per debrief (the output says how many
+    stay drafts), printing `#n <url>`. A covered finding is skipped, never commented on.
+    With the redact list empty it posts nothing, prints the set-redact line and asks.
+  - **off.** No question, no posting; the drafts are still written.
+
 ## 0.8.1 — 2026-10-11
 
 - **The mod reads its templates once, at load, and says when the folder on disk is newer
