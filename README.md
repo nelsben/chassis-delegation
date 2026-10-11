@@ -1132,7 +1132,7 @@ foreground, nothing in the background.
 **A worker stopped by a usage limit (MOD-56).** The engine's `turn.complete` event
 carries no error text (only `reason`), so the mod reads the hand-back text, and only
 when it holds no `[[report]]` block (a worker writing rate-limit code is never taken
-for a stopped one). Any of `429`, `hit your weekly limit`, `usage limit`, `rate limit`,
+for a stopped one). Any of `hit your weekly limit`, `usage limit`, `rate limit`, `too many requests`, or a `429` beside http, status, error or api (never a bare `429`: a sha, a line number or a count),
 in any case, marks the stop. The attempt record and its ledger row then carry
 `stop: rate_limited` (and `resetsAt` when the text names a reset time), and the
 verdict row reads `no-report (rate limited[, resets <time>])`. `next=` is what a
