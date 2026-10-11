@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A held wake is dropped when the brain already messaged its worker (MOD-57).** A resume after a consistent
+  verdict is recorded only at the worker's next hand-back, so a held `next=accept` wake still reached the brain at
+  the turn's end while the worker was busy on attempt 2. The `session.send` hook now notes, for every delivered
+  message to an agent, the agent id and the time (with an ordering counter), whether or not it records an attempt;
+  `flushWakes` drops a held verdict wake whose spawn's agent was messaged after the wake was held, with the debug
+  line `wake skipped: <task> attempt N: the brain already messaged its worker`. Its ready lines are still
+  delivered; the notes are cleared at each flush.
+
 - **A gate failure that only a forbidden file can fix gets a next step that works (MOD-55).** The brief template
   tells a worker whose only fix lies in a forbid= path to leave it alone and hand back gate=fail with
   `[[amend v=1 forbid-=<entry> scope+=<path> reason=<fix>]]`. `advise` (`hooks/lib/verify.ts`) now answers a refuted

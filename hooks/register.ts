@@ -615,7 +615,10 @@ let inTurn = true
 /** MOD-42: a main-loop turn is known to be open (turn.start seen, its turn.complete not yet): a verdict's wake is held for its end. */
 let turnOpen = false
 /** MOD-42: wakes held while the brain's turn is open; a consistent verdict's carries its spawn, re-checked for merged just before delivery. */
-let heldWakes: { text: string; ready: string; spawn?: SpawnRecord }[] = []
+let heldWakes: { text: string; ready: string; spawn?: SpawnRecord; seq: number }[] = []
+/** MOD-57: a counter ordering held wakes against delivered messages (the clock can tie); the last delivered message per agent id. */
+let wakeSeq = 0
+let messaged = new Map<string, { seq: number; at: number }>()
 let idleTimer: { cancel: () => void } | undefined
 let evalTimer: { cancel: () => void } | undefined
 let debriefBusy = false
@@ -1669,7 +1672,7 @@ async function wakeBrain($: Host, text: string, spawn?: SpawnRecord, ready = '')
   // MOD-42: while the brain's turn is open the engine would deliver this only after it, so hold it for the turn's end
   // MOD-51: the held entry keeps the verdict row and its ready lines apart, so a dropped verdict leaves the ready lines
   if (turnOpen) {
-    heldWakes.push({ text, ready, ...(spawn ? { spawn } : {}) })
+    heldWakes.push({ text, ready, seq: ++wakeSeq, ...(spawn ? { spawn } : {}) })
     return
   }
   await submitWake($, [text, ready].filter(Boolean).join('\n'))
@@ -1684,12 +1687,14 @@ async function submitWake($: Host, text: string): Promise<void> {
 }
 
 /**
- * MOD-42: the brain's turn ended: submit the held wakes as one message. MOD-51: a held verdict (any kind) is dropped when
+ * MOD-42: the brain's turn ended: submit the held wakes as one message. MOD-57: a verdict wake is also dropped when the brain messaged its worker after the wake was held. MOD-51: a held verdict (any kind) is dropped when
  * its task has a later attempt, or is merged or accepted by now; its `ready:` lines are still delivered.
  */
 async function flushWakes($: Host): Promise<void> {
   const held = heldWakes
   heldWakes = []
+  const sent = messaged
+  messaged = new Map()
   const keep: string[] = []
   for (const h of held) {
     const spawn = h.spawn
@@ -1702,6 +1707,10 @@ async function flushWakes($: Host): Promise<void> {
         drop = true
       } else if (await alreadyMerged($, spawn, true, true)) {
         debug($, `wake skipped: ${label} merged before delivery`)
+        drop = true
+      } else if (spawn.agentId && (sent.get(spawn.agentId)?.seq ?? 0) > h.seq) {
+        // MOD-57: the brain resumed this worker after the wake was held; its next hand-back is the verdict that matters
+        debug($, `wake skipped: ${label} attempt ${spawn.attempt}: the brain already messaged its worker`)
         drop = true
       }
     }
@@ -5537,8 +5546,14 @@ export const register: Register = (on, opts) => {
     const address = typeof to === 'string' ? to : (to as { agentId?: string } | undefined)?.agentId
     if (!address) return next(e)
     const agentId = (await storeGet<string>($, K.agent(address))) ? address : await storeGet<string>($, K.name(address))
+    // MOD-57: every delivered message to an agent is noted (id and time), whether or not it records a new attempt
+    const nx = async (x: typeof e) => {
+      const out = await next(x)
+      if (out.isDelivered) messaged.set(agentId ?? address, { seq: ++wakeSeq, at: await now($) })
+      return out
+    }
     const spawn = await spawnByAgent($, agentId)
-    if (!agentId || !spawn || spawn.adhoc || spawn.verdictAttempt !== spawn.attempt || !spawn.lastFailed) return next(e)
+    if (!agentId || !spawn || spawn.adhoc || spawn.verdictAttempt !== spawn.attempt || !spawn.lastFailed) return nx(e)
     const lane = laneOf(spawn)
     const records = await loadAttempts($, spawn.task)
     const attempts = attemptsFor(records, spawn.subtask, lane).length
@@ -5552,7 +5567,7 @@ export const register: Register = (on, opts) => {
       }
     }
     if (attempts >= budget) return { isDelivered: false, reason: budgetDenyMessage(taskLabel(spawn.task, spawn.subtask), attempts, spawn.briefPath) }
-    const out = await next(e)
+    const out = await nx(e)
     if (!out.isDelivered) return out
     await recordResume($, spawn, records, agentId)
     return out
