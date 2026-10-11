@@ -125,7 +125,7 @@ import {
   parseCard,
   parseDispatchArgs,
   parseDispatchTool,
-  renderBrief,
+  renderBriefChecked,
   renderHeader,
   scopeLooksProse,
   PROSE_SCOPE_STOP,
@@ -135,6 +135,9 @@ import {
   spawnCall,
   spawnDescription,
   spawnPrompt,
+  TEMPLATE_FILES,
+  templatePath,
+  unrenderedRefusal,
   worktreeAddArgv,
   worktreePath,
   type BriefMode,
@@ -236,7 +239,7 @@ import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, p
 import { MOD_VERSION } from './lib/version'
 import { coveredBy, issueNumberOf, parsePostArg, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding } from './lib/findings'
 import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
-import { behindLine, changelogSlice, classifyRoot, migrateConfig, updateLine, upToDateLine } from './lib/update'
+import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
 type Host = EngineInterface
 
@@ -583,6 +586,13 @@ let lockTail: Promise<unknown> = Promise.resolve()
 let ledgerTail: Promise<unknown> = Promise.resolve()
 let frictionTail: Promise<unknown> = Promise.resolve()
 
+/**
+ * MOD-28: the mod's own templates (hooks/templates/*), read once and kept with the code that renders them. A pull
+ * under a running session moves the folder, never this copy, so old code can never meet a new template. A reload starts it over.
+ */
+type LoadedTemplates = { root: string; text: Map<string, string>; failed: Map<string, string> }
+let templatesLoad: Promise<LoadedTemplates> | undefined
+
 /** MOD-3: the folder this copy of the mod loaded from; the one dir `git merge --ff-only origin/main` may run in. */
 let loadedRoot = ''
 let sessionRoot = ''
@@ -596,6 +606,38 @@ function debug($: Host, text: string) {
     // nothing to do
   }
 }
+/**
+ * MOD-28: the mod's templates, read the first time anything asks and never again until a reload. `register` is handed no `$`,
+ * so session.start asks first (the load); a session that reloads the mod mid-way asks at first use. A file that fails to
+ * load is named once, here, and by the feature that needs it when used.
+ */
+function loadedTemplates($: Host): Promise<LoadedTemplates> {
+  templatesLoad ??= readTemplates($)
+  return templatesLoad
+}
+async function readTemplates($: Host): Promise<LoadedTemplates> {
+  const root = $.plugin.root
+  const text = new Map<string, string>()
+  const failed = new Map<string, string>()
+  for (const name of TEMPLATE_FILES) {
+    try {
+      text.set(name, await $.fs.read(templatePath(root, name)))
+    } catch (err) {
+      failed.set(name, String(err))
+    }
+  }
+  if (failed.size > 0) {
+    const names = [...failed.keys()].join(', ')
+    debug($, `could not load ${names} from ${root}/hooks/templates: ${[...failed.values()].join('; ')}`)
+    try {
+      await $.ui.toast(`${PLUGIN}: could not load ${names} from ${root}/hooks/templates; the feature that needs ${failed.size === 1 ? 'it' : 'each'} will say so when used`)
+    } catch {
+      // the debug line stands
+    }
+  }
+  return { root, text, failed }
+}
+
 async function storeGet<T>($: Host, key: string): Promise<T | undefined> {
   try {
     return (await $.store.get(key)) as T | undefined
@@ -1690,12 +1732,19 @@ async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: stri
     await storeSet($, K.debrief(sid), skip)
     return { skipped: nothingToDebrief(window), builtIn: source.builtIn }
   }
+  // MOD-28: the built-in instructions are the copy loaded with this code and travel in the prompt; with none, nothing is claimed or started
+  let builtInText: string | undefined
+  if (source.builtIn) {
+    const loaded = await loadedTemplates($)
+    builtInText = loaded.text.get('debrief.md')
+    if (builtInText === undefined) return { deny: `the built-in debrief template could not be read: ${loaded.failed.get('debrief.md') ?? 'not loaded'} (it failed to load when the mod started)`, builtIn: true }
+  }
   // claimed before the spawn: never twice for this watermark, whatever the spawn does
   // MOD-10: the previous record is kept inside the claim; a debrief that fails its check puts it back
   const prior = prev ? ((({ prior: _p, window: _w, ...rest }) => rest)(prev) as DebriefRecord) : null
   const record: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn, ...(window ? { window } : {}), prior }
   await storeSet($, K.debrief(sid), record)
-  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), [...notes, ...facts], window) : debriefPrompt(source.path, sid, [...notes, ...facts], window)
+  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), [...notes, ...facts], window, builtInText) : debriefPrompt(source.path, sid, [...notes, ...facts], window)
   const recordAgent = async (agentId: string) => storeSet($, K.debrief(sid), { ...record, agentId })
   runnerStarted.set(promptKey({ prompt }), recordAgent)
   let res: { agentId?: string; deny?: string }
@@ -3183,11 +3232,22 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     out.push(`2. brief ${briefPath} exists — reused${baseNote || ', not overwritten'}${scope || forbid ? ' (--scope/--forbid not applied to it)' : ''}`)
     if ((here !== wantHere || none !== wantNone) && !replay) out.push(`   note: the reused brief is ${here ? 'repo=here' : none ? 'repo=none' : 'a worktree brief'}, so it decides the mode (remove it to re-render)`)
   } else {
+    // MOD-28: the mod's own template is the copy read at load; a template the repo names (briefTemplate) is the repo's file, read now
     let template: string
-    try {
-      template = await $.fs.read(cfg.briefTemplate || `${$.plugin.root}/hooks/templates/brief.md`)
-    } catch (err) {
-      return [...out, `/dispatch ${id}: the brief template could not be read: ${String(err)}`].join('\n')
+    let templateAt: string
+    if (cfg.briefTemplate) {
+      templateAt = cfg.briefTemplate
+      try {
+        template = await $.fs.read(cfg.briefTemplate)
+      } catch (err) {
+        return [...out, `/dispatch ${id}: the brief template could not be read: ${String(err)}`].join('\n')
+      }
+    } else {
+      const loaded = await loadedTemplates($)
+      templateAt = templatePath(loaded.root, 'brief.md')
+      const text = loaded.text.get('brief.md')
+      if (text === undefined) return [...out, `/dispatch ${id}: the brief template could not be read: ${loaded.failed.get('brief.md') ?? 'not loaded'} (it failed to load when the mod started: ${templateAt})`].join('\n')
+      template = text
     }
     let rootNames: string[] = []
     try {
@@ -3197,8 +3257,10 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     }
     // MOD-22: the report line gains artefacts= and metrics= for a card that has an output folder
     const reportExtra = outdir ? ' artefacts=<comma list of the files you delivered, relative to the output folder or absolute> metrics="<k=v,k=v>"' : ''
-    const body = renderBrief(template, { card, worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
-    const written = await writeBrief($, root, fileName, `${header}\n\n${body}`)
+    const rendered = renderBriefChecked(template, { card, worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
+    // MOD-28: a brief with a marker left in it never reaches a worker; nothing is written, no worktree is made
+    if (rendered.leftover !== undefined) return [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n')
+    const written = await writeBrief($, root, fileName, `${header}\n\n${rendered.text}`)
     if ('error' in written) return [...out, `/dispatch ${id}: ${written.error}`].join('\n')
     briefPath = written.path
     out.push(`2. brief ${briefPath} written (tier=${tier}, model=${alias}, budget=${budget}-attempts${here ? ', repo=here' : none ? ', repo=none' : ''})`)
@@ -3638,6 +3700,7 @@ async function statusReport($: Host): Promise<string> {
     ...(split.hasBrain ? [brainLine(split.summary)] : []),
     ...(split.hasEdits ? [`brain edits: ${split.summary.edits}`] : []),
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
+    ...(await codeSkewLines($)),
     ...(await updateStatusLines($)),
     ...(cfg.issueRepo ? [`issues: ${cfg.issueRepo}${cfg.issueRepoOwn ? " (the mod's own tracker)" : ''}`] : []),
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
@@ -3661,6 +3724,18 @@ async function gitIn($: Host, dir: string, args: string[]): Promise<GitOut> {
   return { ok: true, out: r.stdout }
 }
 const commitCount = (out: string): number => out.split('\n').filter(l => /^[0-9a-f]{7,40}$/.test(l.trim())).length
+
+/** MOD-28: `code: running <old>, folder holds <new> …` when hooks/lib/version.ts on disk (read, not imported) names another version than the one running; none otherwise. */
+async function codeSkewLines($: Host): Promise<string[]> {
+  try {
+    const root = $.plugin.root
+    const line = codeSkewLine(MOD_VERSION, folderVersion(await readText($, `${root}/hooks/lib/version.ts`)), inDevMods(root, await homeOf($)))
+    return line ? [line] : []
+  } catch (err) {
+    debug($, `code version check failed: ${String(err)}`)
+    return []
+  }
+}
 
 /** The status line's `update:` text: the loaded clone's commits behind origin/main, fetched at most once per ten minutes; '' when current or not a clone. */
 async function updateStatusLines($: Host): Promise<string[]> {
@@ -3759,7 +3834,10 @@ async function runUpdate($: Host): Promise<string> {
       }
     }
   }
-  out.push(commits === 0 ? `reload: nothing changed, nothing to reload.` : cls.reloadStory)
+  // MOD-28: the folder now names a version other than the code this session runs (a merge moved it, or an earlier pull did)
+  const skew = await codeSkewLines($)
+  out.push(...skew)
+  out.push(commits === 0 && skew.length === 0 ? `reload: nothing changed, nothing to reload.` : cls.reloadStory)
   return out.join('\n')
 }
 
@@ -4157,12 +4235,10 @@ const HANDBACK_CAP = 6000
  * that cannot be read gives the reason instead (the verdict is then next=accept: a review never blocks on its own failure).
  */
 async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string; sha: string; branch: string; text: string }): Promise<{ block: string } | { why: string }> {
-  let template: string
-  try {
-    template = await $.fs.read(`${$.plugin.root}/hooks/templates/review.md`)
-  } catch (err) {
-    return { why: `the review template could not be read: ${String(err)}` }
-  }
+  // MOD-28: the review template as loaded with this code, never a fresh read of the folder
+  const loaded = await loadedTemplates($)
+  const template = loaded.text.get('review.md')
+  if (template === undefined) return { why: `the review template could not be read: ${loaded.failed.get('review.md') ?? 'not loaded'} (it failed to load when the mod started)` }
   const root = (await $.session.root()).replace(/\/+$/, '')
   const briefText = spawn.briefPath ? await readText($, spawn.briefPath) : undefined
   const header = briefText !== undefined ? parseHeader(briefText) : undefined
@@ -4291,6 +4367,7 @@ export const register: Register = (on, opts) => {
   repoLayer = {}
   cfg = readConfig(options, repoLayer).cfg
   // A (re)load starts the per-process memory over; the store keeps what must last.
+  templatesLoad = undefined
   finalizing.clear()
   posted.clear()
 
@@ -4617,6 +4694,8 @@ export const register: Register = (on, opts) => {
     } catch (err) {
       debug($, `the setup tool was not registered: ${String(err)}`)
     }
+    // MOD-28: the load. The templates are read here, once, with the code that renders them.
+    await loadedTemplates($)
     await loadRepoConfig($)
     void sampleSpend($)
     try {

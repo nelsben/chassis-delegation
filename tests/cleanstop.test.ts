@@ -214,3 +214,17 @@ describe('MOD-26: a breadcrumbs debrief carries only the facts inside its window
     expect(debriefPrompt('/Users/b/.claude/commands/debrief.md', 's-1', [])).not.toMatch(/as `at`/)
   })
 })
+
+describe('MOD-28: the built-in debrief prompt carries the template the mod loaded', () => {
+  test('with the loaded text it is inline, between two rules, and names no file to read; without it the old line stays', () => {
+    const inline = builtInDebriefPrompt('/mods/cd/hooks/templates/debrief.md', 'sess-1', '/w/app', ['refuted: OPS-1 attempt 1 refuted on scope'], undefined, '# Debrief\n\nWrite one JSON file.')
+    expect(inline).toContain('# Debrief\n\nWrite one JSON file.')
+    expect(inline).toContain('Run the debrief exactly as written below')
+    expect(inline).not.toContain('exactly as written in')
+    expect(inline).toContain('Session id sess-1. Repo root /w/app.')
+    expect(inline).toContain('- refuted: OPS-1 attempt 1 refuted on scope')
+    expect(inline).toContain('mod_findings')
+    expect(inline.indexOf('Write one JSON file.')).toBeLessThan(inline.indexOf('Session id sess-1.'))
+    expect(builtInDebriefPrompt('/mods/cd/hooks/templates/debrief.md', 'sess-1', '/w/app', [])).toContain('Run the debrief exactly as written in /mods/cd/hooks/templates/debrief.md.')
+  })
+})

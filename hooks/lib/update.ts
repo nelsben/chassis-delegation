@@ -18,10 +18,13 @@ export type RootClass = {
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, '')
 
+/** MOD-28: is the loaded folder one the engine hot-reloads (under `~/.claude/dev-mods`)? */
+export const inDevMods = (root: string, home: string): boolean => home !== '' && trimSlash(root).startsWith(`${trimSlash(home)}/.claude/dev-mods/`)
+
 /** The loaded plugin root → what it is and what happens to the session after it moves. */
 export function classifyRoot(root: string, home: string, isClone: boolean): RootClass {
   const r = trimSlash(root)
-  const devMods = home !== '' && r.startsWith(`${trimSlash(home)}/.claude/dev-mods/`)
+  const devMods = inDevMods(root, home)
   if (!isClone) {
     return {
       kind: 'folder',
@@ -47,6 +50,25 @@ export function classifyRoot(root: string, home: string, isClone: boolean): Root
       'The folder is the one CLAUDE_CODE_PLUGIN_DIRS or --plugin-dir points at.',
     ].join('\n'),
   }
+}
+
+/**
+ * MOD-28: the version `hooks/lib/version.ts` names, read from the file's text (never imported: an import would
+ * give the running copy's own answer). undefined when the text is absent or names none.
+ */
+export function folderVersion(text: string | undefined): string | undefined {
+  const m = /\bMOD_VERSION\b[^=\n]*=\s*(['"`])([^'"`\n]+)\1/.exec(text ?? '')
+  return m ? (m[2] as string).trim() || undefined : undefined
+}
+
+/**
+ * MOD-28: the status and update line when the folder on disk names another version than the code running:
+ * the session runs what it loaded, so a pull under it changes nothing until it reloads. '' when the same or unknown.
+ */
+export function codeSkewLine(running: string, folder: string | undefined, devMods: boolean): string {
+  if (folder === undefined || folder === running) return ''
+  const head = `code: running ${running}, folder holds ${folder} — `
+  return devMods ? `${head}this folder is under ~/.claude/dev-mods, so it reloads when the turn ends` : `${head}reload the window to run it`
 }
 
 const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? '' : 's'}`

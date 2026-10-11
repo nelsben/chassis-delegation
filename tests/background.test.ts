@@ -2,7 +2,7 @@
 // the eval trigger, compaction + the system prompt section, the scheduler.
 // Every spawn here lands in the harness; nothing real runs.
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, mainTurn, agentResult, sessionStart, commandInput, compactInput, composeInput, brainSpawn, spawnCallOf, ROOT, SCRATCH, HOME, NOW, type RunAnswer } from './harness'
+import { world, spawnInput, turnInput, mainTurn, agentResult, sessionStart, commandInput, compactInput, composeInput, brainSpawn, spawnCallOf, DEBRIEF_TEMPLATE, ROOT, SCRATCH, HOME, NOW, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 
 const TOOL = 'mcp__chassis-delegation__dispatch'
@@ -311,7 +311,9 @@ describe('2C: the clean-stop debrief', () => {
     await w.clock.advance(20 * MIN)
     expect(w.spawns).toHaveLength(1)
     const prompt = String(w.spawns[0]?.prompt)
-    expect(prompt).toMatch(/^Run the debrief exactly as written in .*\/templates\/debrief\.md\.\n/)
+    // MOD-28: the instructions are the template as the mod loaded it, in the prompt; the agent reads no file in the folder
+    expect(prompt).toMatch(/^Run the debrief exactly as written below, the built-in template as the mod loaded it \(.*\/templates\/debrief\.md\)/)
+    expect(prompt).toContain(DEBRIEF_TEMPLATE)
     expect(prompt).toContain(`Session id sess-1. Repo root ${ROOT}.`)
     expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ builtIn: true, mode: 'breadcrumbs' })
     await $.turn.complete(turnInput('agent-1', `Wrote ${ROOT}/.delegation/debriefs/2026-10-03-mod-build.json`))

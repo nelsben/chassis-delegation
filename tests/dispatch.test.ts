@@ -1,5 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER } from './fixtures/sample-card'
+import * as dispatchLib from '../hooks/lib/dispatch'
 import {
   parseCard,
   checkStatus,
@@ -352,5 +353,58 @@ describe('GH-16: repo=here, a dispatch into the session checkout', () => {
     expect(headShaArgv(R)).toEqual(['git', '-C', R, 'rev-parse', 'HEAD'])
     expect(checkArgv(currentBranchArgv(R)).ok).toBe(true)
     expect(checkArgv(headShaArgv(R)).ok).toBe(true)
+  })
+})
+
+describe('MOD-28: the leftover-marker scan', () => {
+  const cardOf = (text: string) => {
+    const card = parseCard(text)
+    if ('error' in card) throw new Error(card.error)
+    return card
+  }
+  test('text with no {{ is clean; a {{key}} the caller knows is not a leftover, one it does not know is', () => {
+    const { leftoverMarker } = dispatchLib
+    expect(leftoverMarker('Work in /w on b.\n[[brief v=1 task=T-1]]')).toBeUndefined()
+    expect(leftoverMarker('{{id}} in {{worktree}}', ['id', 'worktree'])).toBeUndefined()
+    expect(leftoverMarker('{{id}} in {{wortree}}', ['id', 'worktree'])).toBe('{{wortree}}')
+    // no keys known: every marker is one
+    expect(leftoverMarker('{{id}}')).toBe('{{id}}')
+  })
+  test('a section opener or closer, a spaced key and an unclosed {{ are all leftovers; the first one is named', () => {
+    const { leftoverMarker } = dispatchLib
+    expect(leftoverMarker('a\n{{#mystery}}x{{/mystery}}\n{{#none}}')).toBe('{{#mystery}}')
+    expect(leftoverMarker('keep\n{{/repo}}\n')).toBe('{{/repo}}')
+    expect(leftoverMarker('{{ id }}', ['id'])).toBe('{{ id }}')
+    expect(leftoverMarker('tail {{open and no end')).toBe('{{open and no end')
+  })
+  test('renderBriefChecked scans the template and never the card: a body that quotes a marker is not a leftover, a template section the code does not know is', () => {
+    const { renderBriefChecked } = dispatchLib
+    const card = cardOf(FIXTURE_CARD.replace('## Why', '## Why\n\nThe old brief carried raw {{#none}} and {{/repo}} markers.'))
+    const v = { card, worktree: '/w/app-BE-101', branch: 'b', cardPath: '/c' }
+    const clean = renderBriefChecked('{{#worktree}}W {{worktree}}\n{{/worktree}}{{#none}}N\n{{/none}}{{#repo}}R\n{{/repo}}{{body}}', v)
+    expect(clean.leftover).toBeUndefined()
+    expect(clean.text).toContain('W /w/app-BE-101\nR\n')
+    expect(clean.text).toContain('raw {{#none}} and {{/repo}} markers')
+    const bad = renderBriefChecked('Hi {{id}}\n{{#mystery}}x{{/mystery}}\n{{body}}', v)
+    expect(bad.leftover).toBe('{{#mystery}}')
+    // a key no value fills stays, and is named
+    expect(renderBriefChecked('{{id}} {{nokey}}', v).leftover).toBe('{{nokey}}')
+    // the render itself is unchanged: renderBrief returns the same text
+    expect(bad.text).toBe(renderBrief('Hi {{id}}\n{{#mystery}}x{{/mystery}}\n{{body}}', v))
+  })
+  test('the refusal names the dispatch, the marker and the template, and says nothing was written', () => {
+    const { unrenderedRefusal } = dispatchLib
+    const line = unrenderedRefusal('BE-101', '{{#mystery}}', '/mods/cd/hooks/templates/brief.md')
+    expect(line.startsWith('/dispatch BE-101: refused —')).toBe(true)
+    expect(line).toContain('{{#mystery}}')
+    expect(line).toContain('/mods/cd/hooks/templates/brief.md')
+    expect(line).toContain('no brief and no worktree were written')
+    expect(line).toContain('reload the window')
+  })
+  test('the templates the mod loads: three files under hooks/templates/', () => {
+    const { TEMPLATE_FILES, templatePath } = dispatchLib
+    expect([...TEMPLATE_FILES].sort()).toEqual(['brief.md', 'debrief.md', 'review.md'])
+    expect(templatePath('/mods/cd/', 'brief.md')).toBe('/mods/cd/hooks/templates/brief.md')
+    expect(templatePath('/mods/cd', 'review.md')).toBe('/mods/cd/hooks/templates/review.md')
   })
 })
