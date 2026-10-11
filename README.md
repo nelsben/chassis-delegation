@@ -1598,6 +1598,7 @@ Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `s
 | --- | --- | --- |
 | `autoEscalate` | `false` | perform the resume instead of advising it; a respawn is always advice (its verdict carries the spawn block) |
 | `wakeOnVerdict` | `true` | after a verdict row, submit it with its next action as a turn of the brain's own, never as your words (MOD-15; see **Waking the brain** under the contracts) |
+| `postFindings` | `ask` | `ask` asks once after a debrief whether to post its new mod findings (nothing without a yes); `auto` posts them at once, scrubbed, at most 5 a debrief, and only with `redact` set; `off` neither asks nor posts. `/config` only, never the repo file (MOD-31; see [Posting the findings](#posting-the-findings)) |
 | `readyFallbackMinutes` | `10` | minutes a `ready:` worktree row may wait for the brain before the mod starts it itself, recorded with `source: fallback` and running outside the mod's hooks; `repo=here` and `repo=none` rows always wait; `0` = off (MOD-15; see **The queue**) |
 | `applyAmends` | `true` | append `scope+=` / `forbid+=` blocks to the brief before verifying |
 | `defaultBudget` | `3` | attempts when the brief names no budget: spawn, resume, respawn |
@@ -1762,6 +1763,31 @@ and says: `set redact in /config to the product, customer, employer and repo
 names this session must never publish, then post again`. The read-only
 `/delegation debrief post` still shows the drafts, with the same warning on its
 first line.
+
+**When the post happens: `postFindings` (MOD-31).** A `/config` option, `ask`
+(the default), `auto` or `off`. It is yours and never the repo file's: posting
+runs `gh` as you, under your own GitHub account, and the repo file is shared by
+every contributor, so `.chassis-delegation.json` is never read for it.
+`/delegation` prints `post findings: <mode> → <issueRepo>` beside the issues
+line.
+
+- **ask.** When a debrief hands back with at least one new mod finding (not
+  covered by an existing issue), the output ends with one question line, `post n
+  findings to <issueRepo>? say yes to post them all, scrubbed, or name some
+  (/delegation debrief post 1,3); nothing is posted without a yes`. The
+  delegation-state section tells the brain to ask you that once and never to
+  post without an explicit yes in your own words; with `wakeOnVerdict` on the
+  question also reaches the brain as the plugin's message. Host findings and the
+  agent's proposals are never in the question. The answer is no until you say
+  yes.
+- **auto.** Right after the scrub the mod posts every new mod finding by the same
+  path as `/delegation debrief post all` (the second scrub, the survive check,
+  the dedupe) and prints `#n <url>` for each. At most 5 per debrief; the rest
+  stay drafts and the output says how many. A covered finding is skipped, never
+  commented on. While the `redact` list is empty auto posts nothing, prints the
+  set-redact line and falls back to the ask question. Set it only when you trust
+  the scrub and the `redact` list.
+- **off.** No question and no posting. The drafts are still written and listed.
 
 Why two steps: the public tracker already carries product, repo, employer and
 home-path names that sessions typed from memory. Nothing leaves the machine

@@ -4569,3 +4569,106 @@ describe('MOD-28: the mod reads its templates once, at load, and says when the f
     expect(out.indexOf('code: running')).toBeGreaterThan(out.indexOf(`mod: chassis-delegation ${MOD_VERSION}`))
   })
 })
+
+describe('MOD-31: after a debrief, the mod asks whether to post its findings', () => {
+  const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const FOLDER = `${ROOT}/.delegation/debriefs`
+  const DEBRIEF = `${FOLDER}/2026-10-10-mod-run.json`
+  const FINDINGS = `${FOLDER}/2026-10-10-mod-run.findings.json`
+  const REPO_FILE = `${ROOT}/.chassis-delegation.json`
+  const one = (over: Record<string, unknown>) => ({ kind: 'went_wrong', surface: '/delegation accept', fault_class: 'bug', severity: 'P2', title: 'Accepted row stayed owed', body: 'It came back.', evidence: ['e1'], ...over })
+  const two = [one({}), one({ surface: '/delegation debrief', title: 'Debrief wrote findings late' })]
+  const isCreate = (argv: string[]) => argv[0] === 'gh' && argv[1] === 'issue' && argv[2] === 'create'
+  let nextIssue = 40
+  const ghRun = (argv: string[]) => {
+    if (argv[0] === 'gh' && argv[2] === 'list') return { exitCode: 0, stdout: '[]' }
+    if (isCreate(argv)) return { exitCode: 0, stdout: `https://github.com/owner/mod/issues/${nextIssue++}\n` }
+    return { exitCode: 0, stdout: '' }
+  }
+  const shown = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
+  const handBack = async ($: any, w: ReturnType<typeof world>) => {
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    return w
+  }
+  const files = (findings: unknown[], extra: Record<string, unknown> = {}) => ({ [DEBRIEF]: JSON.stringify({ summary: 'x', mod_findings: findings, ...extra }), [REPO_FILE]: '{"issueRepo":"owner/mod"}' })
+  const QUESTION = 'post 2 findings to owner/mod? say yes to post them all, scrubbed, or name some (/delegation debrief post 1,3); nothing is posted without a yes'
+
+  test('unset (ask): the hand-back ends with the question naming 2, runs no gh issue create, and the state section carries the ask-once line', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    nextIssue = 40
+    const w = world(on, { listAgents: true, files: files(two), run: ghRun })
+    await handBack($, w)
+    const rows = w.appended.map(a => a.text)
+    expect(rows[rows.length - 1]?.split('\n').pop()).toBe(QUESTION)
+    expect(w.runs.filter(r => isCreate(r.argv))).toHaveLength(0)
+    const section = (await $.prompt.compose(composeInput(['Agent']))).sections.find(s => s.id === 'chassis-delegation:state')
+    expect(section?.text).toContain('Ask the person once whether to post them')
+    expect(section?.text).toContain("never post without an explicit yes in the person's own words")
+    expect(w.submitted.map(s => s.text)).toContain(QUESTION)
+  })
+
+  test('ask with wakeOnVerdict off: the question is printed and nothing is submitted', { options: { autoEval: false, redact: 'globex', wakeOnVerdict: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: files(two), run: ghRun })
+    await handBack($, w)
+    expect(shown(w)).toContain(QUESTION)
+    expect(w.submitted).toEqual([])
+  })
+
+  test('host findings and proposals are not in the question; a covered finding is not counted', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    const host = one({ surface: 'the host app', title: 'Host thing broke' })
+    const covered = JSON.stringify([{ number: 4, title: 'Accepted row stayed owed again', body: '**Surface:** /delegation accept' }])
+    const w = world(on, { listAgents: true, files: files([...two, host], { proposed_harness_changes: [{ target: 'CLAUDE.md', proposed_diff_summary: 'x' }] }), run: (argv: string[]) => (argv[0] === 'gh' && argv[2] === 'list' ? { exitCode: 0, stdout: covered } : ghRun(argv)) })
+    await handBack($, w)
+    const rows = w.appended.map(a => a.text)
+    expect(rows[rows.length - 1]).toContain('post 1 findings to owner/mod?')
+  })
+
+  test('auto: exactly two gh issue create calls, both printed, the numbers recorded; no question', { options: { autoEval: false, redact: 'globex', postFindings: 'auto' } }, async ($, on) => {
+    nextIssue = 40
+    const w = world(on, { listAgents: true, files: files(two), run: ghRun })
+    await handBack($, w)
+    expect(w.runs.filter(r => isCreate(r.argv))).toHaveLength(2)
+    const text = shown(w)
+    expect(text).toContain('#40 https://github.com/owner/mod/issues/40')
+    expect(text).toContain('#41 https://github.com/owner/mod/issues/41')
+    expect(text).not.toContain('say yes to post them all')
+    expect(JSON.parse(w.files.get(FINDINGS) ?? '{}').findings.map((f: { issue?: number }) => f.issue)).toEqual([40, 41])
+  })
+
+  test('auto posts at most 5 per debrief and says how many stay drafts', { options: { autoEval: false, redact: 'globex', postFindings: 'auto' } }, async ($, on) => {
+    nextIssue = 40
+    const seven = Array.from({ length: 7 }, (_, i) => one({ surface: '/delegation accept', title: `Distinct finding number ${i} alpha${i}` }))
+    const w = world(on, { listAgents: true, files: files(seven), run: ghRun })
+    await handBack($, w)
+    expect(w.runs.filter(r => isCreate(r.argv))).toHaveLength(5)
+    expect(shown(w)).toContain('2 more stay drafts')
+  })
+
+  test('auto with the redact list empty posts nothing, prints the set-redact line and asks', { options: { autoEval: false, postFindings: 'auto' } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: files(two), run: ghRun })
+    await handBack($, w)
+    expect(w.runs.filter(r => isCreate(r.argv))).toHaveLength(0)
+    expect(shown(w)).toContain('set redact in /config')
+    expect(shown(w)).toContain(QUESTION)
+  })
+
+  test('off: no question, no posting, the drafts are still listed', { options: { autoEval: false, redact: 'globex', postFindings: 'off' } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: files(two), run: ghRun })
+    await handBack($, w)
+    expect(w.runs.filter(r => isCreate(r.argv))).toHaveLength(0)
+    expect(shown(w)).toContain(`drafts: ${FINDINGS}`)
+    expect(shown(w)).not.toContain('say yes to post them all')
+    expect(w.submitted).toEqual([])
+    const section = (await $.prompt.compose(composeInput(['Agent']))).sections.find(s => s.id === 'chassis-delegation:state')
+    expect(section?.text ?? '').not.toContain('Ask the person once')
+  })
+
+  test('/delegation prints the post findings line beside the issues line', { options: { autoEval: false, postFindings: 'auto' } }, async ($, on) => {
+    world(on, { files: { [REPO_FILE]: '{"issueRepo":"owner/mod"}' } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation(''))).text)
+    expect(out).toContain('post findings: auto → owner/mod')
+    expect(out.indexOf('issues: owner/mod')).toBeLessThan(out.indexOf('post findings: auto'))
+  })
+})

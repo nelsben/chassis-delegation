@@ -157,6 +157,17 @@
       "description": "Comma-separated words (product, customer, employer, repo names) the debrief's findings scrub replaces with <redacted>, whole words, any case. Lives here and not in the repo file, which is public; the home path, the repo and its origin, and the git user are scrubbed without it",
       "default": ""
     },
+    "postFindings": {
+      "type": "string",
+      "title": "Post findings (ask | auto | off)",
+      "description": "After a debrief hands back with new findings about the mod. ask: the mod asks you once whether to post them to the issue repo, and posts nothing without your yes. auto: it posts every new finding at once, scrubbed (needs the redact list set; at most 5 per debrief). off: no question, no posting; the drafts are still written. Posting runs gh as you, so this is yours: it is never read from the repo file",
+      "options": [
+        "ask",
+        "auto",
+        "off"
+      ],
+      "default": "ask"
+    },
     "autoEval": {
       "type": "boolean",
       "title": "Background eval",

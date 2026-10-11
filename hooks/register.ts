@@ -237,7 +237,7 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
-import { coveredBy, issueNumberOf, parsePostArg, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding } from './lib/findings'
+import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
 import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
@@ -280,6 +280,8 @@ const K = {
   recent: (sessionId: string) => `delegation.recent.${sessionId}`,
   /** The background debrief of a session (2C). */
   debrief: (sessionId: string) => `delegation.debrief.${sessionId}`,
+  /** MOD-31: the post-findings question a debrief left waiting for the person (count, repo). */
+  postAsk: (sessionId: string) => `delegation.postAsk.${sessionId}`,
   /** The friction the mod saw in a session (5E): corrections, denials, refutes. */
   friction: (sessionId: string) => `delegation.friction.${sessionId}`,
   /** origin/main when the last T1 eval runner started (2D): never twice per sha. */
@@ -457,6 +459,8 @@ type Config = {
   issueRepoOwn: boolean
   /** MOD-15: a verdict row is followed by a `$.prompt.submit`, a turn of the brain's own. */
   wakeOnVerdict: boolean
+  /** MOD-31: ask | auto | off; /config only, never the (public, shared) repo file. */
+  postFindings: PostMode
   /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
   readyFallbackMs: number
   /** MOD-21: a read-only reviewer after a consistent verdict: off, on, or on-frontier (frontier and premium cards only). */
@@ -523,6 +527,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       issueRepo: issues.repo,
       issueRepoOwn: issues.own,
       wakeOnVerdict: o.wakeOnVerdict !== false,
+      postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
       review: eff.review,
       reviewTier: eff.reviewTier,
@@ -1552,6 +1557,8 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   s.owed = split.live
   s.owedOlder = split.older
   s.prs = prsFrom(recent)
+  const ask = await storeGet<{ count: number; repo: string }>($, K.postAsk(sid))
+  if (ask && ask.count > 0) s.postAsk = ask
   const debrief = await storeGet<DebriefRecord>($, K.debrief(sid))
   if (debrief?.lastAt !== undefined) {
     s.debrief = { at: debrief.lastAt, ...(debrief.agentId ? { agentId: debrief.agentId } : {}), ...(debrief.path ? { path: debrief.path } : {}), ...(debrief.finishedAt !== undefined ? { finishedAt: debrief.finishedAt } : {}) }
@@ -1795,6 +1802,21 @@ async function runDebrief($: Host): Promise<string> {
  * in cfg.issueRepo, one each, a covered one only when named (then as a comment).
  */
 async function runDebriefPost($: Host, argText: string): Promise<string> {
+  const text = await postCore($, argText, {}, { newCount: 0 })
+  // MOD-31: a post was asked for, so the question a debrief left is answered
+  if (argText.trim() !== '') {
+    const sid = await sessionIdOf($)
+    if (sid) await storeSet($, K.postAsk(sid), null)
+  }
+  return text
+}
+
+/**
+ * MOD-31: the one path that posts. `path` names the findings file (default: the latest); `auto` is the
+ * post-right-after-the-scrub form (all, at most AUTO_POST_CAP created, no proposals repeated);
+ * `countOnly` (with an empty argument) only fills `info.newCount`: the findings that are new.
+ */
+async function postCore($: Host, argText: string, opts: { path?: string; auto?: boolean; countOnly?: boolean }, info: { newCount: number }): Promise<string> {
   await loadRepoConfig($)
   const repo = cfg.issueRepo
   if (repo === '') return 'debrief post: issueRepo is empty, so posting is off (the repo file says "", or the mod\'s manifest names no repository). Set issueRepo (owner/name) in .chassis-delegation.json to turn it on; nothing was posted.'
@@ -1802,14 +1824,18 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
   // MOD-18: nothing is filed while the person's own redact list is empty; the read-only form still shows the drafts, with the warning on top
   if (arg !== '' && cfg.redact.length === 0) return `debrief post refused, nothing posted: ${REDACT_EMPTY}`
   const root = (await $.session.root()).replace(/\/+$/, '')
-  const folder = `${root}/.delegation/debriefs`
+  let folder = `${root}/.delegation/debriefs`
   let names: string[] = []
   try {
     names = (await $.fs.list(folder)).map(e => e.name).filter(n => n.endsWith('.findings.json')).sort()
   } catch {
     names = []
   }
-  const name = names[names.length - 1]
+  let name = names[names.length - 1]
+  if (opts.path !== undefined) {
+    folder = opts.path.replace(/\/[^/]*$/, '')
+    name = opts.path.slice(folder.length + 1)
+  }
   if (name === undefined) return `debrief post: no .findings.json under ${folder}/. Run /delegation debrief first.`
   const path = `${folder}/${name}`
   const text = await readText($, path)
@@ -1826,7 +1852,7 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
   const asideLine = setAside > 0 ? `${setAside} host_findings set aside (never posted)` : ''
   // MOD-18: the agent's own proposals, from the debrief this findings file was cut from; shown, never posted
   const proposals = await proposalsOf($, parsed.debrief)
-  const underFindings = proposals.length > 0 ? ['', ...proposals] : []
+  const underFindings = proposals.length > 0 && !opts.auto && !opts.countOnly ? ['', ...proposals] : []
   if (rawList.length === 0) return [`debrief post: ${path} holds no findings`, ...(asideLine ? [asideLine] : []), ...underFindings].join('\n')
   const rules = await redactRules($)
   // scrubbed again, now: what the file says is not trusted to be clean
@@ -1849,6 +1875,8 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
     }
   }
   const statusOf = (f: PostFinding): string => (f.issue !== undefined ? `posted as #${f.issue}` : trackerWhy !== '' ? `unchecked (${trackerWhy})` : (() => { const k = coveredBy(f, issues); return k === undefined ? 'new' : `covered by #${k}` })())
+  info.newCount = findings.filter(f => f.issue === undefined && (trackerWhy !== '' || coveredBy(f, issues) === undefined)).length
+  if (opts.countOnly) return ''
   if (arg === '') {
     const out = [...(cfg.redact.length === 0 ? [`warning: ${REDACT_EMPTY}`] : []), `debrief post: ${path} -> ${repo}${cfg.issueRepoOwn ? " (the mod's own tracker)" : ''} (nothing is posted by this form; /delegation debrief post all|1,3 posts)`, ...(asideLine ? [asideLine] : [])]
     findings.forEach((f, i) => {
@@ -1863,6 +1891,8 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
   const out: string[] = []
   const post: Record<string, unknown>[] = rawList.map(r => ({ ...r }))
   const base = name.replace(/\.findings\.json$/, '')
+  let created = 0
+  let held = 0
   for (const n of want.nums) {
     const f = findings[n - 1] as PostFinding
     if (f.issue !== undefined) {
@@ -1872,6 +1902,11 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
     const k = coveredBy(f, issues)
     if (k !== undefined && want.all) {
       out.push(`[${n}] skipped: covered by #${k} (name it, /delegation debrief post ${n}, to add it as a comment)`)
+      continue
+    }
+    // MOD-31: auto stops at the cap; the rest stay drafts
+    if (opts.auto && k === undefined && created >= AUTO_POST_CAP) {
+      held++
       continue
     }
     const { title, body } = renderPost(f, MOD_VERSION)
@@ -1897,11 +1932,13 @@ async function runDebriefPost($: Host, argText: string): Promise<string> {
       out.push(`[${n}] not posted: ${r.ok ? r.stderr.trim().slice(0, 200) || `gh exited ${r.exitCode}` : r.why}`)
       continue
     }
+    created++
     const num = issueNumberOf(r.stdout)
     if (num !== undefined) (post[n - 1] as Record<string, unknown>).issue = num
     out.push(num !== undefined ? `#${num} ${r.stdout.trim().split('\n').pop()}` : `[${n}] posted: ${r.stdout.trim()} (no issue number found to record)`)
   }
-  if (asideLine) out.push(asideLine)
+  if (held > 0) out.push(capLine(held))
+  if (asideLine && !opts.auto) out.push(asideLine)
   try {
     await $.fs.write(path, JSON.stringify({ ...parsed, findings: post }, null, 2) + '\n')
   } catch (err) {
@@ -1990,10 +2027,37 @@ async function writeFindings($: Host, debriefPath: string, window: DebriefWindow
     await $.fs.write(out, JSON.stringify(findingsFile(path, MOD_VERSION, mod, host), null, 2) + '\n')
     await appendRow($, findingsLines(mod, out, host.length).join('\n'))
     if (proposals.length > 0) await appendRow($, proposals.join('\n'))
+    await afterFindings($, out, mod.length)
   } catch (err) {
     debug($, `findings not written: ${String(err)}`)
   }
   return true
+}
+
+/**
+ * MOD-31: the debrief's mod findings are written; per postFindings, ask the person (the default), post
+ * them all (auto, after the same scrub, survive check and dedupe as `debrief post all`), or say nothing (off).
+ * The host's findings and the agent's proposals are never part of it.
+ */
+async function afterFindings($: Host, findingsPath: string, modCount: number): Promise<void> {
+  const sid = await sessionIdOf($)
+  if (sid) await storeSet($, K.postAsk(sid), null)
+  await loadRepoConfig($)
+  if (cfg.postFindings === 'off' || modCount === 0 || cfg.issueRepo === '') return
+  if (cfg.postFindings === 'auto') {
+    if (cfg.redact.length > 0) {
+      await appendRow($, await postCore($, 'all', { path: findingsPath, auto: true }, { newCount: 0 }))
+      return
+    }
+    await appendRow($, `auto does not post: ${REDACT_EMPTY}`)
+  }
+  const info = { newCount: 0 }
+  await postCore($, '', { path: findingsPath, countOnly: true }, info)
+  if (info.newCount === 0) return
+  const question = askLine(info.newCount, cfg.issueRepo)
+  if (sid) await storeSet($, K.postAsk(sid), { count: info.newCount, repo: cfg.issueRepo })
+  await appendRow($, question)
+  await wakeBrain($, question)
 }
 
 /** The eval runner of this session still out (its agent not listed as finished). */
@@ -3706,7 +3770,7 @@ async function statusReport($: Host): Promise<string> {
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
     ...(await codeSkewLines($)),
     ...(await updateStatusLines($)),
-    ...(cfg.issueRepo ? [`issues: ${cfg.issueRepo}${cfg.issueRepoOwn ? " (the mod's own tracker)" : ''}`] : []),
+    ...(cfg.issueRepo ? [`issues: ${cfg.issueRepo}${cfg.issueRepoOwn ? " (the mod's own tracker)" : ''}`, postModeLine(cfg.postFindings, cfg.issueRepo)] : []),
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
