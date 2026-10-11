@@ -1,5 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
 import * as updateLib from '../hooks/lib/update'
+import { MOD_VERSION } from '../hooks/lib/version'
 import { classifyRoot, changelogSlice, migrateConfig, updateLine, upToDateLine, behindLine, CLONE_URL } from '../hooks/lib/update'
 
 const HOME = '/Users/b'
@@ -160,13 +161,13 @@ describe('MOD-28: the folder on disk against the code running', () => {
   })
   test('the line names both versions and says to reload the window; under ~/.claude/dev-mods it says the turn end reloads it', () => {
     const { codeSkewLine } = updateLib
-    expect(codeSkewLine('0.8.0', '0.9.0', false)).toBe('code: running 0.8.0, folder holds 0.9.0 — reload the window to run it')
-    expect(codeSkewLine('0.8.0', '0.9.0', true)).toBe('code: running 0.8.0, folder holds 0.9.0 — this folder is under ~/.claude/dev-mods, so it reloads when the turn ends')
+    expect(codeSkewLine(MOD_VERSION, '0.9.0', false)).toBe(`code: running ${MOD_VERSION}, folder holds 0.9.0 — reload the window to run it`)
+    expect(codeSkewLine(MOD_VERSION, '0.9.0', true)).toBe(`code: running ${MOD_VERSION}, folder holds 0.9.0 — this folder is under ~/.claude/dev-mods, so it reloads when the turn ends`)
   })
   test('the same version, or none read, says nothing', () => {
     const { codeSkewLine } = updateLib
-    expect(codeSkewLine('0.8.0', '0.8.0', false)).toBe('')
-    expect(codeSkewLine('0.8.0', undefined, false)).toBe('')
+    expect(codeSkewLine(MOD_VERSION, MOD_VERSION, false)).toBe('')
+    expect(codeSkewLine(MOD_VERSION, undefined, false)).toBe('')
   })
   test('a folder under ~/.claude/dev-mods is told from one outside it', () => {
     const { inDevMods } = updateLib
