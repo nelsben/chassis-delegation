@@ -3,20 +3,36 @@
 // the dollars come from a built-in price table keyed by model id prefix.
 // Pure: no `$`.
 
-export type Tokens = { in: number; out: number; cacheRead: number; cacheWrite: number }
-/** Dollars per million tokens. */
-export type Price = { in: number; out: number }
+export type Tokens = {
+  in: number
+  out: number
+  cacheRead: number
+  /** All cache writes, whatever their TTL. */
+  cacheWrite: number
+  /** MOD-47: the part of `cacheWrite` written with the 1-hour TTL (priced 2x); absent where no turn reported the split. */
+  cacheWrite1h?: number
+}
+/** Dollars per million tokens; `cacheRead` is the cache-read price where it is not the default 0.1x input. */
+export type Price = { in: number; out: number; cacheRead?: number }
 
-/** Cache reads cost 10% of the input price; cache writes 125%. */
+/**
+ * MOD-47: prices are API list prices, checked 2026-10-06 against the claude-api skill's
+ * pricing table (Opus 5.5 $4/$20, cache reads $0.20; Sonnet 5.5 $2/$10, cache reads $0.20;
+ * Fable 5.1 and Mythos 5.1 $10/$50, cache reads $0.25; Haiku 5.5 $0.10/$0.50 up to 100K-token
+ * prompts). A model with no `cacheRead` of its own reads the cache at 0.1x input.
+ * Cache writes: 1.25x input for the 5-minute TTL, 2x for the 1-hour TTL (Claude Code writes 1-hour entries).
+ */
 export const CACHE_READ = 0.1
 export const CACHE_WRITE = 1.25
+export const CACHE_WRITE_1H = 2
 
 const TABLE: readonly [string, Price][] = [
-  ['fable-5-1', { in: 10, out: 50 }],
+  ['fable-5-1', { in: 10, out: 50, cacheRead: 0.25 }],
+  ['mythos-5-1', { in: 10, out: 50, cacheRead: 0.25 }],
   ['fable-5', { in: 10, out: 50 }],
-  ['opus-5-5', { in: 4, out: 20 }],
+  ['opus-5-5', { in: 4, out: 20, cacheRead: 0.2 }],
   ['opus-5', { in: 5, out: 25 }],
-  ['sonnet-5-5', { in: 2, out: 10 }],
+  ['sonnet-5-5', { in: 2, out: 10, cacheRead: 0.2 }],
   ['sonnet-5', { in: 3, out: 15 }],
   // Haiku 5.5 bills $0.50 / $2.50 for a request whose prompt passes 100K tokens. Usage
   // arrives summed per turn (a worker's whole run), so that tier cannot be applied:
@@ -45,17 +61,33 @@ export function priceFor(model: string | undefined): Price | undefined {
 }
 
 /** The four counts of a TurnUsage (ModelUsage), as the store keeps them. */
-export type UsageLike = { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null; model?: string }
+export type UsageLike = {
+  input_tokens: number
+  output_tokens: number
+  cache_read_input_tokens?: number | null
+  cache_creation_input_tokens?: number | null
+  /** MOD-47: the API's split of the cache writes by TTL, where the usage carries it. */
+  cache_creation?: { ephemeral_1h_input_tokens?: number | null; ephemeral_5m_input_tokens?: number | null } | null
+  model?: string
+}
 
-export const tokensOf = (u: UsageLike): Tokens => ({
-  in: u.input_tokens || 0,
-  out: u.output_tokens || 0,
-  cacheRead: u.cache_read_input_tokens || 0,
-  cacheWrite: u.cache_creation_input_tokens || 0,
-})
+export const tokensOf = (u: UsageLike): Tokens => {
+  const h = u.cache_creation?.ephemeral_1h_input_tokens
+  const cacheWrite = u.cache_creation_input_tokens || (u.cache_creation ? (h || 0) + (u.cache_creation.ephemeral_5m_input_tokens || 0) : 0)
+  return {
+    in: u.input_tokens || 0,
+    out: u.output_tokens || 0,
+    cacheRead: u.cache_read_input_tokens || 0,
+    cacheWrite,
+    ...(typeof h === 'number' && h > 0 ? { cacheWrite1h: Math.min(h, cacheWrite) } : {}),
+  }
+}
 
-export const usdOf = (t: Tokens, p: Price): number =>
-  (t.in * p.in + t.out * p.out + t.cacheRead * p.in * CACHE_READ + t.cacheWrite * p.in * CACHE_WRITE) / 1e6
+/** Dollars for the tokens at a price: cache reads at the model's own rate, 1-hour writes at 2x input, the rest of the writes at 1.25x. */
+export const usdOf = (t: Tokens, p: Price): number => {
+  const w1h = Math.min(t.cacheWrite1h ?? 0, t.cacheWrite)
+  return (t.in * p.in + t.out * p.out + t.cacheRead * (p.cacheRead ?? p.in * CACHE_READ) + (t.cacheWrite - w1h) * p.in * CACHE_WRITE + w1h * p.in * CACHE_WRITE_1H) / 1e6
+}
 
 /**
  * What an attempt has cost so far: the tokens summed over its turns, and the
@@ -68,12 +100,14 @@ export function addTurn(acc: Spend | undefined, u: UsageLike): Spend {
   const t = tokensOf(u)
   const price = priceFor(u.model)
   const prev: Spend = acc ?? { tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0 }, usd: 0, turns: 0, models: [] }
+  const w1h = (prev.tokens.cacheWrite1h ?? 0) + (t.cacheWrite1h ?? 0)
   return {
     tokens: {
       in: prev.tokens.in + t.in,
       out: prev.tokens.out + t.out,
       cacheRead: prev.tokens.cacheRead + t.cacheRead,
       cacheWrite: prev.tokens.cacheWrite + t.cacheWrite,
+      ...(w1h > 0 ? { cacheWrite1h: w1h } : {}),
     },
     usd: prev.usd === null || price === undefined ? null : prev.usd + usdOf(t, price),
     turns: prev.turns + 1,
@@ -88,6 +122,16 @@ export const round4 = (n: number): number => Math.round(n * 10000) / 10000
 export function usdText(s: { usd: number | null } | undefined): string {
   if (!s) return '$–'
   return s.usd === null ? '$?' : `$${s.usd.toFixed(2)}`
+}
+
+/**
+ * MOD-47: which turn a usage belongs to. The same turn delivered to the hook twice carries the
+ * same turn id and the same counts; a worker's cost is the sum of its distinct turns.
+ */
+export const turnKey = (turnId: string | undefined, u: UsageLike): string | undefined => {
+  if (!turnId) return undefined
+  const t = tokensOf(u)
+  return `${turnId}:${t.in}/${t.out}/${t.cacheRead}/${t.cacheWrite}/${t.cacheWrite1h ?? 0}`
 }
 
 export const totalTokens = (t: Tokens): number => t.in + t.out + t.cacheRead + t.cacheWrite

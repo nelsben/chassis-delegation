@@ -14,10 +14,10 @@ const turn = (model: string, input: number, output: number, read = 0, write = 0)
 
 describe('GH-113: Fable is priced', () => {
   test('fable-5-1 and fable-5 are $10 / $50 per million; the old fable-1 stays unpriced', () => {
-    expect(priceFor('claude-fable-5-1')).toEqual({ in: 10, out: 50 })
+    expect(priceFor('claude-fable-5-1')).toEqual({ in: 10, out: 50, cacheRead: 0.25 })
     expect(priceFor('claude-fable-5')).toEqual({ in: 10, out: 50 })
-    expect(priceFor('claude-fable-5-1[1m]')).toEqual({ in: 10, out: 50 })
-    expect(priceFor('us.anthropic.claude-fable-5-1')).toEqual({ in: 10, out: 50 })
+    expect(priceFor('claude-fable-5-1[1m]')).toEqual({ in: 10, out: 50, cacheRead: 0.25 })
+    expect(priceFor('us.anthropic.claude-fable-5-1')).toEqual({ in: 10, out: 50, cacheRead: 0.25 })
     expect(priceFor('claude-fable-1')).toBeUndefined()
   })
 })
@@ -25,15 +25,15 @@ describe('GH-113: Fable is priced', () => {
 describe('GH-113: the brain record', () => {
   test('main-loop turns add up by model: tokens, dollars, turns', () => {
     let r = brainTurn(undefined, turn('claude-fable-5-1', 100_000, 10_000, 500_000, 20_000))
-    // in 1.00 + out 0.50 + read 0.50 + write 0.25
-    expect(r.usd).toBe(2.25)
+    // in 1.00 + out 0.50 + read 0.125 (Fable 5.1: $0.25/MTok) + write 0.25
+    expect(r.usd).toBe(1.875)
     expect(r.turns).toBe(1)
     expect(r.tokens).toEqual({ in: 100_000, out: 10_000, cacheRead: 500_000, cacheWrite: 20_000 })
     r = brainTurn(r, turn('claude-fable-5-1', 10_000, 1_000))
     r = brainTurn(r, turn('claude-opus-5-5', 100_000, 10_000)) // 0.40 + 0.20
     expect(r.turns).toBe(3)
-    expect(Math.round(r.usd * 1e4) / 1e4).toBe(3.0)
-    expect(r.byModel['claude-fable-5-1']).toMatchObject({ turns: 2, usd: 2.4 })
+    expect(Math.round(r.usd * 1e4) / 1e4).toBe(2.625)
+    expect(r.byModel['claude-fable-5-1']).toMatchObject({ turns: 2, usd: 2.025 })
     expect(r.byModel['claude-opus-5-5']).toMatchObject({ turns: 1, usd: 0.6 })
     expect(r.unpriced).toBe(false)
   })
@@ -69,8 +69,8 @@ describe('GH-113: the split', () => {
   test('the line and the tile', () => {
     const rec = brainTurn(brainTurn(undefined, turn('claude-fable-5-1', 100_000, 10_000, 500_000, 20_000)), turn('claude-fable-5-1', 0, 0))
     const s = brainSummary(rec, 0.75, 3)
-    expect(brainLine(s)).toBe('brain: fable $2.25 over 2 turns · workers $0.75 (3 attempts) · brain share 75%')
-    expect(brainTileText(s)).toBe('brain $2.25 / workers $0.75')
+    expect(brainLine(s)).toBe('brain: fable $1.88 over 2 turns · workers $0.75 (3 attempts) · brain share 71%')
+    expect(brainTileText(s)).toBe('brain $1.88 / workers $0.75')
   })
 })
 

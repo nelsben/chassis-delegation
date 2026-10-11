@@ -2045,11 +2045,26 @@ priced too, and shown apart, so you can see how much of a bill was the brain
 reading, editing and running tests itself.
 
 **The split.** Every main-loop `turn.complete` (no `agentId`) with a `usage`
-adds to one record in `$.state` (`chassis-delegation.brain`): tokens, dollars by
-the model each turn reported, the turn count and the brain's edits. Fable 5.1
-and 5 are in the price table at $10 / $50 per million tokens. The brain's
-share is its dollars over the session total (brain plus workers when the
-session total is unknown).
+adds to one record: tokens, dollars by the model each turn reported, the turn
+count and the brain's edits. The record is kept in the store under the
+conversation's start time (a resume keeps it; `/clear` starts a new one), with
+`$.state` as its view, so a resume or a reload of the mod does not drop the
+turns before it. The brain's share is its dollars over the session total (brain
+plus workers when the session total is unknown).
+
+**What the dollars are.** API list prices from the mod's own table (checked
+2026-10-06 against the claude-api skill's pricing table), priced per message
+from the usage each turn reports, never from a transcript. Per million tokens:
+Opus 5.5 $4 in / $20 out, cache reads $0.20; Sonnet 5.5 $2 / $10, cache reads
+$0.20; Fable 5.1 and Mythos 5.1 $10 / $50, cache reads $0.25; every other model
+reads the cache at 0.1x its input price. Cache writes cost 1.25x input, or 2x for
+the part the usage reports as `ephemeral_1h_input_tokens` (Claude Code writes
+1-hour entries); a usage without that split is priced at 1.25x. What the figures
+leave out: Haiku 5.5's long-prompt tier ($0.50 / $2.50 for a prompt past 100K
+tokens; usage arrives summed per turn, so the tier cannot be applied and a long
+Haiku 5.5 run reads as a floor), fast mode's premium, and any discount or credit
+on your account. A turn delivered to the hook twice (same turn id, same counts)
+is counted once.
 
 **The brain makes the spawn (MOD-12).** Every worker starts from the brain's
 own Agent call: the one a dispatch result's spawn block names, or a ready

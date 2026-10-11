@@ -68,7 +68,7 @@ import {
   spendOf,
   type BriefHeader,
 } from './lib/brief'
-import { addTurn, ceilingState, liveWorker, overSpendDeny, overSpendLine, round4, spendCeiling, spendWarnRow, warnText, OVER_SPEND_NEXT, type Spend } from './lib/cost'
+import { addTurn, turnKey, ceilingState, liveWorker, overSpendDeny, overSpendLine, round4, spendCeiling, spendWarnRow, warnText, OVER_SPEND_NEXT, type Spend } from './lib/cost'
 import {
   addFriction,
   breadcrumbPath,
@@ -279,6 +279,8 @@ const DASH_PANE = 'delegation-dash'
 const K = {
   tasks: (task: string) => `delegation.tasks.${task}`,
   adhoc: 'delegation.adhoc',
+  /** MOD-47: the brain's record for the conversation that started at `since`. */
+  brain: (since: number) => `delegation.brain.${since}`,
   spawn: (key: string) => `delegation.spawn.${key}`,
   agent: (agentId: string) => `delegation.agent.${agentId}`,
   name: (name: string) => `delegation.agentName.${name}`,
@@ -946,7 +948,26 @@ async function readSpend($: Host): Promise<SpendPoint[]> {
 }
 
 // ---- GH-113: the brain's own spend and edits ------------------------------------------
+/**
+ * MOD-47: the brain record is kept in the store, under the conversation's start time
+ * (`$.session.usage().startedAt`: a resume keeps it, `/clear` starts it over), not in
+ * `$.state`. `$.state` is held for one session: a resume gets a new session id and an
+ * empty state, and a session that loads a new copy of the mod starts empty too, so a
+ * record kept there lost every turn before the change. `$.state` stays as the view.
+ */
+async function brainKey($: Host): Promise<string> {
+  let since = 0
+  try {
+    since = (await $.session.usage()).startedAt ?? 0
+  } catch {
+    // unknown: one record for the unknown start
+  }
+  return K.brain(since)
+}
+
 async function readBrain($: Host): Promise<BrainRecord | undefined> {
+  const kept = await storeGet<BrainRecord>($, await brainKey($))
+  if (kept && typeof kept === 'object') return kept
   try {
     const { value } = await $.state.get(BRAIN)
     return value && typeof value === 'object' ? (value as BrainRecord) : undefined
@@ -957,7 +978,9 @@ async function readBrain($: Host): Promise<BrainRecord | undefined> {
 
 async function updateBrain($: Host, fn: (r: BrainRecord | undefined) => BrainRecord) {
   try {
-    await $.state.set(BRAIN, fn(await readBrain($)))
+    const next = fn(await readBrain($))
+    await storeSet($, await brainKey($), next)
+    await $.state.set(BRAIN, next)
   } catch (err) {
     debug($, `brain record not kept: ${String(err)}`)
   }
@@ -1645,7 +1668,7 @@ async function noteRecent($: Host, entry: RecentRow) {
 
 // ---- GH-106: what each worker spends ----------------------------------------------------
 /** A worker's own spend this attempt: the sum of its turns' usage; reset when the attempt moves on (a resume). */
-type CostRecord = { attempt: number; spend: Spend; warned?: true; stopped?: true }
+type CostRecord = { attempt: number; spend: Spend; warned?: true; stopped?: true; /** MOD-47: the turns already added (turn id and counts), so one turn delivered twice counts once. */ seen?: string[] }
 
 async function workerCost($: Host, agentId: string, attempt: number): Promise<Spend | undefined> {
   const rec = await storeGet<CostRecord>($, K.cost(agentId))
@@ -1666,12 +1689,15 @@ async function liveLabels($: Host, workers: readonly { label: string; agentId: s
  * engine gave us its id). A turn that hands back a report is left to the verifier.
  * True when the wrap-up message went out: the worker carries on, so this turn's end is not judged.
  */
-async function trackSpend($: Host, spawn: SpawnRecord, e: { agentId: string; usage?: TurnUsage; answer: string }): Promise<boolean> {
+async function trackSpend($: Host, spawn: SpawnRecord, e: { agentId: string; usage?: TurnUsage; answer: string; turnId?: string }): Promise<boolean> {
   if (!e.usage) return false
   const prior = await storeGet<CostRecord>($, K.cost(e.agentId))
   const rec: CostRecord = prior && prior.attempt === spawn.attempt ? prior : { attempt: spawn.attempt, spend: undefined as unknown as Spend }
+  // MOD-47: a turn the record already holds (same turn id, same counts) is not added again
+  const key = turnKey(e.turnId, e.usage)
+  if (key !== undefined && rec.seen?.includes(key)) return false
   const spend = addTurn(rec.spend, { ...e.usage, model: e.usage.model || spawn.resolvedModel })
-  const next: CostRecord = { ...rec, spend }
+  const next: CostRecord = { ...rec, spend, ...(key !== undefined ? { seen: [...(rec.seen ?? []), key].slice(-200) } : {}) }
   await storeSet($, K.cost(e.agentId), next)
   const ceiling = spawn.spend
   if (spawn.adhoc || ceiling === undefined || ceiling <= 0 || spend.usd === null) return false
@@ -5303,7 +5329,7 @@ export const register: Register = (on, opts) => {
       const agentId = e.agentId
       // GH-106: this worker's own cost, and its ceiling
       const costed = await spawnByAgent($, agentId)
-      const warned = costed ? await trackSpend($, costed, { agentId, ...(e.usage ? { usage: e.usage } : {}), answer: e.answer }) : false
+      const warned = costed ? await trackSpend($, costed, { agentId, ...(e.usage ? { usage: e.usage } : {}), answer: e.answer, turnId: e.turnId }) : false
       turnOf.delete(agentId)
       stepEfforts.delete(agentId)
       // the answer plus the hand-back (GH-2), read once and only for an agent the mod judges

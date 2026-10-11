@@ -14,12 +14,12 @@ describe('3B: the price table', () => {
   test('per MTok in/out, matched by model id prefix, longest first', () => {
     const lengths = PRICES.map(([p]) => p.length)
     expect(lengths).toEqual([...lengths].sort((a, b) => b - a))
-    expect(PRICES.map(([p]) => p).sort()).toEqual(['fable-5', 'fable-5-1', 'haiku-4-5', 'haiku-5-5', 'opus-5', 'opus-5-5', 'sonnet-5', 'sonnet-5-5'])
-    expect(priceFor('claude-opus-5-5')).toEqual({ in: 4, out: 20 })
+    expect(PRICES.map(([p]) => p).sort()).toEqual(['fable-5', 'fable-5-1', 'haiku-4-5', 'haiku-5-5', 'mythos-5-1', 'opus-5', 'opus-5-5', 'sonnet-5', 'sonnet-5-5'])
+    expect(priceFor('claude-opus-5-5')).toEqual({ in: 4, out: 20, cacheRead: 0.2 })
     expect(priceFor('claude-opus-5')).toEqual({ in: 5, out: 25 })
     expect(priceFor('claude-opus-5-20260101')).toEqual({ in: 5, out: 25 })
-    expect(priceFor('claude-sonnet-5-5')).toEqual({ in: 2, out: 10 })
-    expect(priceFor('claude-sonnet-5-5[1m]')).toEqual({ in: 2, out: 10 })
+    expect(priceFor('claude-sonnet-5-5')).toEqual({ in: 2, out: 10, cacheRead: 0.2 })
+    expect(priceFor('claude-sonnet-5-5[1m]')).toEqual({ in: 2, out: 10, cacheRead: 0.2 })
     expect(priceFor('claude-sonnet-5')).toEqual({ in: 3, out: 15 })
     expect(priceFor('claude-haiku-4-5')).toEqual({ in: 1, out: 5 })
     expect(priceFor('claude-haiku-5-5')).toEqual({ in: 0.1, out: 0.5 })
@@ -95,5 +95,36 @@ describe('GH-106: the spend ceiling (pure)', () => {
     expect(overSpendLine({ label: 'T-1', task: 'T-1', attempt: 1, budget: 3, usd: 4.2, spend: 2 })).toBe(
       'chassis-delegation: T-1 attempt 1/3 over-spend · $4.20 of $2 · next=check the worktree (work may be present: /dispatch T-1 --verify <sha>)',
     )
+  })
+})
+
+const r6 = (n: number | null | undefined): number => Math.round((n ?? 0) * 1e6) / 1e6
+
+describe('MOD-47: cache reads at each model\'s own rate, writes by TTL', () => {
+  const MTOK = (model: string, t: Partial<ReturnType<typeof tokensOf>>, extra: Record<string, unknown> = {}) =>
+    addTurn(undefined, { model, input_tokens: t.in ?? 0, output_tokens: t.out ?? 0, cache_read_input_tokens: t.cacheRead ?? 0, cache_creation_input_tokens: t.cacheWrite ?? 0, ...extra }).usd
+  test('1M cache-read tokens cost $0.20 on Opus 5.5, $0.25 on Fable 5.1, $0.20 on Sonnet 5.5, 0.1x input elsewhere', () => {
+    expect(r6(usdOf({ in: 0, out: 0, cacheRead: 1e6, cacheWrite: 0 }, priceFor('claude-opus-5-5')!))).toBe(0.2)
+    expect(r6(usdOf({ in: 0, out: 0, cacheRead: 1e6, cacheWrite: 0 }, priceFor('claude-fable-5-1')!))).toBe(0.25)
+    expect(r6(usdOf({ in: 0, out: 0, cacheRead: 1e6, cacheWrite: 0 }, priceFor('claude-mythos-5-1')!))).toBe(0.25)
+    expect(r6(MTOK('claude-sonnet-5-5', { cacheRead: 1e6 }))).toBe(0.2)
+    expect(r6(MTOK('claude-opus-5', { cacheRead: 1e6 }))).toBe(0.5)
+    expect(r6(MTOK('claude-haiku-4-5', { cacheRead: 1e6 }))).toBe(0.1)
+  })
+  test('cache writes: ephemeral_1h at 2x input, the rest at 1.25x, no breakdown stays 1.25x', () => {
+    const w1h = { cache_creation: { ephemeral_1h_input_tokens: 1e6, ephemeral_5m_input_tokens: 0 } }
+    const w5m = { cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 1e6 } }
+    expect(r6(MTOK('claude-opus-5-5', { cacheWrite: 1e6 }, w1h))).toBe(8)
+    expect(r6(MTOK('claude-opus-5-5', { cacheWrite: 1e6 }, w5m))).toBe(5)
+    expect(r6(MTOK('claude-opus-5-5', { cacheWrite: 1e6 }))).toBe(5)
+    // a mixed write: 400k at 1h, the other 600k at 1.25x
+    expect(r6(MTOK('claude-opus-5-5', { cacheWrite: 1e6 }, { cache_creation: { ephemeral_1h_input_tokens: 4e5 } }))).toBe(r6(4 * (0.4 * 2 + 0.6 * 1.25)))
+  })
+  test('the 1h split survives summing turns', () => {
+    let s: Spend | undefined
+    const w = { cache_creation: { ephemeral_1h_input_tokens: 5e5 } }
+    s = addTurn(s, { model: 'claude-opus-5-5', input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 5e5, ...w })
+    s = addTurn(s, { model: 'claude-opus-5-5', input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 5e5, ...w })
+    expect(r6(s.usd)).toBe(8)
   })
 })
