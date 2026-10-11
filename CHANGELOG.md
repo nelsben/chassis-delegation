@@ -13,6 +13,29 @@
   context and the dollars a call costs on the brain's model, and saying a standard card (with
   `resources` for a one-client app) would drive it. README: What the brain keeps and what it hands off.
 
+- **The money figures match what a session costs (MOD-47).** Three defects in `brain: … · workers … ·
+  ad hoc …`, found on a session whose line read `brain: opus $325.56 over 15 turns` for a main loop
+  that cost about $972 on the mod's own table. (1) *Prices.* `hooks/lib/cost.ts` read every cache read
+  at 0.1x input and every cache write at 1.25x. Cache reads now use each model's list price: Opus 5.5
+  $0.20/MTok, Sonnet 5.5 $0.20, Fable 5.1 and Mythos 5.1 $0.25 (Mythos 5.1 is now in the table), every
+  other model 0.1x input as before; cache writes are priced by TTL from `usage.cache_creation`:
+  `ephemeral_1h_input_tokens` at 2x input, the rest at 1.25x, and a usage without the split stays at
+  1.25x. The comment in cost.ts names the claude-api skill's pricing table, cached 2026-10-06. (2)
+  *Missing turns.* The brain record lived only in `$.state`, which the engine holds for one session:
+  a resume gets a new session id and an empty state, and a session that loads a new copy of the mod
+  (the dev-mods snapshot) starts empty too, so every turn before either was lost (two-thirds of that session's turns). It
+  is now kept in the store under `delegation.brain.<conversation start>`, the start time that a resume
+  keeps and `/clear` resets, with `$.state` as the view. A `turn.complete` that carries no usage cannot
+  be priced and is still not counted; this card found no evidence that any were missing. (3) *Ad hoc
+  agents.* An agent's cost is the sum of its `turn.complete` usages, and a turn delivered to the hook
+  twice (the same turn id and counts, as a resumed agent's turn can be) was added twice. A turn already
+  in the agent's record is now skipped. The rest of the gap to a per-message transcript price (+18% on
+  the 61 agents in that session, and $889 against $453 if every transcript entry is counted) is the
+  transcript: it repeats one message's usage on each of its content-block entries, so summing entries
+  counts a message several times; the mod never reads transcript usage, only the hook's per-turn
+  figure. I could not replay that session's turns here, so the double delivery is the only mod-side
+  cause the code shows. README: The brain's spend.
+
 ## 0.9.0 — 2026-10-11
 
 - **`init` and `setup` take a path, so the brain can scaffold a sibling repo before delegating into it
