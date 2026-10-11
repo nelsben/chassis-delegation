@@ -106,6 +106,48 @@ describe('GH-111: cardFromFields', () => {
     expect(cardSummary(n, 'sonnet')).toContain('· no ceiling')
   })
 
+  test('MOD-22: repo here or none is written on the card; worktree is the default and writes nothing; anything else is refused', () => {
+    const here = ok(cardFromFields(input({ repo: 'here' }), ctx()))
+    expect(here.text).toContain('\nrepo: here\n')
+    expect(here.repo).toBe('here')
+    const none = ok(cardFromFields(input({ repo: 'none' }), ctx()))
+    expect(none.text).toContain('\nrepo: none\n')
+    const c = parseCard(none.text)
+    if ('error' in c) throw new Error(c.error)
+    expect(c.repo).toBe('none')
+    for (const r of [ok(cardFromFields(input(), ctx())), ok(cardFromFields(input({ repo: 'worktree' }), ctx()))]) {
+      expect(r.text).not.toContain('repo:')
+      expect(r.repo).toBe('worktree')
+    }
+    // a repo with no origin/main still defaults to here, and an explicit repo wins over that default
+    expect(ok(cardFromFields(input(), ctx({ here: true }))).text).toContain('\nrepo: here\n')
+    expect(ok(cardFromFields(input({ repo: 'none' }), ctx({ here: true }))).text).toContain('\nrepo: none\n')
+    expect(ok(cardFromFields(input({ repo: 'worktree' }), ctx({ here: true }))).text).not.toContain('repo:')
+    expect(cardFromFields(input({ repo: 'sideways' }), ctx())).toEqual({ error: 'repo must be worktree, here or none (got "sideways")' })
+    expect(cardFromFields(input({ repo: 3 }), ctx())).toEqual({ error: 'repo must be worktree, here or none (got "3")' })
+  })
+
+  test('MOD-22: scope and forbid may hold absolute paths and globs, and a tilde', () => {
+    const r = ok(cardFromFields(input({ repo: 'none', scope: ['/out/hair/**', '~/exports/*.glb', 'notes/x.md'], forbid: ['/etc/**', '~/Documents/**'] }), ctx()))
+    const c = parseCard(r.text)
+    if ('error' in c) throw new Error(c.error)
+    expect(c.scope).toEqual(['/out/hair/**', '~/exports/*.glb', 'notes/x.md'])
+    expect(c.forbid).toEqual(['/etc/**', '~/Documents/**'])
+    // prose is still refused, absolute or not
+    expect('error' in cardFromFields(input({ scope: ['/out/my folder/**'] }), ctx())).toBe(true)
+  })
+
+  test('MOD-22: the tool takes repo, and its description says when to use it', () => {
+    expect(CARD_TOOL.inputSchema.properties.repo.type).toBe('string')
+    expect(CARD_TOOL.inputSchema.required).not.toContain('repo')
+    expect(CARD_TOOL.description).toContain('research or extraction with outputs outside the repo: repo none or here, scope = the output folder')
+  })
+
+  test('MOD-22: the summary names a repo that is not a worktree', () => {
+    expect(cardSummary(ok(cardFromFields(input({ repo: 'none' }), ctx())), 'sonnet')).toContain(' · repo none · ')
+    expect(cardSummary(ok(cardFromFields(input(), ctx())), 'sonnet')).not.toContain('repo')
+  })
+
   test('the tool takes the spec schema', () => {
     expect(CARD_TOOL.name).toBe('card')
     expect(CARD_TOOL.inputSchema.additionalProperties).toBe(false)

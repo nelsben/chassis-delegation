@@ -17,6 +17,12 @@ export type World = {
   storeKeyReads: number
   store: Map<string, unknown>
   files: Map<string, string>
+  /** MOD-22: the modification time `$.fs.stat` and `$.fs.list` answer for a file (default 0); a test moves it to make a file read as changed. */
+  mtimes: Map<string, number>
+  /** MOD-22: folders outside the repo the world lists as a tree: every file under one in `files` is in its listing. A test adds one to make a folder appear. */
+  trees: Set<string>
+  /** MOD-22: folders `$.fs.list` refuses (a permission error), though they exist. */
+  unreadable: Set<string>
   runs: Run[]
   notices: string[]
   statuses: (string | undefined)[]
@@ -75,6 +81,8 @@ export type World = {
 
 export type WorldOptions = {
   files?: Record<string, string>
+  /** MOD-22: folders that exist and list as a tree of the `files` under them (World.trees). */
+  trees?: string[]
   dirs?: Record<string, string[]>
   store?: Record<string, unknown>
   /** What a command answers; a promise holds it up (MOD-20: a gate that takes a while, so two verifiers can overlap). */
@@ -117,6 +125,9 @@ export function world(on: On, options: WorldOptions = {}): World {
   const w: World = {
     store: new Map(Object.entries(options.store ?? {})),
     files: new Map(Object.entries(options.files ?? {})),
+    mtimes: new Map(),
+    trees: new Set(options.trees ?? []),
+    unreadable: new Set(),
     runs: [],
     notices: [],
     statuses: [],
@@ -162,7 +173,17 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('session.model', () => ({ value: w.model }))
   hook('session.id', () => ({ value: options.sessionId ?? 'sess-1' }))
   hook('session.usage', () => ({ value: { startedAt: 0, context: { window: 200000, percent: 12 }, rateLimits: [], cost: { usd: w.usd } } }))
-  hook('fs.exists', (e: { path: string }) => ({ value: w.files.has(e.path) || dirs.has(e.path) }))
+  // MOD-22: a folder under a tree root exists when it is the root or a file lies under it
+  const underTree = (path: string) => [...w.trees].some(t => path === t || path.startsWith(`${t}/`))
+  const treeDir = (path: string) => underTree(path) && (w.trees.has(path) || [...w.files.keys()].some(k => k.startsWith(`${path}/`)))
+  const bytesOf = (text: string) => new TextEncoder().encode(text).length
+  hook('fs.exists', (e: { path: string }) => ({ value: w.files.has(e.path) || dirs.has(e.path) || treeDir(e.path) }))
+  hook('fs.stat', (e: { path: string }) => {
+    const text = w.files.get(e.path)
+    if (text !== undefined) return { value: { kind: 'file', size: bytesOf(text), mtimeMs: w.mtimes.get(e.path) ?? 0, isLink: false } }
+    if (dirs.has(e.path) || treeDir(e.path)) return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false } }
+    throw new Error(`ENOENT: ${e.path}`)
+  })
   hook('fs.read', (e: { path: string; as?: string }) => {
     const text = w.files.get(e.path) ?? (e.path.endsWith('/templates/brief.md') ? TEMPLATE : e.path.endsWith('/templates/review.md') && !options.noReviewTemplate ? REVIEW_TEMPLATE : undefined)
     if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
@@ -172,7 +193,19 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   hook('fs.write', (e: { path: string; text: string }) => (w.files.set(e.path, e.text), { value: undefined }))
   hook('fs.list', (e: { path: string }) => {
+    if (w.unreadable.has(e.path)) throw new Error(`EACCES: ${e.path}`)
     const listed = dirs.get(e.path)
+    if (!listed && treeDir(e.path)) {
+      // MOD-22: a tree folder lists the files directly under it and a dir entry for each folder below
+      const below = [...w.files.keys()].filter(k => k.startsWith(`${e.path}/`)).map(k => k.slice(e.path.length + 1))
+      const entries = new Map<string, { name: string; kind: string; size: number; mtimeMs: number; isLink: boolean }>()
+      for (const rel of below) {
+        const [head = '', ...rest] = rel.split('/')
+        if (rest.length > 0) entries.set(head, { name: head, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })
+        else entries.set(head, { name: head, kind: 'file', size: bytesOf(w.files.get(`${e.path}/${head}`) ?? ''), mtimeMs: w.mtimes.get(`${e.path}/${head}`) ?? 0, isLink: false })
+      }
+      return { value: [...entries.values()] }
+    }
     if (!listed) throw new Error(`ENOENT: ${e.path}`)
     // a file written under a listed folder shows up in it (GH-111: the card tool writes, then dispatches)
     const written = [...w.files.keys()].filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => k.slice(e.path.length + 1))

@@ -3885,3 +3885,154 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     })
   })
 })
+
+describe('MOD-22: research cards (repo=none, an output folder outside the repo)', () => {
+  const NAME = 'OPS-9-extract-the-hair-model.md'
+  const CARD = [
+    '---',
+    'id: OPS-9',
+    'title: Extract the hair model and its renders',
+    'domain: ops',
+    'tier: standard',
+    'status: queued',
+    'repo: none',
+    'scope: [/out/hair/**, /out/notes/*.md]',
+    'forbid: []',
+    'red_test: none',
+    'gate: check',
+    'budget: 2-attempts',
+    '---',
+    '## Why',
+    '',
+    'The model is exported outside the repo.',
+    '',
+  ].join('\n')
+  const OPTIONS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full' as const, gateMap: '{"check":"checker {outdir}"}' }
+  const BRIEF = `${SCRATCH}/briefs/OPS-9.brief.md`
+  const run = (argv: string[]): RunAnswer | undefined => (argv[0] === 'checker' ? { exitCode: 0, stdout: 'checked\n' } : undefined)
+  const REPORT = (extra: string) => `[[report v=1 task=OPS-9 subtask=main branch=none pr=none sha=none gate=pass red=none files=none ${extra}]]`
+  const setup = (on: Parameters<typeof world>[0]) =>
+    world(on, {
+      files: { [`${ROOT}/agents/tasks/${NAME}`]: CARD, '/out/hair/old.txt': 'x' },
+      dirs: { [`${ROOT}/agents/tasks`]: [NAME] },
+      trees: ['/out/hair', '/out/notes'],
+      run,
+      agentId: 'agent-r',
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+
+  test('a repo: none card dispatches with no worktree and no git: the header carries repo=none, outdir= and scratch=, and the listing of every root is recorded', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('OPS-9'))).text)
+    const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
+    expect(header).toContain(' scope=/out/hair/**,/out/notes/*.md forbid= ')
+    expect(header).toContain(` gate=check repo=none outdir=/out/hair scratch=/tmp/td/chassis-delegation/OPS-9 `)
+    expect(out).toContain(`3. no worktree (repo=none): the worker runs in ${ROOT} and writes outside the repo`)
+    expect(argvs(w).filter(a => a[0] === 'git')).toEqual([])
+    const brief = w.files.get(BRIEF) ?? ''
+    expect(brief).toContain('Output folder: /out/hair')
+    expect(brief).toContain('Scratch: /tmp/td/chassis-delegation/OPS-9')
+    expect(brief).toContain('never in the repo')
+    expect(w.store.get('delegation.outside.OPS-9')).toMatchObject({
+      roots: [
+        { root: '/out/hair', entries: [{ path: 'old.txt', size: 1, mtimeMs: 0 }] },
+        { root: '/out/notes', entries: [] },
+      ],
+    })
+    await brainSpawn($, out)
+    expect(w.spawns[0]).toMatchObject({ cwd: ROOT })
+  })
+
+  test('a worker that wrote only under its outdir and named its artefacts is consistent; the gate ran against the outdir; the metrics are recorded', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+    w.files.set('/out/notes/findings.md', '# findings')
+    await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb,/out/notes/findings.md metrics="tris=1200,len_s=2.4"')}`))
+    const row = delivered(w)
+    expect(row).toContain('chassis-delegation: verdict=consistent (no repo) task=OPS-9 attempt=1/2')
+    expect(row).toContain('claim scope: held — every file in scope; outside delta: 2 changed paths under /out/hair, /out/notes, every one within scope and none in forbid')
+    expect(row).toContain('claim artefacts: held — 2 artefacts exist and are not empty: model.glb (17 bytes), /out/notes/findings.md (10 bytes)')
+    expect(row).toContain('claim gate: held — checker {outdir} exited 0')
+    expect(row).toContain('metrics: tris=1200, len_s=2.4')
+    expect(w.runs.filter(r => r.argv[0] === 'checker').map(r => ({ argv: r.argv, cwd: r.cwd }))).toEqual([{ argv: ['checker', '/out/hair'], cwd: '/out/hair' }])
+    expect(records(w, 'OPS-9')[0]).toMatchObject({ verdict: 'consistent', metrics: { tris: '1200', len_s: '2.4' } })
+  })
+
+  test('a worker that also wrote a file outside every scope entry is refuted on scope, naming the file and the outside delta', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+    w.files.set('/out/notes/scratch.txt', 'left behind')
+    await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+    const row = delivered(w)
+    expect(row).toContain('verdict=refuted (no repo) task=OPS-9')
+    expect(row).toContain('claim scope: failed — out-of-scope path: /out/notes/scratch.txt (outside delta)')
+    expect(records(w, 'OPS-9')[0]).toMatchObject({ verdict: 'refuted', firstFailed: 'scope' })
+  })
+
+  test('an artefact the report names that is not there is refuted on artefacts, naming it; nothing named is no claim', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+    await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb,render.png')}`))
+    const row = delivered(w)
+    expect(row).toContain('verdict=refuted (no repo) task=OPS-9')
+    expect(row).toContain('claim artefacts: failed — missing: render.png (/out/hair/render.png)')
+  })
+
+  test('a root that exists but cannot be listed at hand-back leaves the scope claim unchecked: unverified, never held', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+    // the listing now refuses /out/notes
+    w.unreadable.add('/out/notes')
+    await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+    const row = delivered(w)
+    expect(row).toContain('verdict=unverified (no repo) task=OPS-9')
+    expect(row).toContain('claim scope: unchecked — ')
+    expect(row).not.toContain('claim scope: held')
+  })
+
+  test('the card tool takes repo none and an absolute scope: the card, the header and the folders', { options: { briefDir: `${SCRATCH}/briefs`, gateMap: '{"check":"checker {outdir}"}' } }, async ($, on) => {
+    const w = world(on, { dirs: { [`${ROOT}/agents/tasks`]: ['README.md'] }, trees: ['/out/hair'], store: { 'delegation.agentTypes': ['general-purpose'] } })
+    await $.session.start(sessionStart)
+    const out = resultText(
+      await $.tool.call({
+        tool: 'mcp__chassis-delegation__card',
+        title: 'Extract the hair model',
+        why: 'The model lives outside the repo.',
+        doneWhen: ['model.glb is in the output folder'],
+        scope: ['/out/hair/**'],
+        redTest: 'none',
+        repo: 'none',
+        gate: 'check',
+      } as never),
+    )
+    const card = w.files.get(`${ROOT}/agents/tasks/OPS-1-extract-the-hair-model.md`) ?? ''
+    expect(card).toContain('\nrepo: none\n')
+    expect(card).toContain('\nscope: [/out/hair/**]\n')
+    expect(out).toContain(' · repo none · ')
+    expect(out).toContain('gate=check repo=none outdir=/out/hair scratch=/tmp/td/chassis-delegation/OPS-1 ')
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('a tilde in scope is expanded to the home folder in the brief header', { options: OPTIONS }, async ($, on) => {
+    const w = world(on, {
+      files: { [`${ROOT}/agents/tasks/${NAME}`]: CARD.replace('[/out/hair/**, /out/notes/*.md]', '[~/out/hair/**]').replace('forbid: []', 'forbid: [~/secrets/**]') },
+      dirs: { [`${ROOT}/agents/tasks`]: [NAME] },
+      trees: [`${HOME}/out/hair`],
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+    await $.session.start(sessionStart)
+    await $.command.run(commandInput('OPS-9'))
+    const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
+    expect(header).toContain(` scope=${HOME}/out/hair/** forbid=${HOME}/secrets/** `)
+    expect(header).toContain(` outdir=${HOME}/out/hair scratch=`)
+  })
+})
