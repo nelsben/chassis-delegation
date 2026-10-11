@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.3 — 2026-10-11
 
 - **A verdict wake re-checks whether the task is merged when it is about to be delivered, not
   when the verdict lands (MOD-42).** While the brain's turn is open, wakes are held in the mod's
