@@ -7,7 +7,7 @@ import type { AttemptRecord } from './attempts'
 import { taskLabel } from './attempts'
 import { base64, elapsed } from './dashboard'
 import { currentVerdict, isConsistent, LEGACY_VERDICT } from './legacy'
-import { brainSummary, brainTileText, type BrainRecord, type BrainSummary } from './brain'
+import { brainSummary, brainTileText, type AdHoc, type BrainRecord, type BrainSummary } from './brain'
 import { worktreePath } from './paths'
 
 // ---- the spend series -------------------------------------------------------------
@@ -65,8 +65,21 @@ export function spendByModel(records: readonly AttemptRecord[]): ModelSpend[] {
   })
 }
 
-/** Records of this session: those that began at or after `since`. */
-export const sessionRecords = (records: readonly AttemptRecord[], since: number): AttemptRecord[] => records.filter(r => r.at >= since)
+/** MOD-37: who is asking: this session's id and root. */
+export type Who = { sessionId?: string; root?: string }
+
+/**
+ * Records of this session. With a session id: a record carries the id of the session that made it and is kept when it
+ * equals ours; one without (written before MOD-37) is kept only when its root is ours and it began at or after `since`.
+ * With no id known, the time alone decides.
+ */
+export function sessionRecords(records: readonly AttemptRecord[], since: number, who?: Who): AttemptRecord[] {
+  if (!who?.sessionId) return records.filter(r => r.at >= since)
+  return records.filter(r => {
+    if (r.sessionId !== undefined) return r.sessionId === who.sessionId
+    return r.at >= since && who.root !== undefined && who.root !== '' && (r.root ?? (r as { here?: string }).here) === who.root
+  })
+}
 
 // ---- events -----------------------------------------------------------------------
 
@@ -290,10 +303,10 @@ export function firstTry(records: readonly AttemptRecord[]): { n: number; m: num
   return { n: judged.filter(r => isConsistent(r.verdict)).length, m: judged.length }
 }
 
-export type ViewInput = WorktreeInput & { since: number; usd: number; series: readonly SpendPoint[]; owed: number; brain?: BrainRecord }
+export type ViewInput = WorktreeInput & { since: number; usd: number; series: readonly SpendPoint[]; owed: number; brain?: BrainRecord; sessionId?: string; adhoc?: AdHoc }
 
 export function liveView(i: ViewInput): LiveView {
-  const records = sessionRecords(i.records, i.since)
+  const records = sessionRecords(i.records, i.since, { ...(i.sessionId ? { sessionId: i.sessionId } : {}), root: i.root })
   return {
     now: i.now,
     live: Object.keys(i.liveAt).length,
@@ -305,15 +318,18 @@ export function liveView(i: ViewInput): LiveView {
     rows: worktreeRows({ ...i, records }),
     byModel: spendByModel(records),
     firstTry: firstTry(records),
-    ...(i.brain && i.brain.turns > 0 ? { brain: brainSummary(i.brain, workersUsd(records), attempts(records), i.usd > 0 ? i.usd : undefined) } : {}),
+    ...(i.brain && i.brain.turns > 0 ? { brain: brainSummary(i.brain, workersUsd(records), attempts(records), i.usd > 0 ? i.usd : undefined, i.adhoc) } : {}),
   }
 }
 
+/** MOD-37: a hand-back with no card, recorded under its report's task: counted as ad hoc, not as a worker. */
+const isAdHoc = (r: AttemptRecord): boolean => (r as { adhoc?: boolean }).adhoc === true
+
 /** Dollars the session's worker attempts spent (the brain's own turns are not among them). */
-export const workersUsd = (records: readonly AttemptRecord[]): number => round4(records.reduce((a, r) => a + (r.usd ?? 0), 0))
+export const workersUsd = (records: readonly AttemptRecord[]): number => round4(records.filter(r => !isAdHoc(r)).reduce((a, r) => a + (r.usd ?? 0), 0))
 
 /** Worker attempts this session (a verify pass is no attempt). */
-export const attempts = (records: readonly AttemptRecord[]): number => records.filter(r => r.kind !== 'verify').length
+export const attempts = (records: readonly AttemptRecord[]): number => records.filter(r => r.kind !== 'verify' && !isAdHoc(r)).length
 
 /** The band shows while a worker is live, a spawn is queued or a verdict is owed. */
 export const isActive = (v: Pick<LiveView, 'live' | 'queued' | 'owed'>): boolean => v.live + v.queued + v.owed > 0

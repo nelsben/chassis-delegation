@@ -1946,7 +1946,13 @@ is counted twice. The mod spends no turn of its own to start a worker.
 
 - `/delegation` adds
   `brain: fable $2.25 over 2 turns · workers $0.75 (3 attempts) · brain share 75%`
-  and, once the brain has edited, `brain edits: n`.
+  and, once the brain has edited, `brain edits: n`. The figures are this session's
+  only: an attempt record carries the id of the session that made it, and one from
+  another session (or, in an old store, another root) is not counted. Once an Agent
+  spawn with no brief header has run, the line also reads
+  `· ad hoc $1.00 (1 agents)` (from that agent's own cost record), and
+  `· unattributed $0.50` when the session total exceeds brain, workers and ad hoc
+  by a cent or more; the share is the brain over the session total.
 - The dashboard's tile row (pane, hover card) gains a tile
   `brain $2.25 / workers $0.75`; spend by model gains a row labelled `brain`
   for the brain's model, so Fable's spend is never mistaken for a worker's. The

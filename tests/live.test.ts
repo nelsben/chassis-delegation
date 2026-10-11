@@ -1,7 +1,8 @@
 // GH-112: the live delegation model (pure): the spend series, the events, the worktree rows, spend by model.
 import { test, expect, describe } from 'claude-code/testing'
-import { events, familyOf, sampleEvery, spendByModel, spendSeries, SPEND_CAP, worktreeRows, type SpendPoint, sparkText } from '../hooks/lib/live'
+import { sessionRecords, events, familyOf, sampleEvery, spendByModel, spendSeries, SPEND_CAP, worktreeRows, type SpendPoint, sparkText } from '../hooks/lib/live'
 import type { AttemptRecord } from '../hooks/lib/attempts'
+import { brainLine, brainSummary, emptyBrain } from '../hooks/lib/brain'
 
 const NOW = 10_000_000
 const rec = (o: Partial<AttemptRecord> & { task: string }): AttemptRecord => ({
@@ -117,5 +118,31 @@ describe('the dashboard as text', () => {
     expect(sparkText([1])).toBe('')
     expect(sparkText([0, 7])).toBe('▁█')
     expect(sparkText([2, 2, 2])).toBe('▁▁▁')
+  })
+})
+
+describe('MOD-37: the session filter and the line arithmetic', () => {
+  const START = NOW - 3_600_000
+  test('records of another session are dropped; this session\'s kept', () => {
+    const rs = [rec({ task: 'A', sessionId: 's1' }), rec({ task: 'B', sessionId: 's2' })]
+    expect(sessionRecords(rs, START, { sessionId: 's1', root: '/r/a' }).map(r => r.task)).toEqual(['A'])
+  })
+  test('a legacy record is kept only under this root and at or after the start', () => {
+    const rs = [
+      rec({ task: 'OTHER', root: '/r/b' }),
+      rec({ task: 'MINE', root: '/r/a' }),
+      rec({ task: 'OLD', root: '/r/a', at: START - 1 }),
+    ]
+    expect(sessionRecords(rs, START, { sessionId: 's1', root: '/r/a' }).map(r => r.task)).toEqual(['MINE'])
+  })
+  test('the brain line closes the sum: unattributed is the session total less the rest', () => {
+    const brain = { ...emptyBrain(), usd: 2, turns: 4, byModel: { 'claude-fable-5-1': { usd: 2, tokens: 10, turns: 4 } } }
+    const line = brainLine(brainSummary(brain, 3, 2, 8, { usd: 1, agents: 1 }))
+    expect(line).toBe('brain: fable $2.00 over 4 turns · workers $3.00 (2 attempts) · ad hoc $1.00 (1 agents) · unattributed $2.00 · brain share 25%')
+  })
+  test('unattributed is never negative and is left out under a cent', () => {
+    const brain = { ...emptyBrain(), usd: 2, turns: 1, byModel: { 'claude-fable-5-1': { usd: 2, tokens: 10, turns: 1 } } }
+    expect(brainLine(brainSummary(brain, 3, 2, 5, { usd: 1, agents: 1 }))).not.toContain('unattributed')
+    expect(brainLine(brainSummary(brain, 3, 2, 4, { usd: 1, agents: 1 }))).not.toContain('unattributed')
   })
 })

@@ -53,12 +53,19 @@ export function brainFamily(model: string | undefined): BrainFamily {
 export type Split = { total: number; brain: number; workers: number; share: number }
 
 /** The three numbers and the brain's share of the total; the total is brain + workers where the session's is unknown. */
-export function brainSplit(sessionUsd: number | undefined, brainUsd: number, workersUsd: number): Split {
-  const total = sessionUsd !== undefined && Number.isFinite(sessionUsd) ? sessionUsd : brainUsd + workersUsd
+export function brainSplit(sessionUsd: number | undefined, brainUsd: number, workersUsd: number, adhocUsd = 0): Split {
+  const total = sessionUsd !== undefined && Number.isFinite(sessionUsd) ? sessionUsd : brainUsd + workersUsd + adhocUsd
   return { total: round4(total), brain: round4(brainUsd), workers: round4(workersUsd), share: total > 0 ? Math.min(1, brainUsd / total) : 0 }
 }
 
+/** MOD-37: the session's ad hoc Agent spawns (no brief header): their dollars and how many. */
+export type AdHoc = { usd: number; agents: number }
+
 export type BrainSummary = Split & {
+  /** MOD-37: ad hoc spawns this session. */
+  adhoc: AdHoc
+  /** MOD-37: the session total less brain, workers and ad hoc; 0 when the total is unknown or smaller. */
+  unattributed: number
   /** The family of the model that spent most. */
   family: BrainFamily
   /** That model's id. */
@@ -71,12 +78,15 @@ export type BrainSummary = Split & {
 }
 
 /** What the lines and the dashboard show of a record, beside the workers' dollars and attempts. */
-export function brainSummary(rec: BrainRecord | undefined, workersUsd: number, attempts: number, sessionUsd?: number): BrainSummary {
+export function brainSummary(rec: BrainRecord | undefined, workersUsd: number, attempts: number, sessionUsd?: number, adhoc: AdHoc = { usd: 0, agents: 0 }): BrainSummary {
   const r = rec ?? emptyBrain()
   const top = Object.entries(r.byModel).sort((a, b) => b[1].usd - a[1].usd || b[1].tokens - a[1].tokens)[0]
   const tokens = r.tokens.in + r.tokens.out + r.tokens.cacheRead + r.tokens.cacheWrite
+  const split = brainSplit(sessionUsd, r.usd, workersUsd, adhoc.usd)
   return {
-    ...brainSplit(sessionUsd, r.usd, workersUsd),
+    ...split,
+    adhoc,
+    unattributed: sessionUsd !== undefined && Number.isFinite(sessionUsd) ? Math.max(0, round4(split.total - split.brain - split.workers - adhoc.usd)) : 0,
     family: brainFamily(top?.[0]),
     ...(top ? { model: top[0] } : {}),
     tokens,
@@ -89,9 +99,18 @@ export function brainSummary(rec: BrainRecord | undefined, workersUsd: number, a
 
 const money = (n: number): string => `$${n.toFixed(2)}`
 
-/** `brain: fable $2.25 over 2 turns · workers $0.75 (3 attempts) · brain share 75%` */
+/**
+ * `brain: fable $2.25 over 2 turns · workers $0.75 (3 attempts) · ad hoc $1.00 (1 agents) · unattributed $0.50 · brain share 75%`
+ * (MOD-37: the ad hoc part shows once an ad hoc agent ran, the unattributed part from one cent).
+ */
 export const brainLine = (s: BrainSummary): string =>
-  `brain: ${s.family} ${money(s.brain)} over ${s.turns} turns · workers ${money(s.workers)} (${s.attempts} attempts) · brain share ${Math.round(s.share * 100)}%`
+  [
+    `brain: ${s.family} ${money(s.brain)} over ${s.turns} turns`,
+    `workers ${money(s.workers)} (${s.attempts} attempts)`,
+    ...(s.adhoc.agents > 0 || s.adhoc.usd > 0 ? [`ad hoc ${money(s.adhoc.usd)} (${s.adhoc.agents} agents)`] : []),
+    ...(s.unattributed >= 0.01 ? [`unattributed ${money(s.unattributed)}`] : []),
+    `brain share ${Math.round(s.share * 100)}%`,
+  ].join(' · ')
 
 /** The KPI tile's value: `brain $2.25 / workers $0.75`. */
 export const brainTileText = (s: Pick<BrainSummary, 'brain' | 'workers'>): string => `brain ${money(s.brain)} / workers ${money(s.workers)}`

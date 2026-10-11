@@ -2180,6 +2180,22 @@ describe('GH-113: the brain spend and delegate-only', () => {
     expect(out.text).toContain('brain: fable $2.25 over 2 turns · workers $0.00 (0 attempts) · brain share 100%')
   })
 
+  test('MOD-37: another session\'s attempt is not this one\'s workers; an ad hoc spawn is its own figure', async ($, on) => {
+    const other = { task: 'T-77', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'consistent', at: 5, usd: 50, sessionId: 'sess-other', root: '/elsewhere' }
+    const w = world(on, { model: FABLE, store: { 'delegation.tasks.T-77': [other] } })
+    w.usd = 9
+    await $.session.start(sessionStart)
+    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000))) // $2.25
+    await $.agent.spawn(spawnInput({ prompt: 'Look around and tell me what you find.' })) // agent-1, ad hoc
+    await $.turn.complete(turnInput('agent-1', 'found', usage(SONNET, 1_000_000, 0))) // $2.00
+    const text = (await $.command.run(delegation)).text
+    expect(text).toContain('workers $0.00 (0 attempts)')
+    expect(text).toContain('ad hoc $2.00 (1 agents)')
+    expect(text).toContain('unattributed $4.75')
+    expect(text).toContain('brain share 25%')
+    expect(w.store.get('delegation.adhoc')).toMatchObject([{ sessionId: 'sess-1' }])
+  })
+
   test('a worker turn.complete never counts as the brain', async ($, on) => {
     const w = world(on, { model: FABLE })
     await $.session.start(sessionStart)
@@ -3604,7 +3620,7 @@ describe('MOD-19: the verdict says what it checked (verified became consistent; 
   // A store and a ledger as 0.7.x wrote them: the verdict word is `verified`. Nothing in them is rewritten; the mod reads them as it reads consistent.
   const OLD = 'verified'
   const SHA_OWED = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
-  const legacyRecord = (task: string, o: Record<string, unknown>) => ({ task, subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: OLD, at: NOW - 600_000, verdictAt: NOW - 300_000, ...o })
+  const legacyRecord = (task: string, o: Record<string, unknown>) => ({ task, subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: OLD, at: NOW - 600_000, verdictAt: NOW - 300_000, root: ROOT, ...o })
   const legacyStore = {
     // T-4: the report was consistent with git but declared gate=fail honestly, so a resume is owed
     'delegation.tasks.T-4': [legacyRecord('T-4', { reportGate: 'fail', sha: SHA_OWED, agentId: 'agent-4', usd: 0.4, tokens: 2000 })],
