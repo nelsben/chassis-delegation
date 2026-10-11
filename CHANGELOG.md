@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **A repo=here card that shares a resource with an in-flight card is queued, not
+  refused (MOD-24).** Public issue #33 (one worker per app, enforced by the queue).
+  MOD-23 made a shared resource part of the repo=here overlap check, which refuses at
+  dispatch unless `--force-overlap` is given; the brain then had to retry by hand
+  for something the mod can sequence. The two are different things. Overlapping
+  scopes would corrupt each other's dirty-tree delta, so a scope overlap still
+  refuses, exactly as before, and still needs `--force-overlap`. A shared resource
+  only needs sequencing, so a repo=here dispatch whose only overlap with an in-flight
+  repo=here card is a resource now goes on and is queued with the MOD-23 waiting line
+  (`queued: OPS-9 — waiting for resource blender-live (held by OPS-8)`), ready when
+  the holder hands back. A scope refusal no longer also lists the resource.
+  - **The band's queued item names the resource.** A queued `BandItem` gains
+    `waits: { resource, holder }`, set for a row held up by a resource, and the
+    pane's open item reads `OPS-9: queued (position 1) — waits for blender-live (held
+    by OPS-8)` in place of `starts when a worker slot frees`; a row waiting for a
+    slot reads as before. README's repo=here overlap paragraph and the resource
+    paragraph say which one queues and which one refuses.
+  - `resourceOverlapRefusal`, `resourceOverlapWarning` (`hooks/lib/dispatch.ts`) and
+    `sharedResource` (`hooks/lib/brief.ts`) are no longer called by the dispatch.
+
 - **Exclusive resources and fan-out (MOD-23).** Public issues #33 (ask B) and #32
   (ask 3). Two research lanes could not run at once because there was one live
   Blender with one open file; the brain wrote that into every brief and hoped it

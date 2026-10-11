@@ -100,7 +100,8 @@ export function openItemLines(items: readonly BandItem[], now: number): string[]
       case 'decision':
         return `${item.task}: ${item.next}`
       case 'queued':
-        return `${item.task}: queued (position ${item.position}) — starts when a worker slot frees`
+        // MOD-24: a row held up by a resource names it and who holds it; a row waiting for a slot reads as it did
+        return `${item.task}: queued (position ${item.position}) — ${item.waits ? `waits for ${item.waits.resource} (held by ${item.waits.holder})` : 'starts when a worker slot frees'}`
       case 'eval-failed': {
         const score = item.total !== undefined && item.pass !== undefined ? ` ${item.pass}/${item.total}` : ''
         return `eval ${item.tier}${score} at ${item.sha.slice(0, 8)}: read the failing names in the transcript, then press clear in the band`
