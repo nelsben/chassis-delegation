@@ -4,6 +4,7 @@
 
 import { redact, type RedactRules } from './redact'
 import { MOD_SURFACES, windowAsk, splitFindings, type DebriefWindow } from './debriefcheck'
+import { currentLine } from './legacy'
 
 const H = 60 * 60 * 1000
 
@@ -77,11 +78,14 @@ export function cleanStop(i: CleanStopInput): { ok: true } | { ok: false; why: s
 export const MOD_FINDINGS_ASK =
   `Also add one more top-level key to the JSON you write, mod_findings: an array of { kind: went_well | went_wrong, surface (one of: ${MOD_SURFACES.join(', ')}; a finding about the host's permission classifier or safety checks, the engine or the person's own hooks is set aside, never posted), fault_class: bug | design | docs | cost | performance, severity: P1 | P2 | P3, title, body, evidence: [strings] } about chassis-delegation itself, not the project, grounded in the facts above (verdict lines, refutes, by-hand accepts, denials, corrections); [] when there is nothing to say. Name no product, repo, customer, person or path in it.`
 
+/** MOD-26: said under the facts, so the time on a fact line is the `at` of the entry the agent takes from it. */
+export const FACTS_AT_ASK = 'A fact line that starts with a kind and an ISO time (`denial <ISO time>: …`) happened at that time: cite that time as `at` for the corrections, tool_denials or outcomes entry you take from it.'
+
 /** The skill-wrapping prompt: the person's own skill file, unedited, plus the mod_findings ask and the facts it rests on. */
 export const debriefPrompt = (skillPath: string, sessionId: string, facts: readonly string[] = [], window?: DebriefWindow): string =>
   [
     `Run the /debrief skill exactly as written in ${skillPath}. Session id ${sessionId}. Write only what the skill allows.`,
-    ...(facts.length > 0 ? ['What chassis-delegation saw since the last debrief:', ...facts.map(f => `- ${f}`)] : []),
+    ...(facts.length > 0 ? ['What chassis-delegation saw since the last debrief:', ...facts.map(f => `- ${f}`), FACTS_AT_ASK] : []),
     ...(window ? [windowAsk(window)] : []),
     MOD_FINDINGS_ASK,
   ].join('\n')
@@ -112,6 +116,7 @@ export const builtInDebriefPrompt = (templatePath: string, sessionId: string, ro
     `Session id ${sessionId}. Repo root ${root}.`,
     facts.length > 0 ? 'What chassis-delegation saw since the last debrief:' : 'chassis-delegation saw no friction events beyond the verdicts below.',
     ...facts.map(f => `- ${f}`),
+    ...(facts.length > 0 ? [FACTS_AT_ASK] : []),
     ...(window ? [windowAsk(window)] : []),
     MOD_FINDINGS_ASK,
     'Write only what it allows.',
@@ -130,10 +135,51 @@ export function isCorrection(text: string): boolean {
 
 export const addFriction = (list: readonly FrictionEvent[], ev: FrictionEvent, cap = FRICTION_CAP): FrictionEvent[] => [...list, ev].slice(-cap)
 
-const KIND_TEXT: Record<FrictionEvent['kind'], string> = { correction: 'correction', denial: 'tool denied', refuted: 'refuted' }
+const KIND_TEXT: Record<FrictionEvent['kind'], string> = { correction: 'correction', denial: 'denial', refuted: 'refuted' }
 
-/** The facts line by line, as the built-in debrief's prompt carries them. */
-export const frictionFacts = (events: readonly FrictionEvent[]): string[] => events.map(e => `${KIND_TEXT[e.kind]}: ${e.detail.replace(/\s+/g, ' ').slice(0, 200)}`)
+/**
+ * MOD-26: `2026-10-10T16:27:14Z`, the ISO time of a fact. Whole seconds print without milliseconds; a
+ * time that has them keeps them, so the agent cites a time the window check reads back exactly.
+ */
+export const isoTime = (ms: number): string => {
+  if (!Number.isFinite(ms)) return 'unknown-time'
+  const iso = new Date(ms).toISOString()
+  return iso.endsWith('.000Z') ? `${iso.slice(0, -5)}Z` : iso
+}
+
+const factLine = (label: string, ms: number, text: string): string => `${label} ${isoTime(ms)}: ${text}`
+
+/** The facts line by line, as the built-in debrief's prompt carries them: `denial 2026-10-10T16:27:14Z: Bash: git push`. */
+export const frictionFacts = (events: readonly FrictionEvent[]): string[] => events.map(e => factLine(KIND_TEXT[e.kind], e.at, e.detail.replace(/\s+/g, ' ').slice(0, 200)))
+
+/** A verdict row the mod kept, with the time it was posted. */
+export type VerdictFact = { line: string; at: number }
+
+/** The verdict rows as fact lines: `verdict 2026-10-10T18:01:07Z: chassis-delegation: OPS-5 attempt 1/2 consistent …`. */
+export const verdictFacts = (verdicts: readonly VerdictFact[]): string[] => verdicts.map(v => factLine('verdict', v.at, currentLine(v.line)))
+
+/**
+ * MOD-26: the facts a breadcrumbs debrief's prompt carries: the friction events and verdicts whose time lies
+ * between the window's first and last breadcrumb timestamps, inclusive, each dated. A window with no
+ * timestamps (or none that parse) has no span, so it carries none. Nothing is chosen by a count of lines
+ * or by the previous debrief's time: the window is the only filter.
+ */
+export function windowFacts(events: readonly FrictionEvent[], verdicts: readonly VerdictFact[], window: DebriefWindow): string[] {
+  const from = Date.parse(window.firstTs)
+  const to = Date.parse(window.lastTs)
+  if (Number.isNaN(from) || Number.isNaN(to)) return []
+  const inside = (at: number): boolean => at >= from && at <= to
+  return [...frictionFacts(events.filter(e => inside(e.at))), ...verdictFacts(verdicts.filter(v => inside(v.at)))]
+}
+
+/** The breadcrumb kinds that mark where a session starts, ends or compacts, not what happened in it. */
+export const BOUNDARY_KINDS: readonly string[] = ['session_start', 'session_end', 'compaction', 'compact', 'pre_compact', 'post_compact']
+
+/** MOD-26: every breadcrumb line of the window is a session boundary or a compaction (and the window has a kind to say so). */
+export const boundaryOnly = (window: DebriefWindow): boolean => window.kinds.length > 0 && window.kinds.every(k => BOUNDARY_KINDS.includes(k))
+
+/** MOD-26: what `/delegation debrief` says, and the auto path logs, when a boundary-only window holds no fact. */
+export const nothingToDebrief = (window: DebriefWindow): string => `nothing to debrief in lines ${window.firstLine}-${window.lastLine} (session boundaries only)`
 
 export const debriefToast = (answer: string): string => {
   const path = debriefPathOf(answer)

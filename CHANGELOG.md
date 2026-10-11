@@ -18,6 +18,31 @@
     marker match is quoted as before. The claim holds or fails exactly as it did; only
     the quoted line changes.
 
+- **A breadcrumbs debrief's prompt carries only the facts inside its window, each
+  dated, and a window of session boundaries alone spawns nothing (MOD-26).** Public
+  issue #55: `/delegation debrief` on a two-line window (a `session_end` and a
+  `session_start`, no friction) handed the agent three facts from hours earlier, so
+  the MOD-10 check rightly flagged the debrief, the record never moved, and the next
+  debrief read the same stale facts and could never come back clean; a false refute
+  from earlier was once filed as a went_well finding. Friction events were sliced by
+  the count of new breadcrumb lines (two separate streams), verdicts were kept by the
+  previous debrief's time, and the fact lines dropped the time both carry.
+  - **The window chooses the facts.** In breadcrumbs mode the prompt holds the
+    friction events and recent verdicts whose time lies between the window's first and
+    last breadcrumb timestamps, inclusive. The line-count slice and the previous-time
+    filter are gone from that path; without a breadcrumb file the selection is as it
+    was. New pure `windowFacts` (`hooks/lib/cleanstop.ts`).
+  - **Every fact line is dated.** `denial 2026-10-10T16:27:14Z: …`, `correction …`,
+    `refuted …` and `verdict 2026-10-10T18:01:07Z: …` (a denial used to read `tool
+    denied:`), in both modes, and both prompts tell the agent to cite that time as
+    `at`. A time with milliseconds keeps them, so the agent cites it exactly.
+  - **A boundary-only window spawns nothing.** When the window's lines are only
+    `session_start`, `session_end` and compaction breadcrumbs and no fact falls inside
+    it, `/delegation debrief` prints `nothing to debrief in lines a-b (session
+    boundaries only)`, the automatic path logs the same, and the debrief record moves
+    past the window (`skippedTo`; the mod still never writes the `.done` mark), so the
+    next debrief starts after it. New pure `boundaryOnly` and `nothingToDebrief`.
+
 ## 0.8.0 — 2026-10-11
 
 - **A repo=here card that shares a resource with an in-flight card is queued, not

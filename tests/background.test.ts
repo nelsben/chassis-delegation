@@ -287,6 +287,17 @@ describe('2C: the clean-stop debrief', () => {
     expect(w.spawns).toHaveLength(0)
   })
 
+  test('MOD-26: 26 new lines that are only session boundaries pass the clean-stop test and spawn nothing: the skip is logged and the record moves past them', NO_EVAL, async ($, on) => {
+    const boundaries = Array.from({ length: 26 }, (_, i) => JSON.stringify({ ts: `2026-10-10T19:20:${String(10 + i).padStart(2, '0')}Z`, kind: i % 2 === 0 ? 'session_start' : 'session_end' })).join('\n') + '\n'
+    const w = world(on, { files: { [BC]: boundaries }, listAgents: true })
+    await $.turn.complete(mainTurn())
+    await w.clock.advance(20 * MIN)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.toasts).not.toContain('debrief running in the background')
+    expect(w.debugLogs.join('\n')).toContain('no debrief: nothing to debrief in lines 1-26 (session boundaries only)')
+    expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ mode: 'breadcrumbs', watermark: 0, lines: 26, skippedTo: 26 })
+  })
+
   test('a debrief already ran at this watermark: not again, even past the cooldown', NO_EVAL, async ($, on) => {
     const w = world(on, { files: { [BC]: crumbs(60), [DONE]: '10' }, store: { 'delegation.debrief.sess-1': { lastAt: NOW - 7 * H, watermark: 10, lines: 40 } } })
     await $.turn.complete(mainTurn())
@@ -321,8 +332,8 @@ describe('2C: the clean-stop debrief', () => {
     await w.clock.advance(20 * MIN)
     expect(w.spawns).toHaveLength(1)
     const prompt = String(w.spawns[0]?.prompt)
-    expect(prompt).toContain('- correction: actually use pnpm')
-    expect(prompt).toContain('- correction: No — revert that')
+    expect(prompt).toMatch(/- correction \S+Z: actually use pnpm/)
+    expect(prompt).toMatch(/- correction \S+Z: No — revert that/)
     expect(prompt).not.toContain('Notes are fine')
     expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ mode: 'events', lines: 5, watermark: 0 })
   })

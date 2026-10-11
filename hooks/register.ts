@@ -87,10 +87,14 @@ import {
   DEFAULT_DEBRIEF_IDLE_MINUTES,
   DEFAULT_DEBRIEF_MIN_EVENTS,
   DEFAULT_DEBRIEF_MIN_NEW_LINES,
+  boundaryOnly,
   frictionFacts,
   isCorrection,
+  nothingToDebrief,
   parseWatermark,
+  verdictFacts,
   watermarkPath,
+  windowFacts,
   type FrictionEvent,
 } from './lib/cleanstop'
 import { checkDebrief, windowOf, type DebriefWindow } from './lib/debriefcheck'
@@ -305,8 +309,12 @@ const GATE_TIMEOUT_MS = 9 * 60 * 1000
 const OWED_KINDS = ['resume', 'respawn', 'verify', 'exhausted', 'check', 'fix-brief', 'review']
 const LEDGER_FILE = '.delegation/ledger.jsonl'
 
-/** `delegation.debrief.<session>`: the background debrief (2C, 5E). */
-type DebriefRecord = { lastAt: number; watermark: number; lines: number; sessionId: string; mode?: 'breadcrumbs' | 'events'; builtIn?: boolean; agentId?: string; finishedAt?: number; path?: string; denied?: string; window?: DebriefWindow; prior?: DebriefRecord | null }
+/**
+ * `delegation.debrief.<session>`: the background debrief (2C, 5E). MOD-26: `skippedTo` is the breadcrumb line a
+ * boundary-only window ended at when the mod spawned nothing for it; the next window starts there (the mod never
+ * writes the `.done` mark, so the record is what moves).
+ */
+type DebriefRecord = { lastAt: number; watermark: number; lines: number; sessionId: string; mode?: 'breadcrumbs' | 'events'; builtIn?: boolean; agentId?: string; finishedAt?: number; path?: string; denied?: string; window?: DebriefWindow; prior?: DebriefRecord | null; skippedTo?: number }
 /** `delegation.friction.<session>`: every friction event's count, and the last 100. */
 type FrictionRecord = { total: number; events: FrictionEvent[] }
 /** `delegation.eval.inflight`: the eval runner that is out (2D). */
@@ -1630,6 +1638,7 @@ async function maybeDebrief($: Host) {
     if (!verdict.ok) return debug($, `no debrief: ${verdict.why}${mode === 'events' ? ' (friction events)' : ''}`)
     if (inTurn) return
     const res = await startDebrief($, basis, t, [])
+    if (res.skipped !== undefined) return debug($, `no debrief: ${res.skipped}`)
     if (res.deny !== undefined) return debug($, `debrief not started: ${res.deny}`)
     $.ui.toast('debrief running in the background')
   } finally {
@@ -1655,7 +1664,8 @@ async function debriefBasis($: Host): Promise<DebriefBasis | undefined> {
   const friction = (await storeGet<FrictionRecord>($, K.friction(sid))) ?? { total: 0, events: [] }
   const mode: 'breadcrumbs' | 'events' = crumbs !== undefined ? 'breadcrumbs' : 'events'
   const lines = mode === 'breadcrumbs' ? countLines(crumbs ?? '') : friction.total
-  const watermark = mode === 'breadcrumbs' ? parseWatermark(await readText($, watermarkPath(home, sid))) : prev?.mode === 'events' ? prev.lines : 0
+  // MOD-26: a window skipped as session boundaries only is behind us too, whatever the .done mark says
+  const watermark = mode === 'breadcrumbs' ? Math.max(parseWatermark(await readText($, watermarkPath(home, sid))), prev?.skippedTo ?? 0) : prev?.mode === 'events' ? prev.lines : 0
   const window = mode === 'breadcrumbs' ? windowOf(crumbs ?? '', watermark) : undefined
   return { sid, home, prev, mode, lines, watermark, friction, live, ...(window ? { window } : {}) }
 }
@@ -1663,19 +1673,29 @@ async function debriefBasis($: Host): Promise<DebriefBasis | undefined> {
 /** The folder the debrief file lands in: the built-in writes under the repo, the person's skill under ~/.claude/harness. */
 const debriefFolder = (builtIn: boolean, root: string, home: string): string => (builtIn ? `${root.replace(/\/+$/, '')}/.delegation/debriefs` : `${home.replace(/\/+$/, '')}/.claude/harness/debriefs`)
 
-/** The record claimed, the prompt built (the skill's or the built-in's, each asking for mod_findings), the agent spawned. `notes` are extra fact lines. */
-async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: string[]): Promise<{ agentId?: string; deny?: string; builtIn: boolean }> {
+/**
+ * The record claimed, the prompt built (the skill's or the built-in's, each asking for mod_findings), the agent spawned. `notes` are extra fact lines.
+ * MOD-26: a breadcrumbs prompt carries the friction events and verdicts whose time lies inside its window, each dated; a window of session
+ * boundaries alone with no such fact spawns nothing (`skipped` says why) and moves the record past it.
+ */
+async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: string[]): Promise<{ agentId?: string; deny?: string; skipped?: string; builtIn: boolean }> {
   const { sid, home, prev, mode, lines, watermark, friction, window } = basis
   const source = debriefSource(home, $.plugin.root, await exists($, debriefSkillPath(home)))
+  const recent = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
+  // breadcrumbs: the window alone chooses the facts (none without one); events: the events past the last debrief and the verdicts since it
+  const fresh = friction.events.slice(-Math.max(0, Math.min(friction.events.length, lines - watermark)))
+  const facts = mode === 'breadcrumbs' ? (window ? windowFacts(friction.events, recent, window) : []) : [...frictionFacts(fresh), ...verdictFacts(recent.filter(r => prev === undefined || r.at > prev.lastAt))]
+  if (mode === 'breadcrumbs' && window && boundaryOnly(window) && facts.length === 0) {
+    const skip: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn, finishedAt: t, skippedTo: window.end }
+    await storeSet($, K.debrief(sid), skip)
+    return { skipped: nothingToDebrief(window), builtIn: source.builtIn }
+  }
   // claimed before the spawn: never twice for this watermark, whatever the spawn does
   // MOD-10: the previous record is kept inside the claim; a debrief that fails its check puts it back
   const prior = prev ? ((({ prior: _p, window: _w, ...rest }) => rest)(prev) as DebriefRecord) : null
   const record: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn, ...(window ? { window } : {}), prior }
   await storeSet($, K.debrief(sid), record)
-  const recent = ((await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []).filter(r => prev === undefined || r.at > prev.lastAt)
-  const fresh = friction.events.slice(-Math.max(0, Math.min(friction.events.length, lines - watermark)))
-  const facts = [...notes, ...frictionFacts(fresh), ...recent.map(r => `verdict: ${currentLine(r.line)}`)]
-  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), facts, window) : debriefPrompt(source.path, sid, facts, window)
+  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), [...notes, ...facts], window) : debriefPrompt(source.path, sid, [...notes, ...facts], window)
   const recordAgent = async (agentId: string) => storeSet($, K.debrief(sid), { ...record, agentId })
   runnerStarted.set(promptKey({ prompt }), recordAgent)
   let res: { agentId?: string; deny?: string }
@@ -1711,6 +1731,7 @@ async function runDebrief($: Host): Promise<string> {
     const workers = basis.live.workers.length
     const note = workers > 0 ? `${workers} ${workers === 1 ? 'worker' : 'workers'} running; their attempts are not finished` : ''
     const res = await startDebrief($, basis, t, note ? [`note: ${note}`] : [])
+    if (res.skipped !== undefined) return res.skipped
     if (res.deny !== undefined) return `debrief not started: ${res.deny}`
     const root = await $.session.root()
     return `debrief started: agent ${res.agentId ?? '(id not yet known)'} · mode ${basis.mode}${basis.window ? ` · lines ${basis.window.firstLine} to ${basis.window.lastLine}` : ''} · writes to ${debriefFolder(res.builtIn, root, basis.home)}/${note ? ` · ${note}` : ''}`
