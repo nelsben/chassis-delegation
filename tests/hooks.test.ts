@@ -2068,6 +2068,17 @@ describe('GH-111: the card tool', () => {
     expect(w.spawns).toHaveLength(0)
   })
 
+  test('MOD-29: the dry run prints a forbid that collides with a done-when path, and the card is still written', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given, doneWhen: ['`artifacts/kit/index.html` exists'], forbid: ['artifacts/*.html'] } as never))
+    expect(out).toContain('warning: forbid artifacts/*.html matches artifacts/kit/index.html named in done-when')
+    const path = `${ROOT}/agents/tasks/OPS-1-the-rom-reader-returns-the-header.md`
+    expect(out).toContain(`wrote ${path}`)
+    expect(w.files.get(path)).toContain('forbid: [artifacts/*.html]\n')
+    expect(w.spawns).toHaveLength(0)
+  })
+
   test('with dispatch: true it dispatches the card it wrote: the spawn block, for the brain to make (MOD-12)', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = setup(on)
     await $.session.start(sessionStart)

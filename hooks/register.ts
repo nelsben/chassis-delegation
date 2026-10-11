@@ -167,7 +167,7 @@ import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguar
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
-import { CARD_TOOL, cardsFromFields, cardSummary, sayGo, type NewCard } from './lib/card'
+import { CARD_TOOL, cardsFromFields, cardSummary, doneWhenOf, forbidCollisions, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
@@ -3278,6 +3278,10 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const shownForbid = (shownHeader?.fields.forbid ?? '').split(',').filter(Boolean)
   for (const entry of scopeInsideForbid((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid)) {
     out.push(`   ${scopeInsideForbidWarning(entry, forbidCovering(entry, shownForbid) as string)}`)
+  }
+  // MOD-29: a forbid glob that can match a scope entry or a path the done-when names is said once per collision (nothing is refused)
+  for (const line of forbidCollisions((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, doneWhenOf(card.body))) {
+    out.push(`   ${line}`)
   }
   if (here) {
     const f: Record<string, string> = shownHeader?.fields ?? {}
