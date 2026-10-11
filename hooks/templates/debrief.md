@@ -86,8 +86,8 @@ of each kind:
 ]
 ```
 
-Classification: `completed_cleanly` verified on the first attempt; `required_rework`
-verified after a resume or a respawn; `user_corrected` the person changed direction;
+Classification: `completed_cleanly` consistent on the first attempt; `required_rework`
+consistent after a resume or a respawn; `user_corrected` the person changed direction;
 `scope_creep` a refute on scope or an amend that widened it; `blocked` the budget ran
 out or the task could not run.
 

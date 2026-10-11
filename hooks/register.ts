@@ -151,6 +151,7 @@ import {
   type EvalTier,
 } from './lib/evaltrigger'
 import { gateTemplatesOf, resolveGateRuns } from './lib/gates'
+import { currentLine } from './lib/legacy'
 import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
@@ -1352,7 +1353,7 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   }
   if (!sid) return s
   const recent = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
-  s.recent = recent.map(r => ({ line: r.line, at: r.at }))
+  s.recent = recent.map(r => ({ line: currentLine(r.line), at: r.at }))
   const busy = new Set([...s.running.map(r => r.task), ...s.pending.map(p => p.task), ...s.queued.map(q => q.task)])
   const t = await now($)
   const rows: { task: string; text: string; at: number; checked?: boolean }[] = []
@@ -1538,7 +1539,7 @@ async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: stri
   await storeSet($, K.debrief(sid), record)
   const recent = ((await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []).filter(r => prev === undefined || r.at > prev.lastAt)
   const fresh = friction.events.slice(-Math.max(0, Math.min(friction.events.length, lines - watermark)))
-  const facts = [...notes, ...frictionFacts(fresh), ...recent.map(r => `verdict: ${r.line}`)]
+  const facts = [...notes, ...frictionFacts(fresh), ...recent.map(r => `verdict: ${currentLine(r.line)}`)]
   const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), facts, window) : debriefPrompt(source.path, sid, facts, window)
   const recordAgent = async (agentId: string) => storeSet($, K.debrief(sid), { ...record, agentId })
   runnerStarted.set(promptKey({ prompt }), recordAgent)
@@ -1989,7 +1990,7 @@ async function probe($: Host) {
 }
 
 // ---- verify + verdict (5A: native) ---------------------------------------------------
-type Verified = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true }
+type VerifyResult = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true }
 
 /** sha-256 of `bytes`, hex, by the environment's crypto.subtle; undefined when it cannot be taken. */
 async function sha256Hex(bytes: Uint8Array): Promise<string | undefined> {
@@ -2099,7 +2100,7 @@ async function recordWorkPresent(
   return attempt
 }
 
-async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<Verified> {
+async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<VerifyResult> {
   await loadRepoConfig($)
   const root = await $.session.root()
   const briefPath = spawn.briefPath as string
@@ -2150,7 +2151,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
  * first scope root and lie in scope; the gate (map id, or a bare allowlisted
  * command such as `claude plugin validate <folder>`) must exit 0.
  */
-async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string): Promise<Verified> {
+async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string): Promise<VerifyResult> {
   const contract = briefContract(briefText)
   if (!contract.ok) return { verdict: 'refused', lines: [...amendLines, contract.line], noRepo: true }
   // GH-103: a prose scope= gives no root to check files under; the work stands, unverified
@@ -2216,7 +2217,7 @@ async function applyHandbackAmends($: Host, briefPath: string, briefText: string
   try {
     await $.fs.write(briefPath, appendAmends(briefText, apply.map(a => a.block)).text)
   } catch (err) {
-    return [...lines, `note: amend not appended to ${briefPath}: ${String(err)}; verified against the brief as it was`, ...heldLines]
+    return [...lines, `note: amend not appended to ${briefPath}: ${String(err)}; checked against the brief as it was`, ...heldLines]
   }
   return [...lines, ...apply.map(amendedLine), ...heldLines]
 }
@@ -2226,7 +2227,7 @@ type Measured = { tokens?: number; model?: string }
 /**
  * GH-1 item 2: an ad hoc spawn with no header and no brief file (or an
  * Agent result the spawn hook never saw). Its `[[report]]`, when it hands one
- * back, is verified cardlessly.
+ * back, is checked cardlessly.
  */
 const isCardless = (s: SpawnRecord): boolean => s.adhoc && s.briefPath === undefined && s.noBrief === undefined
 
@@ -2240,7 +2241,7 @@ const reportTaskOf = (task: string | undefined): string | undefined => {
  * GH-1 item 2: the git claims of a cardless report, checked in the spawn's
  * cwd (else the session root); scope, gate and red are unchecked (no brief).
  */
-async function runCardless($: Host, spawn: SpawnRecord, report: ReturnType<typeof parseReport>): Promise<Verified> {
+async function runCardless($: Host, spawn: SpawnRecord, report: ReturnType<typeof parseReport>): Promise<VerifyResult> {
   await loadRepoConfig($)
   const root = await $.session.root()
   const repo = spawn.cwd && (await exists($, spawn.cwd)) ? spawn.cwd : root
@@ -2399,7 +2400,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
       lines,
     })
   }
-  // GH-104: a resume or a respawn looks at the worker's worktree first: finished work there is verified, not redone
+  // GH-104: a resume or a respawn looks at the worker's worktree first: finished work there is judged, not redone
   let work: WorkPresent | undefined
   if (!spawn.adhoc && spawn.briefPath && (advice.kind === 'resume' || advice.kind === 'respawn')) {
     const lane = laneOf(spawn)
@@ -3384,7 +3385,7 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
     if (isFinalDeny(deny)) await dropQueued($, p.task, p.subtask)
     return { deny }
   }
-  // GH-104: a respawn (an earlier attempt exists) looks at the worker's worktree first; finished work there is verified, not redone
+  // GH-104: a respawn (an earlier attempt exists) looks at the worker's worktree first; finished work there is judged, not redone
   if (p.prior > 0 && !looked) {
     const fileHeader = p.briefText !== undefined ? parseHeader(p.briefText) : undefined
     const look: LookFor = { task: p.task, subtask: p.subtask, ...(p.cwd ? { cwd: p.cwd } : {}), ...(p.lane ? { replay: true, ...(p.lane.base ? { base: p.lane.base } : {}) } : {}) }

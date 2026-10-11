@@ -1,6 +1,7 @@
 // Attempt records: what the mod keeps per task in `$.store` under
 // `delegation.tasks.<task-id>` (an array, appended per attempt). The eval's
 // data source. Pure: no `$`.
+import { isConsistent, type LegacyVerified } from './legacy'
 import type { Tier, TierSource } from './tier'
 
 /**
@@ -14,7 +15,12 @@ import type { Tier, TierSource } from './tier'
  * `spend=` before it handed back; work may be present in its worktree. Not a
  * failing verdict: it never escalates the tier.
  */
-export type AttemptVerdict = 'pending' | 'verified' | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present' | 'over-spend'
+/**
+ * `consistent` (MOD-19, renamed; see ./legacy.ts): every machine-checkable claim
+ * of the report matched git. `LegacyVerified` is the old word as a record written
+ * before the rename holds it: read as consistent until 0.9.0, never written.
+ */
+export type AttemptVerdict = 'pending' | 'consistent' | LegacyVerified | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present' | 'over-spend'
 /** `verify` (GH-104): no worker ran; the attempt is the work found in the worktree, judged by `--verify`. */
 export type AttemptKind = 'spawn' | 'resume' | 'verify'
 
@@ -96,10 +102,10 @@ export const recordFailed = (r: AttemptRecord): boolean => FAILING.includes(r.ve
 
 /**
  * GH-104: what earns a respawn the next tier: a refuted report, or a
- * `gate=fail` the verifier confirmed (the verdict held it: verified). A
+ * `gate=fail` the verifier confirmed (the verdict held it: consistent). A
  * no-report is a reporting defect, not a capability one, and never escalates.
  */
-export const escalatesOn = (verdict: string, reportGate?: string): boolean => verdict === 'refuted' || (verdict === 'verified' && reportGate === 'fail')
+export const escalatesOn = (verdict: string, reportGate?: string): boolean => verdict === 'refuted' || (isConsistent(verdict) && reportGate === 'fail')
 
 /** GH-115: the claims whose failure says the worker was out of its depth; the rest say the brief's globs or the base were wrong. */
 export const ESCALATING_CLAIMS: readonly string[] = ['sha', 'gate', 'red']

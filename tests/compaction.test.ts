@@ -9,7 +9,7 @@ const busy = (): StateSnapshot => ({
   running: [{ task: 'BE-101', tier: 'frontier', agentId: 'agent-1', at: AT }],
   pending: [{ task: 'OPS-232', agentId: 'agent-2' }],
   recent: [
-    { line: 'chassis-delegation: OPS-230 attempt 1/3 verified · sonnet · next=accept', at: AT },
+    { line: 'chassis-delegation: OPS-230 attempt 1/3 consistent · sonnet · next=accept', at: AT },
     { line: 'chassis-delegation: OPS-231 attempt 1/3 refuted on scope (x) · sonnet · next=resume agent=agent-9', at: AT },
   ],
   queued: [{ task: 'FE-227', position: 1 }],
@@ -34,7 +34,7 @@ describe('the delegation state', () => {
     expect(lines).toContain('- pending verdict: OPS-232 agent agent-2')
     expect(lines).toContain('- queued: FE-227 (position 1)')
     expect(lines).toContain('- owed: OPS-231: resume agent=agent-9')
-    expect(lines).toContain('- verdict: chassis-delegation: OPS-230 attempt 1/3 verified · sonnet · next=accept')
+    expect(lines).toContain('- verdict: chassis-delegation: OPS-230 attempt 1/3 consistent · sonnet · next=accept')
     expect(lines).toContain('- last debrief: 2026-10-03 14:00Z agent agent-7 — /h/.claude/harness/debriefs/2026-10-03-x.json')
     expect(lines).toContain('- last eval: T1 61/63 at abcdef12 (2026-10-03 14:00Z)')
     expect(lines).toContain('- PRs named in reports: #926')

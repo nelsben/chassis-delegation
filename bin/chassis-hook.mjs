@@ -33,7 +33,7 @@ const GATE_TIMEOUT_MS = 9 * 60 * 1000
 const GIT_TIMEOUT_MS = 30 * 1000
 const AGENT_TOOLS = ['Agent', 'Task']
 const NEXT = {
-  verified: 'accept',
+  consistent: 'accept',
   unverified: 'check the unchecked claims before accepting',
   refuted: 'send the worker back with these lines',
   refused: 'fix the brief',
@@ -238,7 +238,7 @@ async function postAgent(lib, input) {
     briefText = prompt
   }
   if (header?.repo === 'none' || header?.repo === 'here') {
-    return unverified([`note: repo=${header.repo}: the settings-hook fallback verifies a branch in a git work tree only; this brief is verified with the engine`])
+    return unverified([`note: repo=${header.repo}: the settings-hook fallback verifies a branch in a git work tree only; this brief is checked with the engine`])
   }
 
   const env = await openRepo(lib, base)
@@ -251,7 +251,7 @@ async function postAgent(lib, input) {
   const baseRef = env.cfg.baseRef ? { baseRef: env.cfg.baseRef } : {}
   let result
   if (briefText === undefined) {
-    // GH-1 item 2: no brief at all: only what git can say alone, so never verified
+    // GH-1 item 2: no brief at all: only what git can say alone, so never consistent
     result = await lib.verifyCardless({ repo: tree, report, ...baseRef }, { exec })
   } else {
     const safe = (task || 'task').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_')

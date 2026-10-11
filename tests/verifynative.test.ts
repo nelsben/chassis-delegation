@@ -134,10 +134,10 @@ describe('5A: the files claim names what is missing and what is extra', () => {
 })
 
 describe('5A: verifyNative against a repo answered from a table', () => {
-  test('every claim holds: verified; files.txt written before the gate; the gate runs in the worker worktree', async () => {
+  test('every claim holds: consistent; files.txt written before the gate; the gate runs in the worker worktree', async () => {
     const t = io(happy())
     const r = await verifyNative(input(), t)
-    expect(r.verdict).toBe('verified')
+    expect(r.verdict).toBe('consistent')
     expect(r.lines).toEqual([
       'claim branch: held — refs/heads/agent/ops/T-1',
       'claim sha: held — a1b2c3d4e reachable on agent/ops/T-1',
@@ -226,13 +226,13 @@ describe('5A: verifyNative against a repo answered from a table', () => {
   test('a replay verifies against its base, not origin/main', async () => {
     const t = io(happy({ [git('merge-base', '96014e3b', FULL)]: ok(MB + '\n') }))
     const r = await verifyNative(input({ base: '96014e3b' }), t)
-    expect(r.verdict).toBe('verified')
+    expect(r.verdict).toBe('consistent')
     expect(t.calls.some(c => c.argv.join(' ') === git('merge-base', 'origin/main', FULL))).toBe(false)
   })
   test('with no origin the base falls back to main, then master', async () => {
     expect(BASE_REFS).toEqual(['origin/main', 'main', 'origin/master', 'master'])
     const t = io(happy({ [git('rev-parse', '--verify', '--quiet', 'origin/main')]: exit(1), [git('rev-parse', '--verify', '--quiet', 'main')]: ok(MB + '\n'), [git('merge-base', 'main', FULL)]: ok(MB + '\n') }))
-    expect((await verifyNative(input(), t)).verdict).toBe('verified')
+    expect((await verifyNative(input(), t)).verdict).toBe('consistent')
   })
   test('a PR number must exist (gh pr view <n> --json state); a missing one is unchecked', async () => {
     const seen = io(happy({ 'gh pr view 931 --json state': ok('{"state":"OPEN"}') }))
@@ -315,7 +315,7 @@ describe('GH-20: verifyNative reads the red evidence in the worker tree, after t
   test('held: the file is read under the repo, and the result carries its path and hash for the attempt record', async () => {
     const t = io(happy())
     const r = await verifyNative(input(), t)
-    expect(r.verdict).toBe('verified')
+    expect(r.verdict).toBe('consistent')
     expect(t.reads).toEqual([`${REPO}/${RED_PATH}`])
     expect(r.red).toEqual({ path: RED_PATH, hash: fakeHash(RED_TEXT), held: true })
   })
@@ -334,7 +334,7 @@ describe('GH-20: verifyNative reads the red evidence in the worker tree, after t
   })
   test('a brief with red_test=none yields no red claim', async () => {
     const r = await verifyNative(input({ briefText: NO_RED, report: report({ red: '' }) }), io(happy()))
-    expect(r.verdict).toBe('verified')
+    expect(r.verdict).toBe('consistent')
     expect(r.lines.some(l => l.startsWith('claim red:'))).toBe(false)
   })
   test("a resume whose red file is byte-identical to attempt 1's, whose red claim did not hold: refuted on red", async () => {
@@ -396,7 +396,7 @@ describe('GH-16: repo=here, the shared checkout (no worktree)', () => {
       'claim gate: held — gate green in the shared checkout /w/main (gate=pass confirmed; repo=here: the dirty tree is allowed, the clean-tree rule does not apply)',
       'claim pr: held — no PR claimed',
     ])
-    expect(r.verdict).toBe('verified')
+    expect(r.verdict).toBe('consistent')
     expect(t.writes['/w/main/.delegation/GH-16/files.txt']).toBe('src/a.ts\nsrc/new.ts\ndocs/new.md\n')
     expect(t.calls.find(c => c.argv[0] === 'npm')).toEqual({ argv: ['npm', 'test'], cwd: ROOTDIR })
     // no worktree, no fetch, and no clean-tree check
@@ -419,7 +419,7 @@ describe('GH-16: repo=here, the shared checkout (no worktree)', () => {
       [hgit('diff', '--name-status', '-M', MB, FULL)]: ok('A\tsrc/a.ts\nA\t.delegation/notes.md\n'),
     }))
     const r = await verifyNative(hereInput({ briefText, report: hereReport({ sha: 'a1b2c3d', files: 'src/a.ts' }), others: [] }), t)
-    expect(r.verdict).toBe('verified')
+    expect(r.verdict).toBe('consistent')
     expect(r.lines.slice(1, 3)).toEqual(['claim sha: held — a1b2c3d4e resolves in /w/main', 'ignored: 1 path by ignore= (.delegation/notes.md)'])
     expect(r.lines).toContain('claim files: held — files= matches the sha delta exactly')
     // no status read for a committed sha, and origin/main is never asked for
@@ -436,7 +436,7 @@ describe('GH-16: repo=here, the shared checkout (no worktree)', () => {
     expect(made.lines).toContain("claim sha: failed — sha 'deadbeef' does not exist in /w/main (fabrication)")
     expect(made.lines).toContain('claim gate: unchecked — sha missing — cannot re-run the gate')
     // sha=none reads the working tree too
-    expect((await verifyNative(hereInput({ report: hereReport({ sha: 'none' }) }), io(hereTable()))).verdict).toBe('verified')
+    expect((await verifyNative(hereInput({ report: hereReport({ sha: 'none' }) }), io(hereTable()))).verdict).toBe('consistent')
   })
 
   test('git status failing leaves scope and files unchecked', async () => {
@@ -458,7 +458,7 @@ describe('GH-16: repo=here, the shared checkout (no worktree)', () => {
   test("an ignore+= amend in the brief and the config's ignore come off too, disclosed", async () => {
     const briefText = `${HERE_HEADER.replace(' ignore=.delegation/**,notes/scratch.md', '')}\n\nbody\n[[amend v=1 ignore+=notes/** reason=the brain keeps notes there]]\n`
     const r = await verifyNative(hereInput({ briefText, ignore: ['.delegation/**'] }), io(hereTable()))
-    expect(r.verdict).toBe('verified')
+    expect(r.verdict).toBe('consistent')
     expect(r.lines[0]).toBe('amendment: #1 ignore+=notes/** — reason: the brain keeps notes there')
     expect(r.lines).toContain('ignored: 2 paths by ignore= (.delegation/briefs/GH-16.brief.md, notes/scratch.md), 1 path belonging to GH-19 (src/b.ts)')
   })
@@ -494,13 +494,13 @@ describe('GH-10: the base a brief names', () => {
   test('worktree mode: the brief base= beats the config baseRef, which beats the origin/main chain; a replay base beats them all', async () => {
     const named = io(happy({ [git('merge-base', 'develop', FULL)]: ok(MB + '\n') }))
     const r = await verifyNative(input({ briefText: `${HEADER.replace(' gate=test', ' gate=test base=develop')}\n` }), named)
-    expect(r.verdict).toBe('verified')
+    expect(r.verdict).toBe('consistent')
     expect(named.calls.some(c => c.argv.includes('origin/main'))).toBe(false)
     const fromConfig = io(happy({ [git('merge-base', 'agent/ops/T-0', FULL)]: ok(MB + '\n') }))
-    expect((await verifyNative(input({ baseRef: 'agent/ops/T-0' }), fromConfig)).verdict).toBe('verified')
+    expect((await verifyNative(input({ baseRef: 'agent/ops/T-0' }), fromConfig)).verdict).toBe('consistent')
     expect(fromConfig.calls.some(c => c.argv.includes('origin/main'))).toBe(false)
     const replay = io(happy({ [git('merge-base', '96014e3b', FULL)]: ok(MB + '\n') }))
-    expect((await verifyNative(input({ base: '96014e3b', baseRef: 'develop', briefText: `${HEADER.replace(' gate=test', ' gate=test base=develop')}\n` }), replay)).verdict).toBe('verified')
+    expect((await verifyNative(input({ base: '96014e3b', baseRef: 'develop', briefText: `${HEADER.replace(' gate=test', ' gate=test base=develop')}\n` }), replay)).verdict).toBe('consistent')
     expect(replay.calls.some(c => c.argv.includes('develop'))).toBe(false)
   })
   test('a base= that is not a git ref makes the brief unusable: refused, nothing runs', async () => {

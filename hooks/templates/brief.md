@@ -19,7 +19,7 @@ You were started by the brain's own Agent call: the mod that dispatched you reco
 {{/here}}
 - Red test first: {{redTest}}. Show it failing before you change code.
 - Red evidence: before you change any source, run the red test and save its failing output to `.delegation/{{id}}/red-<attempt>.txt` inside the worktree (make the folder; `.delegation/` is gitignored, and that is fine: the verifier reads the tree, not git). `<attempt>` is 1 on a first run. On a resume or a respawn, write a NEW file with the next free number (red-2.txt, red-3.txt …), never an earlier attempt's file again: the verifier refutes a red file byte-identical to an earlier attempt's. Name the file in your report as `red=<path>` (relative to the worktree); write `red=none` only when the red test above is none.
-- Stay inside the brief's scope= and never touch a forbid= path. If you must change a file outside scope, say so in your hand-back with an amend block on its own line, `[[amend v=1 scope+=<path> reason=<one line>]]`; it is appended to this brief before your report is verified.
+- Stay inside the brief's scope= and never touch a forbid= path. If you must change a file outside scope, say so in your hand-back with an amend block on its own line, `[[amend v=1 scope+=<path> reason=<one line>]]`; it is appended to this brief before your report is checked.
 {{#worktree}}
 - Gate: {{gate}} green in the worktree before you report. Leave the worktree clean (everything committed): the verifier re-runs the gate there, at your sha.
 - Commit and HOLD: never push, never open a PR, never merge, never commit on main or master.

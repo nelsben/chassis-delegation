@@ -93,7 +93,7 @@ const NOTES: Record<string, string> = {
   maxWorkers: 'workers running at once',
   domains: 'the card domains a branch may carry',
   cardDir: 'where the task cards live, relative to the repo root',
-  autoEval: 'run the eval command after a verified task',
+  autoEval: 'run the eval command after a task comes back consistent',
   ignore: 'globs a repo=here delta never counts',
   spendByTier: 'dollars one attempt may spend, per tier; 0 = no ceiling',
   delegateOnly: 'off | warn | deny: whether an opus or fable brain may edit source itself',

@@ -96,7 +96,7 @@ const input = (repo, f) => ({ repo, report: report(f), briefText: BRIEF, gateMap
 const BRIEF_RED = BRIEF.replace(' gate=check', ' red_test="bash gate.sh" gate=check')
 
 describe('5G: native verify against a real git repository', () => {
-  test('two commits on the branch, everything as reported: verified', async () => {
+  test('two commits on the branch, everything as reported: consistent', async () => {
     const { dir, sha } = makeRepo()
     try {
       const t = io()
@@ -105,7 +105,7 @@ describe('5G: native verify against a real git repository', () => {
       expect(r.lines).toContain('claim branch: held — refs/heads/agent/ops/T-1')
       expect(r.lines).toContain('claim files: held — files= matches the sha delta exactly')
       expect(r.lines).toContain(`claim gate: held — gate green at ${sha} (gate=pass confirmed)`)
-      expect(r.verdict).toBe('verified')
+      expect(r.verdict).toBe('consistent')
       // files.txt is the actual delta in git's order, not the report's
       expect(t.files['/x/.delegation/T-1/files.txt']).toBe('docs/x.md\nsrc/a.ts\n')
       expect(t.ran).toContain('bash gate.sh')
@@ -205,7 +205,7 @@ describe('5G: native verify against a real git repository', () => {
       expect(t.refused).toEqual([])
       expect(r.lines).toContain(`claim gate: held — gate green at ${sha} (gate=pass confirmed)`)
       expect(r.lines).toContain('claim red: held — .delegation/T-1/red-1.txt, 45 bytes, first failure line: exit code 1: src/a.ts not found')
-      expect(r.verdict).toBe('verified')
+      expect(r.verdict).toBe('consistent')
       expect(r.red?.hash).toBe(createHash('sha256').update('bash gate.sh\nexit code 1: src/a.ts not found\n').digest('hex'))
       // the same file named again by a later attempt is attempt 1's file again
       const again = await verifyNative({ ...input(dir, { sha }), briefText: body, report: rep, priorRed: [{ attempt: 1, hash: r.red?.hash }] }, io())
@@ -250,7 +250,7 @@ describe('GH-16: repo=here against a real git checkout', () => {
     others,
   })
 
-  test('the dirty-tree delta less ignore= and the other card: verified, the gate run on the dirty tree', async () => {
+  test('the dirty-tree delta less ignore= and the other card: consistent, the gate run on the dirty tree', async () => {
     const dir = makeCheckout()
     try {
       const t = io()
@@ -259,7 +259,7 @@ describe('GH-16: repo=here against a real git checkout', () => {
       expect(r.lines).toContain(`claim branch: held — main is the current branch of ${dir}`)
       expect(r.lines).toContain('ignored: 1 path by ignore= (.delegation/briefs/GH-16.brief.md), 1 path belonging to GH-19 (src/b.ts)')
       expect(r.lines).toContain('claim files: held — files= matches the dirty-tree delta exactly')
-      expect(r.verdict).toBe('verified')
+      expect(r.verdict).toBe('consistent')
       expect(t.ran).toContain('bash gate.sh')
       expect(t.ran.some(c => c.includes('worktree') || c.includes('fetch'))).toBe(false)
       // the rename is its new path only

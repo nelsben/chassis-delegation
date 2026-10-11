@@ -2,7 +2,9 @@
 // read-only git in the worker's OWN worktree, keeping that script's claims,
 // their wording and its verdict rule:
 //
-//   verified   — every claim checked and held (the only verdict that means "done")
+//   consistent — every claim checked and held: the report matches git (branch,
+//                sha, files, scope, gate, red). It is NOT a review: nothing here
+//                reads the diff, and the brain still does (MOD-19, renamed; see ./legacy.ts)
 //   unverified — a claim could not be checked — NOT a pass
 //   refuted    — a claim was contradicted (a fabricated sha, an out-of-scope
 //                diff, gate=pass over a red gate)
@@ -28,7 +30,7 @@
 // hands back a report. The git claims are checked without a brief (branch,
 // sha, files= against the delta, pr); scope, gate and red have nothing to be
 // checked against and are unchecked, so a cardless verdict is refuted or
-// unverified, never verified. No files.txt is written and no gate runs.
+// unverified, never consistent. No files.txt is written and no gate runs.
 // Pure apart from `io`: no `$`.
 import { effectiveList, parseAmends, parseHeader, type Report } from './brief'
 import { resolveGateRuns, type GateResolution } from './gates'
@@ -74,7 +76,7 @@ export type NativeInput = {
 export const NO_BRIEF_REASON = 'no brief: no scope=/gate=/red_test= to check against'
 
 
-export type NativeVerdict = 'verified' | 'unverified' | 'refuted' | 'refused'
+export type NativeVerdict = 'consistent' | 'unverified' | 'refuted' | 'refused'
 export type NativeResult = {
   verdict: NativeVerdict
   lines: string[]
@@ -408,7 +410,7 @@ function outputTail(stdout: string, stderr: string): string[] {
 }
 
 /**
- * GH-1 item 2: a report with no brief behind it, verified for what git
+ * GH-1 item 2: a report with no brief behind it, checked for what git
  * can say alone (branch, sha, files, pr) in `repo`, the spawn's cwd or the
  * session root. Scope, gate and red are unchecked with NO_BRIEF_REASON.
  */
@@ -652,6 +654,6 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     else claim('pr', 'unchecked', `gh could not resolve ${pr} (offline / auth / not found)`)
   }
 
-  const verdict: NativeVerdict = anyFailed ? 'refuted' : anyUnchecked ? 'unverified' : 'verified'
+  const verdict: NativeVerdict = anyFailed ? 'refuted' : anyUnchecked ? 'unverified' : 'consistent'
   return { verdict, lines: [...lines, ...notes], ...(red ? { red } : {}) }
 }

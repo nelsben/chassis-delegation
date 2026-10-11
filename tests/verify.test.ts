@@ -52,7 +52,7 @@ describe('verdict, advice and budgets', () => {
     expect(isFailing('no-report')).toBe(true)
     expect(isFailing('unverified', 'fail')).toBe(true)
     expect(isFailing('unverified', 'pass')).toBe(false)
-    expect(isFailing('verified')).toBe(false)
+    expect(isFailing('consistent')).toBe(false)
   })
   const base = { task: 'FE-1', adhoc: false, briefPath: '/s/briefs/FE-1.brief.md', agentId: 'agent-7' }
   test('first failing verdict: resume the same worker', () => {
@@ -71,10 +71,10 @@ describe('verdict, advice and budgets', () => {
     const a = advise({ ...base, verdict: 'no-report', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' })
     expect(a).toEqual({ kind: 'respawn', tier: 'standard', next: 'respawn at standard — same brief /s/briefs/FE-1.brief.md, make the spawn block below (it names the model)' })
     // escalation stays for a confirmed gate=fail; an unconfirmed one (unverified) holds the tier
-    expect(advise({ ...base, verdict: 'verified', reportGate: 'fail', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' }).tier).toBe('frontier')
+    expect(advise({ ...base, verdict: 'consistent', reportGate: 'fail', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' }).tier).toBe('frontier')
     expect(advise({ ...base, verdict: 'unverified', reportGate: 'fail', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' }).tier).toBe('standard')
     expect(escalatesOn('refuted')).toBe(true)
-    expect(escalatesOn('verified', 'fail')).toBe(true)
+    expect(escalatesOn('consistent', 'fail')).toBe(true)
     expect(escalatesOn('unverified', 'fail')).toBe(false)
     expect(escalatesOn('no-report')).toBe(false)
   })
@@ -96,8 +96,8 @@ describe('verdict, advice and budgets', () => {
     expect(a.next).toBe("stop — budget exhausted for FE-1 (2 attempts); raise budget= in the task's brief to continue (the ladder resumes from attempt 2, the brief is re-read)")
     expect(budgetDenyMessage('FE-1', 2)).toBe("budget exhausted for FE-1 (2 attempts); raise budget= in the task's brief to continue (the ladder resumes from attempt 2, the brief is re-read)")
   })
-  test('verified accepts; unverified is not a pass; ad hoc spawns get no escalation', () => {
-    expect(advise({ ...base, verdict: 'verified', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard' }).kind).toBe('accept')
+  test('consistent accepts; unverified is not a pass; ad hoc spawns get no escalation', () => {
+    expect(advise({ ...base, verdict: 'consistent', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard' }).kind).toBe('accept')
     expect(advise({ ...base, verdict: 'unverified', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard' }).next).toBe('check by hand — unverified is not a pass')
     expect(advise({ ...base, adhoc: true, verdict: 'no-report', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard' }).kind).toBe('none')
   })
@@ -114,20 +114,20 @@ describe('verdict, advice and budgets', () => {
     expect(advise({ ...base, verdict: 'unverified', attempts: 2, budget: 2, lineageResumes: 0, tier: 'standard', lines }).next).toBe('check by hand — unverified is not a pass')
     expect(advise({ ...base, agentId: undefined, verdict: 'unverified', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard', lines }).next).toBe('check by hand — unverified is not a pass')
   })
-  test('GH-1 item 2: a cardless hand-back accepts when verified, else says check the diff; never resume or respawn', () => {
+  test('GH-1 item 2: a cardless hand-back accepts when consistent, else says check the diff; never resume or respawn', () => {
     const cardless = { ...base, adhoc: true, cardless: true, attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard' as const }
-    expect(advise({ ...cardless, verdict: 'verified' })).toEqual({ kind: 'accept', next: 'accept' })
+    expect(advise({ ...cardless, verdict: 'consistent' })).toEqual({ kind: 'accept', next: 'accept' })
     for (const verdict of ['unverified', 'refuted'] as const) expect(advise({ ...cardless, verdict, lines: ['claim gate: unchecked — x'] })).toEqual({ kind: 'check', next: 'check the diff' })
-    expect(advise({ ...cardless, verdict: 'verified', reportGate: 'fail' }).next).toBe('check the diff')
+    expect(advise({ ...cardless, verdict: 'consistent', reportGate: 'fail' }).next).toBe('check the diff')
   })
   test('the verdict line and the context cap', () => {
     const line = verdictLine({ verdict: 'refuted', task: 'FE-1', attempt: 1, budget: 2, next: 'resume agent=a — x' })
     expect(line).toBe('chassis-delegation: verdict=refuted task=FE-1 attempt=1/2 next=resume agent=a — x')
     // cost and the resolved model sit before next=, which runs to the end of the line
-    expect(verdictLine({ verdict: 'verified', task: 'OPS-230', attempt: 1, budget: 3, usd: 2.9061, model: 'claude-sonnet-5-5', next: 'accept' })).toBe(
-      'chassis-delegation: verdict=verified task=OPS-230 attempt=1/3 usd=2.91 model=claude-sonnet-5-5 next=accept',
+    expect(verdictLine({ verdict: 'consistent', task: 'OPS-230', attempt: 1, budget: 3, usd: 2.9061, model: 'claude-sonnet-5-5', next: 'accept' })).toBe(
+      'chassis-delegation: verdict=consistent task=OPS-230 attempt=1/3 usd=2.91 model=claude-sonnet-5-5 next=accept',
     )
-    expect(verdictLine({ verdict: 'verified', task: 'T', attempt: 1, budget: 3, usd: 0, next: 'accept' })).toBe('chassis-delegation: verdict=verified task=T attempt=1/3 usd=0.00 next=accept')
+    expect(verdictLine({ verdict: 'consistent', task: 'T', attempt: 1, budget: 3, usd: 0, next: 'accept' })).toBe('chassis-delegation: verdict=consistent task=T attempt=1/3 usd=0.00 next=accept')
     const many = Array.from({ length: 60 }, (_, i) => `claim c${i}: held — ok`)
     const block = contextBlock(line, many)
     expect(block.split('\n')).toHaveLength(40)
@@ -165,7 +165,7 @@ describe('attempt arithmetic', () => {
   const rec = (n: number, kind: AttemptRecord['kind'], lineage: number, verdict: AttemptRecord['verdict'], subtask = 'main'): AttemptRecord => ({
     task: 'FE-1', subtask, attempt: n, kind, lineage, tier: 'standard', alias: 'sonnet', verdict, at: n,
   })
-  const recs = [rec(1, 'spawn', 1, 'refuted'), rec(2, 'resume', 1, 'refuted'), rec(1, 'spawn', 1, 'verified', 'retry')]
+  const recs = [rec(1, 'spawn', 1, 'refuted'), rec(2, 'resume', 1, 'refuted'), rec(1, 'spawn', 1, 'consistent', 'retry')]
   test('counts per subtask; a re-brief under a new subtask starts over', () => {
     expect(attemptsFor(recs, 'main')).toHaveLength(2)
     expect(nextAttempt(recs, 'main')).toBe(3)
@@ -192,7 +192,7 @@ describe('attempt arithmetic', () => {
     expect(holdSource(noReport, 'main')).toBe('frontier')
     expect(holdSource(recs, 'main')).toBeUndefined()
     // a confirmed gate=fail still escalates; a work-present attempt neither escalates nor holds
-    expect(escalationSource([{ ...rec(1, 'spawn', 1, 'verified'), reportGate: 'fail' }], 'main')).toBe('standard')
+    expect(escalationSource([{ ...rec(1, 'spawn', 1, 'consistent'), reportGate: 'fail' }], 'main')).toBe('standard')
     expect(escalationSource([rec(1, 'spawn', 1, 'work-present')], 'main')).toBeUndefined()
     expect(holdSource([rec(1, 'spawn', 1, 'work-present')], 'main')).toBeUndefined()
   })

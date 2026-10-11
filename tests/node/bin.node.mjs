@@ -101,13 +101,13 @@ function contextOf(r) {
 const cleanup = (...dirs) => dirs.forEach(d => rmSync(d, { recursive: true, force: true }))
 
 describe('MOD-17: post-agent (PostToolUse on Agent)', () => {
-  test('a matching report: a verified row as additional context', () => {
+  test('a matching report: a consistent row as additional context', () => {
     const { dir, sha } = makeRepo()
     const brief = writeBrief()
     try {
       const r = hook('post-agent', agentCall(dir, `Your brief is the file ${brief}. Follow it exactly.`, `Done.\n${reportLine(sha)}`))
       const ctx = contextOf(r)
-      expect(ctx).toContain('chassis-delegation: verdict=verified task=T-1')
+      expect(ctx).toContain('chassis-delegation: verdict=consistent task=T-1')
       expect(ctx).toContain('claim files: held — files= matches the sha delta exactly')
       expect(ctx).toContain(`claim gate: held — gate green at ${sha} (gate=pass confirmed)`)
       expect(r.stderr).toBe('')
@@ -146,7 +146,7 @@ describe('MOD-17: post-agent (PostToolUse on Agent)', () => {
     const brief = writeBrief()
     try {
       const text = `first try ${reportLine('deadbeef')}\nthen fixed:\n${reportLine(sha)}`
-      expect(contextOf(hook('post-agent', agentCall(dir, `Your brief is the file ${brief}.`, text)))).toContain('verdict=verified task=T-1')
+      expect(contextOf(hook('post-agent', agentCall(dir, `Your brief is the file ${brief}.`, text)))).toContain('verdict=consistent task=T-1')
     } finally {
       cleanup(dir, join(brief, '..'))
     }
@@ -156,7 +156,7 @@ describe('MOD-17: post-agent (PostToolUse on Agent)', () => {
     const { dir, sha } = makeRepo()
     try {
       const prompt = `${header()}\n\nDo the thing in the worktree.\n`
-      expect(contextOf(hook('post-agent', agentCall(dir, prompt, reportLine(sha))))).toContain('verdict=verified task=T-1')
+      expect(contextOf(hook('post-agent', agentCall(dir, prompt, reportLine(sha))))).toContain('verdict=consistent task=T-1')
     } finally {
       cleanup(dir)
     }
@@ -170,7 +170,7 @@ describe('MOD-17: post-agent (PostToolUse on Agent)', () => {
       sh(dir, 'checkout', '-q', 'main')
       sh(dir, 'worktree', 'add', '-q', wt, 'agent/ops/T-1')
       const ctx = contextOf(hook('post-agent', agentCall(dir, `Your brief is the file ${brief}.`, reportLine(sha))))
-      expect(ctx).toContain('verdict=verified task=T-1')
+      expect(ctx).toContain('verdict=consistent task=T-1')
       expect(ctx).toContain(`claim gate: held — gate green at ${sha}`)
     } finally {
       cleanup(dir, join(brief, '..'), join(wt, '..'))
@@ -188,7 +188,7 @@ describe('MOD-17: post-agent (PostToolUse on Agent)', () => {
     }
   })
 
-  test('a brief with repo=none is said to be engine-only, not verified', () => {
+  test('a brief with repo=none is said to be engine-only, not consistent', () => {
     const { dir, sha } = makeRepo()
     const brief = writeBrief(`${header(' repo=none')}\n\nbody\n`)
     try {

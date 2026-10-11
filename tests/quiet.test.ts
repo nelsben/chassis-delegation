@@ -27,7 +27,7 @@ describe('the verifier claim lines', () => {
     expect(verdictReason('refuted', lines)).toBe('on scope (out-of-scope path: hooks/x.ts)')
     expect(verdictReason('unverified', ['claim sha: held — abc', 'claim gate: unchecked — no gate command available'])).toBe('on gate (no gate command available)')
     expect(verdictReason('unverified', ['note: dispatch-verify.sh did not run: refused: x'])).toBe('(note: dispatch-verify.sh did not run: refused: x)')
-    expect(verdictReason('verified', lines)).toBeUndefined()
+    expect(verdictReason('consistent', lines)).toBeUndefined()
     expect(verdictReason('no-report', [])).toBeUndefined()
   })
 
@@ -53,9 +53,9 @@ describe('amend clauses', () => {
 })
 
 describe('the one-line row', () => {
-  test('verified: task, attempt, verdict, alias, cost, next', () => {
-    expect(quietLine({ task: 'OPS-232', attempt: 2, budget: 3, verdict: 'verified', alias: 'sonnet', usd: 2.2611, next: 'accept', lines: ['claim branch: held — x'] })).toBe(
-      'chassis-delegation: OPS-232 attempt 2/3 verified · sonnet · $2.26 · next=accept',
+  test('consistent: task, attempt, verdict, alias, cost, next', () => {
+    expect(quietLine({ task: 'OPS-232', attempt: 2, budget: 3, verdict: 'consistent', alias: 'sonnet', usd: 2.2611, next: 'accept', lines: ['claim branch: held — x'] })).toBe(
+      'chassis-delegation: OPS-232 attempt 2/3 consistent · sonnet · $2.26 · next=accept',
     )
   })
 
@@ -89,10 +89,10 @@ describe('the one-line row', () => {
     expect(line).toBe(`chassis-delegation: T-4 attempt 2/3 refuted on gate (red at abc) · sonnet · $0.00 · amended scope+=a/x.ts · amend needs approval: forbid-=b/** · next=${RESPAWN}`)
   })
 
-  test('no-report has no reason; an honest gate=fail on a verified report says so', () => {
+  test('no-report has no reason; an honest gate=fail on a consistent report says so', () => {
     expect(quietLine({ task: 'T-4', attempt: 1, budget: 2, verdict: 'no-report', alias: 'haiku', next: RESUME, lines: [] })).toBe('chassis-delegation: T-4 attempt 1/2 no-report · haiku · next=resume agent=agent-4')
-    expect(quietLine({ task: 'T-4', attempt: 1, budget: 2, verdict: 'verified', reportGate: 'fail', alias: 'opus', next: RESUME, lines: [] })).toBe(
-      'chassis-delegation: T-4 attempt 1/2 verified (report gate=fail) · opus · next=resume agent=agent-4',
+    expect(quietLine({ task: 'T-4', attempt: 1, budget: 2, verdict: 'consistent', reportGate: 'fail', alias: 'opus', next: RESUME, lines: [] })).toBe(
+      'chassis-delegation: T-4 attempt 1/2 consistent (report gate=fail) · opus · next=resume agent=agent-4',
     )
   })
 })
@@ -102,7 +102,7 @@ describe('3A/5A: a no-repo verdict says so', () => {
     expect(quietLine({ task: 'MOD-4', attempt: 1, budget: 2, verdict: 'refuted', noRepo: true, alias: 'opus', next: 'resume agent=a-1', lines: ['claim files: failed — /m/x.ts is not there'] })).toBe(
       'chassis-delegation: MOD-4 attempt 1/2 refuted (no repo) on files (/m/x.ts is not there) · opus · next=resume agent=a-1',
     )
-    expect(quietLine({ task: 'MOD-4', attempt: 1, budget: 2, verdict: 'verified', noRepo: true, next: 'accept', lines: [] })).toBe('chassis-delegation: MOD-4 attempt 1/2 verified (no repo) · next=accept')
+    expect(quietLine({ task: 'MOD-4', attempt: 1, budget: 2, verdict: 'consistent', noRepo: true, next: 'accept', lines: [] })).toBe('chassis-delegation: MOD-4 attempt 1/2 consistent (no repo) · next=accept')
   })
 })
 

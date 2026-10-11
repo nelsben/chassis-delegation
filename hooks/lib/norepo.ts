@@ -116,7 +116,7 @@ export type NoRepoInput = {
   noGate: boolean
 }
 
-export type NoRepoVerdict = { verdict: 'verified' | 'refuted' | 'unverified'; why?: string; lines: string[] }
+export type NoRepoVerdict = { verdict: 'consistent' | 'refuted' | 'unverified'; why?: string; lines: string[] }
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
@@ -124,7 +124,7 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
  * The verdict and its claim lines, in the native verifier's shape
  * (`claim <name>: held|failed|unchecked — <detail>`). A failed claim refutes
  * (scope first, then missing files, then the gate); else an unchecked one
- * (a gate not re-run, none at all) leaves it unverified; else verified.
+ * (a gate not re-run, none at all) leaves it unverified; else consistent.
  */
 export function noRepoVerdict(v: NoRepoInput): NoRepoVerdict {
   const lines: string[] = []
@@ -162,9 +162,9 @@ export function noRepoVerdict(v: NoRepoInput): NoRepoVerdict {
   }
   if (failed.length > 0) return { verdict: 'refuted', why: failed[0] as string, lines }
   if (unchecked.length > 0) return { verdict: 'unverified', why: unchecked[0] as string, lines }
-  return { verdict: 'verified', lines }
+  return { verdict: 'consistent', lines }
 }
 
-/** `verified (no repo)`, `refuted (no repo): <why>`, `unverified (no repo): <why>`. */
+/** `consistent (no repo)`, `refuted (no repo): <why>`, `unverified (no repo): <why>`. */
 export const noRepoVerdictText = (v: { verdict: string; why?: string }): string =>
   `${v.verdict} (no repo)${v.why ? `: ${v.why}` : ''}`
