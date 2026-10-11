@@ -194,3 +194,63 @@ describe('MOD-29: the dry run warns when a forbid glob collides with the card', 
     expect(forbidCollisions([], ['artifacts/*.html'], ['the page builds'])).toEqual([])
   })
 })
+
+describe('MOD-40: a frontmatter value with a space and a hash is not cut there', () => {
+  const legacy = (redLine: string) => `---
+id: OPS-1
+title: Legacy card
+domain: ops
+tier: standard
+status: queued
+scope: [a/**]
+forbid: []
+${redLine}
+gate: test
+budget: 2-attempts
+spend: 6
+---
+## Why
+
+A card written before the change.
+
+## Done when
+
+- it reads whole
+`
+
+  test('a card whose red_test holds " #89" round-trips whole through the writer and the reader', () => {
+    const red = 'isCorrection on the first three #89 messages'
+    const r = ok(cardFromFields(input({ redTest: red }), ctx()))
+    const c = parseCard(r.text)
+    if ('error' in c) throw new Error(c.error)
+    expect(c.redTest).toBe(red)
+  })
+
+  test('" #n" and a value with both a quote and a hash round-trip whole (title and red_test)', () => {
+    const title = 'Prints "both" lines #n and #3'
+    const red = 'grep "#n" out.txt # 2 hits'
+    const r = ok(cardFromFields(input({ title, redTest: red }), ctx()))
+    const c = parseCard(r.text)
+    if ('error' in c) throw new Error(c.error)
+    expect(c.title).toBe(title)
+    expect(c.redTest).toBe(red)
+  })
+
+  test('an unquoted legacy red_test with " #n" (the MOD-31 case) reads whole', () => {
+    const c = parseCard(legacy('red_test: prints both #n lines'))
+    if ('error' in c) throw new Error(c.error)
+    expect(c.redTest).toBe('prints both #n lines')
+  })
+
+  test('an unquoted legacy red_test with " #89" reads whole', () => {
+    const c = parseCard(legacy('red_test: isCorrection on the first three #89 messages'))
+    if ('error' in c) throw new Error(c.error)
+    expect(c.redTest).toBe('isCorrection on the first three #89 messages')
+  })
+
+  test('an unquoted value with " # " and a trailing note reads only up to the hash', () => {
+    const c = parseCard(legacy('red_test: npm test # the unit tests'))
+    if ('error' in c) throw new Error(c.error)
+    expect(c.redTest).toBe('npm test')
+  })
+})

@@ -86,14 +86,24 @@ export function scratchpadFor(root: string, sessionId: string, base = SCRATCH_BA
 
 export const defaultBriefDir = (root: string, sessionId: string, base = SCRATCH_BASE): string => `${scratchpadFor(root, sessionId, base)}/briefs`
 
+/** MOD-40: a double-quoted scalar's body, with \" \\ \n \t read back. */
+const decodeDq = (inner: string): string => inner.replace(/\\(["\\nt])/g, (_, c: string) => (c === 'n' ? '\n' : c === 't' ? '\t' : c))
+
+/**
+ * One scalar. MOD-40: a `#` is a comment only as ` # ` (a hash followed by a space or the end, after a space) and only
+ * outside quotes; `#89`, `#n` and a hash inside a word stay in the value.
+ */
 function unquote(raw: string): string {
   const v = raw.trim()
-  if (v.startsWith('"') && v.endsWith('"') && v.length >= 2) {
-    return v.slice(1, -1).replace(/\\(["\\nt])/g, (_, c: string) => (c === 'n' ? '\n' : c === 't' ? '\t' : c))
-  }
+  if (v.startsWith('"') && v.endsWith('"') && v.length >= 2) return decodeDq(v.slice(1, -1))
+  const dq = /^"((?:[^"\\]|\\.)*)"\s+#(\s.*)?$/.exec(v)
+  if (dq) return decodeDq(dq[1] as string)
   if (v.startsWith("'") && v.endsWith("'") && v.length >= 2) return v.slice(1, -1).replace(/''/g, "'")
-  return v.replace(/\s+#.*$/, '')
+  return v.replace(/(^|\s+)#(\s.*)?$/, '')
 }
+
+/** MOD-40: a value the card writes unquoted would read back cut at ` #`, so one that holds ` #` or starts with `#` is double-quoted (\ and " escaped). */
+export const yamlScalar = (v: string): string => (/ #|^#/.test(v) ? `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : v)
 
 function flowList(raw: string): string[] {
   const inner = raw.trim().slice(1, -1).trim()
