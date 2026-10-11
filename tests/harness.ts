@@ -77,7 +77,8 @@ export type WorldOptions = {
   files?: Record<string, string>
   dirs?: Record<string, string[]>
   store?: Record<string, unknown>
-  run?: (argv: string[]) => RunAnswer | undefined
+  /** What a command answers; a promise holds it up (MOD-20: a gate that takes a while, so two verifiers can overlap). */
+  run?: (argv: string[]) => RunAnswer | undefined | Promise<RunAnswer | undefined>
   classify?: string
   agentId?: string
   skip?: string[]
@@ -168,9 +169,9 @@ export function world(on: On, options: WorldOptions = {}): World {
     const names = [...new Set([...listed, ...written])]
     return { value: names.map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false })) }
   })
-  hook('process.run', (e: { argv: string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string } }) => {
+  hook('process.run', async (e: { argv: string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string } }) => {
     w.runs.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env, stdin: e.init?.stdin })
-    const answer = options.run?.([...e.argv]) ?? { exitCode: 0, stdout: '' }
+    const answer = (await options.run?.([...e.argv])) ?? { exitCode: 0, stdout: '' }
     return { value: { exitCode: answer.exitCode, stdout: answer.stdout, stderr: answer.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   hook('model.classify', () => ({ value: options.classify }))
