@@ -140,10 +140,29 @@ export type FrictionEvent = { kind: 'correction' | 'denial' | 'refuted'; detail:
 
 const CORRECTION_WORDS = ['no', 'stop', "don't", 'dont', 'actually']
 
-/** A prompt that corrects: its first word is no, stop, don't or actually, in any case. */
+/** MOD-39: first-person disagreement or an explicit verdict, anywhere in the message. */
+const DISAGREE = /\bi\s+(?:(?:don'?t|do\s+not)\s+agree|disagree)\b|\bthat'?s\s+not\s+right\b|\byou'?re\s+wrong\b/
+
+/** MOD-39: a challenge question (it ends in ?), the shouldn't/isn't/wasn't/aren't forms. */
+const CHALLENGE_Q = /\b(?:shouldn'?t\s+(?:it|this|that|we|you|there)|isn'?t\s+it\s+supposed|wasn'?t\s+it\s+supposed|aren'?t\s+(?:we|you)\s+supposed)\b/
+
+/** MOD-39: a message that ends in `bug?`. */
+const ENDS_BUG = /\bbug\?\s*$/
+
+/** MOD-39: a false-report verdict: reported on something false, seems or looks wrong, off or silly. */
+const FALSE_REPORT = /\breported\s+on\s+something\s+false\b|\b(?:seems|looks)\s+(?:wrong|off|silly)\b/
+
+/**
+ * A prompt that corrects: its first word is no, stop, don't or actually, in any case (the
+ * first-word markers, unchanged); or, MOD-39, it carries first-person disagreement or an explicit
+ * verdict anywhere, a challenge question, a message ending in `bug?`, or a false-report verdict.
+ */
 export function isCorrection(text: string): boolean {
   const first = (text.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[\u2019]/g, "'").replace(/[.,!?:;]+$/, '')
-  return CORRECTION_WORDS.includes(first)
+  if (CORRECTION_WORDS.includes(first)) return true
+  const t = text.toLowerCase().replace(/[\u2019]/g, "'").trim()
+  if (DISAGREE.test(t) || FALSE_REPORT.test(t) || ENDS_BUG.test(t)) return true
+  return t.endsWith('?') && CHALLENGE_Q.test(t)
 }
 
 export const addFriction = (list: readonly FrictionEvent[], ev: FrictionEvent, cap = FRICTION_CAP): FrictionEvent[] => [...list, ev].slice(-cap)

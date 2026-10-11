@@ -1676,6 +1676,12 @@ Otherwise it runs the built-in `hooks/templates/debrief.md`. That template write
   it counts the lines past the file's `.done` watermark.
 - **Without one**, it counts what the mod saw since the last debrief:
   - a prompt whose first word is no, stop, don't or actually;
+  - a prompt with first-person disagreement or an explicit verdict anywhere (`i don't agree`,
+    `i disagree`, `that's not right`, `you're wrong`), MOD-39;
+  - a challenge question ending in `?` (`shouldn't it …?`, `isn't it supposed …?`,
+    `wasn't it supposed …?`, `aren't we/you supposed …?`) or a message ending in `bug?`, MOD-39;
+  - a false-report verdict (`reported on something false`, `seems wrong/off/silly`,
+    `looks wrong`), MOD-39;
   - a denied tool call;
   - a refuted verdict.
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **The mod's own correction detector catches pushback and challenge questions, not only an
+  opening "no" or "stop" (MOD-39, public issue 89).** `isCorrection` keeps its first-word markers
+  and adds three more, anywhere in the message: first-person disagreement or an explicit verdict
+  (`i don't agree`, `i disagree`, `that's not right`, `you're wrong`); a challenge question ending
+  in `?` (`shouldn't it …?`, `isn't it supposed …?`, `wasn't it supposed …?`, `aren't we/you
+  supposed …?`) or a message ending in `bug?`; and a false-report verdict (`reported on something
+  false`, `seems wrong/off/silly`, `looks wrong`). A priority reversal with no marker is still not
+  caught. Thirteen benign prompts are pinned as not caught. The mod's own submits remain ignored.
+
 - **A card's frontmatter value that holds a space and a hash is no longer cut there (MOD-40).**
   The card tool double-quotes a title or red_test that contains ` #` (or starts with `#`), with
   inner quotes and backslashes escaped, so it round-trips byte for byte. The card reader treats a
