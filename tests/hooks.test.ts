@@ -4964,6 +4964,46 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(w.submitted[0]?.text).toContain('refuted')
   })
 
+  const mainEnd = () => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' }) as never
+
+  test('MOD-42: a consistent wake held while the brain\'s turn is open is dropped when the task is merged by the turn\'s end', { options: { ...GM } }, async ($, on) => {
+    let ancestor = 1
+    const base = nativeRun({ gate: 0 })
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? (argv.at(-1) === 'origin/main' ? { exitCode: ancestor, stdout: '' } : { exitCode: 0, stdout: '' }) : base(argv)), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toEqual([]) // held: the brain's turn is open
+    ancestor = 0 // the brain reads the verdict and merges in this turn
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toEqual([])
+    expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 merged before delivery'))).toBe(true)
+    expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(1)
+  })
+
+  test('MOD-42: a consistent wake still unmerged at the turn\'s end is submitted then; a refuted one is never dropped', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toEqual([])
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('next=accept')
+  })
+
+  test('MOD-42: a refuted wake is submitted at the turn\'s end even when the sha reads as merged', { options: { ...GM } }, async ($, on) => {
+    const base = nativeRun()
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 0, stdout: '' } : base(argv)), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toEqual([])
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('refuted')
+  })
+
   test('/delegation accept appends one accept row with how accepted, and a second accept appends none', { options: { ...GM } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
