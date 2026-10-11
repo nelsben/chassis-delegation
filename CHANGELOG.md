@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.3 — 2026-10-11
 
 - **A state check's red file gets a marker line; a red file with no marker is checked by hand (MOD-59).** A red test
   that is a query or a file check can have correct red output with no failure word in it, so the red claim came back
