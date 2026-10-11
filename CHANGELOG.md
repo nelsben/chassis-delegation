@@ -26,7 +26,7 @@
   the card tool's dry-run summary carries them. Nothing is refused or changed on the card.
 
 - **A worker stopped by a usage limit is recorded as rate limited, and the queue holds (MOD-56).** A hand-back with
-  no `[[report]]` block that names `429`, `hit your weekly limit`, `usage limit` or `rate limit` (any case) is a
+  no `[[report]]` block that names `hit your weekly limit`, `usage limit`, `rate limit`, `too many requests` or an HTTP-sense `429` (beside http, status, error or api; a bare 429 in a sha, line number or count is not read; any case) is a
   usage-limit stop (`turn.complete` carries no error text, so the text is read). The attempt record and ledger row
   carry `stop: rate_limited` (and `resetsAt` when a reset time is named), the verdict row reads
   `no-report (rate limited[, resets <time>])`, and `next=` is unchanged (`verify sha=` when work is present). While

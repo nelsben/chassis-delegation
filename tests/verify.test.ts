@@ -327,13 +327,15 @@ describe('GH-104: look before you respawn', () => {
 describe('MOD-56: a usage-limit stop', () => {
   const REPORT = '[[report v=1 task=T-4 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]'
   test('each marker is read, whatever its case, in a hand-back with no report', () => {
-    expect(RATE_LIMIT_MARKERS).toEqual(['429', 'hit your weekly limit', 'usage limit', 'rate limit'])
+    expect(RATE_LIMIT_MARKERS).toEqual(['hit your weekly limit', 'usage limit', 'rate limit', 'too many requests'])
     for (const m of RATE_LIMIT_MARKERS) expect(detectRateLimit(`Stopped: ${m.toUpperCase()} reached.`)).toEqual({})
+    for (const t of ['HTTP 429', 'status 429', 'API Error: 429 {"type":"error"}', '429 Too Many Requests']) expect(detectRateLimit(t)).toEqual({})
     expect(detectRateLimit('API Error: 429 You\'ve hit your weekly limit')).toEqual({})
   })
   test('a hand-back with a report is never read, nor one that names no marker', () => {
     expect(detectRateLimit(`I added rate limit handling (429).\n${REPORT}`)).toBeUndefined()
     expect(detectRateLimit('All done.')).toBeUndefined()
+    for (const t of ['committed at a4291c0', 'see register.ts:429', '1429 pass, 0 fail', 'Error in file register.ts:429']) expect(detectRateLimit(t)).toBeUndefined()
     expect(detectRateLimit('')).toBeUndefined()
   })
   test('a named reset time is carried', () => {

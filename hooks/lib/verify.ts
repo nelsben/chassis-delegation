@@ -14,8 +14,11 @@ import { BASE_REFS, type ExecOut } from './verify-native'
  * report matches git. It is not a review: the brain still reads the diff.
  */
 export type Verdict = 'consistent' | 'unverified' | 'refuted' | 'no-report' | 'refused'
-/** MOD-56: the words of a usage-limit stop, matched case-insensitively in a hand-back that has no [[report]] block. */
-export const RATE_LIMIT_MARKERS: readonly string[] = ['429', 'hit your weekly limit', 'usage limit', 'rate limit']
+/** MOD-56: the words of a usage-limit stop, matched case-insensitively (plus `429` in an HTTP or API sense, see HTTP_429) in a hand-back that has no [[report]] block. */
+export const RATE_LIMIT_MARKERS: readonly string[] = ['hit your weekly limit', 'usage limit', 'rate limit', 'too many requests']
+
+/** A `429` counts only in an HTTP or API sense: a whole word beside http, status, error, api or too many requests (never a sha, a line number or a count). */
+const HTTP_429 = /\b(?:http|status|error|api)\b[\s:=#-]{0,3}(?<![\w.])429(?!\w)|(?<![\w.:])429(?!\w)[\s:,-]{0,3}(?:http\b|status\b|error\b|api\b|too many requests)/i
 
 /**
  * MOD-56: a worker stopped by a usage limit. The turn.complete event carries no error text (its `reason` is
@@ -25,7 +28,7 @@ export const RATE_LIMIT_MARKERS: readonly string[] = ['429', 'hit your weekly li
 export function detectRateLimit(text: string): { resetsAt?: string } | undefined {
   if (extractReport(text) !== undefined || text.includes('[[report')) return undefined
   const lower = text.toLowerCase()
-  if (!RATE_LIMIT_MARKERS.some(m => lower.includes(m))) return undefined
+  if (!RATE_LIMIT_MARKERS.some(m => lower.includes(m)) && !HTTP_429.test(text)) return undefined
   const m = /\bresets?\s+(?:at\s+|in\s+)?([^\n.]*?[^\s.])\s*(?:\.(?=\s|$)|\n|$)/i.exec(text)
   return m?.[1] ? { resetsAt: m[1].trim() } : {}
 }
