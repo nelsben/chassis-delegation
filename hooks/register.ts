@@ -142,6 +142,8 @@ import {
   cardDirPath,
   overlapRefusal,
   overlapWarning,
+  scopeSizeWarning,
+  tierHint,
   parseCard,
   parseDispatchArgs,
   parseDispatchTool,
@@ -190,7 +192,7 @@ import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOf
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
-import { CARD_TOOL, cardsFromFields, cardSummary, doneWhenOf, forbidCollisions, sayGo, type NewCard } from './lib/card'
+import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
@@ -4064,6 +4066,12 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   for (const line of forbidCollisions((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, doneWhenOf(card.body))) {
     out.push(`   ${line}`)
   }
+  // MOD-54: a wide scope warns, and a small standard card is told economy would do (nothing is refused or changed)
+  const sizeScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
+  const sizeWarn = scopeSizeWarning(sizeScope)
+  if (sizeWarn) out.push(`   ${sizeWarn}`)
+  const economyHint = tierHint({ tier, scope: sizeScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest })
+  if (economyHint) out.push(`   ${economyHint}`)
   if (here) {
     const f: Record<string, string> = shownHeader?.fields ?? {}
     out.push(`   repo=here: base=${f.base || 'the chain (origin/main, main, origin/master, master)'} · ignore=${f.ignore || '(none)'}`)
@@ -4501,7 +4509,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       continue
     }
     const alias = finalAlias({ tier: c.tier, source: 'brief' }, cfg.tierMap[c.tier]).alias
-    const notes = lines.filter(l => /^\s+(note|warning|repo):/.test(l)).map(l => l.trim())
+    const notes = lines.filter(l => /^\s+(note|warning|hint|repo):/.test(l)).map(l => l.trim())
     // GH-114: one classifier call per card written, on the dry run only
     let second: string | undefined
     if (cfg.classifierSecondOpinion) {

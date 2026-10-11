@@ -434,6 +434,12 @@ export function doneWhenOf(body: string): string[] {
   return out
 }
 
+/** MOD-54: how many statements a Done when section holds: its list items, or its non-blank lines when it has no list. */
+export function doneStatementCount(lines: readonly string[]): number {
+  const items = lines.filter(l => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(l)).length
+  return items > 0 ? items : lines.filter(l => l.trim() !== '').length
+}
+
 /**
  * The warnings for each forbid glob that collides with the card: `warning: forbid <glob> matches scope <entry>`
  * for a scope entry (literal or glob) the forbid can name, and `warning: forbid <glob> matches <path> named in
