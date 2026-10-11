@@ -113,7 +113,10 @@ export function advise(input: AdviseInput): Advice {
   if (input.lineageResumes === 0 && input.agentId) {
     if (held === 'scope') {
       const path = failed && failed.name === 'scope' ? outOfScopePath(failed) : undefined
-      return { kind: 'resume', next: `resume agent=${input.agentId} — amend: [[amend v=1 scope+=${path ?? '<path>'} reason=…]] (the path is outside scope; a scope refute never escalates)` }
+      const amend = `[[amend v=1 scope+=${path ?? '<path>'} reason=…]]`
+      // MOD-22: a stray file outside the repo is first a file to remove (a card keeps scratch out of its folders)
+      const fix = failed?.detail.includes('(outside delta') ? `remove ${path ?? '<path>'}, or amend: ${amend}` : `amend: ${amend}`
+      return { kind: 'resume', next: `resume agent=${input.agentId} — ${fix} (the path is outside scope; a scope refute never escalates)` }
     }
     if (held === 'files') return { kind: 'resume', next: `resume agent=${input.agentId} — list the paths named above in files= (or revert the extras)` }
     return { kind: 'resume', next: `resume agent=${input.agentId} — SendMessage it the verifier lines below` }

@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+- **Research cards (MOD-22).** Public issues #32 and #33 (two adopter repos,
+  2026-10-09/10): research and extraction lanes write their outputs outside the
+  repo (an exported model, renders, a sound file, notes), often need the live
+  checkout and its running apps, and have no test to turn green and nothing to
+  commit. They ran as ad hoc Agent spawns, and claims nobody could check passed:
+  a report said a glTF validator passed when none was installed, and a hair lane
+  claimed byte-identical output nobody ran and left scratch files inside the
+  repo. A card with an output folder, artefact assertions and a gate run against
+  that folder refutes both. See "Research cards" in the README.
+  - **The card tool takes `repo`** (`worktree`, the default; `here`; `none`) and
+    writes `repo: here|none` on the card; `/dispatch` reads it from the card as it
+    reads `--here`. A `repo: none` card dispatches with no worktree, no fetch and
+    no git (`3. no worktree (repo=none): …`). The tool's description gains the
+    clause: research or extraction with outputs outside the repo: repo none or
+    here, scope = the output folder. An explicit `repo` beats the old rule that a
+    repo with no `origin/main` writes `repo: here`.
+  - **`scope` and `forbid` take absolute paths and globs** (a leading `~` is the
+    home folder, expanded at dispatch). The first absolute scope entry is the
+    card's `outdir` unless the card names `outdir:`; the header gains
+    `outdir=<abs>` and `scratch=<abs>` (default `<system temp>/chassis-delegation/<ID>`,
+    or the card's `scratch:`) after `repo=` and before `spend=`, and the brief
+    template tells the worker to put deliverables in the output folder and helper
+    files in scratch, never in the repo. A plain worktree card's header does not
+    change. The template gains `{{#none}}`, `{{#repo}}`, `{{#outdir}}`,
+    `{{#scratch}}` and `{{reportExtra}}`; `renderSections` takes a mode
+    (`'worktree' | 'here' | 'none'`) as well as the boolean it always took.
+  - **The outside delta.** At `/dispatch` the mod lists (relative path, size,
+    mtime) every absolute scope and forbid root and stores it as
+    `delegation.outside.<ID>`; at hand-back it lists them again. The scope claim
+    covers both deltas: every git path against the repo entries and every changed
+    outside path (added, removed, changed) inside an absolute scope entry and outside
+    every absolute forbid entry. A refute names the delta
+    (`out-of-scope path: /out/notes/scratch.txt (outside delta)`, or `(repo delta)`
+    on a card with outside roots). A root that cannot be listed leaves the claim
+    unchecked, never held; a root that is not there yet lists as empty. A reused
+    brief keeps its first listing, so the delta is cumulative across attempts. New
+    pure `outsideClaim`, `outsideCheck`, `outsideRoots`, `outdirOf` and
+    `expandTilde` in `hooks/lib/norepo.ts`.
+  - **`{outdir}` in a gate-map command**, filled with the brief's `outdir=` at
+    verify time. The allowlist accepts the command word for word with only
+    `{outdir}`, `{worktree}` and `{files}` filled by absolute paths; a command that
+    names `{outdir}` when the brief has none is "gate not re-run".
+  - **The report gains `artefacts=` and `metrics="k=v,…"`.** The `artefacts` claim
+    holds when each named path (relative to `outdir=`, or absolute) exists and is
+    not empty, fails naming the first that is missing or empty, and is absent when
+    the report names none. Metrics are recorded on the attempt (`metrics`) and shown
+    as `metrics: tris=1200, len_s=2.4` in the verdict detail, and never judged.
+  - **`repo=none` and `repo=here` cards go through the same new claims** (the outside
+    delta, artefacts, metrics, `{outdir}`); a `none` verdict keeps its
+    `(no repo)` check and adds them.
+
 - **An optional reviewer stage: after a consistent verdict, a fresh read-only
   reviewer labels each claim of the hand-back confirmed, refuted or
   unverifiable before `next=accept` (MOD-21; public issue #1, second half).**

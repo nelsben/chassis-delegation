@@ -132,6 +132,7 @@ import {
   spawnPrompt,
   worktreeAddArgv,
   worktreePath,
+  type BriefMode,
   type Card,
   type DispatchArgs,
   type SpawnCall,
@@ -160,7 +161,7 @@ import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardFromFields, cardSummary, sayGo } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
-import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
+import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import {
@@ -283,6 +284,8 @@ const K = {
   evals: 'delegation.evals',
   /** MOD-20: whose engine-suite gate (`claude plugin test`) is running; verifiers take turns on it. */
   engineGate: 'delegation.engineGate',
+  /** MOD-22: the listing of a research card's absolute scope and forbid roots, taken at /dispatch. */
+  outside: (task: string) => `delegation.outside.${task}`,
 }
 
 const PROBE_EVERY_MS = 24 * 60 * 60 * 1000
@@ -315,7 +318,7 @@ type EvalEntry = { tier: EvalTier; sha: string; total?: number; pass?: number; f
  * the checkout it shares (the session root), and `files`, the files= its
  * hand-back claimed (written before the verify, so a sibling's verify sees them).
  */
-type HereFields = { here?: string; files?: string[] }
+type HereFields = { here?: string; files?: string[]; /** MOD-22: the report's metrics=, recorded and never judged. */ metrics?: Record<string, string> }
 /**
  * GH-1: `requestedAlias: 'fable'` when fable was asked for and opus spawned
  * (item 8); `adhoc: true` on the attempt a cardless hand-back recorded under
@@ -2084,7 +2087,7 @@ async function probe($: Host) {
 }
 
 // ---- verify + verdict (5A: native) ---------------------------------------------------
-type VerifyResult = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true }
+type VerifyResult = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true; metrics?: Record<string, string> }
 
 /** sha-256 of `bytes`, hex, by the environment's crypto.subtle; undefined when it cannot be taken. */
 async function sha256Hex(bytes: Uint8Array): Promise<string | undefined> {
@@ -2240,6 +2243,100 @@ async function takeEngineTurn($: Host, label: string): Promise<{ line?: string; 
   return holder === undefined ? { release } : { line: waitedLine((await now($)) - started, holder), release }
 }
 
+// ---- MOD-22: research cards, the folders outside the repo ----------------------------------
+/** A root with more files than this is not listed (the claim is left unchecked): the listing lives in the store. */
+const OUTSIDE_MAX_ENTRIES = 10000
+
+const isEnoent = (err: unknown): boolean => /ENOENT/.test(String(err))
+
+/**
+ * One root as a before-and-after listing: every file under it as (relative path, size, mtime), folders
+ * walked and links not followed. A root that is not there yet lists as empty; a root that is a file is
+ * itself the one entry (path ''); a root that cannot be read, or holds too many files, says why.
+ */
+async function listRoot($: Host, root: string): Promise<RootListing> {
+  let kind: string
+  let st: { size: number; mtimeMs: number }
+  try {
+    const got = await $.fs.stat(root)
+    kind = got.kind
+    st = got
+  } catch (err) {
+    return isEnoent(err) ? { root, entries: [] } : { root, error: String(err).slice(0, 160) }
+  }
+  if (kind === 'file') return { root, entries: [{ path: '', size: st.size, mtimeMs: st.mtimeMs }] }
+  if (kind !== 'dir') return { root, error: `${root} is neither a folder nor a file` }
+  const entries: { path: string; size: number; mtimeMs: number }[] = []
+  const walk = async (dir: string, rel: string): Promise<string | undefined> => {
+    let listed: { name: string; kind: string; size: number; mtimeMs: number; isLink: boolean }[]
+    try {
+      listed = await $.fs.list(dir)
+    } catch (err) {
+      return String(err).slice(0, 160)
+    }
+    for (const e of listed) {
+      const path = rel === '' ? e.name : `${rel}/${e.name}`
+      if (e.kind === 'dir' && !e.isLink) {
+        const why = await walk(`${dir}/${e.name}`, path)
+        if (why !== undefined) return why
+      } else {
+        entries.push({ path, size: e.size, mtimeMs: e.mtimeMs })
+        if (entries.length > OUTSIDE_MAX_ENTRIES) return `more than ${OUTSIDE_MAX_ENTRIES} files`
+      }
+    }
+    return undefined
+  }
+  const why = await walk(root, '')
+  return why === undefined ? { root, entries } : { root, error: why }
+}
+
+/** What is at an artefact path: missing, or its size (a folder: its entry count). */
+async function statArtefact($: Host, path: string): Promise<ArtefactStat> {
+  try {
+    const st = await $.fs.stat(path)
+    if (st.kind === 'dir') return { exists: true, size: (await $.fs.list(path)).length, isDir: true }
+    return { exists: true, size: st.size }
+  } catch (err) {
+    return isEnoent(err) ? { exists: false } : { exists: false, error: String(err).slice(0, 160) }
+  }
+}
+
+/** The listings /dispatch took of a task's absolute roots, with a way to list them again; undefined when none were taken. */
+async function outsideFor($: Host, task: string | undefined): Promise<OutsideInput | undefined> {
+  if (!task) return undefined
+  const saved = await storeGet<{ roots?: RootListing[] }>($, K.outside(task))
+  return Array.isArray(saved?.roots) ? { before: saved.roots, list: root => listRoot($, root) } : undefined
+}
+
+/** The system temp dir (TMPDIR), or '' when the environment has none. */
+async function tmpDirOf($: Host): Promise<string> {
+  try {
+    return (await $.env.get('TMPDIR')) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * At /dispatch: lists every absolute scope and forbid root of the brief and stores the listings for the
+ * verifier to compare. A brief that was reused keeps the listing it has, so the delta stays cumulative
+ * across attempts. Returns what to say about it, or undefined when the brief names no outside root.
+ */
+async function recordOutside($: Host, task: string, briefPath: string, reused: boolean): Promise<string | undefined> {
+  const text = await readText($, briefPath)
+  const contract = text !== undefined ? briefContract(text) : undefined
+  if (!contract || !contract.ok) return undefined
+  const roots = outsideRoots(contract.scope.filter(isAbsolute), contract.forbid.filter(isAbsolute))
+  if (roots.length === 0) return undefined
+  if (reused && (await storeGet<unknown>($, K.outside(task))) !== undefined) return `outside: the listing of ${roots.join(', ')} taken at the first dispatch stands`
+  const listed: RootListing[] = []
+  for (const root of roots) listed.push(await listRoot($, root))
+  await storeSet($, K.outside(task), { at: await now($), briefPath, roots: listed })
+  const files = listed.reduce((n, l) => n + ('entries' in l ? l.entries.length : 0), 0)
+  const bad = listed.filter((l): l is { root: string; error: string } => 'error' in l)
+  return `outside: listed ${roots.join(', ')} before the run (${files} file${files === 1 ? '' : 's'})${bad.length > 0 ? `; ${bad.map(b => `${b.root} could not be listed: ${b.error}`).join('; ')}, so scope will be unchecked there` : ''}`
+}
+
 async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<VerifyResult> {
   await loadRepoConfig($)
   const root = await $.session.root()
@@ -2257,15 +2354,16 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const report = parseReport(block)
   const filesPath = filesPathFor(scratchFor(briefPath), spawn.task)
   const allowed = (argv: readonly string[]) => checkArgv(argv, allowCfg()).ok
-  if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root)
+  if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task)
   // GH-16: repo=here verifies the session's own checkout, shared with the brain and other workers
   const here = header?.repo === 'here'
   const repo = here ? root : await workerRepo($, spawn, header?.repo, root)
   const probed = await run($, workTreeArgv(repo), { cwd: root, timeoutMs: 15000 })
-  if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root)
+  if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task)
   // GH-20: a red file must differ from every earlier attempt's of this task + subtask
   const priorRed = priorRedHashes(await loadAttempts($, spawn.task), spawn.subtask, spawn.attempt, laneOf(spawn))
   const others = here ? (await inFlightHere($, root, taskLabel(spawn.task, spawn.subtask))).map(c => ({ card: c.label, files: c.files })) : []
+  const outside = await outsideFor($, spawn.task)
   const r = await verifyNative(
     {
       repo,
@@ -2279,10 +2377,11 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
       ...(spawn.replay && spawn.base ? { base: spawn.base } : {}),
       ...(cfg.baseRef ? { baseRef: cfg.baseRef } : {}),
       ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),
+      ...(outside ? { outside } : {}),
     },
-    { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)) },
+    { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)), stat: path => statArtefact($, path) },
   )
-  return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
+  return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.metrics ? { metrics: r.metrics } : {}), ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
 }
 
 /**
@@ -2291,7 +2390,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
  * first scope root and lie in scope; the gate (map id, or a bare allowlisted
  * command such as `claude plugin validate <folder>`) must exit 0.
  */
-async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string): Promise<VerifyResult> {
+async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string, task?: string): Promise<VerifyResult> {
   const contract = briefContract(briefText)
   if (!contract.ok) return { verdict: 'refused', lines: [...amendLines, contract.line], noRepo: true }
   // GH-103: a prose scope= gives no root to check files under; the work stands, unverified
@@ -2300,9 +2399,17 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const scopeRoot = first ? (first.startsWith('/') ? globRoot(first) : `${root}/${globRoot(first)}`.replace(/\/+$/, '')) : root
   const sc = scopeCheck({ files: reportFiles(report.files), root: scopeRoot, scope: globList(contract.scope.join(',')), forbid: globList(contract.forbid.join(',')) })
   const present: string[] = []
-  const missing: string[] = []
-  for (const p of sc.inScope) (await exists($, p)) ? present.push(p) : missing.push(p)
-  const gates = resolveGateRuns(contract.gate, cfg.gateMap, argv => checkArgv(argv, allowCfg()).ok, filesPath, scopeRoot)
+  const missingFiles: string[] = []
+  for (const p of sc.inScope) (await exists($, p)) ? present.push(p) : missingFiles.push(p)
+  // MOD-22: the outside delta (the same claim a repo=here brief gets), the artefacts and the metrics
+  const absScope = contract.scope.filter(isAbsolute)
+  const absForbid = contract.forbid.filter(isAbsolute)
+  const watched = outsideRoots(absScope, absForbid)
+  const baseline = await outsideFor($, task)
+  const outside = await outsideCheck(absScope, absForbid, baseline)
+  const artefacts = await artefactsCheck(reportArtefacts(report.artefacts), contract.outdir ?? scopeRoot, path => statArtefact($, path))
+  const metrics = reportMetrics(report.metrics)
+  const gates = resolveGateRuns(contract.gate, cfg.gateMap, argv => checkArgv(argv, allowCfg()).ok, filesPath, scopeRoot, contract.outdir)
   const outcomes: { label: string; exitCode?: number; error?: string }[] = []
   const waits: string[] = []
   for (const g of gates.runs) {
@@ -2321,14 +2428,18 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const v = noRepoVerdict({
     root: scopeRoot,
     files: present,
-    missing,
+    missing: missingFiles,
     outOfScope: sc.outOfScope,
     forbidden: sc.forbidden,
     gates: outcomes,
-    notRerun: gates.notRerun.map(n => n.id),
+    notRerun: gates.notRerun.map(n => (n.why.includes('{outdir}') ? `${n.id} (${n.why})` : n.id)),
     noGate: gates.none === true,
+    ...(outside ? { outside } : {}),
+    ...(artefacts ? { artefacts } : {}),
+    metrics,
   })
-  return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...waits, ...v.lines], noRepo: true }
+  const note = watched.length > 0 && baseline === undefined ? [`note: outside delta not checked: no listing of ${watched.join(', ')} was taken at dispatch`] : []
+  return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...waits, ...v.lines, ...note], noRepo: true, ...(Object.keys(metrics).length > 0 ? { metrics } : {}) }
 }
 
 /**
@@ -2435,6 +2546,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   let verdict: Verdict
   let lines: string[] = []
   let noRepo = false
+  let metrics: Record<string, string> | undefined
   let red: Pick<AttemptRecord, 'red' | 'redHash' | 'redHeld'> = {}
   // GH-16: a repo=here worker's claimed files go on its record before the verify, so a sibling verifying now subtracts them
   if (report && spawn.here && !spawn.adhoc) {
@@ -2455,6 +2567,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
     verdict = v.verdict
     lines = v.lines
     noRepo = v.noRepo === true
+    metrics = v.metrics
     red = { ...(v.red !== undefined ? { red: v.red } : {}), ...(v.redHash !== undefined ? { redHash: v.redHash } : {}), redHeld: v.redHeld }
   }
 
@@ -2531,6 +2644,8 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
       ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
         ...(tokens !== undefined ? { tokens } : {}),
         ...(model !== undefined ? { resolvedModel: model } : {}),
+        // MOD-22: the report's metrics=, recorded on the attempt and never judged
+        ...(metrics ? { metrics } : {}),
         ...red,
       },
       lane,
@@ -2852,6 +2967,13 @@ async function inlineBrief($: Host, prompt: string, header: BriefHeader): Promis
  * worker spawns in the root. A scope that overlaps an in-flight repo=here
  * card's is refused unless `--force-overlap`.
  *
+ * MOD-22: a card that says `repo: none` dispatches with no worktree, no fetch
+ * and no git: the brief says `repo=none` and the worker runs in the root.
+ * Scope and forbid may hold absolute paths and globs (a leading `~` is the home
+ * folder); the first absolute scope entry is the outdir unless the card names
+ * `outdir:`; the header gains `outdir=` and `scratch=`; and every absolute scope
+ * and forbid root is listed (`recordOutside`) for the verifier's outside delta.
+ *
  * MOD-12 (#22): no door spawns. The result ends with the spawn block, the
  * Agent call the brain makes; the spawn hook then shapes and records it, and
  * the engine shows the mod that worker's tool calls and turns.
@@ -2890,13 +3012,17 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const reusedText = reuse ? await readText($, reuse) : undefined
   const reusedHeader = reusedText !== undefined ? parseHeader(reusedText) : undefined
   const wantHere = !replay && (parsed.here === true || card.repo === 'here')
+  // MOD-22: `repo: none` is the third mode (no worktree, no git); --here beats it, and a reused brief decides
+  const wantNone = !replay && !wantHere && card.repo === 'none'
   const here = !replay && (reusedHeader ? reusedHeader.repo === 'here' : wantHere)
+  const none = !replay && (reusedHeader ? reusedHeader.repo === 'none' : wantNone)
+  const mode: BriefMode = here ? 'here' : none ? 'none' : 'worktree'
   // MOD-2: no base named, a reused worktree brief that carries one: the cut point is that base, the verifier's base too
   const reusedBase = (reusedHeader?.fields.base ?? '').trim()
   if (!replay && !here && base === 'origin/main' && reusedBase && isGitRef(reusedBase)) base = reusedBase
 
-  const worktree = here ? root : worktreePath(root, id, replay, cfg.worktreeRoot)
-  let branch = branchName(card.domain, id, replay)
+  const worktree = here || none ? root : worktreePath(root, id, replay, cfg.worktreeRoot)
+  let branch = none ? 'none' : branchName(card.domain, id, replay)
   if (here) {
     const current = await run($, currentBranchArgv(root), { cwd: root, timeoutMs: 10000 })
     branch = current.ok && current.exitCode === 0 && current.stdout.trim() ? current.stdout.trim() : '<current branch>'
@@ -2908,7 +3034,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       ? `1. card ${base}:agents/tasks/${name} (status ${card.status} at ${base}, domain ${card.domain}) — replay of ${id} at ${base}`
       : `1. card ${cardPath} (status ${card.status}, domain ${card.domain})`,
   )
-  if (replay && card.repo === 'here') out.push('   note: the card says repo: here; a replay works in its own worktree at the base')
+  if (replay && (card.repo === 'here' || card.repo === 'none')) out.push(`   note: the card says repo: ${card.repo}; a replay works in its own worktree at the base`)
 
   // GH-16: the other repo=here cards in flight in this checkout; a scope overlapping theirs is refused
   const inflight = here ? await inFlightHere($, root, id) : []
@@ -2928,6 +3054,15 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const budget = budgetAttempts(card.budget, cfg.defaultBudget)
   // GH-106: the card's spend: wins, else the tier's default; 0 is no ceiling
   const spend = spendCeiling(card.spend, tier, cfg.spendByTier)
+  // MOD-22: scope and forbid may hold absolute paths and globs, a leading ~ the home folder; the first absolute scope entry is the outdir
+  const home = await homeOf($)
+  const expandAll = (list: readonly string[]): string[] => list.map(e => expandTilde(e, home))
+  const headScope = expandAll(scope ?? card.scope)
+  const headForbid = expandAll(forbid ?? card.forbid)
+  const outdir = outdirOf(headScope, card.outdir ? expandTilde(card.outdir, home) : undefined)
+  // scratch= is written for a card that has an output folder, names a scratch folder, or shares or has no repo (a worktree card's header stays as it was)
+  const scratch = outdir !== undefined || here || none || card.scratch ? (card.scratch ? expandTilde(card.scratch, home) : defaultScratch(await tmpDirOf($), id)) : undefined
+  const folders = { ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}) }
   let header: string
   if (here && !reuse) {
     // base=: a sha --base, else baseRef (HEAD pinned to the sha it is at now), else none (the verifier's chain)
@@ -2939,10 +3074,12 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       else out.push('   note: baseRef HEAD could not be pinned (git rev-parse HEAD failed); the brief says base=HEAD')
     }
     const ignore = hereIgnore(ignoreWithCards(cfg.ignore, cfg.cardDir), inflight.flatMap(c => c.files))
-    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore })
+    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore, ...folders })
+  } else if (none && !reuse) {
+    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'none', ...folders })
   } else {
     // GH-105: a base that is not the default is written, so the verifier diffs from the commit the worktree was cut from
-    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), ...(scope ? { scope } : {}), ...(forbid ? { forbid } : {}), ...(base !== 'origin/main' ? { base } : {}) })
+    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, ...(base !== 'origin/main' ? { base } : {}), ...folders })
   }
   let briefPath: string
   let shown = header
@@ -2958,7 +3095,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       baseNote = set.previous !== undefined ? `, base= replaced ${set.previous} → ${parsed.base}` : `, base= set to ${parsed.base}`
     }
     out.push(`2. brief ${briefPath} exists — reused${baseNote || ', not overwritten'}${scope || forbid ? ' (--scope/--forbid not applied to it)' : ''}`)
-    if (here !== wantHere && !replay) out.push(`   note: the reused brief is ${here ? 'repo=here' : 'a worktree brief'}, so it decides the mode (remove it to re-render)`)
+    if ((here !== wantHere || none !== wantNone) && !replay) out.push(`   note: the reused brief is ${here ? 'repo=here' : none ? 'repo=none' : 'a worktree brief'}, so it decides the mode (remove it to re-render)`)
   } else {
     let template: string
     try {
@@ -2972,11 +3109,13 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     } catch {
       rootNames = []
     }
-    const body = renderBrief(template, { card, worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, here, spend })
+    // MOD-22: the report line gains artefacts= and metrics= for a card that has an output folder
+    const reportExtra = outdir ? ' artefacts=<comma list of the files you delivered, relative to the output folder or absolute> metrics="<k=v,k=v>"' : ''
+    const body = renderBrief(template, { card, worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
     const written = await writeBrief($, root, fileName, `${header}\n\n${body}`)
     if ('error' in written) return [...out, `/dispatch ${id}: ${written.error}`].join('\n')
     briefPath = written.path
-    out.push(`2. brief ${briefPath} written (tier=${tier}, model=${alias}, budget=${budget}-attempts${here ? ', repo=here' : ''})`)
+    out.push(`2. brief ${briefPath} written (tier=${tier}, model=${alias}, budget=${budget}-attempts${here ? ', repo=here' : none ? ', repo=none' : ''})`)
   }
   // GH-1 item 6: the budget the spawn will use, off the grammar, falls back to the default; say so once
   const budgetWarn = budgetWarning(reuse ? reusedHeader?.budget : card.budget, cfg.defaultBudget)
@@ -2996,6 +3135,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     const f: Record<string, string> = shownHeader?.fields ?? {}
     out.push(`   repo=here: base=${f.base || 'the chain (origin/main, main, origin/master, master)'} · ignore=${f.ignore || '(none)'}`)
   }
+  if (shownHeader?.fields.outdir) out.push(`   research card: outdir=${shownHeader.fields.outdir} · scratch=${shownHeader.fields.scratch || '(none)'}`)
   if (dryRun) return [...out, '', shown].join('\n')
   // MOD-13: the card's own effort: (it wins over effortByTier for this task's workers); cleared when the card has none
   await storeSet($, K.effort(id), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
@@ -3006,7 +3146,12 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     return [...out, '', shown, '', `scope: ${shownScope.join(', ')}`, '', PROSE_SCOPE_STOP].join('\n')
   }
 
+  // MOD-22: the absolute scope and forbid roots are listed now; the verifier lists them again at hand-back
+  const listedOutside = await recordOutside($, id, briefPath, reuse !== undefined)
+  if (listedOutside) out.push(`   ${listedOutside}`)
+
   if (here) out.push(`3. no worktree (repo=here): the worker shares ${root}`)
+  else if (none) out.push(`3. no worktree (repo=none): the worker runs in ${root} and writes outside the repo`)
   else if (await exists($, worktree)) out.push(`3. worktree ${worktree} exists — reused`)
   else {
     const fetched = await run($, fetchArgv(root), { cwd: root, timeoutMs: 120000 })
@@ -3028,7 +3173,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (replay) await storeSet($, K.replay(briefPath), base)
   // MOD-12: the brain's Agent call names no folder; the spawn hook sets the worker here (repo=here: `worktree` is the root itself)
   await storeSet($, K.handoff(briefPath), { cwd: worktree, at: await now($) })
-  const place = here ? `repo=here in ${root}` : `worktree ${worktree}`
+  const place = here ? `repo=here in ${root}` : none ? `repo=none in ${root}` : `worktree ${worktree}`
   // MOD-12 (#22): no spawn here. The checks the spawn hook makes, then the call for the brain to make.
   const prepared = await prepareSpawn($, { briefPath, subagentType, cwd: worktree })
   if ('deny' in prepared) {
@@ -3338,8 +3483,10 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     return `card not written: ${path}: ${String(err)}`
   }
   const wrote = `wrote ${path}`
-  if (input.dispatch === true) return [wrote, await runDispatch($, { id: made.id, dryRun: false, base: 'origin/main', ...(here ? { here: true as const } : {}) })].join('\n')
-  const dry = await runDispatch($, { id: made.id, dryRun: true, base: 'origin/main', ...(here ? { here: true as const } : {}) })
+  // MOD-22: dispatch reads the mode from the card (`repo:`); here is passed only when the card says repo: here
+  const dispatchHere = made.repo === 'here'
+  if (input.dispatch === true) return [wrote, await runDispatch($, { id: made.id, dryRun: false, base: 'origin/main', ...(dispatchHere ? { here: true as const } : {}) })].join('\n')
+  const dry = await runDispatch($, { id: made.id, dryRun: true, base: 'origin/main', ...(dispatchHere ? { here: true as const } : {}) })
   const lines = dry.split('\n')
   const header = lines.at(-1) ?? ''
   if (!header.startsWith('[[brief ')) return [wrote, dry].join('\n')

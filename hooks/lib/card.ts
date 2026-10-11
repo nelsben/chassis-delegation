@@ -19,6 +19,10 @@ export type CardCtx = {
   here?: boolean
 }
 
+/** MOD-22: where the worker runs: in its own worktree (the default), in the session's checkout, or with no repo at all. */
+export type CardRepo = 'worktree' | 'here' | 'none'
+export const CARD_REPOS: readonly CardRepo[] = ['worktree', 'here', 'none']
+
 export type NewCard = {
   id: string
   /** The file name inside the card folder. */
@@ -33,20 +37,23 @@ export type NewCard = {
   redTest: string
   budget: number
   spend: number
+  /** MOD-22: the mode the card was written for. */
+  repo: CardRepo
 }
 
 export const CARD_TOOL = {
   name: 'card',
   description:
-    'When the person describes work to delegate, look at the repo to choose scope globs, then call this with the task. It writes the card, runs the dry run and returns the brief; show the person the summary and dispatch when they say go (call dispatch, or call this with dispatch: true when they already said to go ahead). Never ask the person to edit a card file.',
+    'When the person describes work to delegate, look at the repo to choose scope globs, then call this with the task (research or extraction with outputs outside the repo: repo none or here, scope = the output folder). It writes the card, runs the dry run and returns the brief; show the person the summary and dispatch when they say go (call dispatch, or call this with dispatch: true when they already said to go ahead). Never ask the person to edit a card file.',
   inputSchema: {
     type: 'object',
     properties: {
       title: { type: 'string', description: 'One line that says what done looks like' },
       why: { type: 'string', description: 'Two or three sentences: why this task' },
       doneWhen: { type: 'array', items: { type: 'string' }, description: 'Checkable statements: what is true when it is done' },
-      scope: { type: 'array', items: { type: 'string' }, description: 'Globs or paths the worker may change, e.g. ["src/feature/**", "tests/test_feature.py"]. Not prose' },
-      forbid: { type: 'array', items: { type: 'string' }, description: 'Globs the worker must not touch (default none)' },
+      scope: { type: 'array', items: { type: 'string' }, description: 'Globs or paths the worker may change, e.g. ["src/feature/**", "tests/test_feature.py"]; an absolute path or glob (a leading ~ is the home folder) names a folder outside the repo, and the first one is the output folder. Not prose' },
+      forbid: { type: 'array', items: { type: 'string' }, description: 'Globs the worker must not touch (default none); absolute paths and globs too' },
+      repo: { type: 'string', description: 'worktree (default): the worker gets its own worktree; here: it works in this checkout; none: no repo at all. For research or extraction with outputs outside the repo use none or here, with scope = the output folder' },
       redTest: { type: 'string', description: 'The command or test that fails now and passes after, or "none" for docs-only work' },
       tier: { type: 'string', description: 'economy, standard (default), frontier or premium' },
       domain: { type: 'string', description: 'One of the repo domains (default: ops when the repo has it, else the first)' },
@@ -112,6 +119,11 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx): Ne
   const forbid = globs('forbid', input.forbid, false)
   if ('error' in forbid) return forbid
 
+  // MOD-22: no repo given keeps the old rule (a repo with no origin/main works in the checkout)
+  const repoIn = input.repo === undefined ? undefined : typeof input.repo === 'string' ? text(input.repo) : String(input.repo)
+  if (repoIn !== undefined && !(CARD_REPOS as readonly string[]).includes(repoIn)) return { error: `repo must be worktree, here or none (got "${repoIn}")` }
+  const repo: CardRepo = (repoIn as CardRepo | undefined) ?? (ctx.here ? 'here' : 'worktree')
+
   const redTest = text(input.redTest)
   if (redTest === '') return { error: 'redTest is required: the command or test that fails now and passes after, or "none" for docs-only work' }
 
@@ -141,7 +153,7 @@ title: ${title}
 domain: ${domain}
 tier: ${tier}
 status: queued
-${ctx.here ? 'repo: here\n' : ''}scope: [${scope.join(', ')}]
+${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.join(', ')}]
 forbid: [${forbid.join(', ')}]
 red_test: ${redTest}
 gate: ${gate.join(', ')}
@@ -156,12 +168,12 @@ ${why}
 
 ${done.map(d => `- ${d}`).join('\n')}
 `
-  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend }
+  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo }
 }
 
-/** `OPS-1 · standard → sonnet · scope a, b · gate test · red: cmd · 2 attempts · $6 ceiling` */
-export const cardSummary = (c: Pick<NewCard, 'id' | 'tier' | 'scope' | 'gate' | 'redTest' | 'budget' | 'spend'>, alias: string): string =>
-  [c.id, `${c.tier} → ${alias}`, `scope ${c.scope.join(', ')}`, `gate ${c.gate.join(', ')}`, `red: ${c.redTest}`, `${c.budget} attempts`, c.spend > 0 ? `${dollars(c.spend)} ceiling` : 'no ceiling'].join(' · ')
+/** `OPS-1 · standard → sonnet · scope a, b · gate test · red: cmd · 2 attempts · $6 ceiling`; a card that is not a worktree card names its repo after the scope (`… · repo none · gate test …`). */
+export const cardSummary = (c: Pick<NewCard, 'id' | 'tier' | 'scope' | 'gate' | 'redTest' | 'budget' | 'spend'> & { repo?: CardRepo }, alias: string): string =>
+  [c.id, `${c.tier} → ${alias}`, `scope ${c.scope.join(', ')}`, ...(c.repo && c.repo !== 'worktree' ? [`repo ${c.repo}`] : []), `gate ${c.gate.join(', ')}`, `red: ${c.redTest}`, `${c.budget} attempts`, c.spend > 0 ? `${dollars(c.spend)} ceiling` : 'no ceiling'].join(' · ')
 
 /** The closing line of the dry-run answer. */
 export const sayGo = (id: string): string => `Say go and Claude dispatches ${id}.`

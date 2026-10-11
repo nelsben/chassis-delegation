@@ -182,7 +182,8 @@ export function world(on: On, options: WorldOptions = {}): World {
     const text = w.files.get(e.path)
     if (text !== undefined) return { value: { kind: 'file', size: bytesOf(text), mtimeMs: w.mtimes.get(e.path) ?? 0, isLink: false } }
     if (dirs.has(e.path) || treeDir(e.path)) return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false } }
-    throw new Error(`ENOENT: ${e.path}`)
+    // the engine rejects a missing path with ENOENT; a thrown hook would read as "no implementation", so the hook denies with the reason
+    return { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
   })
   hook('fs.read', (e: { path: string; as?: string }) => {
     const text = w.files.get(e.path) ?? (e.path.endsWith('/templates/brief.md') ? TEMPLATE : e.path.endsWith('/templates/review.md') && !options.noReviewTemplate ? REVIEW_TEMPLATE : undefined)

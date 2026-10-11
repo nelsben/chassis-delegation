@@ -349,7 +349,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool; the model then makes the Agent call its result ends with |
-| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test; it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
+| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test (and `repo`: `none` or `here` for research or extraction with outputs outside the repo, see [Research cards](#research-cards)); it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
 | `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (no input) |
 
@@ -517,7 +517,9 @@ fix when a field is wrong, writing nothing. You can still write one by hand. `<I
     gate: test                  # ids in gateMap, comma-separated
     budget: 2-attempts          # spawns + resumes before it comes back to you
     spend: 4                    # optional: dollars one attempt may spend (else spendByTier; 0 = no ceiling)
-    repo: here                  # optional: no worktree, the worker shares this checkout (see repo=here)
+    repo: here                  # optional: here = no worktree, the worker shares this checkout (see repo=here); none = no repo at all (see Research cards)
+    outdir: /out/hair           # optional: the output folder outside the repo; default the folder of the first absolute scope entry
+    scratch: /tmp/hair-scratch  # optional: where the worker puts helper files; default <system temp>/chassis-delegation/<ID>
     ---
     ## Why … ## Done when …
 
@@ -527,6 +529,14 @@ Glob rules for `scope` and `forbid`:
 - `**` is the same as `*`;
 - `?` is one character;
 - a trailing `/` means everything under the folder.
+
+An entry may also be an absolute path or glob (MOD-22), and a leading `~` is
+the home folder (expanded at dispatch, so the brief header holds the absolute
+path). It names a folder outside the repo; the first absolute scope entry is the
+card's output folder (see [Research cards](#research-cards)). An absolute entry
+is matched the way a `repo=none` brief's always was: `*` stays inside one
+folder, `**` spans folders, and `dir/**` is the folder and everything below it.
+No spaces in an entry (a path with one reads as prose).
 
 A card whose scope is prose is caught at dispatch (GH-103). `/dispatch` and the
 tool write the brief, print its header and the prose scope, and stop before the
@@ -550,6 +560,9 @@ spawn whose header carries such a budget logs the same line to debug. The
 starts with one header line:
 
     [[brief v=1 task=<ID> subtask=main purpose=build tier=<tier> model=<alias> scope=<globs> forbid=<globs> red_test="<cmd>" gate=<ids> spend=<usd> budget=<n>-attempts report=chassis.report.v1]]
+
+A card with an output folder or no repo adds `repo=`, `outdir=<abs>` and
+`scratch=<abs>` after the gate and before `spend=` (see [Research cards](#research-cards)).
 
 `spend=` is the per-attempt ceiling in dollars (GH-106): the card's `spend:`
 when it has one, else the tier's entry in `spendByTier`; `0` writes none. The
@@ -587,7 +600,8 @@ refused: the verifier marks the scope claim `unchecked` (add `scope_globs=` to
 check it), checks every other claim, and the verdict is `unverified` at worst.
 Only a brief with no `scope=` at all is refused. Other header fields are optional too:
 
-- `repo=none` marks a task with no git repo, and `repo=<dir>` names the folder to verify;
+- `repo=none` marks a task with no git repo, and `repo=<dir>` names the folder to verify; a `repo: none` card dispatches with no worktree, no fetch and no git (see [Research cards](#research-cards));
+- `outdir=<abs>` is the card's output folder, outside the repo: the card's `outdir:`, else the folder of its first absolute scope entry. A gate command may name it as `{outdir}`, and a relative `artefacts=` path is read against it. `scratch=<abs>` is where the worker puts helper files (the card's `scratch:`, else `<system temp>/chassis-delegation/<ID>`), never in the repo; the brief template says so. `scratch=` is written whenever there is an `outdir=`, the card is `repo: none` or `repo: here`, or it names a scratch folder, and neither is written for a plain worktree card, so its header is the one it always was;
 - `repo=here` marks a task worked in the session's own checkout, no worktree (see [repo=here](#repohere-the-main-checkout));
 - `base=<ref>` names where the delta starts when the worker commits (GH-10): a branch, `HEAD~2`, a sha. It beats `baseRef` and the `origin/main` chain. A value that is not a git ref (one starting with `-`, or a `a..b` range) makes the brief **refused**. `/dispatch <ID> --base <sha>` (and the tool's `base`) writes it whenever the base is not the default `origin/main`, in worktree mode and repo=here alike (GH-105): a card stacked on an unpushed sibling is cut from that sha and judged on what the worker added to it, not on the sibling's files. The brief's `base=` is the cut point and the diff base, and a dispatch that names a base writes it (MOD-2): against a reused worktree brief it sets or replaces `base=` in the header alone, amend blocks and body untouched, and the reuse line says so (`reused, base= set to <sha>` or `reused, base= replaced <old> → <new>`); a dispatch naming no base against a reused brief that carries one cuts the worktree from it. `--verify <sha>` takes its delta from the same `base=`. The verdict's scope line names the base it diffed from (`every changed path since <base> is within …`);
 - `ignore=<globs>` (repo=here only) names paths taken off the delta before scope and files are checked.
@@ -597,7 +611,11 @@ instead of its `{{#worktree}}` ones. It tells the worker that it shares the
 checkout with the brain and maybe other workers, to touch only its scope, not
 to commit unless the card says so, and to report `branch=<current>` and
 `sha=HEAD` (or the sha it committed). A template of your own without the
-sections renders the same in both modes.
+sections renders the same in both modes. A repo=none brief keeps the template's
+`{{#none}}` sections instead; `{{#repo}}` (the red-test lines) is kept for the
+other two modes; `{{#outdir}}` and `{{#scratch}}` are kept when the brief names
+the folder, and `{{reportExtra}}` is the report line's `artefacts=` and `metrics=`
+placeholders.
 
 **Inline header.** A spawn needs no brief file. The header can sit in the
 Agent prompt itself, which suits a subtask or a brain that does not use
@@ -700,7 +718,7 @@ the last one across the worker's final answer and its SubagentHandback
 message; for a background worker it reads that message from the worker's own
 transcript:
 
-    [[report v=1 task=<ID> subtask=main branch=<branch> pr=<none|n|url> sha=<sha> gate=pass|fail red=<path|none> files=<a,b>]]
+    [[report v=1 task=<ID> subtask=main branch=<branch> pr=<none|n|url> sha=<sha> gate=pass|fail red=<path|none> files=<a,b> artefacts=<a,b> metrics="k=v,k=v"]]
 
 `red=` names the red test's failing output (GH-20): a file the worker
 saved before changing any source, relative to its worktree, such as
@@ -708,6 +726,15 @@ saved before changing any source, relative to its worktree, such as
 the tree, not git. A resume or respawn writes a new file for its attempt. The
 field is optional: a brief whose `red_test=` is empty or `none` asks for no
 evidence, and the worker may write `red=none`.
+
+`artefacts=` and `metrics=` are optional too (MOD-22). `artefacts=` is a comma
+list of the files the worker delivered, relative to the brief's `outdir=` (else
+the tree) or absolute; the verifier checks each exists and is not empty (a folder:
+has an entry), and the claim fails naming the first that is missing or empty.
+`metrics="k=v,k=v"` is numbers or words worth keeping, such as
+`metrics="tris=1200,len_s=2.4"`: they are recorded on the attempt (`metrics`) and
+shown in the verdict detail as `metrics: tris=1200, len_s=2.4`, and never judged.
+Both are absent from the report line of a brief with no output folder.
 
 **Amend.** A worker that had to change a file outside its scope says so on its
 own line, just above the report:
@@ -735,10 +762,11 @@ anything. Each claim is held, failed or unchecked.
 | --- | --- |
 | `branch` | `refs/heads/<branch>` (or `refs/remotes/origin/<branch>`) exists |
 | `sha` | it resolves (`rev-parse --verify <sha>^{commit}`) and is an ancestor of the branch. A sha that does not exist is **failed** (fabrication) |
-| `scope` | every path changed between `merge-base(<base>, sha)` and the sha matches a scope glob and no forbid glob. `<base>` is a replay's own base, else the brief's `base=`, else `baseRef`, else the first of `origin/main`, `main`, `origin/master`, `master` |
+| `scope` | every path changed between `merge-base(<base>, sha)` and the sha matches a scope glob and no forbid glob. `<base>` is a replay's own base, else the brief's `base=`, else `baseRef`, else the first of `origin/main`, `main`, `origin/master`, `master`. A brief with absolute scope or forbid entries (MOD-22) is also held to the outside delta (see [Research cards](#research-cards)), and a refute names the delta it came from |
 | `files` | `files=` equals that changed set exactly. A moved file is listed once, at its new path (git's rename detection; an old path listed too is dropped, not refuted). A path missing from it or invented in it is named. An entry ending in `/` stands for the changed files under that folder; a folder with none changed is an invented path |
 | `gate` | the tree's HEAD is the sha and `git status --porcelain` is empty. Then each gate id runs from `gateMap` in the worktree: exit 0 under `gate=pass` holds, non-zero is failed and shows the last 8 output lines, and `gate=fail` with a red gate holds (an honest stop). A gate red only on timeouts in tests the delta never touched is run once more (see below) |
 | `red` | only when the brief's `red_test=` is set (not empty, not `none`). The `red=` file lies in the worker's tree, is not empty, holds a failure marker (`fail`, `error`, `not ok`, `✗`, `exit code 1`-`9`, `exit 1`, `AssertionError`, `expected`; any case), and, if byte-identical (sha-256) to an earlier attempt's red file for the same task and subtask, that attempt's own red claim held (one proof per task: it is held again, `attempt n's proof, reused`). Held shows its size and first failure line. No `red=` or no marker is unchecked; a path outside the tree, a missing or empty file, or an earlier attempt's file that did not itself hold is **failed** |
+| `artefacts` | only when the report names `artefacts=` (MOD-22). Each path exists and is not empty (a relative one is read against the brief's `outdir=`, else the tree); the first that is missing or empty fails the claim, named. Unreadable is unchecked. No `artefacts=` is no claim |
 | `pr` | `pr=none`, or `gh pr view <n> --json state` finds it |
 
 The gate is left unchecked, never failed, in these cases:
@@ -780,8 +808,10 @@ Other gates (`claude plugin validate`, a node suite) take no turn.
 The changed paths are written to `<root>/.delegation/<ID>/files.txt` before
 the gate runs. A gate command can take them as `{files}`, and the absolute
 path of the tree it runs in (the worktree, or the root for `repo=here`) as
-`{worktree}`: `claude plugin validate {worktree}`. Each takes an absolute path
-with no `..`, once per word.
+`{worktree}`: `claude plugin validate {worktree}`. A research card's output
+folder (MOD-22) is `{outdir}`: `node scripts/check.mjs {outdir}`. Each takes an
+absolute path with no `..`, once per word. A command that names `{outdir}` when
+the brief has no `outdir=` is "gate not re-run".
 
 The verdict:
 
@@ -815,11 +845,13 @@ append-only. A script that parses the row text, `verdict=` or
 one is dropped.
 
 `repo=none` changes the check (and the row says `(no repo)`). The verifier
-then checks only three things:
+then checks only these things:
 
 - every `files=` path exists;
 - every path lies in scope and outside forbid;
-- the gate exits 0.
+- the gate exits 0;
+- and, for a brief with an output folder (MOD-22), the outside delta and the
+  `artefacts=` (see [Research cards](#research-cards)); the metrics are shown.
 
 That gate is a map id, or a bare allowlisted command such as
 `claude plugin validate <folder>`.
@@ -935,7 +967,7 @@ base) were wrong, not that the worker was out of its depth. Only a refute on
 `sha`, `gate` or `red` (or a record from before the mod kept `firstFailed`)
 earns the next tier. A scope refute advises
 `next=resume agent=<id> — amend: [[amend v=1 scope+=<path> reason=…]]` with the
-first out-of-scope path filled in; a files refute advises listing the paths in
+first out-of-scope path filled in (for a path from the outside delta, `remove <path>, or amend: …`); a files refute advises listing the paths in
 `files=` (or reverting the extras); a later respawn says
 `(held: a scope refute)` or `(held: a files refute)`. A respawn verdict carries
 the next spawn block under its row (the tier the spawn hook will pick); the
@@ -1010,6 +1042,126 @@ words, not text, so a heredoc body that mentions `git commit` never triggers
 it. It sees every worker as well as the brain: a worker is the brain's own Agent
 call (MOD-12), so the engine runs the mod's `tool.call` hook for the worker's
 Bash calls, and a repo=here worker on `main` cannot commit there.
+
+### Research cards
+
+Some lanes do not change code. They extract a model from a running app, render
+images, record a sound, write notes: the outputs land in a folder outside the
+repo, the work often needs the live checkout and its running app, and there is
+no test to turn green and nothing to commit. Run as ad hoc spawns, those lanes
+made claims nobody could check (a report said a glTF validator passed when none
+was installed; another claimed byte-identical output nobody had run, and left
+scratch files inside the repo). A research card is an ordinary card with four
+changes, and it goes through the same dispatch, hand-back and verdict:
+
+1. **`repo: none` or `repo: here`.** The `card` tool takes `repo` (`worktree`,
+   the default; `here`; `none`) and writes it on the card; `/dispatch` reads it
+   from the card exactly as it reads `--here`. `here` shares the session's
+   checkout (the live app is there); `none` is no repo at all: no worktree, no
+   fetch, no git, the worker runs in the session folder. The tool's description
+   says when: research or extraction with outputs outside the repo, repo none or
+   here, scope = the output folder.
+2. **Scope names the output folder.** `scope` and `forbid` may hold absolute
+   paths and globs (`~` is the home folder). The first absolute scope entry is the
+   card's `outdir` unless the card names `outdir:` itself, and the header gains
+   `outdir=<abs>` and `scratch=<abs>`. The brief tells the worker to put
+   deliverables in the output folder and every helper file in the scratch folder,
+   never in the repo.
+3. **The verifier lists the folders before and after.** At dispatch the mod
+   lists (relative path, size, modification time) every absolute scope and forbid
+   *root*, the folder of each absolute entry, and stores the listings
+   (`delegation.outside.<ID>`). At hand-back it lists them again. The scope claim
+   covers both deltas: every git path against the repo entries, and every
+   *changed* outside path (added, removed, or a different size or time) against the
+   absolute entries: inside a scope entry and outside every forbid entry. A
+   refute names the delta it came from:
+
+       claim scope: failed — out-of-scope path: /out/notes/scratch.txt (outside delta)
+       claim scope: failed — out-of-scope path: scratch.py (repo delta)
+
+   A root that does not exist yet lists as empty. A root that exists but cannot be
+   read, or holds more than 10000 files, leaves the claim **unchecked**, never held;
+   so does a root nobody listed at dispatch while others were (a root an amend
+   added). A brief with no listing at all (one that never went through `/dispatch`)
+   is checked as it always was, plus `note: outside delta not checked: …`. The mod can only see
+   the folders the card names, so name what you want watched: a `forbid` entry such
+   as `~/exports/avatar/**` is listed too, and a change under it fails the claim.
+4. **The gate runs against the folder, and the report can say what it made.** A
+   gate-map command may carry `{outdir}`, filled with the brief's `outdir=` at
+   verify time; the allowlist accepts it word for word with only `{outdir}` and
+   `{worktree}` filled. The report gains `artefacts=` and `metrics=` (see **Report**
+   under [The contracts](#the-contracts)): the `artefacts` claim fails naming the
+   first path that is missing or empty, and the metrics are recorded and shown,
+   never judged.
+
+A `repo: none` card's gate runs in the output folder (the folder of its first
+scope entry), so name a gate script by an absolute path or put it on `PATH`; a
+`repo: here` gate runs in the checkout, so a path relative to the repo works.
+
+`repo: none` and `repo: here` cards go through the same claims; the git ones
+(branch, sha, files, red, pr) apply only to `here`, and a `none` card keeps the
+`repo=none` check (`files=` exist and are in scope, the gate exits 0) with the
+new claims added. A `none` card's report reads `branch=none sha=none red=none
+files=none`.
+
+**Worked example: a hair lane.** The lane exports the hair model from the running
+app, renders two turntable views and checks its own output. The repo has a script,
+`scripts/check-hair.mjs <folder>`, that fails when `hair.gltf` does not validate
+(and when no validator is installed), and exports twice to compare hashes. The
+gate map names it, so the claim "validator passed" and the claim "byte-identical"
+are both re-run by the verifier rather than taken from the report.
+
+`.chassis-delegation.json`:
+
+    { "gateMap": { "hair-check": "node scripts/check-hair.mjs {outdir}" } }
+
+The card (the `card` tool writes this from `repo: "here"`, `scope: ["~/exports/hair/**"]`
+and `forbid: ["~/exports/avatar/**"]`, with the next free id):
+
+    ---
+    id: OPS-40
+    title: Export the hair model and two turntable renders from the running app
+    domain: ops
+    tier: standard
+    status: queued
+    repo: here
+    scope: [~/exports/hair/**]
+    forbid: [~/exports/avatar/**]
+    red_test: none
+    gate: hair-check
+    budget: 2-attempts
+    ---
+    ## Why
+
+    The hair model is rebuilt by hand each time. Export it from the running app
+    into the output folder, with front and side renders, and say what you measured.
+
+    ## Done when
+
+    - `hair.gltf`, `front.png` and `side.png` are in the output folder and not empty
+    - `scripts/check-hair.mjs` passes on the folder (it validates the glTF and exports twice to compare)
+    - nothing else changed: no scratch files in the repo, none under `~/exports/avatar/`
+
+The brief header `/dispatch` writes (home folder `/home/ana`):
+
+    [[brief v=1 task=OPS-40 subtask=main purpose=build tier=standard model=sonnet scope=/home/ana/exports/hair/** forbid=/home/ana/exports/avatar/** red_test="none" gate=hair-check repo=here ignore=.delegation/**,agents/tasks/** outdir=/home/ana/exports/hair scratch=/tmp/chassis-delegation/OPS-40 spend=10 budget=2-attempts report=chassis.report.v1]]
+
+The worker's last line, then the verdict:
+
+    [[report v=1 task=OPS-40 subtask=main branch=main pr=none sha=HEAD gate=pass red=none files=none artefacts=hair.gltf,front.png,side.png metrics="tris=18400,export_s=3.1"]]
+
+    chassis-delegation: verdict=consistent task=OPS-40 attempt=1/2 …
+    claim scope: held — every changed path is within scope=[/home/ana/exports/hair/**], forbid=[/home/ana/exports/avatar/**] untouched; outside delta: 3 changed paths under /home/ana/exports/hair, /home/ana/exports/avatar, every one within scope and none in forbid
+    claim files: held — files= matches the dirty-tree delta exactly
+    claim artefacts: held — 3 artefacts exist and are not empty: hair.gltf (212004 bytes), front.png (88120 bytes), side.png (87904 bytes)
+    claim gate: held — gate green in the shared checkout … (gate=pass confirmed; …)
+    metrics: tris=18400, export_s=3.1
+
+Had the worker left `scratch.json` in the repo, the scope claim would have failed
+on the repo delta; had it written into `~/exports/avatar/`, on the outside delta;
+had it named a render it never made, the artefacts claim would have failed naming
+it; and had the check script failed, the gate claim would have said so, whatever
+the report said.
 
 ## Review
 
@@ -1145,7 +1297,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 
 | Key | Repo file | `/config` | Default | What it does |
 | --- | --- | --- | --- | --- |
-| `gateMap` | object | JSON string | `{}` | gate id → command, run by argv with no shell. `{files}` is files.txt, `{worktree}` the tree the gate runs in; chain with ` && `. A command the allowlist would refuse is dropped at load and named. No `sf`, `git`, `gh`, network, `rm` or publish. An id not in the map is "gate not re-run" (unverified) |
+| `gateMap` | object | JSON string | `{}` | gate id → command, run by argv with no shell. `{files}` is files.txt, `{worktree}` the tree the gate runs in, `{outdir}` a research card's output folder; chain with ` && `. A command the allowlist would refuse is dropped at load and named. No `sf`, `git`, `gh`, network, `rm` or publish. An id not in the map is "gate not re-run" (unverified) |
 | `agentTypes` | object | JSON string | `{}` | card domain → subagent type. A domain not named runs on a subagent type of the same name if the session offers one, else `general-purpose` |
 | `tierMap` | object | JSON string | `{economy: haiku, standard: sonnet, frontier: opus}` | tier → alias. `fable` is never spawned; it becomes opus, and when a brief, the caller or the map asks for fable the notice says so (`tier=frontier → opus (fable requested; fable is never spawned by the mod)`) and the attempt record keeps `requestedAlias: fable` |
 | `domains` | array | comma string | `frontend, backend, ops, dispatcher, cross, shared` | the domains a card may name |
@@ -1352,7 +1504,7 @@ says `chassis-delegation: refused argv [...] (<reason>)`. The list, verbatim:
     gh pr list|view …                                        (no --web)
     gh issue create|comment|list, for the configured issueRepo only (MOD-7; the body file under <root>/.delegation/debriefs/)
     claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
-    a gate-map command, word for word, `{files}` and `{worktree}` filled by absolute paths
+    a gate-map command, word for word, `{files}`, `{worktree}` and `{outdir}` filled by absolute paths
 
 `<id>` is `<PREFIX>-<number>[letter]`. Everything else is refused, including:
 
@@ -1371,7 +1523,7 @@ A gate-map command is refused when it contains any of these:
 
 A refused command yields no template, so its argv can never run. The same
 check runs when the repo file or `/config` is loaded, with sample paths in
-place of `{files}` and `{worktree}`: a command the allowlist would refuse at
+place of `{files}`, `{worktree}` and `{outdir}`: a command the allowlist would refuse at
 verify time (say `claude plugin validate .`, which is not an absolute folder)
 is dropped from the map then, and named in the toast and log with its reason,
 so it is not found a gate run later.
@@ -1718,9 +1870,10 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
   rewritten (see the deprecation note under [How a report is verified](#how-a-report-is-verified)).
 - **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`, with
   these keys:
-  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named; a `work-present` attempt, kind `verify`, carries the branch head it found; a reviewer's attempt, kind `review` (MOD-21), carries the number of the attempt it reviewed, its verdict `reviewed` and the `review` counts, and is on no ladder);
+  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named, and `metrics`, the report's `metrics=` (MOD-22); a `work-present` attempt, kind `verify`, carries the branch head it found; a reviewer's attempt, kind `review` (MOD-21), carries the number of the attempt it reviewed, its verdict `reviewed` and the `review` counts, and is on no ladder);
   - `delegation.recent.<session>`: the verdict lines;
   - `delegation.handoff.<brief>`: the folder `/dispatch` prepared for the brief's worker, which the spawn hook gives the brain's Agent call (MOD-12);
+  - `delegation.outside.<ID>`: the listing `/dispatch` took of a research card's absolute scope and forbid roots, the "before" of the outside delta (MOD-22); a re-dispatch of a reused brief keeps it;
   - `delegation.debrief.<session>`;
   - `delegation.friction.<session>`;
   - `delegation.evals`.
