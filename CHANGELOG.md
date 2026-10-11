@@ -15,6 +15,15 @@
   three (never negative, left out under a cent) and the share is brain over the session total.
   The ad hoc part shows once an ad hoc agent has run.
 
+- **The debrief check accepts a correction the transcript holds at its time (MOD-38, issue
+  #90).** A corrections entry whose `at` is inside the window is matched against the user
+  messages of the session transcript (the engine's session messages call): its quote,
+  compared after collapsing whitespace and case, at least 12 characters, within two minutes
+  of `at`, marks it `source: transcript` and it stops counting toward the flag. A check whose
+  only flag was such corrections prints `debrief check: clean (n corrections evidenced by the
+  transcript, none in the breadcrumbs)`, moves the record and sends the watermark message.
+  `tool_denials` are unchanged.
+
 ## 0.8.2 — 2026-10-11
 
 - **A merged task is not woken for, an accept is on the ledger, each verdict row is written

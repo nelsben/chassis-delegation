@@ -2425,6 +2425,35 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
     expect(shown(w)).toContain('debrief check: clean')
   })
 
+  // MOD-38: the breadcrumbs hold no correction (public #89), the transcript does
+  const QUIET = ['2026-10-08T09:00:00Z', '2026-10-10T10:05:00Z', '2026-10-10T10:20:00Z'].map((ts, i) => JSON.stringify({ ts, kind: ['session_start', 'permission_prompt', 'session_end'][i], detail: {} })).join('\n') + '\n'
+  const SAID = ['Do not touch the lockfile again', 'Use the other branch for this work', 'That summary is too long for me', 'Stop adding comments to every line']
+  const userRows = SAID.map((text, i) => ({ role: 'user', text, timestamp: `2026-10-10T10:1${i}:00Z` }))
+  const fourCorrections = (texts: string[]) => ({ corrections: texts.map((t, i) => ({ text: `"${t}"`, at: `2026-10-10T10:1${i}:30Z` })) })
+  const quietFiles = (debrief: object) => ({ ...files(debrief), [CRUMBS]: QUIET })
+
+  test('MOD-38: four corrections the transcript holds come back clean, move the record and send the watermark message', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true, mainTranscript: userRows, store: { 'delegation.debrief.sess-1': PRIOR }, files: quietFiles(fourCorrections(SAID)) })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect(shown(w)).toContain('debrief check: clean (4 corrections evidenced by the transcript, none in the breadcrumbs)')
+    expect((w.store.get('delegation.debrief.sess-1') as { finishedAt?: number }).finishedAt).toBeDefined()
+    expect(w.sent).toHaveLength(1)
+    expect(w.sent[0]?.text).toBe(MARK)
+    expect(JSON.parse(w.files.get(DEBRIEF) ?? '{}').corrections.map((c: { source?: string }) => c.source)).toEqual(['transcript', 'transcript', 'transcript', 'transcript'])
+  })
+
+  test('MOD-38: a correction the transcript does not hold is flagged as before and the record stands', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true, mainTranscript: userRows, store: { 'delegation.debrief.sess-1': PRIOR }, files: quietFiles(fourCorrections([...SAID.slice(0, 3), 'Something the user never typed'])) })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect(shown(w)).toContain('flagged corrections')
+    expect(w.store.get('delegation.debrief.sess-1')).toEqual(PRIOR)
+    expect(w.sent).toHaveLength(0)
+  })
+
   const SKILL = `${HOME}/.claude/commands/debrief.md`
   const MARK = 'debrief check: clean. Mark your watermark now, as your instructions say, and stop.'
 

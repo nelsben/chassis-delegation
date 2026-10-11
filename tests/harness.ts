@@ -60,6 +60,8 @@ export type World = {
    * for a conversation it cannot read. A test may set or replace one mid-run.
    */
   transcripts: Map<string, unknown[]>
+  /** MOD-38: what `$.session.messages({})` (the main conversation) answers; empty unless a test sets it. */
+  mainTranscript: unknown[]
   /** The turn ids the mod ended with `$.turn.abort` (GH-106). */
   aborted: string[]
   /** What `$.session.model()` answers (GH-113); a test sets it to put a fable or opus brain in the seat. */
@@ -101,6 +103,8 @@ export type WorldOptions = {
   panesUnplaced?: string
   /** Agents' transcripts for `$.session.messages({ agentId })` (World.transcripts). */
   transcripts?: Record<string, unknown[]>
+  /** The main conversation's rows (World.mainTranscript). */
+  mainTranscript?: unknown[]
   /** What `$.session.model()` answers (GH-113); default a sonnet brain. */
   model?: string
   /** MOD-21: reading hooks/templates/review.md fails (ENOENT), as it does when the mod is installed without it. */
@@ -159,6 +163,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     invalidations: 0,
     storeKeyReads: 0,
     transcripts: new Map(Object.entries(options.transcripts ?? {})),
+    mainTranscript: options.mainTranscript ?? [],
     aborted: [],
     model: options.model ?? 'claude-sonnet-5-5',
     spawnedBy: new Map(),
@@ -243,7 +248,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('agent.list', () => ({ value: w.agents.map(a => ({ ...a })) }))
   // the main conversation is empty here; an agent's is its transcript, else a deny
   hook('session.messages', (e: { agentId?: string }) => {
-    if (e.agentId === undefined) return { value: [] }
+    if (e.agentId === undefined) return { value: JSON.parse(JSON.stringify(w.mainTranscript)) }
     const rows = w.transcripts.get(e.agentId)
     return { value: rows ? JSON.parse(JSON.stringify(rows)) : { deny: `no conversation for ${e.agentId}` } }
   })

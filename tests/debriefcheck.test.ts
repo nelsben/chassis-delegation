@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { windowOf, windowAsk, checkDebrief, splitFindings, MOD_SURFACES } from '../hooks/lib/debriefcheck'
+import { windowOf, windowAsk, checkDebrief, splitFindings, quoteEvidenced, userMessagesOf, MOD_SURFACES } from '../hooks/lib/debriefcheck'
 import { debriefPrompt, builtInDebriefPrompt, MOD_FINDINGS_ASK } from '../hooks/lib/cleanstop'
 
 const crumb = (ts: string, kind: string): string => JSON.stringify({ ts, kind, detail: {} })
@@ -91,5 +91,51 @@ describe('MOD-10: findings about the host', () => {
     expect(splitFindings([f('dispatch', { title: 'The engine dropped the spawn' })]).host).toHaveLength(1)
     expect(splitFindings([f('config', { body: 'my own hook blocked it' })]).host).toHaveLength(1)
     expect(splitFindings([f('dispatch', { body: 'queued twice' })]).mod).toHaveLength(1)
+  })
+})
+
+describe('MOD-38: a correction the transcript holds at its time', () => {
+  const users = userMessagesOf([
+    { role: 'user', text: "I don't agree here and I think Opus needs help. MCP isn't required", timestamp: '2026-10-10T10:00:00Z' },
+    { role: 'assistant', text: 'Understood, switching to the other model now', timestamp: '2026-10-10T10:00:10Z' },
+    { role: 'user', text: 'Please   STOP\n  using the shell for this', timestamp: '2026-10-10T10:01:00Z' },
+  ])
+  const at = (iso: string): number => Date.parse(iso)
+
+  test('only user rows with a usable time are kept', () => {
+    expect(users).toHaveLength(2)
+  })
+  test('the normalisation is whitespace and case only: apostrophes are not folded, so "dont" does not match "don\'t"', () => {
+    expect(quoteEvidenced('i dont agree here and i think opus needs help', at('2026-10-10T10:00:30Z'), users)).toBe(false)
+    expect(quoteEvidenced("i don't agree here and i think opus needs help", at('2026-10-10T10:00:30Z'), users)).toBe(true)
+  })
+  test('a verbatim quote, with surrounding quotes, whitespace and case differences, matches within two minutes', () => {
+    expect(quoteEvidenced('"Please stop using the shell"', at('2026-10-10T10:01:00Z'), users)).toBe(true)
+    expect(quoteEvidenced('please STOP using the shell', at('2026-10-10T10:02:30Z'), users)).toBe(true)
+  })
+  test('a quote of fewer than 12 characters never matches', () => {
+    expect(quoteEvidenced('please stop', at('2026-10-10T10:01:00Z'), users)).toBe(false)
+    expect(quoteEvidenced('Please', at('2026-10-10T10:01:00Z'), users)).toBe(false)
+  })
+  test('a message more than two minutes from at does not count', () => {
+    expect(quoteEvidenced('please stop using the shell', at('2026-10-10T10:03:01Z'), users)).toBe(false)
+    expect(quoteEvidenced('please stop using the shell', at('2026-10-10T10:03:00Z'), users)).toBe(true)
+  })
+  test('checkDebrief: evidenced corrections are marked source transcript, do not flag, and print the evidenced line', () => {
+    const quiet = windowOf([crumb('2026-10-10T10:00:00Z', 'session_start'), crumb('2026-10-10T10:05:00Z', 'session_end')].join('\n'), 0)!
+    const text = JSON.stringify({ corrections: [{ text: '"Please stop using the shell"', at: '2026-10-10T10:01:00Z' }, { text: "I don't agree here and I think Opus needs help", at: '2026-10-10T10:00:30Z' }] })
+    const r = checkDebrief(text, quiet, users)
+    expect(r.clean).toBe(true)
+    expect(r.evidenced).toBe(2)
+    expect(r.lines[0]).toBe('debrief check: clean (2 corrections evidenced by the transcript, none in the breadcrumbs)')
+    expect((r.debrief.corrections as { source?: string }[]).map(c => c.source)).toEqual(['transcript', 'transcript'])
+  })
+  test('checkDebrief: one correction the transcript lacks is flagged as before', () => {
+    const quiet = windowOf([crumb('2026-10-10T10:00:00Z', 'session_start'), crumb('2026-10-10T10:05:00Z', 'session_end')].join('\n'), 0)!
+    const text = JSON.stringify({ corrections: [{ text: 'Please stop using the shell', at: '2026-10-10T10:01:00Z' }, { text: 'nothing like this was ever said', at: '2026-10-10T10:01:00Z' }] })
+    const r = checkDebrief(text, quiet, users)
+    expect(r.clean).toBe(false)
+    expect(r.flagged).toHaveLength(1)
+    expect(r.lines[0]).toBe('debrief check: 0 stripped, 1 flagged')
   })
 })
