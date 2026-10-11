@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.8.1, MIT.
+any other repo: no scripts, no harness, no network. Version 0.8.2, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,18 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.8.1 to 0.8.2
+
+What the brain will see:
+
+- **A verdict wake is skipped for a task already merged, an accept is on the ledger, and each verdict row is written once (MOD-35, public issue #84).** A verdict wake no longer arrives for a task already merged; its row is still posted. Accepts are recorded on the ledger, and no verdict row is written twice.
+- **Per-domain lessons reach every brief in the domain (MOD-34, public issue #65).** A `lessons/<domain>.md` file beside the cards is appended to each brief for that domain, capped at 40 lines; `/delegation lesson` adds one.
+- **`/delegation debrief apply` turns the debrief's proposals into actions you approve (MOD-33).** `apply` lists the latest proposals, and each one you approve or dismiss is recorded; the mod writes nothing but its own record.
+- **After a clean debrief check the mod tells the agent to mark its watermark, and a false refute is one fact (MOD-32).** A refute that a re-judge found consistent at the same sha is shown once, as a false refute.
+- **The mod asks whether to post a debrief's findings (MOD-31).** A new `postFindings` option, `ask` | `auto` | `off` (default `ask`), decides whether the findings are posted to the issue repo.
+
+What to do: set `redact` in `/config` before any session posts, and set `postFindings` to `auto` only after that.
 
 ### From 0.8.0 to 0.8.1
 
