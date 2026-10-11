@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **`files=` takes a folder glob, and the red claim quotes the line that failed (MOD-27).**
+  Public issue #56. A hand-back that listed a new folder as `docs/new/**` in `files=` was
+  refuted on files, though the six paths under it were exactly the delta: `filesClaim`
+  expanded only an entry ending in `/`. `dir/**` now stands for every delta path under
+  `dir/`, and `dir/*` for the ones exactly one level under it, as `dir/` does for the
+  whole tree. A glob that covers no delta path still reads as invented. The existing
+  literal and trailing-slash behaviour is unchanged.
+  - **The red claim skips a passing line.** A held red claim quoted the first marker
+    match, so a passing test whose name holds `Error` (`…NeverAnException Pass`) was
+    quoted as the failure while the real one (`Fail  System.AssertException: …`) sat two
+    lines below. A line whose outcome reads as passing (a whole-word `pass`, `passed`,
+    `ok`, or a ✓/✔ mark) is skipped; a line with a failing word (`Fail`, `failed`,
+    `not ok`, ✗, ✕) is preferred over an earlier marker line; with neither, the first
+    marker match is quoted as before. The claim holds or fails exactly as it did; only
+    the quoted line changes.
+
 ## 0.8.0 — 2026-10-11
 
 - **A repo=here card that shares a resource with an in-flight card is queued, not

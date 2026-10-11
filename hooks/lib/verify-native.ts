@@ -239,8 +239,24 @@ export function briefContract(briefText: string): BriefContract {
   }
 }
 
+/**
+ * MOD-27: the delta paths a folder entry in files= stands for, or undefined for a literal path. `dir/` and
+ * `dir/**` stand for every path under dir/; `dir/*` for the paths exactly one level under it.
+ */
+function folderEntry(entry: string): ((path: string) => boolean) | undefined {
+  if (entry.endsWith('/**')) {
+    const prefix = entry.slice(0, -2)
+    return p => p.startsWith(prefix)
+  }
+  if (entry.endsWith('/*')) {
+    const prefix = entry.slice(0, -1)
+    return p => p.startsWith(prefix) && !p.slice(prefix.length).includes('/')
+  }
+  return entry.endsWith('/') ? p => p.startsWith(entry) : undefined
+}
+
 /** The files claim: the report's files= against the sha's delta, as sets; a difference names each path.
- *  An entry ending in `/` stands for every delta path under that folder; a folder with none under it is an invented path.
+ *  An entry ending in `/`, `/**` or `/*` stands for the delta paths under that folder (MOD-27: see folderEntry); a folder with none under it is an invented path.
  *  `what` names the delta in the held line (repo=here with sha=HEAD: the dirty-tree delta). */
 export function filesClaim(claimed: readonly string[], actual: readonly string[], what = 'the sha delta', renamedFrom: readonly string[] = []): string {
   const have = new Set(actual)
@@ -250,8 +266,9 @@ export function filesClaim(claimed: readonly string[], actual: readonly string[]
   for (const c of claimed) {
     // GH-102: the old path of a detected rename is not in the delta; a worker that lists it too is not refuted
     if (renamedFrom.includes(c) && !have.has(c)) { collapsed++; continue }
-    if (!c.endsWith('/')) { want.add(c); continue }
-    const under = actual.filter(p => p.startsWith(c))
+    const covers = folderEntry(c)
+    if (covers === undefined) { want.add(c); continue }
+    const under = actual.filter(covers)
     if (under.length === 0) { want.add(c); continue }
     expanded++
     for (const p of under) want.add(p)
@@ -394,6 +411,22 @@ export const RED_MARKER = /fail|error|not ok|\u2717|exit code [1-9]|exit 1|expec
 /** The first failure line a held red claim quotes is cut to this many characters. */
 export const RED_LINE_CAP = 100
 
+/** MOD-27: a line whose outcome reads as failing: a failing word (whole word, any case) or a cross mark. */
+const RED_FAILED_WORD = /\b(?:fail|failed|not ok)\b|[\u2717\u2715]/i
+/** MOD-27: a line whose outcome reads as passing: a passing word (whole word, any case) or a check mark. */
+const RED_PASSED_WORD = /\b(?:pass|passed|ok)\b|[\u2713\u2714]/i
+
+/**
+ * MOD-27: the marker line a held red claim quotes. A line that reads as passing (a passing word or mark,
+ * and no failing one) is skipped, so a passing test whose name holds `Error` is never quoted as the failure.
+ * The first marker line with a failing word is preferred; else the first marker line that does not read
+ * as passing; else the first marker line, as before.
+ */
+function quotedRedLine(markers: readonly string[]): string {
+  const passing = (l: string) => RED_PASSED_WORD.test(l) && !RED_FAILED_WORD.test(l)
+  return markers.find(l => RED_FAILED_WORD.test(l)) ?? markers.find(l => !passing(l)) ?? (markers[0] as string)
+}
+
 /**
  * The red claim (GH-20): the file the report's red= names holds the red
  * test's failing output, in the worker's tree, fresh for this attempt. No
@@ -408,8 +441,9 @@ export function redClaim(i: RedClaimInput): RedClaim | undefined {
   if (i.error !== undefined || i.text === undefined) return { status: 'unchecked', detail: `red=${path} could not be read: ${i.error ?? 'no text came back'}` }
   const bytes = i.bytes ?? i.text.length
   if (bytes === 0 || i.text.trim() === '') return { status: 'failed', detail: `red=${path} is empty` }
-  const line = i.text.split(/\r?\n/).find(l => RED_MARKER.test(l))
-  if (line === undefined) return { status: 'unchecked', detail: `no failure marker found in red=${path} (${bytes} bytes)` }
+  const markers = i.text.split(/\r?\n/).filter(l => RED_MARKER.test(l))
+  if (markers.length === 0) return { status: 'unchecked', detail: `no failure marker found in red=${path} (${bytes} bytes)` }
+  const line = quotedRedLine(markers)
   const priors = i.priorHashes ?? []
   if (i.hash !== undefined) {
     const sames = priors.filter(p => p.hash === i.hash).sort((a, b) => a.attempt - b.attempt)

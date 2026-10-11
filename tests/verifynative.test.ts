@@ -546,3 +546,46 @@ describe('GH-1 item 2: a cardless report (no header, no brief)', () => {
     expect(t.calls.some(c => c.argv.join(' ') === git('merge-base', 'develop', FULL))).toBe(true)
   })
 })
+
+describe('MOD-27: a folder glob in files=, and the red line a claim quotes', () => {
+  const SIX = ['objects/Snapshot/a.xml', 'objects/Snapshot/b.xml', 'objects/Snapshot/c.xml', 'objects/Snapshot/d.xml', 'objects/Snapshot/fields/e.xml', 'objects/Snapshot/fields/f.xml']
+  test('dir/** stands for every delta path under dir/, as dir/ does', () => {
+    expect(filesClaim(['objects/Snapshot/**', 'src/x.ts'], [...SIX, 'src/x.ts'])).toBe('claim files: held — files= matches the sha delta exactly (1 folder entry expanded)')
+    expect(filesClaim(['objects/Snapshot/**'], SIX)).toBe('claim files: held — files= matches the sha delta exactly (1 folder entry expanded)')
+    expect(filesClaim(['objects/Snapshot/**'], [...SIX, 'src/x.ts'])).toBe('claim files: failed — files= does not match the actual delta (omits or invents a path): omits src/x.ts')
+  })
+  test('dir/* stands for the delta paths exactly one level under dir/', () => {
+    expect(filesClaim(['objects/Snapshot/*'], ['objects/Snapshot/a.xml'])).toBe('claim files: held — files= matches the sha delta exactly (1 folder entry expanded)')
+    expect(filesClaim(['objects/Snapshot/*'], ['objects/Snapshot/a.xml', 'objects/Snapshot/fields/b.xml'])).toBe('claim files: failed — files= does not match the actual delta (omits or invents a path): omits objects/Snapshot/fields/b.xml')
+  })
+  test('a glob that covers no delta path reads as invented', () => {
+    expect(filesClaim(['objects/Snapshot/**'], ['src/x.ts'])).toBe('claim files: failed — files= does not match the actual delta (omits or invents a path): omits src/x.ts; invents objects/Snapshot/**')
+    expect(filesClaim(['objects/Snapshot/*'], ['objects/Snapshot/fields/b.xml'])).toBe('claim files: failed — files= does not match the actual delta (omits or invents a path): omits objects/Snapshot/fields/b.xml; invents objects/Snapshot/*')
+  })
+  describe('the quoted red line', () => {
+    const ev = { redTest: 'npm test', path: RED_PATH, repo: REPO, exists: true, hash: 'h1', priorHashes: [] as { attempt: number; hash: string }[] }
+    const red = (text: string) => redClaim({ ...ev, text, bytes: text.length })
+    test('a passing line whose test name holds Error is not quoted; the Fail line below it is', () => {
+      const text = 'getHeadline_returnsFriendlyErrorNeverAnException Pass\nx Fail System.AssertException: Expected: 200, Actual: 400\n'
+      expect(red(text)).toEqual({ status: 'held', detail: `${RED_PATH}, ${text.length} bytes, first failure line: x Fail System.AssertException: Expected: 200, Actual: 400` })
+    })
+    test('every passing outcome word or mark is skipped (whole word, any case, or a check mark)', () => {
+      for (const pass of ['x Error PASS', 'x Error passed', 'x Error ok', 'x Error ✓', 'x Error ✔ done']) {
+        expect(red(`${pass}\nx Fail boom\n`)?.detail).toContain('first failure line: x Fail boom')
+      }
+    })
+    test('pass is matched as a whole word only', () => {
+      expect(red('x Error Passwords\ny Error other\n')?.detail).toContain('first failure line: x Error Passwords')
+      expect(red('x Error Pass\ny Error other\n')?.detail).toContain('first failure line: y Error other')
+    })
+    test('a failing outcome word (Fail, failed, not ok, a cross mark) is preferred over an earlier marker line', () => {
+      expect(red('Error: first\nnot ok 3 - sums\n')?.detail).toContain('first failure line: not ok 3 - sums')
+      expect(red('Error: first\n✗ sums\n')?.detail).toContain('first failure line: ✗ sums')
+      expect(red('Error: first\nFAILED: 2\n')?.detail).toContain('first failure line: FAILED: 2')
+    })
+    test('with no failing line, the first marker match is quoted, and the claim still holds', () => {
+      expect(red('getHeadline_returnsFriendlyErrorNeverAnException Pass\n')?.status).toBe('held')
+      expect(red('x Error handled\nx Error again\n')).toEqual({ status: 'held', detail: `${RED_PATH}, 30 bytes, first failure line: x Error handled` })
+    })
+  })
+})
