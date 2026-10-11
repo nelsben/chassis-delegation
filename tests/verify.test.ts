@@ -146,7 +146,7 @@ describe('verdict, advice and budgets', () => {
     const noMarker = 'claim red: unchecked — no failure marker found in red=.delegation/FE-1/red-1.txt (40 bytes); a state check\'s red file ends with an "expected: …; got: …" line'
     const inp = { ...base, verdict: 'unverified' as const, attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard' as const, reportGate: 'pass' as const, lines: ['claim branch: held — refs/heads/x', noMarker] }
     expect(advise(inp)).toEqual({ kind: 'check', next: 'check red by hand — no failure marker in .delegation/FE-1/red-1.txt; if it shows the red state, accept; else resume agent=agent-7 — prove: red' })
-    expect(advise({ ...inp, agentId: undefined })).toEqual({ kind: 'check', next: 'check red by hand — no failure marker in .delegation/FE-1/red-1.txt' })
+    expect(advise({ ...inp, agentId: undefined })).toEqual({ kind: 'check', next: 'check red by hand — no failure marker in .delegation/FE-1/red-1.txt; if it shows the red state, accept' })
     // red plus another unchecked claim: a resume to prove both, as today
     const both = advise({ ...inp, lines: ['claim gate: unchecked — gate not re-run: test (not in gateMap)', noMarker] })
     expect(both.kind).toBe('resume')
