@@ -249,6 +249,17 @@ describe('GH-112: the band and the pane', () => {
     expect(await ui.find({ key: 'dash-spend' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /T-1/ })).toBeDefined()
   })
+  test('MOD-23: a worker that holds a resource shows it in the pane’s worktree table and in the text fallback', async ($, on) => {
+    const w = world(on, { listAgents: true, panesUnplaced: 'no attached surface places panes' })
+    worker(w)
+    w.store.set('delegation.spawn.k1', { ...(w.store.get('delegation.spawn.k1') as object), resources: ['blender-live'] })
+    const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'Pane', requestId: 'delegation-dash', props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: /blender-live/ })).toBeDefined()
+    const out = await $.command.run({ command: 'delegation', args: 'dashboard', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    const text = String(out.text)
+    expect(text).toContain('| Task | Model | State | Worktree | Resource | Tokens | Cost | Attempt |')
+    expect(text).toMatch(/\| T-1 \| sonnet \(claude-sonnet-5-5\) \| live [^|]*\| – \| blender-live \|/)
+  })
   test('GH-113: the pane has a brain / workers tile and a brain row in spend by model once the brain has spent', async ($, on) => {
     const w = world(on, { listAgents: true })
     worker(w)
