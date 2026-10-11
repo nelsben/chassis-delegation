@@ -44,5 +44,9 @@
   "_issueRepo": "Where /delegation debrief post files the debrief's scrubbed findings about the mod (MOD-7): this mod's own public tracker. owner/name; empty = posting off.",
   "issueRepo": "nelsben/chassis-delegation",
   "_cardDir": "This repo is itself a plugin: the engine reads agents/*.md as subagent definitions, so the cards live under docs/cards/ (GH-12, GH-100: docs/ keeps the repo root short).",
-  "cardDir": "docs/cards"
+  "cardDir": "docs/cards",
+  "_ignore": "globs a repo=here delta never counts",
+  "ignore": [".delegation/**"],
+  "_spendByTier": "dollars one attempt may spend, per tier; 0 = no ceiling",
+  "spendByTier": {"economy":3,"standard":10,"frontier":25}
 }
