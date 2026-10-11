@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-10-11
 
 - **A repo=here card that shares a resource with an in-flight card is queued, not
   refused (MOD-24).** Public issue #33 (one worker per app, enforced by the queue).
