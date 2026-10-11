@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **`/delegation debrief apply` turns the agent's proposals into actions you approve
+  (MOD-33).** `apply` lists the latest debrief's proposals numbered with target, a one-line
+  summary and a status (open, done, dismissed); `apply <n>` prints one in full with a single
+  instruction for the brain by target (draft an edit and apply it only on your yes; write a
+  card; or show it and ask); `apply <n> done [note]` and `apply <n> dismiss [reason]` record
+  `proposals_status` in the `.findings.json`. The next debrief's prompt carries
+  `already done:` / `dismissed:` lines so settled proposals are not proposed again, and the
+  delegation-state section carries `n debrief proposals open — /delegation debrief apply`
+  while any are open. The mod writes nothing but its own record.
+
 - **After a clean debrief check the mod tells the debrief agent to mark its watermark, and
   a re-judged refute is one fact (MOD-32).** The check prints after the agent hands back, so
   the agent never saw `debrief check: clean` and left `.done` unmarked. A clean check now

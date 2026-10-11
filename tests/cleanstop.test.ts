@@ -17,6 +17,10 @@ import {
   frictionFacts,
   isCorrection,
   proposalsLines,
+  parseProposals,
+  proposalListLines,
+  proposalInstruction,
+  settledLines,
   type FrictionEvent,
   boundaryOnly,
   windowFacts,
@@ -258,5 +262,40 @@ describe('MOD-32: a refute re-judged consistent at the same sha is one fact, and
       expect(p).toMatch(/false refute/)
       expect(p).toMatch(/never a went_well/)
     }
+  })
+})
+
+describe('MOD-33: /delegation debrief apply, the proposals as actions the person approves', () => {
+  const change = (target: string, proposed_diff_summary: string, rationale = 'why') => ({ target, rationale, proposed_diff_summary })
+  const json = JSON.stringify({ proposed_harness_changes: [change('CLAUDE.md', 'Add a rule that a card names its gate.'), change('memory/x.md', `Note that the verdict row is\nread first. ${'y'.repeat(300)}`), null, {}] })
+  test('two proposals render as two numbered lines with target and status open', () => {
+    const lines = proposalListLines(parseProposals(json), [])
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatch(/^\[1\] CLAUDE\.md \u00b7 Add a rule that a card names its gate\. \u00b7 open$/)
+    expect(lines[1]?.startsWith('[2] memory/x.md \u00b7 Note that the verdict row is read first.')).toBe(true)
+    expect(lines[1]?.endsWith('open')).toBe(true)
+    expect(lines[1]).not.toContain('\n')
+  })
+  test('after a done record the second reads done with its note; a dismiss reads dismissed with the reason', () => {
+    const lines = proposalListLines(parseProposals(json), [{ n: 2, status: 'done', note: 'fixed in memory', at: '2026-10-10T10:00:00Z' }, { n: 1, status: 'dismissed', note: 'not now', at: '2026-10-10T11:00:00Z' }])
+    expect(lines[1]).toContain('done: fixed in memory')
+    expect(lines[1]).toContain('2026-10-10')
+    expect(lines[0]).toContain('dismissed: not now')
+  })
+  test('the instruction block: a memory file is draft, show, apply on yes, mark done', () => {
+    const [p] = parseProposals(JSON.stringify({ proposed_harness_changes: [change('memory/x.md', 's')] }))
+    expect(proposalInstruction(p!)).toBe('draft the edit to memory/x.md as a diff, show it to the person, apply it only on their yes, then run /delegation debrief apply 1 done <one line>')
+  })
+  test('the instruction block: a mod surface or code is a card; other shows it and asks', () => {
+    const ps = parseProposals(JSON.stringify({ proposed_harness_changes: [change('hooks/lib/verify.ts', 's'), change('dispatch', 's'), change('other', 's')] }))
+    expect(proposalInstruction(ps[0]!)).toContain('write a card with the card tool from this proposal, show the dry run, dispatch on go, then mark it done naming the card id')
+    expect(proposalInstruction(ps[1]!)).toContain('write a card with the card tool')
+    expect(proposalInstruction(ps[2]!)).toMatch(/^show it to the person and ask/)
+  })
+  test('settled proposals become already done: / dismissed: lines', () => {
+    const ps = parseProposals(json)
+    expect(settledLines(ps, [{ n: 1, status: 'done', note: '', at: 'x' }, { n: 2, status: 'dismissed', note: 'r', at: 'x' }])[0]).toBe('already done: Add a rule that a card names its gate.')
+    expect(settledLines(ps, [{ n: 2, status: 'dismissed', note: 'r', at: 'x' }])).toHaveLength(1)
+    expect(settledLines(ps, [])).toEqual([])
   })
 })

@@ -82,6 +82,16 @@ import {
   findingsLines,
   findingsPathOf,
   proposalsLines,
+  openProposals,
+  parseProposals,
+  parseStatuses,
+  proposalDetail,
+  proposalInstruction,
+  proposalListLines,
+  settledLines,
+  SETTLED_ASK,
+  isoTime,
+  type ProposalStatus,
   scrubbedFindings,
   DEFAULT_DEBRIEF_AGENT,
   DEFAULT_DEBRIEF_COOLDOWN_HOURS,
@@ -1567,6 +1577,12 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   if (debrief?.lastAt !== undefined) {
     s.debrief = { at: debrief.lastAt, ...(debrief.agentId ? { agentId: debrief.agentId } : {}), ...(debrief.path ? { path: debrief.path } : {}), ...(debrief.finishedAt !== undefined ? { finishedAt: debrief.finishedAt } : {}) }
   }
+  // MOD-33: the latest debrief's proposals with no record yet
+  const latest = await latestProposals($)
+  if (latest) {
+    const open = openProposals(latest.proposals, latest.statuses)
+    if (open > 0) s.proposalsOpen = open
+  }
   const inflight = await storeGet<EvalInflight>($, K.evalInflight)
   const last = ((await storeGet<EvalEntry[]>($, K.evals)) ?? []).filter(e => e.sessionId === sid).at(-1)
   if (inflight && inflight.sessionId === sid) s.eval = { tier: inflight.tier, sha: inflight.sha, at: inflight.at, running: true, ...(inflight.agentId ? { agentId: inflight.agentId } : {}) }
@@ -1755,7 +1771,10 @@ async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: stri
   const prior = prev ? ((({ prior: _p, window: _w, ...rest }) => rest)(prev) as DebriefRecord) : null
   const record: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn, ...(window ? { window } : {}), prior }
   await storeSet($, K.debrief(sid), record)
-  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), [...notes, ...facts], window, builtInText) : debriefPrompt(source.path, sid, [...notes, ...facts], window)
+  // MOD-33: proposals the person already settled are named, so the agent does not propose them again
+  const settled = await settledNotes($)
+  const promptFacts = [...notes, ...settled, ...facts]
+  const prompt = source.builtIn ? builtInDebriefPrompt(source.path, sid, await $.session.root(), promptFacts, window, builtInText) : debriefPrompt(source.path, sid, promptFacts, window)
   const recordAgent = async (agentId: string) => storeSet($, K.debrief(sid), { ...record, agentId })
   runnerStarted.set(promptKey({ prompt }), recordAgent)
   let res: { agentId?: string; deny?: string }
@@ -1949,6 +1968,93 @@ async function postCore($: Host, argText: string, opts: { path?: string; auto?: 
     out.push(`could not record the issue numbers in ${path}: ${String(err).slice(0, 100)}`)
   }
   return [...out, ...underFindings].join('\n')
+}
+
+// ---- MOD-33: /delegation debrief apply -----------------------------------------------
+
+type LatestProposals = { debrief: string; findings: string; proposals: ReturnType<typeof parseProposals>; statuses: ProposalStatus[]; doc: Record<string, unknown> | undefined }
+
+/** The debrief files in the repo folder and the proposals of one: its findings file (beside it) holds the statuses. */
+async function proposalsAt($: Host, debrief: string): Promise<LatestProposals | undefined> {
+  const text = await readText($, debrief)
+  if (text === undefined) return undefined
+  const findings = findingsPathOf(debrief)
+  let doc: Record<string, unknown> | undefined
+  try {
+    const j: unknown = JSON.parse((await readText($, findings)) ?? 'null')
+    if (j !== null && typeof j === 'object' && !Array.isArray(j)) doc = j as Record<string, unknown>
+  } catch {
+    doc = undefined
+  }
+  return { debrief, findings, proposals: parseProposals(text), statuses: parseStatuses(doc?.proposals_status), doc }
+}
+
+/** The latest debrief's proposals: the one this session's record names, else the newest in <root>/.delegation/debriefs. */
+async function latestProposals($: Host): Promise<LatestProposals | undefined> {
+  const sid = await sessionIdOf($)
+  const rec = sid ? await storeGet<DebriefRecord>($, K.debrief(sid)) : undefined
+  if (rec?.path) {
+    const home = (await homeOf($)).replace(/\/+$/, '')
+    const got = await proposalsAt($, rec.path.startsWith('~/') ? `${home}${rec.path.slice(1)}` : rec.path)
+    if (got) return got
+  }
+  const folder = `${(await $.session.root()).replace(/\/+$/, '')}/.delegation/debriefs`
+  let stems: string[] = []
+  try {
+    stems = (await $.fs.list(folder)).map(e => e.name).filter(n => n.endsWith('.json')).map(n => n.replace(/\.findings\.json$/, '').replace(/\.json$/, '')).filter(n => !/\.post-\d+/.test(n))
+  } catch {
+    stems = []
+  }
+  const stem = [...new Set(stems)].sort().at(-1)
+  return stem === undefined ? undefined : proposalsAt($, `${folder}/${stem}.json`)
+}
+
+/** `already done: …` / `dismissed: …` lines from the last few debriefs in the repo folder, each summary once. */
+async function settledNotes($: Host): Promise<string[]> {
+  const folder = `${(await $.session.root()).replace(/\/+$/, '')}/.delegation/debriefs`
+  let stems: string[] = []
+  try {
+    stems = (await $.fs.list(folder)).map(e => e.name).filter(n => n.endsWith('.findings.json')).map(n => n.replace(/\.findings\.json$/, '')).sort().slice(-10)
+  } catch {
+    return []
+  }
+  const lines = new Set<string>()
+  for (const stem of stems) {
+    const got = await proposalsAt($, `${folder}/${stem}.json`)
+    if (got) for (const l of settledLines(got.proposals, got.statuses)) lines.add(l)
+  }
+  return lines.size === 0 ? [] : [...lines, SETTLED_ASK]
+}
+
+/**
+ * MOD-33, `/delegation debrief apply [n [done|dismiss [note]]]`: list the latest debrief's proposals,
+ * print one in full with the instruction for the brain, or record that the person settled it. The mod
+ * writes nothing but its own record (proposals_status in the .findings.json); the brain makes the edit, with the person's yes.
+ */
+async function runDebriefApply($: Host, argText: string): Promise<string> {
+  const latest = await latestProposals($)
+  if (latest === undefined) return 'debrief apply: no debrief found under .delegation/debriefs/. Run /delegation debrief first.'
+  const { proposals, statuses } = latest
+  const m = /^\s*(\S*)\s*(\S*)\s*([\s\S]*)$/.exec(argText)
+  const [, nText = '', verb = '', rest = ''] = m ?? []
+  if (nText === '') {
+    if (proposals.length === 0) return `no proposals in ${latest.debrief}`
+    return [`debrief proposals in ${latest.debrief} (${openProposals(proposals, statuses)} open):`, ...proposalListLines(proposals, statuses), '/delegation debrief apply <n> shows one; apply <n> done [note] or apply <n> dismiss [reason] records it'].join('\n')
+  }
+  const n = /^\d+$/.test(nText) ? Number(nText) : 0
+  const p = proposals.find(x => x.n === n)
+  if (p === undefined) return `debrief apply: there is no proposal [${nText}] in ${latest.debrief} (${proposals.length === 0 ? 'it has none' : `1 to ${proposals.length}`})`
+  if (verb === '') return [...proposalDetail(p), '', `For the brain: ${proposalInstruction(p)}`].join('\n')
+  if (verb !== 'done' && verb !== 'dismiss') return `debrief apply: after the number say done [note] or dismiss [reason] (got ${JSON.stringify(verb)})`
+  const status: ProposalStatus = { n, status: verb === 'done' ? 'done' : 'dismissed', note: rest.trim(), at: isoTime(await now($)) }
+  const next = [...statuses.filter(x => x.n !== n), status].sort((a, b) => a.n - b.n)
+  const doc = latest.doc ?? { debrief: latest.debrief, modVersion: MOD_VERSION, scrubbed: true, findings: [], host_findings: [] }
+  try {
+    await $.fs.write(latest.findings, JSON.stringify({ ...doc, proposals_status: next }, null, 2) + '\n')
+  } catch (err) {
+    return `debrief apply: could not record it in ${latest.findings}: ${String(err).slice(0, 100)}`
+  }
+  return `proposal [${n}] marked ${status.status}${status.note ? `: ${status.note}` : ''} (${latest.findings})`
 }
 
 /** MOD-18: the agent's own proposals out of the debrief file a findings file names (a leading ~/ is the home folder); [] when there is none to read. */
@@ -4825,6 +4931,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'setup') return { text: await runSetup($) }
     if (arg === 'update') return { text: await runUpdate($) }
     if (arg === 'debrief') return { text: await runDebrief($) }
+    if (arg === 'debrief apply' || arg.startsWith('debrief apply ')) return { text: await runDebriefApply($, arg.slice('debrief apply'.length)) }
     if (arg === 'debrief post' || arg.startsWith('debrief post ')) return { text: await runDebriefPost($, arg.slice('debrief post'.length)) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'dashboard') {
