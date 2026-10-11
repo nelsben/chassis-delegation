@@ -220,3 +220,39 @@ export function retirePatch(probe: { ancestor?: boolean; card?: string }, now: n
   if (probe.ancestor === undefined && probe.card === undefined) return { retireTriedAt: now }
   return { retireTriedAt: now, retireCheckedAt: now }
 }
+
+/**
+ * MOD-35: the key one ledger row is written under. An accept row is one per task
+ * attempt; a verdict row is one per (task, attempt, sha, verdict), so a hand-back
+ * that arrives twice (as a tool result and as a notification, or from a second
+ * copy of the mod) leaves one line. A row with neither a verdict nor a kind of
+ * accept has no key and is always written.
+ */
+export function ledgerRowKey(row: Record<string, unknown>): string | undefined {
+  const head = `${String(row.task ?? '')}|${String(row.subtask ?? 'main')}|${String(row.attempt ?? '')}`
+  if (row.kind === 'accept') return `accept|${head}`
+  if (typeof row.verdict !== 'string') return undefined
+  // a reviewer's rows are told apart by the spawn they came from; a worker's by (task, attempt, sha, verdict)
+  return `verdict|${head}|${String(row.sha ?? '')}|${row.verdict}${row.kind === 'review' ? `|${String(row.toolUseId ?? '')}` : ''}`
+}
+
+/** MOD-35: does this ledger text already hold a row under the same key as `row`? */
+export function ledgerHas(text: string, row: Record<string, unknown>): boolean {
+  const key = ledgerRowKey(row)
+  if (key === undefined || text === '') return false
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue
+    try {
+      const parsed = JSON.parse(line) as unknown
+      if (parsed && typeof parsed === 'object' && ledgerRowKey(parsed as Record<string, unknown>) === key) return true
+    } catch {
+      // a line that is not JSON is not a row
+    }
+  }
+  return false
+}
+
+/** MOD-35: the accept row (`how`: the branch reached the default branch, or the brain accepted it). */
+export function acceptRow(rec: Pick<AttemptRecord, 'task' | 'subtask' | 'attempt' | 'sha'>, how: 'merged' | 'accepted', at: number): Record<string, unknown> {
+  return { kind: 'accept', task: rec.task, subtask: rec.subtask, attempt: rec.attempt, ...(rec.sha ? { sha: rec.sha } : {}), at, how }
+}

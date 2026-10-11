@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **A merged task is not woken for, an accept is on the ledger, each verdict row is written
+  once (MOD-35, issue #84).** Before submitting a verdict wake the mod runs MOD-4's merged
+  check on a consistent hand-back (sha an ancestor of origin/main, the card there reading
+  merged, or an accept already recorded); when it is merged the row is posted, no wake is
+  sent and the debug log says `wake skipped: <id> already merged`. Refuted, over-spend and
+  `ready:` wakes are never skipped. An accept line (`kind: accept`, task, subtask, attempt,
+  sha, at, `how: merged | accepted`) is appended to `.delegation/ledger.jsonl` when the retire
+  check finds the task merged, on `/delegation accept <id>`, and when the git guard's
+  Bash hook sees the brain run `gh pr merge` or `git merge` naming the task's branch or PR,
+  one per task attempt. Every ledger append is now guarded by its key (task, subtask,
+  attempt, sha, verdict), so the doubled rows an adopter saw cannot be written again.
+
 - **Per-domain lessons reach every brief in the domain (MOD-34).** A file beside the
   cards, `<cardDir>/lessons/<domain>.md`, is appended to each brief for that domain under
   `## Lessons (<domain>)`, after the card, as the file stands and capped at 40 lines (a

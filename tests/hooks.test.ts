@@ -4823,3 +4823,104 @@ describe('MOD-31: after a debrief, the mod asks whether to post its findings', (
     expect(out.indexOf('issues: owner/mod')).toBeLessThan(out.indexOf('post findings: auto'))
   })
 })
+
+describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a verdict row is written once', () => {
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const REPORT = '[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const delegationCmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const ledgerOf = (w: { files: Map<string, string> }) =>
+    (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+  /** The verifier's repo, with origin/main answering the ancestor check: exit 0 merged, 1 not. */
+  const runWith = (ancestor: number) => {
+    const base = nativeRun({ gate: 0 })
+    return (argv: string[]): RunAnswer | undefined =>
+      argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? (argv.at(-1) === 'origin/main' ? { exitCode: ancestor, stdout: '' } : { exitCode: 0, stdout: '' }) : base(argv)
+  }
+  const ran = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+
+  test('a consistent hand-back whose sha is on origin/main submits no wake and logs the skip', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(0), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toEqual([])
+    expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 already merged'))).toBe(true)
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 consistent') // the row is still posted
+    expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(1)
+    expect(ledgerOf(w).find(r => r.kind === 'accept')).toMatchObject({ task: 'T-4', attempt: 1, how: 'merged' })
+  })
+
+  test('a consistent hand-back not yet merged submits its wake as today', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toHaveLength(1)
+    expect(w.debugLogs.some(l => l.includes('wake skipped'))).toBe(false)
+    expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(0)
+  })
+
+  test('a refuted hand-back is woken for even when the sha reads as merged', { options: { ...GM } }, async ($, on) => {
+    const base = nativeRun() // gate red: the claim gate=pass is refuted
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 0, stdout: '' } : base(argv)), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('refuted')
+  })
+
+  test('/delegation accept appends one accept row with how accepted, and a second accept appends none', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    await $.session.start(sessionStart)
+    await $.command.run(delegationCmd('accept T-4 looks right'))
+    const accepts = () => ledgerOf(w).filter(r => r.kind === 'accept')
+    expect(accepts()).toHaveLength(1)
+    expect(accepts()[0]).toMatchObject({ kind: 'accept', task: 'T-4', attempt: 1, sha: expect.any(String), how: 'accepted' })
+    expect(typeof accepts()[0]?.at).toBe('number')
+    await $.command.run(delegationCmd('accept T-4'))
+    expect(accepts()).toHaveLength(1)
+  })
+
+  test('a hand-back delivered twice (notification and tool result) leaves exactly one verdict row on the ledger', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
+    on('tool.call', { tool: 'Agent' }, () => agentResult('Done.\n' + REPORT, 'agent-4'))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    await $.tool.call({ tool: 'Agent', description: 'T-4', prompt: `Your brief is the file ${BRIEF}.` })
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(ledgerOf(w).filter(r => r.verdict === 'consistent')).toHaveLength(1)
+  })
+
+  test('the write guard: the same (task, attempt, sha, verdict) is never appended twice, even from a ledger that already holds it', { options: { ...GM } }, async ($, on) => {
+    const row = { task: 'T-4', subtask: 'main', attempt: 1, kind: 'spawn', sha: '1234abcd', verdict: 'consistent', next: 'accept' }
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', [`${ROOT}/.delegation/ledger.jsonl`]: JSON.stringify(row) + '\n' }, run: runWith(1), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(ledgerOf(w).filter(r => r.verdict === 'consistent')).toHaveLength(1)
+  })
+
+  test('the brain\'s `gh pr merge agent/frontend/T-4 --rebase` appends an accept row with how merged, once', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
+    on('tool.call', { tool: 'Bash' }, ran)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    await $.tool.call({ tool: 'Bash', command: 'gh pr merge agent/frontend/T-4 --rebase' } as never)
+    const accepts = () => ledgerOf(w).filter(r => r.kind === 'accept')
+    expect(accepts()).toHaveLength(1)
+    expect(accepts()[0]).toMatchObject({ task: 'T-4', attempt: 1, how: 'merged' })
+    await $.tool.call({ tool: 'Bash', command: 'gh pr merge agent/frontend/T-4 --rebase' } as never)
+    expect(accepts()).toHaveLength(1)
+  })
+
+  test('a Bash command that is not a merge of a recorded task appends nothing', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
+    on('tool.call', { tool: 'Bash' }, ran)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    await $.tool.call({ tool: 'Bash', command: 'gh pr merge agent/frontend/NOPE-9 --rebase' } as never)
+    await $.tool.call({ tool: 'Bash', command: 'gh pr view agent/frontend/T-4' } as never)
+    expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(0)
+  })
+})

@@ -897,6 +897,14 @@ foreground worker's verdict, which rides its Agent result, wake nothing; an
 over-spend verdict does wake, so the brain can tell you. `wakeOnVerdict` (default
 `true`) turns it off, and the row is posted all the same.
 
+A verdict whose task is already merged does not wake (MOD-35). Before it submits,
+the mod asks MOD-4's retire check about a consistent hand-back: the attempt's sha an
+ancestor of `origin/main`, the card there reading `status: merged`, or an accept
+already recorded. When the answer is yes the row is still posted, no wake is sent,
+and the debug log says `wake skipped: <id> already merged` (a `ready:` line the
+hand-back freed is still submitted). A refuted, no-report, over-spend or reviewed
+verdict is never skipped by this rule.
+
 **Report.** The worker's hand-back ends with the report line. The mod reads
 the last one across the worker's final answer and its SubagentHandback
 message; for a background worker it reads that message from the worker's own
@@ -2242,6 +2250,14 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
   `review: {confirmed, refuted, unverifiable}`. A line
   written before the `consistent` rename says `verified` and is never
   rewritten (see the deprecation note under [How a report is verified](#how-a-report-is-verified)).
+  Each verdict line is written once (MOD-35): a line with the same task, subtask,
+  attempt, sha and verdict as one already in the file is not appended, so a hand-back
+  that arrives twice (as a tool result and as a notification) leaves one line.
+  An accept line records a closed outcome: `{kind: accept, task, subtask, attempt,
+  sha, at, how, sessionId}` with `how: merged` (the retire check found the sha on the
+  default branch, or the git guard saw the brain run `gh pr merge` naming the task's
+  branch or PR, or `git merge agent/<domain>/<id>`) or `how: accepted`
+  (`/delegation accept <id>`). One accept line per task attempt, never two.
 - **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`, with
   these keys:
   - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named, and `metrics`, the report's `metrics=` (MOD-22); a `work-present` attempt, kind `verify`, carries the branch head it found; a reviewer's attempt, kind `review` (MOD-21), carries the number of the attempt it reviewed, its verdict `reviewed` and the `review` counts, and is on no ladder);

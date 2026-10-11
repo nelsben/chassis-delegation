@@ -234,7 +234,9 @@ export function world(on: On, options: WorldOptions = {}): World {
   })
   hook('process.run', async (e: { argv: string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string } }) => {
     w.runs.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env, stdin: e.init?.stdin })
-    const answer = (await options.run?.([...e.argv])) ?? { exitCode: 0, stdout: '' }
+    // MOD-35: an unanswered "is this sha on origin/main" reads as not merged (MOD-4's retire check, and the wake's skip rule); every other unanswered command exits 0
+    const unmerged = e.argv[3] === 'merge-base' && e.argv[4] === '--is-ancestor' && e.argv[e.argv.length - 1] === 'origin/main'
+    const answer = (await options.run?.([...e.argv])) ?? { exitCode: unmerged ? 1 : 0, stdout: '' }
     return { value: { exitCode: answer.exitCode, stdout: answer.stdout, stderr: answer.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   hook('model.classify', () => ({ value: options.classify }))
