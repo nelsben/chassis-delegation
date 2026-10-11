@@ -28,6 +28,7 @@ import {
   lineageResumes,
   nextAttempt,
   patchRecord,
+  patchReview,
   priorRedHashes,
   retireDue,
   retirePatch,
@@ -160,8 +161,23 @@ import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardFromFields, cardSummary, sayGo } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { globList, globRoot, isNotWorkTree, noRepoVerdict, reportFiles, scopeCheck, workTreeArgv } from './lib/norepo'
-import { deliveryFor, parseVerbosity, quietLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
-import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type RepoConfig } from './lib/repoconfig'
+import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
+import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type RepoConfig, type ReviewMode } from './lib/repoconfig'
+import {
+  parseReviewBlock,
+  parseReviewMarker,
+  refutedRows,
+  reviewAdvice,
+  reviewClause,
+  reviewDue,
+  reviewerDeny,
+  reviewerPick,
+  reviewPlan,
+  reviewResumeText,
+  reviewVerdictLine,
+  shownRefuted,
+  type ReviewMarker,
+} from './lib/review'
 import { alreadyQueuedDeny, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, promptKey, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, runningDeny, startingOthers, waitedMinutes, type FallbackKind } from './lib/scheduler'
 import {
   aliasOf,
@@ -282,7 +298,7 @@ const DEBRIEF_STALE_MS = HOUR_MS
 const EVALS_CAP = 100
 const GATE_TIMEOUT_MS = 9 * 60 * 1000
 /** The advice kinds that leave something for the brain (or the person) to do. */
-const OWED_KINDS = ['resume', 'respawn', 'verify', 'exhausted', 'check', 'fix-brief']
+const OWED_KINDS = ['resume', 'respawn', 'verify', 'exhausted', 'check', 'fix-brief', 'review']
 const LEDGER_FILE = '.delegation/ledger.jsonl'
 
 /** `delegation.debrief.<session>`: the background debrief (2C, 5E). */
@@ -350,6 +366,11 @@ type SpawnRecord = {
   verdictLine?: string
   /** GH-16: a repo=here worker: the checkout it shares (the session root). */
   here?: string
+  /**
+   * MOD-21: set on a reviewer's record. `attempt` is the attempt it reviews; `worker` is that worker's agent id
+   * (the resume goes to it), `sha` the commit under review. A reviewer is on no ladder, holds no slot, and edits nothing.
+   */
+  review?: { worker?: string; sha?: string }
 }
 
 const laneOf = (s: { replay?: boolean; base?: string }): Lane | undefined =>
@@ -357,7 +378,7 @@ const laneOf = (s: { replay?: boolean; base?: string }): Lane | undefined =>
 
 /** `<task>:<lineage>:<attempt>` (the subtask and a replay lane folded into the task) — one verdict per key. */
 const attemptKey = (s: SpawnRecord): string =>
-  `${taskLabel(s.task, s.subtask)}${s.replay ? `@replay${s.base ? `-${s.base}` : ''}` : ''}:${s.lineage}:${s.attempt}`
+  `${taskLabel(s.task, s.subtask)}${s.replay ? `@replay${s.base ? `-${s.base}` : ''}` : ''}:${s.review ? `review-${s.key}` : s.lineage}:${s.attempt}`
 
 type Config = {
   autoEscalate: boolean
@@ -421,6 +442,10 @@ type Config = {
   wakeOnVerdict: boolean
   /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
   readyFallbackMs: number
+  /** MOD-21: a read-only reviewer after a consistent verdict: off, on, or on-frontier (frontier and premium cards only). */
+  review: ReviewMode
+  /** MOD-21: the reviewer's tier; '' = one below the worker's. */
+  reviewTier: Tier | ''
 }
 
 function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: string[] } {
@@ -482,6 +507,8 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       issueRepoOwn: issues.own,
       wakeOnVerdict: o.wakeOnVerdict !== false,
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
+      review: eff.review,
+      reviewTier: eff.reviewTier,
     },
   }
 }
@@ -689,7 +716,8 @@ async function allRecords($: Host): Promise<AttemptRecord[]> {
   for (const key of keys) {
     if (!key.startsWith(K.tasks(''))) continue
     const list = await storeGet<AttemptRecord[]>($, key)
-    if (Array.isArray(list)) out.push(...list)
+    // MOD-21: a reviewer's attempt is no worker attempt: the dashboard counts the workers
+    if (Array.isArray(list)) out.push(...list.filter(r => r.kind !== 'review'))
   }
   recordsCache = { at: t, records: out }
   return out
@@ -787,6 +815,33 @@ async function brainGuard($: Host, e: { tool: unknown; agentId?: string }): Prom
     }
   } catch (err) {
     debug($, `delegateOnly not checked: ${String(err)}`)
+  }
+  return undefined
+}
+
+/**
+ * MOD-21: a reviewer never edits. While a reviewer runs, its Edit, Write, MultiEdit and NotebookEdit calls are
+ * refused, and so is any Bash command the delegateOnly lexer counts as a write (a redirection, tee, sed -i, a cp or
+ * mv destination, a git commit), read against the folder it works in and against the session root. One line says why.
+ * Undefined = go on.
+ */
+async function reviewerGuard($: Host, e: { tool: unknown; agentId?: string }): Promise<{ deny: string } | undefined> {
+  const tool = String(e.tool)
+  if (!e.agentId || !(WRITE_TOOLS.includes(tool) || tool === 'Bash')) return undefined
+  const spawn = await spawnByAgent($, e.agentId)
+  if (!spawn?.review) return undefined
+  const deny = reviewerDeny(tool, taskLabel(spawn.task, spawn.subtask))
+  if (WRITE_TOOLS.includes(tool)) return { deny }
+  try {
+    const command = typeof (e as unknown as Record<string, unknown>).command === 'string' ? ((e as unknown as Record<string, unknown>).command as string) : ''
+    const root = await $.session.root()
+    const home = (await $.env.get('HOME')) || undefined
+    for (const dir of new Set([spawn.cwd ?? root, root])) {
+      const writes = bashWrites(command, dir, home)
+      if (writes.paths.length > 0 || writes.commit) return { deny }
+    }
+  } catch (err) {
+    debug($, `reviewer's Bash not checked: ${String(err)}`)
   }
   return undefined
 }
@@ -979,7 +1034,10 @@ async function liveState($: Host, exclude?: string): Promise<Live> {
     const label = taskLabel(spawn.task, spawn.subtask)
     if (a.status === 'running') {
       out.running += 1
-      if (!spawn.adhoc && isOpen(spawn)) out.workers.push({ label, agentId: a.id, spawn })
+      // MOD-21: a running reviewer holds no worker slot; its task's verdict is pending until it hands back
+      if (spawn.review) {
+        if (isOpen(spawn)) out.pending.push({ task: label, agentId: a.id })
+      } else if (!spawn.adhoc && isOpen(spawn)) out.workers.push({ label, agentId: a.id, spawn })
     } else if (a.status === 'completed' && !spawn.adhoc && isOpen(spawn)) out.pending.push({ task: label, agentId: a.id })
   }
   for (const key of finalizing.keys()) {
@@ -1299,7 +1357,8 @@ async function stepEffort($: Host, agentId: string): Promise<Effort | undefined>
   const hit = stepEfforts.get(agentId)
   if (hit !== undefined) return hit ?? undefined
   const spawn = await spawnByAgent($, agentId)
-  if (!spawn || spawn.adhoc) return undefined
+  // MOD-21: a reviewer steps at the engine's default; the card's effort belongs to its worker
+  if (!spawn || spawn.adhoc || spawn.review) return undefined
   const effort = effortFor(spawn.tier, await storeGet<string>($, K.effort(spawn.task)), cfg.effortByTier)
   stepEfforts.set(agentId, effort ?? null)
   if (effort) {
@@ -2363,6 +2422,8 @@ const renderedOf = (s: SpawnRecord): Rendered => ({ full: s.verdictBlock as stri
 
 /** Verifies, records, acts on the advice (autoEscalate), and returns the row in both forms (2B). */
 async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measured: Measured): Promise<Rendered> {
+  // MOD-21: a reviewer's hand-back is read for its [[review]] block, not checked as a worker's report
+  if (spawnIn.review) return finalizeReview($, spawnIn, text, measured)
   if (spawnIn.verdictAttempt === spawnIn.attempt && spawnIn.verdictBlock) return renderedOf(spawnIn)
   // A caller may hold a record read before an earlier fire stored its verdict.
   const stored = await storeGet<SpawnRecord>($, K.spawn(spawnIn.key))
@@ -2488,6 +2549,8 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
       briefPath: spawn.briefPath,
       adhoc: false,
       lines,
+      // MOD-21: a consistent verdict is followed by a reviewer when the option says so; a repo=none brief and a replay have no diff to read
+      review: reviewDue(cfg.review, spawn.tier) && !noRepo && !spawn.replay,
     })
   }
   // GH-104: a resume or a respawn looks at the worker's worktree first: finished work there is judged, not redone
@@ -2499,6 +2562,16 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
     if (work) {
       await recordWorkPresent($, spawn, work, lane)
       advice = verifyAdvice(work)
+    }
+  }
+  // MOD-21: the reviewer's spawn block rides under the row as a respawn's does; a review that cannot be set up is next=accept, with the reason
+  let reviewBlock: string | undefined
+  if (advice.kind === 'review') {
+    const built = await prepareReview($, spawn, { block: block ?? '', sha: report?.sha?.trim() ?? '', branch: report?.branch?.trim() ?? '', text })
+    if ('block' in built) reviewBlock = built.block
+    else {
+      advice = { kind: 'accept', next: 'accept' }
+      lines = [...lines, `note: review not run — ${built.why}`]
     }
   }
   // a prove resume (GH-1 item 5) counts against the budget as a failing verdict's resume does
@@ -2533,9 +2606,10 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   // GH-104: work present rides under the verdict line in both forms
   const workLine = work ? workPresentLine(work) : undefined
   const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }), workLine ? [workLine, ...lines] : lines)
-  const full = respawn ? `${verdictRows}\n${respawn}` : verdictRows
+  const spawnText = respawn ?? reviewBlock
+  const full = spawnText ? `${verdictRows}\n${spawnText}` : verdictRows
   const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines })
-  const line = [quiet, ...(workLine ? [workLine] : []), ...(respawn ? [respawn] : [])].join('\n')
+  const line = [quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n')
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
   await setWorkers($, list => list.map(w => (w.task === spawn.task && w.subtask === spawn.subtask && w.attempt === spawn.attempt ? { ...w, verdict } : w)))
@@ -2548,6 +2622,74 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
     await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, next: shortNext(next), sessionId: await sessionIdOf($) })
   }
   return { full, line }
+}
+
+/**
+ * MOD-21: a reviewer's hand-back. The `[[review]]` block is read (the last well-formed one): nothing refuted, or no
+ * usable block, is next=accept (the review never blocks on its own failure); refuted rows are quoted as the resume the
+ * worker is owed. The reviewer's attempt keeps the counts; so do the row and the ledger line. The worker's own record
+ * and budget are untouched here: a resume that follows is the worker's next attempt, and the brain or autoEscalate sends it.
+ */
+async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measured: Measured): Promise<Rendered> {
+  if (spawn.verdictAttempt === spawn.attempt && spawn.verdictBlock) return renderedOf(spawn)
+  const stored = await storeGet<SpawnRecord>($, K.spawn(spawn.key))
+  if (stored && stored.verdictAttempt === stored.attempt && stored.verdictBlock) return renderedOf(stored)
+  const label = taskLabel(spawn.task, spawn.subtask)
+  const lane = laneOf(spawn)
+  const t = await now($)
+  const own = spawn.agentId ? await workerCost($, spawn.agentId, spawn.attempt) : undefined
+  const usdNow = own && own.usd !== null ? undefined : await sessionUsd($)
+  const usdApprox = !(own && own.usd !== null) && usdNow !== undefined && spawn.usdAtStart !== undefined
+  const usd = own && own.usd !== null ? round4(own.usd) : usdNow !== undefined && spawn.usdAtStart !== undefined ? round4(usdNow - spawn.usdAtStart) : undefined
+  const model = measured.model ?? spawn.resolvedModel
+
+  const counts = parseReviewBlock(text, spawn.task)
+  const rows = counts && counts.refuted > 0 ? refutedRows(text) : []
+  const shown = shownRefuted(counts, rows, text)
+  const before = await loadAttempts($, spawn.task)
+  const worker = spawn.review?.worker ? await spawnByAgent($, spawn.review.worker) : undefined
+  const advice = reviewAdvice({ counts, refuted: rows, ...(worker?.agentId ? { agentId: worker.agentId } : {}), attempts: attemptsFor(before, spawn.subtask, lane).length, budget: spawn.budget, label })
+
+  const records = patchReview(before, spawn.key, {
+    verdict: 'reviewed',
+    verdictAt: t,
+    ...(counts ? { review: { confirmed: counts.confirmed, refuted: counts.refuted, unverifiable: counts.unverifiable } } : {}),
+    ...(usd !== undefined ? { usd } : {}),
+    ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
+    ...(measured.tokens !== undefined ? { tokens: measured.tokens } : {}),
+    ...(model !== undefined ? { resolvedModel: model } : {}),
+  })
+  await storeSet($, K.tasks(spawn.task), records)
+  const judged = records.find(r => r.kind === 'review' && r.toolUseId === spawn.key)
+
+  let next = advice.next
+  let performed = false
+  if (advice.kind === 'resume' && worker) {
+    // the worker's next message is its resume: a message after a failing verdict is the one the session.send hook records
+    await storeSet($, K.spawn(worker.key), { ...worker, lastFailed: true })
+    if (cfg.autoEscalate && worker.agentId) {
+      let sent: { isDelivered: boolean; reason?: string }
+      try {
+        sent = await $.session.send({ to: { agentId: worker.agentId }, text: reviewResumeText({ label, attempt: spawn.attempt, budget: spawn.budget, refuted: rows, said: text }) })
+      } catch (err) {
+        sent = { isDelivered: false, reason: String(err) }
+      }
+      performed = sent.isDelivered
+      next = sent.isDelivered ? `resumed agent=${worker.agentId} (autoEscalate)` : `${advice.next} (autoEscalate could not deliver: ${sent.reason})`
+    }
+  }
+
+  const long = [reviewVerdictLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, counts, usd, usdApprox, model, next }), reviewClause(counts), ...shown].join('\n')
+  const quiet = reviewLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, alias: spawn.alias, ...(usd !== undefined ? { usd, usdApprox } : {}), counts, next })
+  const line = [quiet, ...shown].join('\n')
+  const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
+  await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: long, verdictLine: line })
+  await setLastVerdict($, { task: label, attempt: spawn.attempt, verdict: 'reviewed', next, at: t, text: long })
+  const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${label}: ${shortNext(next)}` : undefined
+  await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'reviewed', line: quiet, at: t, ...(owed ? { owed } : {}) })
+  if (counts && counts.refuted > 0) void noteFriction($, { kind: 'refuted', detail: quiet, at: t })
+  await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, kind: 'review' }), verdict: 'reviewed', next: shortNext(next), sessionId: await sessionIdOf($) })
+  return { full: long, line }
 }
 
 /** Hands a verdict to the brain per verdictVerbosity: the row it returns, plus the log and toast (2B). */
@@ -3239,6 +3381,7 @@ async function statusReport($: Host): Promise<string> {
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
     `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${cfg.maxWorkers} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
     effortText(cfg.effortByTier),
+    ...(cfg.review !== 'off' ? [`review: ${cfg.review} · ${cfg.reviewTier ? `reviewer at ${cfg.reviewTier}` : "reviewer one tier below the worker's"}`] : []),
     ...aliasLines(Object.fromEntries((await Promise.all(['haiku', 'sonnet', 'opus'].map(async a => [a, await storeGet<unknown>($, K.alias(a))] as const))).filter(([, v]) => v !== undefined)), await now($)),
     `base: ${cfg.baseRef || 'origin/main → main → origin/master → master'} · repo=here ignore: ${ignoreWithCards(cfg.ignore, cfg.cardDir).join(', ') || '(none)'}`,
   ].join('\n')
@@ -3657,6 +3800,130 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
 }
 
 /**
+ * MOD-21: the agent.spawn hook's decision for a reviewer (a prompt that opens with its marker). Its tier is one below
+ * the worker's, or reviewTier; it runs where the worker ran. It is recorded as an attempt of kind `review`, which is on
+ * no ladder: no budget, no slot, no queue, no escalation. The brain's model hint gives way to the tier, as a worker's does.
+ */
+async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start: (alias: string, cwd?: string) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> {
+  await loadRepoConfig($)
+  const t = await now($)
+  spawnSeq += 1
+  const key = e.tool_use_id || `plugin-${t}-${spawnSeq}`
+  const label = taskLabel(marker.task, marker.subtask)
+  const worker = await spawnByAgent($, marker.worker)
+  const lane = worker ? laneOf(worker) : undefined
+  const before = await loadAttempts($, marker.task)
+  const reviewed = attemptsFor(before, marker.subtask, lane).find(r => r.attempt === marker.attempt)
+  const { tier, alias } = reviewerPick(worker?.tier ?? reviewed?.tier ?? 'standard', cfg.reviewTier || undefined, cfg.tierMap)
+  try {
+    $.ui.notice(e.tool_use_id, noticeText({ tier, source: 'review' }, alias, false))
+  } catch {
+    // no dialog to carry it
+  }
+  debug($, tierPickLine(`${label} review of attempt ${marker.attempt}`, tier, { tier, source: 'review' }, undefined, false))
+  if (e.model && aliasOf(e.model) !== alias) debug($, `${label}: the review call asked for ${e.model}; tier=${tier} spawns ${alias}`)
+  const cwd = e.cwd ?? worker?.cwd
+  const usdAtStart = await sessionUsd($)
+  const res = await start(alias, cwd)
+  if (res.deny !== undefined) return res
+  const briefPath = worker?.briefPath ?? reviewed?.briefPath
+  const rec: AttemptRecord = {
+    task: marker.task,
+    subtask: marker.subtask,
+    attempt: marker.attempt,
+    kind: 'review',
+    lineage: worker?.lineage ?? reviewed?.lineage ?? marker.attempt,
+    tier,
+    alias,
+    source: 'review',
+    ...(res.model ? { resolvedModel: res.model } : {}),
+    verdict: 'pending',
+    at: t,
+    ...(res.agentId ? { agentId: res.agentId } : {}),
+    toolUseId: key,
+    ...(briefPath ? { briefPath } : {}),
+    purpose: 'review',
+    ...laneFields(lane),
+  }
+  await storeSet($, K.tasks(marker.task), [...(await loadAttempts($, marker.task)), rec])
+  const spawn: SpawnRecord = {
+    key,
+    task: marker.task,
+    subtask: marker.subtask,
+    adhoc: false,
+    attempt: marker.attempt,
+    lineage: rec.lineage,
+    tier,
+    alias,
+    budget: worker?.budget ?? cfg.defaultBudget,
+    purpose: 'review',
+    ...(briefPath ? { briefPath } : {}),
+    prompt: e.prompt.slice(0, PROMPT_CAP),
+    description: e.description,
+    subagentType: e.subagentType,
+    ...(cwd ? { cwd } : {}),
+    ...(res.agentId ? { agentId: res.agentId } : {}),
+    ...(res.model ? { resolvedModel: res.model } : {}),
+    ...(usdAtStart !== undefined ? { usdAtStart } : {}),
+    ...(lane ? { replay: true, ...(lane.base ? { base: lane.base } : {}) } : {}),
+    at: t,
+    review: { ...(marker.worker ? { worker: marker.worker } : {}), ...(marker.sha ? { sha: marker.sha } : {}) },
+  }
+  await storeSet($, K.spawn(key), spawn)
+  if (res.agentId) await storeSet($, K.agent(res.agentId), key)
+  if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
+  delegated = true
+  await refreshStatus($)
+  return res
+}
+
+/** What a hand-back may be quoted at in a reviewer's prompt. */
+const HANDBACK_CAP = 6000
+
+/**
+ * MOD-21: the reviewer's spawn block for a consistent hand-back: hooks/templates/review.md filled in with the brief,
+ * the tree, the sha, the base, the report and what the worker said, the model one tier below the worker's. A template
+ * that cannot be read gives the reason instead (the verdict is then next=accept: a review never blocks on its own failure).
+ */
+async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string; sha: string; branch: string; text: string }): Promise<{ block: string } | { why: string }> {
+  let template: string
+  try {
+    template = await $.fs.read(`${$.plugin.root}/hooks/templates/review.md`)
+  } catch (err) {
+    return { why: `the review template could not be read: ${String(err)}` }
+  }
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const briefText = spawn.briefPath ? await readText($, spawn.briefPath) : undefined
+  const header = briefText !== undefined ? parseHeader(briefText) : undefined
+  const briefBase = (header?.fields.base ?? '').trim()
+  const base = (briefBase && isGitRef(briefBase) ? briefBase : '') || cfg.baseRef || 'origin/main'
+  const worktree = spawn.here ? root : await workerRepo($, spawn, header?.repo, root)
+  const label = taskLabel(spawn.task, spawn.subtask)
+  const plan = reviewPlan({
+    template,
+    workerTier: spawn.tier,
+    ...(cfg.reviewTier ? { override: cfg.reviewTier } : {}),
+    tierMap: cfg.tierMap,
+    label,
+    marker: { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, ...(spawn.agentId ? { worker: spawn.agentId } : {}), ...(input.sha ? { sha: input.sha } : {}) },
+    vars: {
+      id: spawn.task,
+      subtask: spawn.subtask,
+      attempt: String(spawn.attempt),
+      budget: String(spawn.budget),
+      brief: spawn.briefPath ?? '(none)',
+      worktree,
+      branch: input.branch || '(the report names none)',
+      sha: input.sha || 'HEAD',
+      base,
+      report: input.block,
+      handback: input.text.length > HANDBACK_CAP ? `${input.text.slice(0, HANDBACK_CAP - 1)}…` : input.text,
+    },
+  })
+  return { block: plan.block }
+}
+
+/**
  * MOD-12: the spawn block for a task's brief, as the spawn hook would decide
  * it now (tier, escalation, budget and slot): the Agent call the brain makes.
  * A refusal (running, budget, work present, queued) comes back as its line.
@@ -3766,8 +4033,12 @@ export const register: Register = (on, opts) => {
       if (res.agentId) selfIds.set(pk, res.agentId)
       return res
     }
+    const asked = { ...e, subagentType: e.subagentType || (e as unknown as { subagent_type?: string }).subagent_type || 'general-purpose' }
+    // MOD-21: a reviewer's prompt opens with its marker. Read before the brief the prompt names: that is not a worker.
+    const marker = parseReviewMarker(e.prompt)
+    if (marker) return decideReview($, asked, marker, (alias, cwd) => next({ ...e, model: alias, ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
     // MOD-12: the brain's Agent call names no folder; a briefed worker runs where /dispatch prepared it
-    return decideSpawn($, { ...e, subagentType: e.subagentType || (e as unknown as { subagent_type?: string }).subagent_type || 'general-purpose' }, (alias, cwd) => next({ ...e, model: alias, ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
+    return decideSpawn($, asked, (alias, cwd) => next({ ...e, model: alias, ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
   })
 
   // ---- every tool call: the worker's SubagentHandback text; denials as friction (5E) ---
@@ -3776,6 +4047,12 @@ export const register: Register = (on, opts) => {
     if (refused) {
       void noteFriction($, { kind: 'denial', detail: `${String(e.tool)}: ${refused.deny.slice(0, 160)}`, at: await now($) })
       return refused
+    }
+    // MOD-21: a reviewer never edits
+    const unwritable = await reviewerGuard($, e)
+    if (unwritable) {
+      void noteFriction($, { kind: 'denial', detail: `${String(e.tool)}: ${unwritable.deny.slice(0, 160)}`, at: await now($) })
+      return unwritable
     }
     // MOD-13: a worker past twice its ceiling is refused every call but its hand-back
     if (e.agentId && String(e.tool) !== 'SubagentHandback') {
@@ -3831,7 +4108,8 @@ export const register: Register = (on, opts) => {
     const command = typeof e.command === 'string' ? e.command : ''
     if (!e.agentId || command === '') return next(e)
     const worker = await spawnByAgent($, e.agentId)
-    if (!worker || worker.adhoc) return next(e)
+    // MOD-21: a reviewer is no attempt of its task: it keeps the inherited environment
+    if (!worker || worker.adhoc || worker.review) return next(e)
     const run = withIdentity(command, worker)
     return next(run === command ? e : { ...e, command: run })
   })
@@ -3853,7 +4131,7 @@ export const register: Register = (on, opts) => {
     const spawn = (await storeGet<SpawnRecord>($, K.spawn(e.tool_use_id))) ?? (await spawnByAgent($, agentId))
     if (status === 'async_launched' || status === 'remote_launched') {
       if (!spawn || spawn.adhoc) return ran
-      const line = `${PLUGIN}: verify deferred — runs when ${agentId ?? 'the worker'} hands back (background)`
+      const line = `${PLUGIN}: ${spawn.review ? 'review' : 'verify'} deferred — runs when ${agentId ?? (spawn.review ? 'the reviewer' : 'the worker')} hands back (background)`
       return { ...ran, context: [...(ran.context ?? []), line] }
     }
     const content = Array.isArray(result?.content) ? (result.content as { text?: unknown }[]) : []

@@ -790,6 +790,7 @@ The verdict:
 | **refuted** | any claim failed | `resume agent=<id>`, then a respawn |
 | **unverified** | no claim failed, but one could not be checked | `resume … — prove: <claims>` while the budget lasts, else `check by hand` |
 | **consistent** | every claim held | `accept` |
+| **consistent**, `review` on | every claim held, and the `review` option calls for a reviewer | `review`, with the reviewer's spawn block under the row (see [Review](#review)) |
 | **refused** | the brief is unusable | `fix the brief` |
 | **no-report** | no report line | `resume`, then a respawn at the same tier |
 
@@ -797,7 +798,8 @@ The verdict:
 the branch, the sha, the files, the scope, the gate and the red evidence all
 held. It is not a review. Nothing in the check reads the diff, so a worker that
 cleanly builds the wrong thing gets the same row as one that builds the right
-thing, and the brain still reads the diff before it accepts. A report that
+thing, and the brain still reads the diff before it accepts (or, with the
+`review` option on, a reviewer reads it first: see [Review](#review)). A report that
 declares `gate=fail` honestly is never accepted, whatever else holds: its row
 reads `consistent (report gate=fail)` and `next=` resumes the worker.
 
@@ -1009,6 +1011,120 @@ it. It sees every worker as well as the brain: a worker is the brain's own Agent
 call (MOD-12), so the engine runs the mod's `tool.call` hook for the worker's
 Bash calls, and a repo=here worker on `main` cannot commit there.
 
+## Review
+
+`consistent` says the report matches git. It does not say the work is right:
+nothing in that check reads the diff. With the `review` option on, a consistent
+verdict is followed by one more agent that does (MOD-21; the second half of
+public issue #1). It changed the outcome on roughly one hand-back in three for
+the two adopters who first built it by hand.
+
+| `review` | What gets a reviewer |
+| --- | --- |
+| `off` (default) | nothing: every row, record and ledger line is as it was |
+| `on` | every consistent verdict |
+| `on-frontier` | a consistent verdict of a frontier or premium attempt only |
+
+Set it in the repo file (`"review": "on"`) or in `/config`; `/config` wins,
+and `off` there means "not set here", so the repo file speaks.
+
+**What it checks.** A fresh agent reads the brief, the worker's report and
+hand-back, and the diff at the report's sha. It writes one row per factual
+claim of the hand-back (what was built, what the tests and the gate show, what
+was left alone), each labelled `confirmed`, `refuted` or `unverifiable` and
+naming the command it ran or the file and line that decides it, and ends with a
+count block:
+
+    confirmed: a/x.ts gains the parser — a/x.ts:12
+    refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1
+    unverifiable: CI is green — no network from here
+    [[review v=1 task=T-4 confirmed=1 refuted=1 unverifiable=1]]
+
+The prompt comes from `hooks/templates/review.md`. The report's own fields
+(branch, sha, files, scope, gate, red) were matched against git already; the
+reviewer is asked to spend itself on what they cannot say.
+
+**How it runs.** The reviewer is one more Agent call, and the brain makes every
+spawn (MOD-12), so the verdict row asks for it the way a respawn does: the row
+says `next=review` and ends with a spawn block.
+
+    chassis-delegation: T-4 attempt 1/3 consistent · sonnet · $0.41 · next=review
+    spawn: Agent
+    ```json
+    { "subagent_type": "general-purpose", "model": "haiku", "description": "T-4 review economy haiku", "prompt": "[[review-of v=1 task=T-4 subtask=main attempt=1 worker=<agent> sha=<sha>]]\n…" }
+    ```
+    The reviewer starts when you make this Agent call: pass the JSON above as its input, verbatim. …
+
+The first line of the prompt is a marker; it is how the spawn hook knows a
+spawn is a reviewer's, whatever else the prompt names. The hook records the
+reviewer as an attempt of `kind: review` (`source: review`) in the task's
+records, and runs it in the worktree the worker used. A reviewer is on no
+ladder:
+
+- it never counts against `budget=`, and takes no worker slot (`maxWorkers`),
+  and the next worker attempt is numbered as if it had not run;
+- it is not a worker on the dashboard; while it runs its task is `pending
+  verdict`, and the review is no longer owed;
+- it steps at the engine's default effort and keeps the Bash environment it
+  inherits (it has no attempt identity).
+
+**What it never does.** It edits nothing. While it runs, the `tool.call` hook
+refuses its Edit, Write, MultiEdit and NotebookEdit calls, and any Bash command
+the `delegateOnly` lexer counts as a write (a redirection, `tee`, `sed -i`, the
+destination of `cp` or `mv`, a `git commit`), read against the worktree it works
+in and against the session root. The refusal is one line:
+
+    chassis-delegation: a reviewer never edits (T-4 review): Write refused. Label each claim confirmed, refuted or unverifiable, naming the command or file:line that decides it, and hand back.
+
+That lexer is an accident tripwire, not a sandbox, and the template tells the
+reviewer the same rules. The reviewer does not re-run the gate, does not change
+the worker's verdict, and does not fix what it finds: it labels, and the worker
+fixes.
+
+**At its hand-back** the mod reads the last well-formed `[[review]]` block:
+
+| The block | The row's `next=` | The row says |
+| --- | --- | --- |
+| `refuted=0` | `accept` | `review: 3 confirmed, 1 unverifiable` |
+| `refuted>0` | `resume agent=<the worker>` (while the budget lasts; else `check by hand`) | `review: 3 confirmed, 1 refuted, 0 unverifiable`, and each refuted row quoted under it |
+| missing, malformed, or for another task | `accept` | `review: no review block` |
+
+A review never blocks on its own failure: a reviewer that dies, or hands back
+without a block, is `next=accept` with the note. With a refuted row the worker is
+owed a resume: the brain sends it the refuted rows (`SendMessage`), or, with
+`autoEscalate` on, the mod does; that message is the worker's next attempt and
+spends `budget=` like any resume. The worker's new hand-back is checked, and if
+it is consistent it is reviewed again. The one-line row for a review reads
+
+    chassis-delegation: T-4 attempt 1/3 reviewed · haiku · $0.05 · review: 3 confirmed, 1 unverifiable · next=accept
+
+and the long form (`verdictVerbosity: full`) is
+`chassis-delegation: review task=T-4 attempt=1/3 confirmed=3 refuted=0 unverifiable=1 usd=… model=… next=accept`.
+The reviewer's attempt keeps the counts (`review: {confirmed, refuted,
+unverifiable}`, verdict `reviewed`), and so does its ledger line.
+
+**The reviewer's tier.** One tier below the worker's: a standard worker is
+reviewed by a haiku, a frontier worker by a sonnet, a premium worker by an opus
+(economy is the floor, so an economy worker is reviewed by a haiku too). The
+`tierMap` turns the tier into an alias as for any spawn, and fable is never
+spawned. `reviewTier` (repo file or `/config`) pins the tier instead: `"reviewTier":
+"frontier"` reviews every hand-back on an opus.
+
+**Cost.** One more agent per reviewed hand-back. The reviewer reads the
+hand-back (quoted in its prompt, cut at 6000 characters), the brief and the diff,
+and runs a few read-only commands; one tier below the worker keeps it a fraction
+of the worker's own cost, and `on-frontier` spends on the cards where a missed
+error costs most. Its cost is on its row and ledger line and in the session
+total; the dashboard's "workers" dollars count worker attempts only. A refuted
+row costs a resume of the worker and, once it hands back again, another review.
+
+**Not reviewed.** A hand-back that is not consistent (refuted, unverified,
+`gate=fail`, no-report); a `repo=none` brief (there is no diff); a `--replay`
+run; and a cardless hand-back. `/dispatch <ID> --verify <sha>` is reviewed like
+a hand-back when its verdict is consistent. A reviewer is a model: `confirmed`
+is its reading of the diff, not a proof, and a claim about CI or the runtime is
+usually `unverifiable`.
+
 ## Configuration
 
 Three layers, in order of precedence:
@@ -1047,6 +1163,8 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `ignore` | array | comma string | `[".delegation/**"]` | globs always taken off a repo=here delta (the card folder is always added to them); `[]` in the repo file ignores nothing |
 | `issueRepo` | `owner/name` | string | the mod's own repository (the manifest's `repository`) | the repo `/delegation debrief post` files the mod findings in; `""` in the repo file = posting is off (see [Posting the findings](#posting-the-findings)) |
 | `delegateOnly` | `off` \| `warn` \| `deny` | string (`off` = unset) | `off` | keeps an opus or fable brain from doing worker work itself (GH-113; see [The brain's spend](#the-brains-spend)) |
+| `review` | `off` \| `on` \| `on-frontier` | string (`off` = unset) | `off` | a fresh read-only reviewer reads each consistent hand-back against the diff before `next=accept` (MOD-21; see [Review](#review)). `on-frontier` reviews frontier and premium cards only; `off` changes nothing anywhere |
+| `reviewTier` | `economy` \| `standard` \| `frontier` \| `premium` | string | `""` (one tier below the worker's) | the tier the reviewer runs at; empty = one below the worker's, never below economy (see [Review](#review)) |
 
 Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `settings.json`):
 
@@ -1593,12 +1711,14 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
 ## Store and ledger
 
 - **`<root>/.delegation/ledger.jsonl`** gets one JSON line per judged attempt,
-  holding the attempt fields plus `verdict`, `next` and `sessionId`. A line
+  holding the attempt fields plus `verdict`, `next` and `sessionId`. A reviewer's
+  line (MOD-21) has `kind: review`, `verdict: reviewed` and
+  `review: {confirmed, refuted, unverifiable}`. A line
   written before the `consistent` rename says `verified` and is never
   rewritten (see the deprecation note under [How a report is verified](#how-a-report-is-verified)).
 - **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`, with
   these keys:
-  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named; a `work-present` attempt, kind `verify`, carries the branch head it found);
+  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named; a `work-present` attempt, kind `verify`, carries the branch head it found; a reviewer's attempt, kind `review` (MOD-21), carries the number of the attempt it reviewed, its verdict `reviewed` and the `review` counts, and is on no ladder);
   - `delegation.recent.<session>`: the verdict lines;
   - `delegation.handoff.<brief>`: the folder `/dispatch` prepared for the brief's worker, which the spawn hook gives the brain's Agent call (MOD-12);
   - `delegation.debrief.<session>`;

@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+- **An optional reviewer stage: after a consistent verdict, a fresh read-only
+  reviewer labels each claim of the hand-back confirmed, refuted or
+  unverifiable before `next=accept` (MOD-21; public issue #1, second half).**
+  `consistent` (MOD-19) says the report matches git; nothing reads the diff.
+  Two adopters added their own second layer, a reviewer that checks the
+  hand-back's claims against the diff and never fixes anything, and it changed
+  the outcome on about one hand-back in three. The brain now makes every spawn
+  (0.7.0), so the reviewer is one more Agent call the mod prints, and its tool
+  calls run under the mod's hooks, so the mod keeps it read-only.
+  - **A new option, `review`** (`off` | `on` | `on-frontier`; repo file and
+    `/config`; default `off`). `on` reviews every consistent verdict;
+    `on-frontier` only an attempt at the frontier or premium tier; `off`
+    changes nothing anywhere: no row, record, ledger line or `/delegation`
+    line differs. `reviewTier` (repo file and `/config`) pins the reviewer's
+    tier; unset, it is one tier below the worker's (economy is the floor). Both
+    are declared in the manifest.
+  - **`next=review`.** With review on, a consistent verdict (not a refuted,
+    unverified, `gate=fail`, no-report, `repo=none` or `--replay` one) says
+    `next=review` where it said `next=accept`, and ends with a spawn block for
+    the reviewer: `subagent_type` general-purpose, the model one tier below the
+    worker's (a standard worker gets a haiku, a frontier worker a sonnet),
+    description `<ID> review <tier> <alias>`, and a prompt built from the new
+    `hooks/templates/review.md`: read the brief, the report and the diff at the
+    sha; one row per factual claim of the hand-back, `confirmed`, `refuted` or
+    `unverifiable`, each with the command or `file:line` that decides it; edit
+    nothing; end with `[[review v=1 task=<ID> confirmed=N refuted=N
+    unverifiable=N]]`. The owed list names the review until it is made.
+    `/dispatch <ID> --verify <sha>` is reviewed the same way. A template the
+    mod cannot read gives `next=accept` and a `note: review not run` line.
+  - **The reviewer is an attempt of kind `review`.** The prompt opens with a
+    marker line (`[[review-of v=1 task=… attempt=… worker=… sha=…]]`), which the
+    `agent.spawn` hook reads before it looks for the brief the prompt names. The
+    hook records the attempt (`source: review`, in the task's records), runs the
+    reviewer in the worker's worktree, and keeps it off the ladder: it never
+    counts against `budget=`, takes no worker slot, is not numbered among the
+    worker's attempts, steps at the engine's default effort, gets no attempt
+    identity in its Bash environment, and is left out of the dashboard's worker
+    counts. While it runs its task shows as `pending verdict`.
+  - **It never edits.** While it runs, the `tool.call` hook refuses its Edit,
+    Write, MultiEdit and NotebookEdit calls and any Bash command the
+    `delegateOnly` lexer counts as a write, against its worktree and against the
+    session root, with one line: `a reviewer never edits (T-4 review): Write
+    refused. …`.
+  - **At its hand-back** the mod reads the last well-formed `[[review]]` block.
+    `refuted=0` is `next=accept` with `review: 3 confirmed, 1 unverifiable`.
+    `refuted>0` is `next=resume agent=<the worker>` with the refuted rows quoted
+    under the row and as the resume message (`autoEscalate` sends it; otherwise
+    the brain does, and that message is the worker's next attempt, spent from
+    `budget=`; with the budget spent the advice is `check by hand`). A missing or
+    malformed block is `next=accept` with `review: no review block`: the review
+    never blocks on its own failure. The reviewer's attempt keeps the counts
+    (`review`, verdict `reviewed`), the row says `reviewed · haiku · $0.05`, and
+    the ledger line carries `kind: review` and the counts.
+  - The README has a Review section (what it checks, what it never does, the
+    option, the reviewer's tier, cost) and the verdict table gains `next=review`.
+
 - **Gates that run in parallel do not false-refute (MOD-20).** On 2026-10-11 two
   workers ran their gates on one machine at once (load average about 40): one
   engine run had six timeouts and passed on a rerun with no change, and another

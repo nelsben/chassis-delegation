@@ -12,7 +12,7 @@
 // repo's autoEval off.
 import { DEFAULT_SPEND_BY_TIER } from './cost'
 import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
-import { DEFAULT_EFFORT_BY_TIER, isEffort, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
+import { DEFAULT_EFFORT_BY_TIER, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
 
 export const REPO_CONFIG_FILE = '.chassis-delegation.json'
 
@@ -61,6 +61,10 @@ const IGNORE_GLOB = /^[^\s"]+$/
 export type DelegateOnly = 'off' | 'warn' | 'deny'
 const DELEGATE_ONLY: readonly string[] = ['off', 'warn', 'deny']
 
+/** MOD-21: whether a consistent verdict is followed by a read-only reviewer: never, always, or only for frontier and premium cards. */
+export type ReviewMode = 'off' | 'on' | 'on-frontier'
+export const REVIEW_MODES: readonly ReviewMode[] = ['off', 'on', 'on-frontier']
+
 export type SpendTier = 'economy' | 'standard' | 'frontier'
 
 export type RepoConfig = {
@@ -89,9 +93,13 @@ export type RepoConfig = {
   delegateOnly?: DelegateOnly
   /** MOD-7: owner/name of the repo /delegation debrief post files issues in. MOD-18: unset = the mod's own repository (the manifest's); "" = posting is off. */
   issueRepo?: string
+  /** MOD-21: a read-only reviewer after a consistent verdict (off | on | on-frontier); default off. */
+  review?: ReviewMode
+  /** MOD-21: the tier the reviewer runs at; unset = one below the worker's. */
+  reviewTier?: Tier
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'delegateOnly', 'issueRepo'] as const
+export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -113,6 +121,9 @@ export type Effective = {
   effortByTier: Record<SpendTier, EffortSetting>
   delegateOnly: DelegateOnly
   issueRepo: string
+  review: ReviewMode
+  /** '' = one tier below the worker's. */
+  reviewTier: Tier | ''
   /** Which layer each key came from. */
   sources: Record<RepoKey, 'default' | 'repo' | 'settings'>
 }
@@ -279,6 +290,18 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         // in /config "off" is the manifest default: unset, so the repo file's value shows through
         else if (strict || v.trim() !== 'off') config.delegateOnly = v.trim() as DelegateOnly
         break
+      case 'review':
+        if (typeof v !== 'string' || !(REVIEW_MODES as readonly string[]).includes(v.trim())) errors.push(`review${where}: needs off, on or on-frontier (ignored)`)
+        // in /config "off" is the manifest default: unset, so the repo file's value shows through
+        else if (strict || v.trim() !== 'off') config.review = v.trim() as ReviewMode
+        break
+      case 'reviewTier':
+        if (typeof v !== 'string') errors.push(`reviewTier${where}: not a string (ignored)`)
+        else if (v.trim() !== '') {
+          if (isTier(v.trim())) config.reviewTier = v.trim() as Tier
+          else errors.push(`reviewTier${where}: needs economy, standard, frontier or premium (ignored)`)
+        }
+        break
       case 'issueRepo':
         if (typeof v !== 'string') errors.push(`issueRepo${where}: not a string (ignored)`)
         else if (v.trim() !== '') {
@@ -373,6 +396,8 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig): Effective {
     effortByTier: { ...DEFAULT_EFFORT_BY_TIER, ...repo.effortByTier, ...settings.effortByTier },
     delegateOnly: pick('delegateOnly', 'off'),
     issueRepo: pick('issueRepo', ''),
+    review: pick('review', 'off'),
+    reviewTier: settings.reviewTier ?? repo.reviewTier ?? '',
     sources,
   }
 }

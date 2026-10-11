@@ -9,7 +9,8 @@
 
 export type Tier = 'economy' | 'standard' | 'frontier' | 'premium'
 export type Alias = 'haiku' | 'sonnet' | 'opus' | 'fable'
-export type TierSource = 'brief' | 'caller' | 'classified' | 'floor' | 'escalated' | 'held' | 'resume'
+/** MOD-21: `review` is a reviewer's pick: one tier below the worker's (or the reviewTier option's). */
+export type TierSource = 'brief' | 'caller' | 'classified' | 'floor' | 'escalated' | 'held' | 'resume' | 'review'
 export type TierPick = { tier: Tier; source: TierSource; callerAlias?: Alias }
 
 export const TIERS: readonly Tier[] = ['economy', 'standard', 'frontier', 'premium']
@@ -76,6 +77,16 @@ export function nextTier(tier: Tier): Tier {
 }
 
 export const maxTier = (a: Tier, b: Tier): Tier => (RANK[a] >= RANK[b] ? a : b)
+
+/**
+ * MOD-21: the tier a reviewer runs at: one below the worker's (premium → frontier
+ * → standard → economy, and economy stays economy: the floor), or `override`
+ * (the reviewTier option) when one is set.
+ */
+export function reviewerTier(workerTier: Tier, override?: Tier): Tier {
+  if (override) return override
+  return workerTier === 'premium' ? 'frontier' : workerTier === 'frontier' ? 'standard' : 'economy'
+}
 
 export type PickInput = {
   hadHeader: boolean
@@ -156,6 +167,7 @@ const PICKED_BY: Readonly<Record<TierSource, string>> = {
   escalated: 'escalation one tier above the last refuted attempt',
   held: "the last attempt's tier (a respawn after a no-report is held there, never escalated)",
   resume: 'the resumed spawn',
+  review: "one tier below the reviewed worker's (or reviewTier)",
 }
 
 /**

@@ -28,7 +28,7 @@ export const filesPathFor = (scratch: string, task: string): string => `${scratc
 export const isFailing = (verdict: StoredVerdict, reportGate?: string): boolean =>
   verdict === 'refuted' || verdict === 'no-report' || reportGate === 'fail'
 
-export type AdviceKind = 'accept' | 'check' | 'fix-brief' | 'resume' | 'respawn' | 'verify' | 'exhausted' | 'none'
+export type AdviceKind = 'accept' | 'review' | 'check' | 'fix-brief' | 'resume' | 'respawn' | 'verify' | 'exhausted' | 'none'
 export type Advice = { kind: AdviceKind; next: string; tier?: Tier }
 
 export type AdviseInput = {
@@ -49,6 +49,11 @@ export type AdviseInput = {
   firstFailed?: string
   /** The verifier's lines: an unverified verdict's resume names its unchecked claims (GH-1 item 5). */
   lines?: readonly string[]
+  /**
+   * MOD-21: a reviewer is due for a consistent verdict (the review option is on for this tier): the advice is
+   * `review` where it would have been `accept`. Nothing else about the advice changes.
+   */
+  review?: boolean
 }
 
 /** An unchecked claim's reason is cut to this many characters in `next=`. */
@@ -85,13 +90,14 @@ export const budgetDenyMessage = (label: string, attempts: number, briefPath?: s
  * the SAME tier after a no-report (GH-104: a reporting defect, not a
  * capability one); a task at its budget stops. An unverified verdict with
  * unchecked claims, an agent and budget left resumes the worker to prove them
- * (GH-1 item 5); a cardless hand-back is never resumed or respawned.
+ * (GH-1 item 5); a cardless hand-back is never resumed or respawned. MOD-21: a
+ * consistent verdict is advised `review` instead of `accept` when `review` is on.
  */
 export function advise(input: AdviseInput): Advice {
   // a cardless hand-back has no brief to resume or respawn against (GH-1 item 2)
   if (input.adhoc && input.cardless) return isConsistent(input.verdict) && input.reportGate !== 'fail' ? { kind: 'accept', next: 'accept' } : { kind: 'check', next: 'check the diff' }
   if (input.adhoc) return { kind: 'none', next: 'none — ad hoc spawn, no brief' }
-  if (isConsistent(input.verdict) && input.reportGate !== 'fail') return { kind: 'accept', next: 'accept' }
+  if (isConsistent(input.verdict) && input.reportGate !== 'fail') return input.review ? { kind: 'review', next: 'review' } : { kind: 'accept', next: 'accept' }
   if (input.verdict === 'refused') return { kind: 'fix-brief', next: 'fix the brief — the verifier refused it (not charged to the worker)' }
   if (!isFailing(input.verdict, input.reportGate)) {
     // GH-1 item 5: unverified is actionable — resume the worker with the claims it has to prove

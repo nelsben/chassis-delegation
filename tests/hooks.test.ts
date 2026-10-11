@@ -1,4 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
+import type { TestBody } from 'claude-code/testing'
 import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, brainSpawn, spawnCallOf, workerCall, stepInput, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 import { MOD_VERSION } from '../hooks/lib/version'
@@ -3521,8 +3522,8 @@ describe('MOD-20: a gate that ran beside another worker does not false-refute', 
 })
 
 describe('MOD-21: an optional reviewer stage after a consistent verdict', () => {
-  type Tester = Parameters<Parameters<typeof test>[2]>[0]
-  type On = Parameters<Parameters<typeof test>[2]>[1]
+  type Tester = Parameters<TestBody>[0]
+  type On = Parameters<TestBody>[1]
   const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
   const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=2-attempts report=chassis.report.v1]]'
   const REPORT = (sha: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass files=a/x.ts]]`
@@ -3542,7 +3543,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
   const delegationText = async ($: Tester) => String((await $.command.run({ command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)).text)
 
   // The worker hands back a consistent report (agent-4); a review spawn, when the brain makes it, is agent-2.
-  const handBack = async ($: Tester, on: On, over: { header?: string; cwd?: string; dirs?: Record<string, string[]> } = {}) => {
+  const handBack = async ($: Tester, on: On, over: { header?: string; cwd?: string; dirs?: Record<string, string[]>; agentSays?: string } = {}) => {
     const w = world(on, { files: { [BRIEF]: (over.header ?? HEADER) + '\nbody' }, ...(over.dirs ? { dirs: over.dirs } : {}), run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
     bottom = []
     // the engine's own tool, at the bottom; an Agent call goes on to a test's own hook
@@ -3551,6 +3552,8 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
       bottom.push({ tool: e.tool, command: e.command, agentId: e.agentId })
       return { result: 'ok' }
     })
+    // a foreground Agent call: the reviewer's answer comes back in its result (hooks are registered before the first $ call)
+    if (over.agentSays !== undefined) on('tool.call', { tool: 'Agent' }, () => agentResult(over.agentSays as string, 'agent-2'))
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, ...(over.cwd ? { cwd: over.cwd } : {}) }))
     await $.turn.complete(turnInput('agent-4', 'Added the parser.\n' + REPORT('1234abcd')))
     return w
@@ -3675,6 +3678,35 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     expect(state).toContain('pending verdict: T-4 agent agent-2')
     expect(state).not.toContain('running: T-4')
     expect(state).not.toContain('owed: T-4: review')
+  })
+
+  test('/dispatch T-4 --verify <sha> is reviewed like a hand-back when its verdict is consistent', { options: { review: 'on', ...FULL } }, async ($, on) => {
+    const wt = `${ROOT}-T-4`
+    const card = '---\nid: T-4\ntitle: The thing\ndomain: frontend\ntier: standard\nstatus: queued\nscope: [a/**]\nforbid: [b/**]\nred_test: none\ngate: prettier\nbudget: 2-attempts\n---\n## Why\nA card.\n'
+    const repo = nativeRun({ gate: 0 })
+    const w = world(on, {
+      files: { [`${ROOT}/.delegation/briefs/T-4.brief.md`]: HEADER + '\nbody', [`${ROOT}/agents/tasks/T-4-the-thing.md`]: card },
+      dirs: { [wt]: [], [`${ROOT}/agents/tasks`]: ['T-4-the-thing.md'] },
+      run: argv => (argv[3] === 'diff' && !argv.includes('--name-status') ? { exitCode: 0, stdout: 'a/x.ts\n' } : repo(argv)),
+    })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('T-4 --verify 1234abcd'))).text)
+    expect(out).toContain('verdict=consistent task=T-4 attempt=1/2')
+    expect(out).toContain('next=review')
+    const call = spawnCallOf(out) as SpawnCall
+    expect(call.model).toBe('haiku')
+    expect(call.prompt.split('\n')[0]).toBe('[[review-of v=1 task=T-4 subtask=main attempt=1 sha=1234abcd]]')
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('a review template the mod cannot read: next=accept with the reason (a review never blocks on its own failure)', { options: { review: 'on', ...FULL } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4', noReviewTemplate: true })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Added the parser.\n' + REPORT('1234abcd')))
+    expect(delivered(w)).toContain('next=accept')
+    expect(delivered(w)).toContain('note: review not run — the review template could not be read')
+    expect(delivered(w)).not.toContain('spawn: Agent')
+    expect(recentOf(w).at(-1)?.owed).toBeUndefined()
   })
 
   describe('the reviewer never edits', () => {
@@ -3833,9 +3865,8 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     })
 
     test('a foreground reviewer is judged from its Agent result, like a foreground worker', ON, async ($, on) => {
-      const w = await handBack($, on)
+      const w = await handBack($, on, { agentSays: REVIEW_REFUTED })
       await review($, w)
-      on('tool.call', { tool: 'Agent' }, () => agentResult(REVIEW_REFUTED, 'agent-2'))
       const r = await $.tool.call({ tool: 'Agent', description: 'T-4 review economy haiku', prompt: 'x', tool_use_id: 'toolu_REVIEW01' } as never)
       const context = (r.context ?? []).join('\n')
       expect(context).toContain('chassis-delegation: review task=T-4 attempt=1/2')
