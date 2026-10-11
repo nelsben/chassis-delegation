@@ -161,8 +161,8 @@ describe('MOD-28: the folder on disk against the code running', () => {
   })
   test('the line names both versions and says to reload the window; under ~/.claude/dev-mods it says the turn end reloads it', () => {
     const { codeSkewLine } = updateLib
-    expect(codeSkewLine(MOD_VERSION, '0.9.0', false)).toBe(`code: running ${MOD_VERSION}, folder holds 0.9.0 — reload the window to run it`)
-    expect(codeSkewLine(MOD_VERSION, '0.9.0', true)).toBe(`code: running ${MOD_VERSION}, folder holds 0.9.0 — this folder is under ~/.claude/dev-mods, so it reloads when the turn ends`)
+    expect(codeSkewLine(MOD_VERSION, '9.9.9', false)).toBe(`code: running ${MOD_VERSION}, folder holds 9.9.9 — reload the window to run it`)
+    expect(codeSkewLine(MOD_VERSION, '9.9.9', true)).toBe(`code: running ${MOD_VERSION}, folder holds 9.9.9 — this folder is under ~/.claude/dev-mods, so it reloads when the turn ends`)
   })
   test('the same version, or none read, says nothing', () => {
     const { codeSkewLine } = updateLib

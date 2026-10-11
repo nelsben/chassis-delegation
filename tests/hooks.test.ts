@@ -855,9 +855,9 @@ describe('MOD-3: /delegation update', () => {
   })
 
   test('MOD-28: a merge that moved the version prints the code line: running the old, the folder holds the new, reload the window', async ($, on) => {
-    await behindClone($, on, { folderVersion: '0.9.0' })
+    await behindClone($, on, { folderVersion: '9.9.9' })
     const out = String((await $.command.run(delegation('update'))).text)
-    expect(out).toContain(`code: running ${MOD_VERSION}, folder holds 0.9.0 — reload the window to run it`)
+    expect(out).toContain(`code: running ${MOD_VERSION}, folder holds 9.9.9 — reload the window to run it`)
     // before the reload line, which says the same thing for a folder outside ~/.claude/dev-mods
     expect(out.indexOf('code: running')).toBeLessThan(out.indexOf('reload: not done'))
   })
