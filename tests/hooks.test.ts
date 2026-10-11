@@ -207,6 +207,16 @@ describe('tool.call on Agent: report capture and verify', () => {
     expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ task: 'T-4', subtask: 'main', attempt: 1, tier: 'standard', alias: 'sonnet', verdict: 'refuted', reportGate: 'pass', sessionId: 'sess-1' })
   })
 
+  test('MOD-56: a hand-back with the 429 text and no report is no-report (rate limited), and the record and ledger carry stop', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', "API Error: 429 You've hit your weekly limit · resets 3pm"))
+    expect(delivered(w)).toContain('verdict=no-report (rate limited, resets 3pm) task=T-4')
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'no-report', stop: 'rate_limited', resetsAt: '3pm' })
+    const lines = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n')
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ task: 'T-4', verdict: 'no-report', stop: 'rate_limited', resetsAt: '3pm' })
+  })
+
   test('ledgerFile off: no ledger file', { options: { ...GM, ledgerFile: false } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))

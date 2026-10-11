@@ -213,7 +213,7 @@ import {
   shownRefuted,
   type ReviewMarker,
 } from './lib/review'
-import { alreadyQueuedDeny, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, planQueue, promptKey, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, resourceBlock, resourceDeny, runningDeny, startingOthers, waitedMinutes, waitsText, type FallbackKind, type ResourceWait, type Wanting } from './lib/scheduler'
+import { alreadyQueuedDeny, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, planQueue, promptKey, heldLine, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, resourceBlock, resourceDeny, runningDeny, startingOthers, waitedMinutes, waitsText, type FallbackKind, type ResourceWait, type Wanting } from './lib/scheduler'
 import {
   aliasOf,
   CLASSIFIER_LABELS,
@@ -244,11 +244,13 @@ import {
   branchDelta,
   budgetDenyMessage,
   contextBlock,
+  detectRateLimit,
   filesPathFor,
   isFailing,
   isProveResume,
   newestRed,
   probeWork,
+  rateLimitedVerdict,
   resumeText,
   scratchFor,
   syntheticReport,
@@ -624,6 +626,8 @@ const starting = new Map<number, string>() // slot token → the task label of a
 const startingResources = new Map<number, string[]>()
 /** MOD-12: the queued tasks the mod has said `ready:` for and that are still ready; each is said once. */
 const announced = new Set<string>()
+/** MOD-56: the last worker of this session stopped on a usage limit (at, as ms; resetsAt as the hand-back wrote it); cleared by the brain's next spawn. */
+let rateHeld: { at: number; resetsAt?: string } | undefined
 /** MOD-15: label → ms the queued row became ready (the fallback's clock); a row leaves with the queue or when it is no longer ready. */
 const readySince = new Map<string, number>()
 /** MOD-15: ready rows the fallback has looked at past their timeout and will not start (repo=here, repo=none, an unreadable brief). */
@@ -1521,6 +1525,11 @@ async function planOfQueue($: Host, live: Live, queue: readonly QueuedSpawn[]): 
   return planQueue(wants, heldResources(live.workers), readyCount(live.workers.length, starting.size, cfg.maxWorkers))
 }
 
+const hhmm = (ms: number): string => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 /**
  * MOD-12: the queue is advice. The queued rows a free slot now waits for
  * (head first, as many as the slots free), each named once while it stays
@@ -1530,6 +1539,11 @@ async function planOfQueue($: Host, live: Live, queue: readonly QueuedSpawn[]): 
  */
 async function readyRows($: Host, exclude?: string): Promise<string[]> {
   const ready = (await readyQueued($, exclude)).map(q => ({ label: queuedLabel(q), task: q.task }))
+  // MOD-56: while the last worker stopped on a usage limit, a queued task is held, not announced ready (nothing is marked announced)
+  if (rateHeld) {
+    const at = hhmm(rateHeld.at)
+    return ready.map(r => heldLine(r.label, at, rateHeld?.resetsAt))
+  }
   const stillReady = new Set(ready.map(r => r.label))
   for (const label of [...announced]) if (!stillReady.has(label)) announced.delete(label)
   await noteReady($, ready.map(r => r.label), true)
@@ -1598,6 +1612,7 @@ async function fallbackCheck($: Host): Promise<void> {
     for (let guard = 0; guard < 20; guard++) {
       const ready = await readyQueued($)
       await noteReady($, ready.map(queuedLabel), true)
+      if (rateHeld) break // MOD-56: the mod does not start a task into a usage limit
       const t = await now($)
       const due = ready.find(q => !fallbackSkipped.has(queuedLabel(q)) && fallbackDue(readySince.get(queuedLabel(q)) ?? t, t, cfg.readyFallbackMs / MIN_MS))
       if (!due) break
@@ -1881,7 +1896,9 @@ async function snapshot($: Host): Promise<StateSnapshot> {
     const shown = tag(label, q.repo)
     let line: string | undefined
     const waiting = plan.waits.get(label)
-    if (plan.ready.includes(label)) {
+    if (plan.ready.includes(label) && rateHeld) {
+      line = heldLine(shown, hhmm(rateHeld.at), rateHeld.resetsAt)
+    } else if (plan.ready.includes(label)) {
       line = readyLine(shown, q.task)
       // MOD-15: a row the fallback will never start says how long it has waited, once it is past the timeout
       const since = readySince.get(label)
@@ -3345,6 +3362,9 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   const tokens = measured.tokens
   const block = extractReport(text)
   const report = block ? parseReport(block) : undefined
+  // MOD-56: a worker's hand-back with no report that names a usage limit
+  const rateLimit = !spawn.adhoc ? detectRateLimit(text) : undefined
+  if (rateLimit) rateHeld = { at: await now($), ...(rateLimit.resetsAt ? { resetsAt: rateLimit.resetsAt } : {}) }
   let verdict: Verdict
   let lines: string[] = []
   let noRepo = false
@@ -3440,6 +3460,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
         reportGate: report?.gate,
         // GH-104: the sha the report named, so a later look at the worktree knows it is judged
         ...(report?.sha ? { sha: report.sha.trim() } : {}),
+        ...(rateLimit ? { stop: 'rate_limited' as const, ...(rateLimit.resetsAt ? { resetsAt: rateLimit.resetsAt } : {}) } : {}),
         // GH-115: the first failed claim, so a scope or files refute holds the tier on a respawn
         ...(verdict === 'refuted' && firstFailedClaim(lines) ? { firstFailed: firstFailedClaim(lines)?.name } : {}),
         verdictAt: t,
@@ -3520,13 +3541,13 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
     respawn = 'deny' in prepared ? (isQueuedDeny(prepared.deny) ? `respawn ${prepared.deny}` : `respawn not prepared: ${prepared.deny}`) : spawnBlock(prepared.call)
   }
 
-  const shownVerdict = noRepo ? `${verdict} (no repo)` : verdict
+  const shownVerdict = rateLimit ? rateLimitedVerdict(rateLimit) : noRepo ? `${verdict} (no repo)` : verdict
   // GH-104: work present rides under the verdict line in both forms
   const workLine = work ? workPresentLine(work) : undefined
   const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }), workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   const full = spawnText ? `${verdictRows}\n${spawnText}` : verdictRows
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines })
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines })
   const line = [quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n')
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
@@ -4940,6 +4961,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(fableAsked ? { requestedAlias: 'fable' as const } : {}),
       ...(classifierTier ? { classifierTier } : {}),
     }
+    rateHeld = undefined // MOD-56: the brain dispatched again
     if (adhoc) await storeSet($, K.adhoc, [...((await storeGet<AttemptRecord[]>($, K.adhoc)) ?? []), rec].slice(-200))
     else await storeSet($, K.tasks(task), [...records, rec])
     const spawn: SpawnRecord = {

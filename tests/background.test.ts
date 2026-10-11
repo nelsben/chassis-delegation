@@ -189,6 +189,19 @@ describe('2F: the worker scheduler', () => {
     expect(records(w, 'T-3')[0]).toMatchObject({ attempt: 1, kind: 'spawn', verdict: 'pending', alias: 'sonnet' })
   })
 
+  test('MOD-56: after a worker stopped on a usage limit a freed slot holds the queued task, until the brain spawns again', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_C0000003' }))
+    await $.turn.complete(turnInput('agent-1', "API Error: 429 You've hit your weekly limit · resets 3pm"))
+    const rows = rowsOf(w).join('\n')
+    expect(rows).not.toContain('ready: T-3')
+    expect(rows).toMatch(/held: T-3 queued; the last worker stopped on a usage limit at \d\d:\d\d, resets 3pm; dispatch it when the limit resets/)
+    await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_E0000003' }))
+    expect(w.spawns).toHaveLength(3)
+  })
+
   test('a slot stays full while its worker runs: a finished ad hoc agent starts nothing', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))

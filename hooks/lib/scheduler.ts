@@ -91,6 +91,10 @@ export const readyCount = (running: number, starting: number, max: number): numb
 /** MOD-12: the advice when a slot frees for a queued task: the brain makes its spawn. */
 export const readyLine = (label: string, task: string): string => `ready: ${label} — run its spawn block (/dispatch ${task} prints it again)`
 
+/** MOD-56: a freed slot after a worker stopped on a usage limit: the queued task is held, not announced ready. */
+export const heldLine = (label: string, at: string, resetsAt?: string): string =>
+  `held: ${label} queued; the last worker stopped on a usage limit at ${at}${resetsAt ? `, resets ${resetsAt}` : ''}; dispatch it when the limit resets`
+
 // ---- MOD-15: a ready row the brain leaves unclaimed ------------------------------------
 
 /** MOD-15: minutes a ready row waits for the brain before the mod starts a worktree worker itself; 0 turns the fallback off. */

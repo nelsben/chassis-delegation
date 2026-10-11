@@ -3,6 +3,7 @@
 // map's rules are ./gates.ts. GH-104: the look at a worker's worktree before a
 // respawn or an auto-resume, and the synthetic report `--verify` judges. Pure:
 // no `$` (git runs through an injected `exec`).
+import { extractReport } from './brief'
 import { escalatesOn, ESCALATING_CLAIMS } from './attempts'
 import { parseClaimLine, type ClaimLine } from './quiet'
 import { nextTier, type Tier } from './tier'
@@ -13,6 +14,25 @@ import { BASE_REFS, type ExecOut } from './verify-native'
  * report matches git. It is not a review: the brain still reads the diff.
  */
 export type Verdict = 'consistent' | 'unverified' | 'refuted' | 'no-report' | 'refused'
+/** MOD-56: the words of a usage-limit stop, matched case-insensitively in a hand-back that has no [[report]] block. */
+export const RATE_LIMIT_MARKERS: readonly string[] = ['429', 'hit your weekly limit', 'usage limit', 'rate limit']
+
+/**
+ * MOD-56: a worker stopped by a usage limit. The turn.complete event carries no error text (its `reason` is
+ * `error` and nothing more), so the hand-back text is read; and only when it holds no [[report]] block, so a
+ * worker writing rate-limit code is never taken for a stopped one. `resetsAt` is the text after `resets`.
+ */
+export function detectRateLimit(text: string): { resetsAt?: string } | undefined {
+  if (extractReport(text) !== undefined || text.includes('[[report')) return undefined
+  const lower = text.toLowerCase()
+  if (!RATE_LIMIT_MARKERS.some(m => lower.includes(m))) return undefined
+  const m = /\bresets?\s+(?:at\s+|in\s+)?([^\n.]*?[^\s.])\s*(?:\.(?=\s|$)|\n|$)/i.exec(text)
+  return m?.[1] ? { resetsAt: m[1].trim() } : {}
+}
+
+/** `no-report (rate limited[, resets <time>])`: the verdict as the row and the quiet line show it. */
+export const rateLimitedVerdict = (rl: { resetsAt?: string }): string => `no-report (rate limited${rl.resetsAt ? `, resets ${rl.resetsAt}` : ''})`
+
 /** A verdict as a caller holds it (a stored record is read through readRecord in ./attempts.ts first). */
 export type StoredVerdict = Verdict
 
