@@ -2132,6 +2132,32 @@ tool; you read the repo to write cards, verify hand-backs, and read diffs. Do
 not edit source or run the test suite yourself." The section keeps its
 40-line cap.
 
+## What the brain keeps and what it hands off
+
+`/delegation` shows `brain calls:` the brain's own main-loop calls this session by kind (run or poll, read,
+edit, spawn) and its average context per call (input plus cache-read tokens over calls). Past a context of
+`driveWarnTokens` (default 200K; `driveWarn: false` turns the row off) the mod adds one row a turn when the
+brain runs the same command a third time or polls a job, with the dollars one call costs at that context.
+
+The worked example is one long Game-Decompiler session on an Opus 5.5 brain with a median context of
+490-650K tokens. Of its 3,705 main-loop calls, 1,653 drove an emulator lab (builds, boots, bench runs,
+`until grep` polls, filming, reading bench CSVs) and cost $258 of the main loop's $605 at list prices; 71%
+of that was cache reads of the whole context on every poll. The same calls at an 80K context cost $99 on
+Opus and $63 on Sonnet 5.5: the small context cuts about 60%, Sonnet's price a further third. The 61 ad hoc
+research agents it spawned cost $286, 39 of them on Opus because no model was set: set the model on
+research spawns as well as on cards.
+
+- **The brain keeps** choosing what to build and the numbers that make it right, writing the brief (the
+  goal, the numbers, the check to pass, what to hand back: the diff, measured results, images) and
+  reviewing the hand-back (the diff, the bench lines, stills or a video).
+- **A worker hands back** the build, run, poll and read-the-logs loop from a fresh, small context: edit,
+  hot-load, bench and read the CSV, disc builds and boots, filming, and the docs that record the result.
+  A standard card is a Sonnet worker; `resources: ["lab"]` keeps one worker on a one-client app, so lab
+  workers run one at a time.
+- **What stays with the brain anyway:** a repo whose gate is unit tests cannot tell whether a move works in
+  the game, so the brain still reads the bench results and looks at the stills. A worktree is cut from
+  main, so the brief names the branch tip.
+
 ## Spend ceiling
 
 An attempt has a ceiling in dollars: `spend=` in the brief header (above).
