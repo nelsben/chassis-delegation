@@ -286,17 +286,28 @@ export const resourceOverlapRefusal = (id: string, resource: string, card: strin
 export const resourceOverlapWarning = (id: string, resource: string, card: string): string =>
   `warning: ${id} holds resource ${resource}, which in-flight ${card} holds in the shared checkout (--force-overlap: dispatched anyway; it waits for the resource)`
 
+/** The values a brief is rendered with (the card and where its worker runs, plus the optional parts). */
+export type BriefVars = {
+  card: Card
+  worktree: string
+  branch: string
+  cardPath: string
+  install?: string
+  extra?: string
+  here?: boolean
+  mode?: BriefMode
+  spend?: number
+  outdir?: string
+  scratch?: string
+  reportExtra?: string
+}
+
 /**
- * The brief body from the template: `{{id}} {{title}} {{domain}} {{worktree}}
- * {{branch}} {{cardPath}} {{redTest}} {{gate}} {{body}}`, plus `{{install}}`
- * (the lockfile's install step) and `{{extra}}` (the repo file's briefExtra).
- * GH-16: `here` keeps the template's `{{#here}}` sections (`{{worktree}}` is
- * then the shared checkout) and drops its `{{#worktree}}` ones; else the reverse.
+ * The template with its sections decided and its `{{key}}`s still in place, and the values they take.
+ * MOD-28: split from the fill so a scan for a leftover marker can look at the template's own text, before
+ * any value (a card body that quotes `{{#none}}`, say) is put in.
  */
-export function renderBrief(
-  template: string,
-  v: { card: Card; worktree: string; branch: string; cardPath: string; install?: string; extra?: string; here?: boolean; mode?: BriefMode; spend?: number; outdir?: string; scratch?: string; reportExtra?: string },
-): string {
+function stageBrief(template: string, v: BriefVars): { staged: string; values: Record<string, string> } {
   const values: Record<string, string> = {
     install: v.install ?? "the repo's own install step, if a lockfile is present",
     extra: v.extra ?? '',
@@ -319,8 +330,57 @@ export function renderBrief(
   // MOD-22: `{{#outdir}}…{{/outdir}}` and `{{#scratch}}…{{/scratch}}` are kept only when the brief names the folder
   const keep = (text: string, name: string, on: boolean) => text.replace(new RegExp(`\\{\\{#${name}\\}\\}\\n?([\\s\\S]*?)\\{\\{/${name}\\}\\}\\n?`, 'g'), (_, inner: string) => (on ? inner : ''))
   const withFolders = keep(keep(withSpend, 'outdir', !!v.outdir), 'scratch', !!v.scratch)
-  return renderSections(withFolders, v.mode ?? (v.here === true ? 'here' : 'worktree')).replace(/\{\{(\w+)\}\}/g, (whole, key: string) => (key in values ? (values[key] as string) : whole))
+  return { staged: renderSections(withFolders, v.mode ?? (v.here === true ? 'here' : 'worktree')), values }
 }
+
+/** One pass over the staged template: a `{{key}}` with a value takes it; the rest stays. Nothing a value holds is read again. */
+const fillBrief = (staged: string, values: Readonly<Record<string, string>>): string => staged.replace(/\{\{(\w+)\}\}/g, (whole, key: string) => (key in values ? (values[key] as string) : whole))
+
+/**
+ * The brief body from the template: `{{id}} {{title}} {{domain}} {{worktree}}
+ * {{branch}} {{cardPath}} {{redTest}} {{gate}} {{body}}`, plus `{{install}}`
+ * (the lockfile's install step) and `{{extra}}` (the repo file's briefExtra).
+ * GH-16: `here` keeps the template's `{{#here}}` sections (`{{worktree}}` is
+ * then the shared checkout) and drops its `{{#worktree}}` ones; else the reverse.
+ */
+export function renderBrief(template: string, v: BriefVars): string {
+  const { staged, values } = stageBrief(template, v)
+  return fillBrief(staged, values)
+}
+
+/**
+ * MOD-28: the first `{{` marker in `text` that is not a `{{key}}` naming one of `known`, as written
+ * (a section opener or closer, a key with a space in it, a key nothing fills, a `{{` never closed); undefined when none.
+ * A marker the code rendered is gone by the time this looks; one that survives is a template this code does not understand.
+ */
+export function leftoverMarker(text: string, known: readonly string[] = []): string | undefined {
+  for (const m of text.matchAll(/\{\{[^\n]*?\}\}|\{\{[^\n]*/g)) {
+    const key = /^\{\{(\w+)\}\}$/.exec(m[0])?.[1]
+    if (key === undefined || !known.includes(key)) return m[0].length > 60 ? `${m[0].slice(0, 60)}…` : m[0]
+  }
+  return undefined
+}
+
+/**
+ * MOD-28: renderBrief, and the first marker the template itself leaves behind (see leftoverMarker). The scan is
+ * of the template once its sections are decided, before the values go in: a card body, title or red test that
+ * quotes `{{#none}}` is the card's text, never a leftover.
+ */
+export function renderBriefChecked(template: string, v: BriefVars): { text: string; leftover?: string } {
+  const { staged, values } = stageBrief(template, v)
+  const leftover = leftoverMarker(staged, Object.keys(values))
+  return { text: fillBrief(staged, values), ...(leftover !== undefined ? { leftover } : {}) }
+}
+
+/** MOD-28: the refusal when a rendered brief still holds a marker: nothing is written, so no worker reads it. */
+export const unrenderedRefusal = (id: string, marker: string, template: string): string =>
+  `/dispatch ${id}: refused — the brief rendered from ${template} still holds ${marker}, which this code does not render; a brief with unrendered markers never reaches a worker, so no brief and no worktree were written (the template is newer or other than the code running: reload the window if the folder was updated, else fix the template)`
+
+/** MOD-28: the files under hooks/templates/ the mod renders; each is read once, when the mod loads. A node test holds this equal to the folder. */
+export const TEMPLATE_FILES = ['brief.md', 'review.md', 'debrief.md'] as const
+
+/** MOD-28: where a template of the mod lives, under the loaded plugin folder. */
+export const templatePath = (pluginRoot: string, name: string): string => `${pluginRoot.replace(/\/+$/, '')}/hooks/templates/${name}`
 
 export type DispatchArgs =
   | { id: string; dryRun: boolean; base: string; replay?: true; scope?: string[]; forbid?: string[]; here?: true; forceOverlap?: true; verify?: string; error?: undefined }

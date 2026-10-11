@@ -17,6 +17,8 @@ export type World = {
   storeKeyReads: number
   store: Map<string, unknown>
   files: Map<string, string>
+  /** MOD-28: every path `$.fs.read` was asked for, in order (a test reads which files the mod read, and how often). */
+  reads: string[]
   /** MOD-22: the modification time `$.fs.stat` and `$.fs.list` answer for a file (default 0); a test moves it to make a file read as changed. */
   mtimes: Map<string, number>
   /** MOD-22: folders outside the repo the world lists as a tree: every file under one in `files` is in its listing. A test adds one to make a folder appear. */
@@ -103,6 +105,10 @@ export type WorldOptions = {
   model?: string
   /** MOD-21: reading hooks/templates/review.md fails (ENOENT), as it does when the mod is installed without it. */
   noReviewTemplate?: true
+  /** MOD-28: reading hooks/templates/debrief.md fails (ENOENT) too. */
+  noDebriefTemplate?: true
+  /** MOD-28: and so does hooks/templates/brief.md. */
+  noBriefTemplate?: true
 }
 
 const RESOLVED: Record<string, string> = {
@@ -121,10 +127,14 @@ export const REVIEW_TEMPLATE = [
   'Edit nothing. End with [[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]',
 ].join('\n')
 
+/** MOD-28: the debrief instructions the mod loads from hooks/templates/debrief.md (a stand-in, as the two above). */
+export const DEBRIEF_TEMPLATE = '# Debrief (stand-in)\n\nWrite one JSON file under <root>/.delegation/debriefs/ with a mod_findings list.'
+
 export function world(on: On, options: WorldOptions = {}): World {
   const w: World = {
     store: new Map(Object.entries(options.store ?? {})),
     files: new Map(Object.entries(options.files ?? {})),
+    reads: [],
     mtimes: new Map(),
     trees: new Set(options.trees ?? []),
     unreadable: new Set(),
@@ -186,7 +196,16 @@ export function world(on: On, options: WorldOptions = {}): World {
     return { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
   })
   hook('fs.read', (e: { path: string; as?: string }) => {
-    const text = w.files.get(e.path) ?? (e.path.endsWith('/templates/brief.md') ? TEMPLATE : e.path.endsWith('/templates/review.md') && !options.noReviewTemplate ? REVIEW_TEMPLATE : undefined)
+    w.reads.push(e.path)
+    const text =
+      w.files.get(e.path) ??
+      (e.path.endsWith('/templates/brief.md') && !options.noBriefTemplate
+        ? TEMPLATE
+        : e.path.endsWith('/templates/review.md') && !options.noReviewTemplate
+          ? REVIEW_TEMPLATE
+          : e.path.endsWith('/templates/debrief.md') && !options.noDebriefTemplate
+            ? DEBRIEF_TEMPLATE
+            : undefined)
     if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
     // `{ as: 'bytes' }` answers the file's UTF-8 bytes as `{ base64 }`, as the engine does
     if (e.as === 'bytes') return { value: { base64: btoa(Array.from(new TextEncoder().encode(text), b => String.fromCharCode(b)).join('')) } }

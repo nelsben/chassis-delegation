@@ -95,6 +95,27 @@ it. It refuses while a worker is running. `/delegation` itself adds
 clone is behind (one fetch per ten minutes), and nothing when it is current.
 Nothing updates by itself.
 
+**Why a reload matters.** A session runs the mod it loaded, and keeps it: the code,
+and the templates that code renders (`hooks/templates/brief.md`, `review.md`,
+`debrief.md`), which the mod reads once when it loads and never again until a reload. Pulling the folder under a running session therefore changes nothing in that
+session, and it cannot mix old code with a new template: before the templates were kept,
+a pull that brought a new section into `brief.md` while the session still ran the code
+that predates it wrote briefs with raw `{{#none}}` and `{{/repo}}` markers, and each
+worker guessed which sections applied. A brief that still holds a `{{` marker after it is
+rendered is now refused at dispatch, naming the marker and the template; nothing is
+written and no worktree is made. A `briefTemplate` the repo file names is the repo's own
+file, read at each dispatch, and is held to the same check.
+
+**The `code:` line.** `/delegation` reads `hooks/lib/version.ts` on disk (as text, not an
+import) and, when it names a version other than the one running, prints
+`code: running 0.8.0, folder holds 0.9.0 — reload the window to run it` under the `mod:`
+line. It means the folder has moved on and this session has not: reload the window (VS
+Code: Developer: Reload Window; terminal: restart `claude`) to run what is on disk. For a
+folder under `~/.claude/dev-mods` the line says the folder reloads when the turn ends
+instead. `/delegation update` prints the same line after a merge that moved the version.
+No line means the running code and the folder agree (or the folder holds no readable
+`version.ts`).
+
 The steps below are the fallback by hand; they are written so the agent in the
 session that loads the mod can follow them.
 

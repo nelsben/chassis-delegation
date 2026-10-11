@@ -110,9 +110,16 @@ export const FRICTION_CAP = 100
 export const debriefSource = (home: string, pluginRoot: string, skillExists: boolean): { path: string; builtIn: boolean } =>
   skillExists ? { path: debriefSkillPath(home), builtIn: false } : { path: `${pluginRoot.replace(/\/+$/, '')}/hooks/templates/debrief.md`, builtIn: true }
 
-export const builtInDebriefPrompt = (templatePath: string, sessionId: string, root: string, facts: readonly string[], window?: DebriefWindow): string =>
+/**
+ * The built-in debrief's prompt. MOD-28: `template` is the text of hooks/templates/debrief.md as the mod loaded it;
+ * with it the instructions travel inline, so the agent never reads the folder (which a pull may have moved on).
+ * Without it the prompt names the file, as before.
+ */
+export const builtInDebriefPrompt = (templatePath: string, sessionId: string, root: string, facts: readonly string[], window?: DebriefWindow, template?: string): string =>
   [
-    `Run the debrief exactly as written in ${templatePath}.`,
+    ...(template !== undefined
+      ? [`Run the debrief exactly as written below, the built-in template as the mod loaded it (${templatePath}); do not read that file.`, '----- debrief template -----', template.trimEnd(), '----- end of debrief template -----']
+      : [`Run the debrief exactly as written in ${templatePath}.`]),
     `Session id ${sessionId}. Repo root ${root}.`,
     facts.length > 0 ? 'What chassis-delegation saw since the last debrief:' : 'chassis-delegation saw no friction events beyond the verdicts below.',
     ...facts.map(f => `- ${f}`),

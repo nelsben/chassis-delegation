@@ -2,7 +2,7 @@
 // test cannot read files). The brief template is repo-neutral; the debrief
 // template carries the same JSON schema as the harness /debrief skill.
 import { test, expect, describe } from './kit.mjs'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const read = rel => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8')
@@ -137,5 +137,35 @@ describe('MOD-21: hooks/templates/review.md, the reviewer prompt', () => {
     const example = t.split('\n').filter(l => /^(confirmed|refuted|unverifiable): /.test(l))
     expect(example.map(l => l.split(':')[0])).toEqual(['confirmed', 'refuted', 'unverifiable'])
     expect(reviewRows(example.join('\n')).map(r => r.label)).toEqual(['confirmed', 'refuted', 'unverifiable'])
+  })
+})
+
+describe('MOD-28: what the mod loads is what it ships', () => {
+  test('TEMPLATE_FILES names every file under hooks/templates/: a template added there is read at load or this fails', async () => {
+    const { TEMPLATE_FILES } = await import('../../hooks/lib/dispatch.ts')
+    const onDisk = readdirSync(fileURLToPath(new URL('../../hooks/templates', import.meta.url))).sort()
+    expect([...TEMPLATE_FILES].sort()).toEqual(onDisk)
+  })
+
+  test('the shipped brief.md renders with no leftover marker in every mode, with and without a spend ceiling and the two folders', async () => {
+    const { renderBriefChecked, parseCard } = await import('../../hooks/lib/dispatch.ts')
+    const t = read('hooks/templates/brief.md')
+    const card = parseCard('---\nid: OPS-9\ntitle: Extract the model\ndomain: ops\nrepo: none\nscope: [/out/a/**]\nred_test: none\ngate: check\n---\nThe body quotes {{#none}} and {{/repo}}.\n')
+    const base = { card, worktree: '/w/main', branch: 'b', cardPath: '/w/cards/OPS-9.md' }
+    for (const mode of ['worktree', 'here', 'none']) {
+      for (const spend of [0, 6]) {
+        for (const folders of [{}, { outdir: '/out/a', scratch: '/tmp/cd/OPS-9', reportExtra: ' artefacts=<paths>' }]) {
+          const out = renderBriefChecked(t, { ...base, mode, spend, ...folders })
+          expect(out.leftover).toBeUndefined()
+        }
+      }
+    }
+  })
+
+  test('the shipped review.md uses only keys the reviewer spawn fills, and debrief.md carries no {{ marker at all', () => {
+    const filled = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback']
+    const keys = [...read('hooks/templates/review.md').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1])
+    for (const k of keys) expect(filled.includes(k)).toBe(true)
+    expect(read('hooks/templates/debrief.md').includes('{{')).toBe(false)
   })
 })

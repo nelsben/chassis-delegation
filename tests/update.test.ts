@@ -1,4 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
+import * as updateLib from '../hooks/lib/update'
 import { classifyRoot, changelogSlice, migrateConfig, updateLine, upToDateLine, behindLine, CLONE_URL } from '../hooks/lib/update'
 
 const HOME = '/Users/b'
@@ -144,5 +145,33 @@ describe('MOD-3: migrating the repo config', () => {
   test('invalid JSON is an error and no text', () => {
     expect(migrateConfig('{ nope').error).toBeDefined()
     expect(migrateConfig('[]').error).toBeDefined()
+  })
+})
+
+describe('MOD-28: the folder on disk against the code running', () => {
+  test('hooks/lib/version.ts is read as text: the quoted version, whatever sits around it; no version, no answer', () => {
+    const { folderVersion } = updateLib
+    expect(folderVersion("// The mod's version.\nexport const MOD_VERSION = '0.9.0'\n")).toBe('0.9.0')
+    expect(folderVersion('export const MOD_VERSION = "1.10.2"')).toBe('1.10.2')
+    expect(folderVersion('export const MOD_VERSION: string = `0.9.0-rc1`')).toBe('0.9.0-rc1')
+    expect(folderVersion('export const OTHER = "0.9.0"')).toBeUndefined()
+    expect(folderVersion('')).toBeUndefined()
+    expect(folderVersion(undefined)).toBeUndefined()
+  })
+  test('the line names both versions and says to reload the window; under ~/.claude/dev-mods it says the turn end reloads it', () => {
+    const { codeSkewLine } = updateLib
+    expect(codeSkewLine('0.8.0', '0.9.0', false)).toBe('code: running 0.8.0, folder holds 0.9.0 — reload the window to run it')
+    expect(codeSkewLine('0.8.0', '0.9.0', true)).toBe('code: running 0.8.0, folder holds 0.9.0 — this folder is under ~/.claude/dev-mods, so it reloads when the turn ends')
+  })
+  test('the same version, or none read, says nothing', () => {
+    const { codeSkewLine } = updateLib
+    expect(codeSkewLine('0.8.0', '0.8.0', false)).toBe('')
+    expect(codeSkewLine('0.8.0', undefined, false)).toBe('')
+  })
+  test('a folder under ~/.claude/dev-mods is told from one outside it', () => {
+    const { inDevMods } = updateLib
+    expect(inDevMods(DEV, HOME)).toBe(true)
+    expect(inDevMods('/Users/b/Documents/chassis-delegation', HOME)).toBe(false)
+    expect(inDevMods(DEV, '')).toBe(false)
   })
 })

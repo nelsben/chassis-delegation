@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
-import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, composeInput, brainSpawn, spawnCallOf, workerCall, stepInput, paneProps, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
+import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, DEBRIEF_TEMPLATE, composeInput, brainSpawn, spawnCallOf, workerCall, stepInput, paneProps, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 import { MOD_VERSION } from '../hooks/lib/version'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
@@ -739,7 +739,7 @@ describe('MOD-3: /delegation update', () => {
   const CHANGELOG_NEW = '# Changelog\n\n## 0.5.0 — 2026-10-08\n\n- five a\n\n## 0.4.0 — 2026-10-05\n\n- four a\n'
   /** A clone root behind origin/main by two commits, 0.4.0 → 0.5.0; the merge moves the files in. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const behindClone = async ($: any, on: any, opts: { fetchFails?: boolean; dirty?: boolean } = {}) => {
+  const behindClone = async ($: any, on: any, opts: { fetchFails?: boolean; dirty?: boolean; folderVersion?: string } = {}) => {
     let merged = false
     const root = { value: '' }
     let files: Map<string, string> | undefined
@@ -757,6 +757,7 @@ describe('MOD-3: /delegation update', () => {
           merged = true
           files?.set(`${root.value}/.claude-plugin/plugin.json`, '{"version":"0.5.0"}')
           files?.set(`${root.value}/CHANGELOG.md`, CHANGELOG_NEW)
+          if (opts.folderVersion) files?.set(`${root.value}/hooks/lib/version.ts`, `export const MOD_VERSION = '${opts.folderVersion}'\n`)
           return { exitCode: 0, stdout: 'Updating\n' }
         }
         return undefined
@@ -816,6 +817,20 @@ describe('MOD-3: /delegation update', () => {
     expect(argvs(w).some(a => a.includes('merge'))).toBe(false)
     const st = String((await $.command.run(delegation(''))).text)
     expect(st.split('\n').filter(l => l.startsWith('update:')).length).toBeLessThanOrEqual(1)
+  })
+
+  test('MOD-28: a merge that moved the version prints the code line: running the old, the folder holds the new, reload the window', async ($, on) => {
+    await behindClone($, on, { folderVersion: '0.9.0' })
+    const out = String((await $.command.run(delegation('update'))).text)
+    expect(out).toContain(`code: running ${MOD_VERSION}, folder holds 0.9.0 — reload the window to run it`)
+    // before the reload line, which says the same thing for a folder outside ~/.claude/dev-mods
+    expect(out.indexOf('code: running')).toBeLessThan(out.indexOf('reload: not done'))
+  })
+
+  test('MOD-28: an update that moved no version prints no code line', async ($, on) => {
+    await behindClone($, on)
+    const out = String((await $.command.run(delegation('update'))).text)
+    expect(out).not.toContain('code: running')
   })
 
   test('a plain folder changes nothing and prints the clone command with its own path', async ($, on) => {
@@ -4425,5 +4440,121 @@ describe('MOD-24: a repo=here card that shares a resource is queued, not refused
     expect(forced).toContain('   warning: OPS-9 scope src/eyes/** overlaps in-flight OPS-8 scope src/** in the shared checkout (--force-overlap: dispatched anyway)')
     expect(forced).toContain('queued: OPS-9 — waiting for resource blender-live (held by OPS-8)')
     expect(queueOf(w).map(q => q.task)).toEqual(['OPS-9'])
+  })
+})
+
+describe('MOD-28: the mod reads its templates once, at load, and says when the folder is newer than the code', () => {
+  type Tester = Parameters<TestBody>[0]
+  const OPTIONS = { briefDir: `${SCRATCH}/briefs` }
+  const files = (): Record<string, string> => ({ [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: FIXTURE_CARD })
+  const dirs = { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME] }
+  const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  /** The folder the mod loaded from, as /delegation says it (the status reads no template, so this loads nothing). */
+  const rootOf = async ($: Tester) => /loaded from (\S+)/.exec(String((await $.command.run(delegation(''))).text))?.[1] ?? ''
+  const gitRuns = (w: { runs: { argv: string[] }[] }) => argvs(w).filter(a => a[0] === 'git')
+
+  test('a brief.md changed in the folder after the load is not read: dispatch renders the template as loaded', { options: OPTIONS }, async ($, on) => {
+    const w = world(on, { files: files(), dirs })
+    await $.session.start(sessionStart)
+    const root = await rootOf($)
+    expect(root).not.toBe('')
+    // a pull under the running session: the folder now holds a newer brief.md, with a section this code never rendered
+    w.files.set(`${root}/hooks/templates/brief.md`, 'FROM THE FOLDER NOW {{id}}\n{{#none}}a section the loaded code never rendered{{/none}}\n{{body}}')
+    await $.command.run(commandInput('BE-101 --dry-run'))
+    const brief = w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? ''
+    expect(brief).toContain(`Work in ${ROOT}-BE-101 on agent/backend/BE-101;`)
+    expect(brief).not.toContain('FROM THE FOLDER NOW')
+    expect(brief).not.toContain('{{')
+  })
+
+  test('a template holding a section the code does not know: dispatch is refused naming the marker and the template; no brief, no worktree, no spawn', { options: OPTIONS }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, store: { 'delegation.agentTypes': ['general-purpose', 'backend'] } })
+    const root = await rootOf($)
+    const template = `${root}/hooks/templates/brief.md`
+    w.files.set(template, 'Work in {{worktree}}.\n{{#mystery}}only when the mystery applies{{/mystery}}\n{{body}}')
+    await $.session.start(sessionStart) // the load reads the folder's copy, mystery section and all
+    const out = String((await $.command.run(commandInput('BE-101 --scope app/**'))).text)
+    expect(out).toContain('/dispatch BE-101: refused')
+    expect(out).toContain('{{#mystery}}')
+    expect(out).toContain(template)
+    expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(false)
+    expect(gitRuns(w)).toEqual([])
+    expect(w.spawns).toHaveLength(0)
+    expect(spawnCallOf(out)).toBeUndefined()
+    // a dry run is refused the same way: the brief is never shown
+    const dry = String((await $.command.run(commandInput('BE-101 --dry-run'))).text)
+    expect(dry).toContain('{{#mystery}}')
+    expect(dry).not.toContain('[[brief v=1')
+  })
+
+  test('a card body that quotes a marker is not a leftover: only the template is scanned', { options: OPTIONS }, async ($, on) => {
+    const quoting = FIXTURE_CARD.replace('## Why', '## Why\n\nThe old brief carried raw {{#none}} and {{/repo}} markers.')
+    const w = world(on, { files: { [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: quoting }, dirs })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('BE-101 --dry-run'))).text)
+    expect(out).not.toContain('refused')
+    expect(w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').toContain('raw {{#none}} and {{/repo}} markers')
+  })
+
+  test('a brief template that cannot be read at load is reported once at load; dispatch says so when used, without reading the folder again', { options: OPTIONS }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, noBriefTemplate: true })
+    await $.session.start(sessionStart)
+    const root = await rootOf($)
+    const briefReads = () => w.reads.filter(r => r.endsWith('/templates/brief.md'))
+    expect(briefReads()).toEqual([`${root}/hooks/templates/brief.md`])
+    expect(w.toasts.filter(t => t.includes('brief.md'))).toHaveLength(1)
+    const out = String((await $.command.run(commandInput('BE-101 --dry-run'))).text)
+    expect(out).toContain('/dispatch BE-101: the brief template could not be read')
+    expect(out).toContain('it failed to load when the mod started')
+    // once at load: dispatch neither read the folder again nor toasted again
+    expect(briefReads()).toHaveLength(1)
+    expect(w.toasts.filter(t => t.includes('brief.md'))).toHaveLength(1)
+  })
+
+  test('the debrief agent is given the loaded debrief.md in its prompt, not a path to read in the folder', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.session.start(sessionStart)
+    const root = await rootOf($)
+    w.files.set(`${root}/hooks/templates/debrief.md`, 'CHANGED AFTER THE LOAD')
+    await $.command.run(delegation('debrief'))
+    const prompt = String(w.spawns[0]?.prompt)
+    expect(prompt).toContain(DEBRIEF_TEMPLATE)
+    expect(prompt).not.toContain('CHANGED AFTER THE LOAD')
+    expect(prompt).not.toContain('exactly as written in')
+  })
+
+  test('a debrief.md that cannot be read: /delegation debrief says so and starts nothing, claiming no watermark', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true, noDebriefTemplate: true })
+    await $.session.start(sessionStart)
+    expect(w.toasts.filter(t => t.includes('debrief.md'))).toHaveLength(1)
+    const out = String((await $.command.run(delegation('debrief'))).text)
+    expect(out).toContain('debrief not started')
+    expect(out).toContain('debrief template could not be read')
+    expect(w.spawns).toHaveLength(0)
+    expect(w.store.get('delegation.debrief.sess-1')).toBeUndefined()
+  })
+
+  test('a review.md that cannot be read is reported once at load', { options: { review: 'on' } }, async ($, on) => {
+    const w = world(on, { noReviewTemplate: true })
+    await $.session.start(sessionStart)
+    expect(w.toasts.filter(t => t.includes('review.md'))).toHaveLength(1)
+    expect(w.toasts.filter(t => t.includes('brief.md') || t.includes('debrief.md'))).toHaveLength(0)
+  })
+
+  test('/delegation says when hooks/lib/version.ts on disk names another version than the one running', async ($, on) => {
+    const w = world(on)
+    await $.session.start(sessionStart)
+    const first = String((await $.command.run(delegation(''))).text)
+    const root = /loaded from (\S+)/.exec(first)?.[1] ?? ''
+    // no version.ts to read (a folder cut down): no line
+    expect(first).not.toContain('code: running')
+    w.files.set(`${root}/hooks/lib/version.ts`, `export const MOD_VERSION = '${MOD_VERSION}'\n`)
+    expect(String((await $.command.run(delegation(''))).text)).not.toContain('code: running')
+    // the folder is pulled under the session: it names 9.9.9 (read as text, never imported)
+    w.files.set(`${root}/hooks/lib/version.ts`, "// The mod's version\nexport const MOD_VERSION = '9.9.9'\n")
+    const out = String((await $.command.run(delegation(''))).text)
+    expect(out).toContain(`code: running ${MOD_VERSION}, folder holds 9.9.9 — reload the window to run it`)
+    // under the mod line, in the status block
+    expect(out.indexOf('code: running')).toBeGreaterThan(out.indexOf(`mod: chassis-delegation ${MOD_VERSION}`))
   })
 })

@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+- **The mod reads its templates once, at load, and says when the folder on disk is newer
+  than the code running (MOD-28).** Every brief written after MOD-22 merged (MOD-23 to
+  MOD-27) carried about twenty raw `{{#none}}`, `{{#repo}}` and `{{/repo}}` markers.
+  MOD-22 added those sections to `hooks/templates/brief.md` and taught `renderSections`
+  to drop them, but the session that dispatched those cards was still running the code
+  it loaded hours earlier, and dispatch read the template from the folder on disk, which
+  the brain had pulled to main. Old code, new template: the workers each guessed which
+  sections applied. The same skew hits any session whose folder is pulled without a
+  reload (a `CLAUDE_CODE_PLUGIN_DIRS` folder never hot-reloads), and `/delegation update`
+  leaves a session in exactly that state until the window reloads.
+  - **Templates are read once.** `hooks/templates/brief.md`, `review.md` and `debrief.md`
+    (`TEMPLATE_FILES` in `hooks/lib/dispatch.ts`, held equal to the folder by a node test)
+    are read the first time the mod gets a `$` (`session.start`; `register` is handed none,
+    and a mod reloaded mid-session reads at first use) and kept in memory with the code
+    that renders them. Dispatch, the reviewer spawn and the debrief use that copy and
+    never read the folder again until a reload. A file that fails to load is named in one
+    toast at load, and the feature that needs it says so when used (`/dispatch` says the
+    brief template could not be read; a review is skipped with `next=accept` and the
+    reason; `/delegation debrief` says `debrief not started` and claims no watermark). A
+    `briefTemplate` the repo file names is the repo's own file, not the mod's, and is still
+    read at each dispatch.
+  - **The built-in debrief carries its instructions.** The debrief agent's prompt now holds
+    the loaded `debrief.md` between two rules, in place of the line telling it to read
+    that file in the folder. A `~/.claude/commands/debrief.md` skill still wins, as before.
+  - **A brief with a marker left in it is refused.** After a brief is rendered, the
+    template's own text is scanned for any `{{` that no value fills (`leftoverMarker`,
+    `renderBriefChecked`). One that survives refuses the dispatch, naming the marker and the
+    template, before the brief is written, so no worktree is made and no worker reads it.
+    The scan is of the template, not of the card: a card body that quotes `{{#none}}` is
+    the card's text and passes. `renderBrief` renders exactly as before.
+  - **`/delegation` says when the folder is newer than the code.** It reads
+    `hooks/lib/version.ts` on disk (as text, never imported) and, when it names a version
+    other than the running `MOD_VERSION`, prints `code: running <old>, folder holds <new> —
+    reload the window to run it` under the `mod:` line; for a folder under
+    `~/.claude/dev-mods` it says the folder reloads when the turn ends. `/delegation update`
+    prints the same line after a merge that moved the version (and when an earlier pull
+    left the folder ahead), and then ends with the reload story rather than "nothing to
+    reload". A folder with no readable `version.ts` prints no line. README's Upgrading
+    says why a reload matters and what the line means.
+  - `folderVersion`, `codeSkewLine`, `inDevMods` (`hooks/lib/update.ts`);
+    `unrenderedRefusal`, `templatePath` (`hooks/lib/dispatch.ts`); `builtInDebriefPrompt`
+    takes the loaded text as its last argument (`hooks/lib/cleanstop.ts`). No config key,
+    no new tool.
+
 - **`files=` takes a folder glob, and the red claim quotes the line that failed (MOD-27).**
   Public issue #56. A hand-back that listed a new folder as `docs/new/**` in `files=` was
   refuted on files, though the six paths under it were exactly the delta: `filesClaim`
