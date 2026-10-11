@@ -1703,6 +1703,26 @@ post` shows the same block under the findings, read from the debrief the
 `.findings.json` was cut from. Whether to change `CLAUDE.md`, a memory file or
 a card is yours to decide; the mod only puts the proposals in front of you.
 
+`/delegation debrief apply` turns a proposal into an action you approve (MOD-33):
+
+- `apply` lists the latest debrief's proposals, numbered, each as `[n] <target> ·
+  <summary on one line> · open`, or `done: <note> (<date>)` / `dismissed: <reason>
+  (<date>)`; none prints `no proposals in <debrief path>`.
+- `apply <n>` prints proposal n in full (target, rationale, proposed diff) and one
+  instruction for the brain. For `CLAUDE.md`, a memory file, a command or an agent file:
+  draft the edit as a diff, show it, apply it only on your yes, then mark it done. For a
+  mod surface or code in this repo: write a card with the card tool, show the dry run,
+  dispatch on go, then mark it done naming the card id. For `other`: show it and ask.
+- `apply <n> done [note]` and `apply <n> dismiss [reason]` record `{ n, status, note, at }`
+  in a `proposals_status` array of the `.findings.json` beside the debrief. The next
+  debrief's prompt then carries `already done: <summary>` / `dismissed: <summary>`, so the
+  agent does not propose the same change again, and the delegation-state section carries
+  `n debrief proposals open — /delegation debrief apply` while the latest debrief has open ones.
+
+The mod never writes your `CLAUDE.md`, memory, commands or agents (they live in `~/.claude`,
+outside the repo); the brain makes the edit, with your yes. The only thing the mod writes
+here is its own record, `proposals_status`.
+
 The scrub (`redact` in `hooks/lib/redact.ts`) turns every `/Users/<name>/…` or
 `/home/<name>/…` prefix into `<home>/…`; the session root's folder name and its
 origin URL (both `owner/name` and the full URL) into `<repo>`; the git

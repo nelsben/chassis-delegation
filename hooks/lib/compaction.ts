@@ -28,6 +28,8 @@ export type StateSnapshot = {
   prs: string[]
   /** MOD-31: a debrief's post-findings question is waiting for the person's answer. */
   postAsk?: { count: number; repo: string }
+  /** MOD-33: proposals of the latest debrief with no done or dismissed record. */
+  proposalsOpen?: number
 }
 
 /** One `delegation.recent.<session>` row: a verdict as the one line has it, and what it leaves owed. */
@@ -114,7 +116,7 @@ export function renderState(s: StateSnapshot, reserve = 0): string[] {
   ]
   const older = s.owedOlder ?? []
   // the count line is the last live line and is never cut for room
-  const tail = older.length > 0 ? [`- ${older.length} older owed rows: ${older.join(', ')}`] : []
+  const tail = [...(older.length > 0 ? [`- ${older.length} older owed rows: ${older.join(', ')}`] : []), ...((s.proposalsOpen ?? 0) > 0 ? [`- ${s.proposalsOpen} debrief proposals open \u2014 /delegation debrief apply`] : [])]
   const history = [
     ...s.recent.slice(-RECENT).map(r => `- verdict: ${r.line}`),
     ...(s.debrief
@@ -142,7 +144,7 @@ export const appendInstructions = (existing: string | undefined, block: string):
 /** What a compaction is told to keep: KEEP VERBATIM, the release recipe pointer, the state. */
 export function compactBlock(s: StateSnapshot, scratchpad?: string): string {
   const recipe = scratchpad ? [`Release recipe: the FOLDnn scripts in ${scratchpad}`] : []
-  const state = isEmptyState(s) && s.recent.length === 0 && !s.debrief && !s.eval ? [`${HEADER} nothing running, nothing owed.`] : renderState(s)
+  const state = isEmptyState(s) && (s.proposalsOpen ?? 0) === 0 && s.recent.length === 0 && !s.debrief && !s.eval ? [`${HEADER} nothing running, nothing owed.`] : renderState(s)
   return [KEEP_VERBATIM, ...recipe, ...state].join('\n')
 }
 
@@ -158,8 +160,9 @@ export function composeSection(s: StateSnapshot, posture: readonly string[] = []
   const acting = actPending(s) ? [...posture, ACT_POSTURE] : posture
   // MOD-31: while a post-findings question waits, one more posture line
   const lines = s.postAsk ? [...acting, askPosture(s.postAsk.count, s.postAsk.repo)] : acting
-  if (isEmptyState(s) && lines.length === 0) return undefined
-  const body = isEmptyState(s) && s.recent.length === 0 ? [HEADER, '- nothing running, nothing owed.'] : renderState(s, lines.length)
+  const quiet = isEmptyState(s) && (s.proposalsOpen ?? 0) === 0
+  if (quiet && lines.length === 0) return undefined
+  const body = quiet && s.recent.length === 0 ? [HEADER, '- nothing running, nothing owed.'] : renderState(s, lines.length)
   const [head, ...rest] = body as [string, ...string[]]
   return { id: SECTION_ID, text: [head, ...lines, ...rest].join('\n'), scope: 'session' }
 }

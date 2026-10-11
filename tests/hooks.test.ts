@@ -2786,6 +2786,77 @@ describe('MOD-7: /delegation debrief post', () => {
       expect(String((await $.command.run(delegation('debrief post'))).text)).not.toContain('proposals:')
     })
   })
+
+  describe('MOD-33: /delegation debrief apply', () => {
+    const DEBRIEF = `${FOLDER}/2026-10-10-mod-run.json`
+    const SUMMARY = 'Add a rule that a card names its gate.'
+    const DJSON = JSON.stringify({ mod_findings: [], proposed_harness_changes: [{ target: 'CLAUDE.md', rationale: 'r1', proposed_diff_summary: SUMMARY }, { target: 'memory/x.md', rationale: 'r2', proposed_diff_summary: 'Note that the verdict row is read first.' }] })
+    const adirs = { [FOLDER]: ['2026-10-10-mod-run.json', '2026-10-10-mod-run.findings.json'] }
+    const afiles = () => ({ [DEBRIEF]: DJSON, [FINDINGS]: JSON.stringify({ debrief: DEBRIEF, modVersion: '0.7.0', scrubbed: true, findings: [], host_findings: [] }) })
+    const O = { options: { autoEval: false } }
+
+    test('apply lists the latest debrief proposals numbered with a status', O, async ($, on) => {
+      world(on, { files: afiles(), dirs: adirs })
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(delegation('debrief apply'))).text)
+      expect(out).toContain(`[1] CLAUDE.md \u00b7 ${SUMMARY} \u00b7 open`)
+      expect(out).toContain('[2] memory/x.md')
+    })
+
+    test('apply with none prints no proposals in <debrief path>', O, async ($, on) => {
+      world(on, { files: { [DEBRIEF]: JSON.stringify({ proposed_harness_changes: [] }) }, dirs: { [FOLDER]: ['2026-10-10-mod-run.json'] } })
+      await $.session.start(sessionStart)
+      expect(String((await $.command.run(delegation('debrief apply'))).text)).toBe(`no proposals in ${DEBRIEF}`)
+    })
+
+    test('apply 2 prints it in full with one instruction block; an unknown n prints one line', O, async ($, on) => {
+      const w = world(on, { files: afiles(), dirs: adirs })
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(delegation('debrief apply 2'))).text)
+      expect(out).toContain('r2')
+      expect(out).toContain('draft the edit to memory/x.md as a diff')
+      expect(out).toContain('/delegation debrief apply 2 done')
+      const bad = String((await $.command.run(delegation('debrief apply 9'))).text)
+      expect(bad.split('\n')).toHaveLength(1)
+      expect(w.files.get(FINDINGS) ?? '').not.toContain('proposals_status')
+    })
+
+    test('apply 2 done <note> writes proposals_status and the list shows it', O, async ($, on) => {
+      const w = world(on, { files: afiles(), dirs: adirs })
+      await $.session.start(sessionStart)
+      await $.command.run(delegation('debrief apply 2 done fixed in memory'))
+      const rec = JSON.parse(w.files.get(FINDINGS) ?? '{}').proposals_status
+      expect(rec).toHaveLength(1)
+      expect(rec[0]).toMatchObject({ n: 2, status: 'done', note: 'fixed in memory' })
+      expect(typeof rec[0].at).toBe('string')
+      const out = String((await $.command.run(delegation('debrief apply'))).text)
+      expect(out).toContain('done: fixed in memory')
+      await $.command.run(delegation('debrief apply 1 dismiss not worth it'))
+      expect(String((await $.command.run(delegation('debrief apply'))).text)).toContain('dismissed: not worth it')
+    })
+
+    test('the next debrief prompt carries already done: / dismissed: for a settled summary', O, async ($, on) => {
+      const w = world(on, { listAgents: true, files: afiles(), dirs: adirs })
+      await $.session.start(sessionStart)
+      await $.command.run(delegation('debrief apply 1 done'))
+      await $.command.run(delegation('debrief apply 2 dismiss no'))
+      await $.command.run(delegation('debrief'))
+      const prompt = w.spawns[0]?.prompt ?? ''
+      expect(prompt).toContain(`already done: ${SUMMARY}`)
+      expect(prompt).toContain('dismissed: Note that the verdict row is read first.')
+    })
+
+    test('the state section carries the open-proposals line while one is open and not after', O, async ($, on) => {
+      world(on, { files: afiles(), dirs: adirs })
+      await $.session.start(sessionStart)
+      const state = async () => (await $.prompt.compose(composeInput(['Agent']))).sections.find(s => s.id === 'chassis-delegation:state')?.text ?? ''
+      expect(await state()).toContain('2 debrief proposals open \u2014 /delegation debrief apply')
+      await $.command.run(delegation('debrief apply 1 done'))
+      expect(await state()).toContain('1 debrief proposals open \u2014 /delegation debrief apply')
+      await $.command.run(delegation('debrief apply 2 dismiss'))
+      expect(await state()).not.toContain('debrief proposals open')
+    })
+  })
 })
 
 describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {

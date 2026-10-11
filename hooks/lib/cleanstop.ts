@@ -338,3 +338,85 @@ export function proposalsLines(json: string): string[] {
   if (lines.length === 0 && counts.length === 0) return []
   return [`proposals: ${lines.length} for you to review (never posted)`, ...lines, ...(counts.length > 0 ? [counts.join(' \u00b7 ')] : [])]
 }
+
+// ---- MOD-33: /delegation debrief apply ----------------------------------------------
+
+/** One proposed_harness_changes entry, numbered from 1 in the order the debrief lists the usable ones. */
+export type Proposal = { n: number; target: string; rationale: string; summary: string; diff: string }
+
+/** What the person decided about proposal `n`, kept in the .findings.json as `proposals_status`. */
+export type ProposalStatus = { n: number; status: 'done' | 'dismissed'; note: string; at: string }
+
+/** The usable proposals of a debrief JSON (the same entries proposalsLines counts); [] for anything that is not one. */
+export function parseProposals(json: string): Proposal[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return []
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return []
+  const list = (parsed as Record<string, unknown>).proposed_harness_changes
+  const out: Proposal[] = []
+  for (const raw of Array.isArray(list) ? list : []) {
+    if (raw === null || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const target = oneLine(r.target)
+    const summary = oneLine(r.proposed_diff_summary) || oneLine(r.rationale)
+    if (target === '' && summary === '') continue
+    const diff = typeof r.proposed_diff === 'string' ? r.proposed_diff.trim() : ''
+    out.push({ n: out.length + 1, target: target || '(no target)', rationale: oneLine(r.rationale), summary: summary || '(no summary)', diff })
+  }
+  return out
+}
+
+/** The status records out of a findings file's `proposals_status`; anything malformed is dropped. */
+export function parseStatuses(v: unknown): ProposalStatus[] {
+  const out: ProposalStatus[] = []
+  for (const raw of Array.isArray(v) ? v : []) {
+    if (raw === null || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    if (typeof r.n !== 'number' || (r.status !== 'done' && r.status !== 'dismissed')) continue
+    out.push({ n: r.n, status: r.status, note: typeof r.note === 'string' ? r.note : '', at: typeof r.at === 'string' ? r.at : '' })
+  }
+  return out
+}
+
+/** The list's status text: open, done: <note> (<date>) or dismissed: <reason> (<date>). */
+const statusText = (st: ProposalStatus | undefined): string => {
+  if (st === undefined) return 'open'
+  return `${st.status}${st.note ? `: ${st.note}` : ''}${st.at ? ` (${st.at.slice(0, 10)})` : ''}`
+}
+
+/** One numbered line per proposal: `[n] target · summary (one line) · status`. */
+export function proposalListLines(proposals: readonly Proposal[], statuses: readonly ProposalStatus[]): string[] {
+  return proposals.map(p => `[${p.n}] ${p.target} · ${cut(p.summary, PROPOSAL_LINE_CAP)} · ${statusText(statuses.filter(s => s.n === p.n).at(-1))}`)
+}
+
+/** How many proposals have no done or dismissed record. */
+export const openProposals = (proposals: readonly Proposal[], statuses: readonly ProposalStatus[]): number => proposals.filter(p => !statuses.some(s => s.n === p.n)).length
+
+/** The proposal in full: target, rationale, proposed diff. */
+export const proposalDetail = (p: Proposal): string[] => [`[${p.n}] ${p.target}`, `rationale: ${p.rationale || '(none)'}`, `proposed diff: ${p.diff || p.summary}`]
+
+const EDIT_TARGET = /(^|\/)CLAUDE\.md$|(^|\/)memory\/|(^|\/)commands\/[^/]+\.md$|(^|\/)agents\/[^/]+\.md$/i
+const CODE_TARGET = /^agents\/tasks\/|(^|\/)\.chassis-delegation\.json$|^(hooks|bin|tests)\/|\.(ts|tsx|mjs|js|json|sh)$/i
+
+/** The one instruction block for the brain, by target; the mod itself writes nothing but its own record. */
+export function proposalInstruction(p: Proposal): string {
+  const t = p.target
+  const surface = (MOD_SURFACES as readonly string[]).includes(t.replace(/^\/?(delegation )?/, '').toLowerCase())
+  if (CODE_TARGET.test(t) || surface) return `write a card with the card tool from this proposal, show the dry run, dispatch on go, then mark it done naming the card id (/delegation debrief apply ${p.n} done <card id>)`
+  if (EDIT_TARGET.test(t)) return `draft the edit to ${t} as a diff, show it to the person, apply it only on their yes, then run /delegation debrief apply ${p.n} done <one line>`
+  return `show it to the person and ask what they want done; then /delegation debrief apply ${p.n} done <one line>, or /delegation debrief apply ${p.n} dismiss <reason>`
+}
+
+/** `already done: <summary>` / `dismissed: <summary>` for the settled proposals, so the next debrief does not propose them again. */
+export const settledLines = (proposals: readonly Proposal[], statuses: readonly ProposalStatus[]): string[] =>
+  proposals.flatMap(p => {
+    const st = statuses.filter(s => s.n === p.n).at(-1)
+    return st === undefined ? [] : [`${st.status === 'done' ? 'already done' : 'dismissed'}: ${p.summary}`]
+  })
+
+/** Said under the settled lines. */
+export const SETTLED_ASK = 'Do not propose again a change listed as `already done:` or `dismissed:` above.'
