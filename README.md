@@ -917,6 +917,17 @@ and the debug log says `wake skipped: <id> already merged` (a `ready:` line the
 hand-back freed is still submitted). A refuted, no-report, over-spend or reviewed
 verdict is never skipped by this rule.
 
+The same check runs again at delivery (MOD-42). While the brain's own turn is open
+the engine could only deliver a wake after it, by which time the brain has usually
+read the verdict from the ledger and merged. So a wake raised during that turn is
+held in the mod's session state and submitted at the turn's end, as one message,
+after re-running the merged check for each consistent verdict; one whose task is
+merged or accepted by then is dropped with the debug line
+`wake skipped: <id> merged before delivery`. Refuted, over-spend, no-report and
+`ready:` wakes are never dropped. A wake raised while the session is idle is submitted
+at once. If the session ends before the turn does, nothing is lost: the ledger and the
+state section hold every verdict.
+
 **Report.** The worker's hand-back ends with the report line. The mod reads
 the last one across the worker's final answer and its SubagentHandback
 message; for a background worker it reads that message from the worker's own

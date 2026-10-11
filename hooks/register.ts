@@ -585,6 +585,10 @@ let spawnSeq = 0
 // A (re)load does not know whether a main turn is running, so it assumes one is
 // until the next main-loop turn.complete: nothing runs in the background before.
 let inTurn = true
+/** MOD-42: a main-loop turn is known to be open (turn.start seen, its turn.complete not yet): a verdict's wake is held for its end. */
+let turnOpen = false
+/** MOD-42: wakes held while the brain's turn is open; a consistent verdict's carries its spawn, re-checked for merged just before delivery. */
+let heldWakes: { text: string; spawn?: SpawnRecord }[] = []
 let idleTimer: { cancel: () => void } | undefined
 let evalTimer: { cancel: () => void } | undefined
 let debriefBusy = false
@@ -1405,13 +1409,37 @@ async function appendRow($: Host, row: string) {
  * (typed over, the engine queues it until the person's prompt is done). The
  * brain's own `--verify` and a foreground Agent result never come here.
  */
-async function wakeBrain($: Host, text: string): Promise<void> {
+async function wakeBrain($: Host, text: string, spawn?: SpawnRecord): Promise<void> {
   if (!cfg.wakeOnVerdict || text === '') return
+  // MOD-42: while the brain's turn is open the engine would deliver this only after it, so hold it for the turn's end
+  if (turnOpen) {
+    heldWakes.push({ text, ...(spawn ? { spawn } : {}) })
+    return
+  }
+  await submitWake($, text)
+}
+
+async function submitWake($: Host, text: string): Promise<void> {
   try {
     await $.prompt.submit({ text })
   } catch (err) {
     debug($, `brain not woken: ${String(err)}`)
   }
+}
+
+/**
+ * MOD-42: the brain's turn ended: submit the held wakes as one message, dropping a consistent verdict's whose task
+ * is merged (or accepted) by now. Refuted, over-spend, no-report and ready: wakes carry no spawn and are never dropped.
+ */
+async function flushWakes($: Host): Promise<void> {
+  const held = heldWakes
+  heldWakes = []
+  const keep: string[] = []
+  for (const h of held) {
+    if (h.spawn && (await alreadyMerged($, h.spawn, true))) debug($, `wake skipped: ${taskLabel(h.spawn.task, h.spawn.subtask)} merged before delivery`)
+    else keep.push(h.text)
+  }
+  if (keep.length > 0) await submitWake($, keep.join('\n'))
 }
 
 /** This session's verdict lines (2E reads them). */
@@ -1669,14 +1697,14 @@ async function retireProbe($: Host, task: string, sha: string | undefined): Prom
  * 15 minutes, the sha is looked for in origin/main and the card there for
  * `status: merged`; a check that gets no answer leaves the row as it is.
  */
-async function retireCheck($: Host, label: string, t: number): Promise<{ retired: boolean; checked: boolean }> {
+async function retireCheck($: Host, label: string, t: number, force = false): Promise<{ retired: boolean; checked: boolean }> {
   const { task, subtask } = splitLabel(label)
   try {
     const records = await loadAttempts($, task)
     const last = attemptsFor(records, subtask).at(-1)
     if (!last) return { retired: false, checked: false }
     if (last.retired) return { retired: true, checked: true }
-    if (!retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
+    if (!force && !retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
     const patch = retirePatch(await retireProbe($, task, last.sha), t)
     await storeSet($, K.tasks(task), patchRecord(await loadAttempts($, task), subtask, last.attempt, patch))
     if (patch.retired === 'merged') await appendLedger($, acceptRow(last, 'merged', t))
@@ -1707,12 +1735,12 @@ async function acceptTask($: Host, rest: string): Promise<string> {
  * attempt's sha an ancestor of origin/main, the card there reading merged, or an accept already recorded. Only a
  * consistent verdict of a real worker is asked about; a refuted, over-spend or reviewed one is always woken for.
  */
-async function alreadyMerged($: Host, spawn: SpawnRecord): Promise<boolean> {
+async function alreadyMerged($: Host, spawn: SpawnRecord, force = false): Promise<boolean> {
   if (spawn.adhoc || spawn.review || spawn.replay) return false
   try {
     const rec = attemptsFor(await loadAttempts($, spawn.task), spawn.subtask).find(r => r.attempt === spawn.attempt)
     if (rec?.verdict !== 'consistent') return false
-    return (await retireCheck($, taskLabel(spawn.task, spawn.subtask), await now($))).retired
+    return (await retireCheck($, taskLabel(spawn.task, spawn.subtask), await now($), force)).retired
   } catch (err) {
     debug($, `${taskLabel(spawn.task, spawn.subtask)}: merged check failed: ${String(err)}`)
     return false
@@ -4975,12 +5003,13 @@ export const register: Register = (on, opts) => {
         if (row !== undefined && spawn && (await alreadyMerged($, spawn))) {
           debug($, `wake skipped: ${taskLabel(spawn.task, spawn.subtask)} already merged`)
           await wakeBrain($, ready.join('\n'))
-        } else await wakeBrain($, text)
+        } else await wakeBrain($, text, row !== undefined ? spawn : undefined)
       }
       // idle counts from the last turn of either loop
       if (!inTurn) armIdle($)
     } else {
       inTurn = false
+      turnOpen = false
       brainWarnedThisTurn = false
       // GH-113: the brain's own turn, priced apart from the workers'
       if (e.usage) {
@@ -4988,6 +5017,7 @@ export const register: Register = (on, opts) => {
         await updateBrain($, r => brainTurn(r, u))
       }
       armIdle($)
+      await flushWakes($)
     }
     await refreshStatus($)
     return out
@@ -5008,6 +5038,7 @@ export const register: Register = (on, opts) => {
       return next(e)
     }
     inTurn = true
+    turnOpen = true
     cancelIdle()
     return next(e)
   })

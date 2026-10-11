@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A verdict wake re-checks whether the task is merged when it is about to be delivered, not
+  when the verdict lands (MOD-42).** While the brain's turn is open, wakes are held in the mod's
+  session state and submitted together at the turn's end; each consistent verdict's task goes
+  through MOD-4's merged check again first, and a merged or accepted one is dropped with
+  `wake skipped: <id> merged before delivery`. Refuted, over-spend, no-report and `ready:` wakes
+  are never dropped. Fixes wakes arriving for tasks the brain had already merged.
+
 - **The mod's own correction detector catches pushback and challenge questions, not only an
   opening "no" or "stop" (MOD-39, public issue 89).** `isCorrection` keeps its first-word markers
   and adds three more, anywhere in the message: first-person disagreement or an explicit verdict
