@@ -38,6 +38,7 @@ import {
   taskLabel,
   type AttemptRecord,
   type Lane,
+  isResumeAfterJudged,
 } from './lib/attempts'
 import {
   amendNeedsApproval,
@@ -3310,6 +3311,37 @@ async function claimPost($: Host, spawn: SpawnRecord): Promise<boolean> {
   return true
 }
 
+/** Records the next attempt of a task as a resume of `spawn`'s worker (kind resume, same lineage) and opens it for a verdict. */
+async function recordResume($: Host, spawn: SpawnRecord, records: readonly AttemptRecord[], agentId: string): Promise<SpawnRecord> {
+  const lane = laneOf(spawn)
+  const t = await now($)
+  const attempt = nextAttempt(records, spawn.subtask, lane)
+  const rec: HereRecord = {
+    ...(await ownerFields($)),
+    task: spawn.task,
+    subtask: spawn.subtask,
+    attempt,
+    kind: 'resume',
+    lineage: spawn.lineage,
+    tier: spawn.tier,
+    alias: spawn.alias,
+    source: 'resume',
+    verdict: 'pending',
+    at: t,
+    agentId,
+    ...(spawn.briefPath ? { briefPath: spawn.briefPath } : {}),
+    purpose: spawn.purpose,
+    ...laneFields(lane),
+    ...(spawn.here ? { here: spawn.here } : {}),
+  }
+  await storeSet($, K.tasks(spawn.task), [...records, rec])
+  const usdAtStart = await sessionUsd($)
+  const next: SpawnRecord = { ...spawn, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
+  await storeSet($, K.spawn(spawn.key), next)
+  await setWorkers($, list => [...list, { task: spawn.task, subtask: spawn.subtask, attempt, kind: 'resume', tier: spawn.tier, alias: spawn.alias, agentId, verdict: 'pending', at: t }])
+  return next
+}
+
 async function spawnByAgent($: Host, agentId: string | undefined): Promise<SpawnRecord | undefined> {
   if (!agentId) return undefined
   const key = await storeGet<string>($, K.agent(agentId))
@@ -4903,7 +4935,14 @@ export const register: Register = (on, opts) => {
       // the answer plus the hand-back (GH-2), read once and only for an agent the mod judges
       let said: Promise<string> | undefined
       const saidOnce = () => (said ??= workerText($, agentId, e.answer))
-      const spawn = await spawnByAgent($, agentId)
+      let spawn = await spawnByAgent($, agentId)
+      // MOD-41: the brain resumed a worker whose last attempt was judged and not advised a resume: a hand-back at a new sha is the next attempt
+      if (!warned && spawn && !spawn.adhoc && !spawn.review && spawn.verdictAttempt === spawn.attempt) {
+        const block = extractReport(await saidOnce())
+        const sha = block ? parseReport(block)?.sha : undefined
+        const records = sha ? await loadAttempts($, spawn.task) : []
+        if (sha && isResumeAfterJudged(records, spawn.subtask, sha, laneOf(spawn))) spawn = await recordResume($, spawn, records, agentId)
+      }
       // a worker just told to wrap up is going on: this turn's end is not its hand-back
       if (warned) debug($, `${taskLabel(spawn?.task ?? '', spawn?.subtask ?? 'main')}: wrap-up sent; its next turn is the hand-back`)
       // An ad hoc background agent is judged into the brain's conversation only
@@ -5006,30 +5045,7 @@ export const register: Register = (on, opts) => {
     if (attempts >= budget) return { isDelivered: false, reason: budgetDenyMessage(taskLabel(spawn.task, spawn.subtask), attempts, spawn.briefPath) }
     const out = await next(e)
     if (!out.isDelivered) return out
-    const t = await now($)
-    const attempt = nextAttempt(records, spawn.subtask, lane)
-    const rec: HereRecord = {
-      ...(await ownerFields($)),
-      task: spawn.task,
-      subtask: spawn.subtask,
-      attempt,
-      kind: 'resume',
-      lineage: spawn.lineage,
-      tier: spawn.tier,
-      alias: spawn.alias,
-      source: 'resume',
-      verdict: 'pending',
-      at: t,
-      agentId,
-      ...(spawn.briefPath ? { briefPath: spawn.briefPath } : {}),
-      purpose: spawn.purpose,
-      ...laneFields(lane),
-      ...(spawn.here ? { here: spawn.here } : {}),
-    }
-    await storeSet($, K.tasks(spawn.task), [...records, rec])
-    const usdAtStart = await sessionUsd($)
-    await storeSet($, K.spawn(spawn.key), { ...spawn, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) })
-    await setWorkers($, list => [...list, { task: spawn.task, subtask: spawn.subtask, attempt, kind: 'resume', tier: spawn.tier, alias: spawn.alias, agentId, verdict: 'pending', at: t }])
+    await recordResume($, spawn, records, agentId)
     return out
   })
 

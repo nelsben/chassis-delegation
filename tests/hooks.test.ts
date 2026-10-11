@@ -1487,6 +1487,44 @@ describe('MOD-1: one proof of red per task, and --verify at the last attempt\'s 
     expect(rows(w)[1]).toContain("claim red: held — attempt 1's proof, reused (one proof per task)")
     expect(rows(w)[1]).toContain('verdict=consistent task=T-4 attempt=2/3')
   })
+
+  // MOD-41: the brain resumes a worker after a consistent verdict (SendMessage, not advised by the mod)
+  const ledgerRows = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+
+  test('MOD-41: a hand-back at a new sha after a consistent verdict is attempt 2/3 and writes one ledger row; at the same sha again it writes nothing', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const gate = { v: 0 }
+    const w = setup(on, gate)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1111111', RED_1)))
+    expect(rows(w)[0]).toContain('verdict=consistent task=T-4 attempt=1/3')
+    expect(ledgerRows(w)).toHaveLength(1)
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('2222222', RED_1)))
+    expect(rows(w)).toHaveLength(2)
+    expect(rows(w)[1]).toContain('verdict=consistent task=T-4 attempt=2/3')
+    expect(ledgerRows(w)).toHaveLength(2)
+    expect(ledgerRows(w)[1]).toMatchObject({ task: 'T-4', attempt: 2, kind: 'resume', verdict: 'consistent' })
+    expect(records(w, 'T-4').map(r => [r.attempt, r.kind, r.lineage, r.verdict])).toEqual([[1, 'spawn', 1, 'consistent'], [2, 'resume', 1, 'consistent']])
+    // the same hand-back again, and the first sha again: nothing new
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('2222222', RED_1)))
+    expect(rows(w)).toHaveLength(2)
+    expect(ledgerRows(w)).toHaveLength(2)
+    expect(records(w, 'T-4')).toHaveLength(2)
+  })
+
+  test('MOD-41: a hand-back past the budget is judged, and its row says the budget is spent', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const gate = { v: 0 }
+    const w = setup(on, gate)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1111111', RED_1)))
+    await $.turn.complete(turnInput('agent-4', 'Again.\n' + REPORT('2222222', RED_1)))
+    await $.turn.complete(turnInput('agent-4', 'Again.\n' + REPORT('3333333', RED_1)))
+    gate.v = 1
+    await $.turn.complete(turnInput('agent-4', 'Again.\n' + REPORT('4444444', RED_1)))
+    expect(rows(w)).toHaveLength(4)
+    expect(rows(w)[3]).toContain('verdict=refuted task=T-4 attempt=4/3')
+    expect(rows(w)[3]).toContain('next=stop — budget exhausted')
+    expect(ledgerRows(w)).toHaveLength(4)
+  })
 })
 
 describe('GH-104: spend guards', () => {
