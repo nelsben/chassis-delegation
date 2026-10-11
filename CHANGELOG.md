@@ -10,6 +10,12 @@
   when the task is merged or accepted by then (MOD-35's retire check). A `ready:` line held with a dropped verdict
   is still delivered, alone. A wake raised with no turn open, and a held wake still current, are unchanged.
 
+- **A done-when path in markdown bold no longer raises forbid warnings (MOD-52).** `donePaths` strips leading and
+  trailing `*` and `_` emphasis and trailing punctuation (`:` `.` `,` `;` `!` `?` `)`) from each word, in either
+  order, so `**some/file.html:**` and `**some/file.html**:` both read as `some/file.html`; a backticked word is
+  cleaned the same way. `forbidCollisions` skips the done-when warning for a path a scope entry already names
+  (equal, or matched by the scope glob under the repo or absolute rule), since the scope warning covers it.
+
 ## 0.9.1 — 2026-10-11
 
 - **The legacy verdict reader is removed (MOD-49).** `hooks/lib/legacy.ts` is gone; the old verdict word
