@@ -737,7 +737,7 @@ anything. Each claim is held, failed or unchecked.
 | `sha` | it resolves (`rev-parse --verify <sha>^{commit}`) and is an ancestor of the branch. A sha that does not exist is **failed** (fabrication) |
 | `scope` | every path changed between `merge-base(<base>, sha)` and the sha matches a scope glob and no forbid glob. `<base>` is a replay's own base, else the brief's `base=`, else `baseRef`, else the first of `origin/main`, `main`, `origin/master`, `master` |
 | `files` | `files=` equals that changed set exactly. A moved file is listed once, at its new path (git's rename detection; an old path listed too is dropped, not refuted). A path missing from it or invented in it is named. An entry ending in `/` stands for the changed files under that folder; a folder with none changed is an invented path |
-| `gate` | the tree's HEAD is the sha and `git status --porcelain` is empty. Then each gate id runs from `gateMap` in the worktree: exit 0 under `gate=pass` holds, non-zero is failed and shows the last 8 output lines, and `gate=fail` with a red gate holds (an honest stop) |
+| `gate` | the tree's HEAD is the sha and `git status --porcelain` is empty. Then each gate id runs from `gateMap` in the worktree: exit 0 under `gate=pass` holds, non-zero is failed and shows the last 8 output lines, and `gate=fail` with a red gate holds (an honest stop). A gate red only on timeouts in tests the delta never touched is run once more (see below) |
 | `red` | only when the brief's `red_test=` is set (not empty, not `none`). The `red=` file lies in the worker's tree, is not empty, holds a failure marker (`fail`, `error`, `not ok`, `✗`, `exit code 1`-`9`, `exit 1`, `AssertionError`, `expected`; any case), and, if byte-identical (sha-256) to an earlier attempt's red file for the same task and subtask, that attempt's own red claim held (one proof per task: it is held again, `attempt n's proof, reused`). Held shows its size and first failure line. No `red=` or no marker is unchecked; a path outside the tree, a missing or empty file, or an earlier attempt's file that did not itself hold is **failed** |
 | `pr` | `pr=none`, or `gh pr view <n> --json state` finds it |
 
@@ -746,6 +746,36 @@ The gate is left unchecked, never failed, in these cases:
 - the tree is dirty, or HEAD is not the sha;
 - the gate id is not in the map;
 - the gate exits 126 or 127, meaning the environment, not the code.
+
+**A gate that ran beside another worker's (MOD-20).** The engine suite gives
+each test 5 seconds, and two suites on one machine at once blow it: tests the
+worker never touched time out and a clean branch reads as refuted. So a red gate
+whose every failing test failed only with the engine's `timed out after N ms`,
+and none of them in a test file the delta changed, is run once more before the
+claim is made. When the second run is green the claim says so:
+
+    claim gate: held — gate green on rerun (first run: 2 timeouts in untouched tests) at a1b2c3d (gate=pass confirmed)
+
+When it is red again the attempt is refuted as it always was, the last 8 lines
+are the second run's, and a `note:` line says the gate was run twice. A failure
+that is not a timeout (an assertion, an error), a timeout in a test file the
+delta changed, and any output the mod cannot read as a list of failing tests
+(no `(fail)` lines, or a `fail` total that counts more than were read) are never
+run again. The rerun reads the output of `claude plugin test` (`(fail) <name>`
+under a `<file>:` header, `Error: timed out after 5000 ms` under it).
+
+**Engine gates take turns (MOD-20).** A gate-map command that runs
+`claude plugin test <folder>` is an engine gate. The verifiers of one session
+run them one at a time: a verifier takes `delegation.engineGate` in the store
+before its engine gate and clears it after, and one that finds another's lock
+still live waits, looking again every 5 seconds. The lock expires after the gate's own
+timeout (9 minutes), so a crash never wedges the rest, and if the store cannot
+be read the gate runs without a turn. A rerun stays inside the turn. The wait is
+one line of the verdict detail, ahead of the gate claim:
+
+    waited 40 s for MOD-x's engine gate
+
+Other gates (`claude plugin validate`, a node suite) take no turn.
 
 The changed paths are written to `<root>/.delegation/<ID>/files.txt` before
 the gate runs. A gate command can take them as `{files}`, and the absolute
@@ -1305,6 +1335,13 @@ judged like a written path, so a commit of only card, `.delegation/`, repo-file,
 warned or denied naming it. `sed -i ''` and `sed -i .bak` take the suffix word
 as the suffix, not as a file.
 
+Quotes inside a command substitution are quoted (MOD-20). A `$( )` or backtick
+substitution inside double quotes is read as a command of its own, with its own
+quotes, so `gh issue close 2 --comment "$(printf "id <task>-a<n>")"` writes
+nothing: the `>` in the id is text. A real redirect inside one still counts,
+quoted or not: `echo "$(echo x > hooks/a.ts)"` writes `hooks/a.ts`. The text of a
+`git commit -m "$(cat <<'EOF' … EOF)"` is read to its end.
+
 **Posture.** While the session model is fable and `delegateOnly` is not `off`,
 the "Delegation state" section of the system prompt starts with two lines: "You
 are the brain on a premium model. Build work goes to workers through the card
@@ -1501,7 +1538,10 @@ What differs from the engine's verdict:
   recorded, so a red file reused from an earlier attempt is not caught;
 - a `repo=here` or `repo=none` brief gets an `unverified` row saying so;
 - the hand-back's `[[amend …]]` blocks are not applied (a note says so), so the
-  worker is judged against the brief as written.
+  worker is judged against the brief as written;
+- a gate red only on timeouts in untouched tests is run once more, as in the
+  engine, but engine gates take no turns (the turn is held in the engine's
+  store), so two workers verified at once can still time each other out.
 
 What exists only with the engine: tiering (the model picked from the card's
 tier, the effort setting), the queue and `maxWorkers`, the respawn ladder and

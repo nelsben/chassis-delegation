@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- **Gates that run in parallel do not false-refute (MOD-20).** On 2026-10-11 two
+  workers ran their gates on one machine at once (load average about 40): one
+  engine run had six timeouts and passed on a rerun with no change, and another
+  worker was refuted on gate because the verifier's engine run timed out on two
+  tests it never touched. The engine suite gives each test 5 seconds, so any
+  wave of two workers carried the risk. Three changes:
+  - **A gate red only on timeouts in untouched tests is run once more.** When
+    the gate's failing tests all failed with nothing but the engine's
+    `timed out after N ms` and none of them sits in a test file the delta
+    changed, the verifier runs that gate again. The claim then reads
+    `gate green on rerun (first run: 2 timeouts in untouched tests)`; a second
+    red is refuted as before, with a `note:` that it was run twice. A failure
+    that is not a timeout, a timeout in a touched test file, and output the mod
+    cannot read as failing tests are never run again. New `gateFailures` and
+    `timeoutRerun` in `hooks/lib/verify-native.ts` parse the `(fail)` lines of
+    `claude plugin test` and decide.
+  - **Engine gates take turns.** A gate-map command that runs
+    `claude plugin test` takes `delegation.engineGate` in the store before it
+    runs and clears it after; a verifier that finds another's live lock waits
+    for it (looking again every 5 seconds), and the wait is one verdict detail
+    line, `waited 40 s for MOD-x's engine gate`. The lock expires after the
+    gate's own timeout (9 minutes), so a crashed holder never wedges the rest;
+    a store that cannot be read runs the gate without a turn. The read, check
+    and write of the lock are one step inside the process (the store has no
+    compare-and-set), so two verifiers finishing together do not both take it.
+    The rerun stays inside the turn. A `repo=none` brief's engine gate takes its
+    turn too. The settings.json fallback reruns but takes no turns.
+  - **The `delegateOnly` lexer reads substitutions inside double quotes.** The
+    brain's own merge command was refused because a comment string inside
+    `$( … )` carried `<task>-a<attempt>`, and the lexer read the `>` as a
+    redirect to a file in the repo. A `$( )` or backtick substitution inside
+    double quotes is now a command of its own with its own quotes, so
+    `gh issue close 2 --comment "$(printf "id <task>-a<n>")"` counts no write.
+    A real redirect inside one still counts, quoted or not
+    (`echo "$(echo x > hooks/a.ts)"` writes `hooks/a.ts`; before this it was
+    missed when quoted).
+  New `tests/gaterun.test.ts` (the parser, the rerun decision, the turn and the
+  verifier with the gate answered from a table), the lexer cases in
+  `tests/brain.test.ts` and engine tests in `tests/hooks.test.ts`, including two
+  verifiers whose engine gates must not overlap. `tests/harness.ts` lets a
+  `run` answer return a promise.
+
 - **The debrief shows the agent's own process proposals, mod findings post to
   the mod's tracker from any repo, and a post refuses while the redact list is
   empty (MOD-18).** Does `/delegation debrief` cover the agent's process

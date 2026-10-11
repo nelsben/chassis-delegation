@@ -133,3 +133,35 @@ export function resolveGateRuns(gate: string | undefined, map: Readonly<Record<s
   }
   return { runs, notRerun }
 }
+
+// ---- MOD-20: engine-suite gates take turns -------------------------------------------------------
+// Two workers' `claude plugin test` runs at once blow the engine's 5 s per-test timeout (a machine
+// at load 40 timed out tests neither worker touched). A gate-map command that runs the engine suite
+// is an engine gate; the verifiers of one session take turns on it through one store-held lock.
+// The lock holds until the gate's own timeout at most, so a crashed holder never wedges the rest.
+
+/** True when `argv` runs the engine suite: `claude plugin test <folder>`. */
+export const isEngineGate = (argv: readonly string[]): boolean => argv.length >= 3 && base(argv[0] as string) === 'claude' && argv[1] === 'plugin' && argv[2] === 'test'
+
+/** The store value `delegation.engineGate`: who runs the engine suite, and until when the claim stands. */
+export type EngineLock = { holder: string; token: string; since: number; until: number }
+
+/** How often a waiting verifier looks at the lock again. */
+export const ENGINE_POLL_MS = 5000
+
+/** A stored value as a lock; anything that is not one reads as none. */
+export function readEngineLock(v: unknown): EngineLock | undefined {
+  if (typeof v !== 'object' || v === null) return undefined
+  const o = v as Record<string, unknown>
+  if (typeof o.holder !== 'string' || typeof o.token !== 'string' || typeof o.since !== 'number' || typeof o.until !== 'number') return undefined
+  return { holder: o.holder, token: o.token, since: o.since, until: o.until }
+}
+
+/** Whether `token` may take the lock now: free, expired or its own; else who holds it and how long to look away. */
+export function engineLockDecision(lock: EngineLock | undefined, now: number, token: string): { take: true } | { take: false; holder: string; waitMs: number } {
+  if (lock === undefined || lock.until <= now || lock.token === token) return { take: true }
+  return { take: false, holder: lock.holder, waitMs: Math.max(1, Math.min(ENGINE_POLL_MS, lock.until - now)) }
+}
+
+/** The verdict detail line for a wait: `waited 40 s for MOD-x's engine gate`. */
+export const waitedLine = (ms: number, holder: string): string => `waited ${Math.max(1, Math.round(ms / 1000))} s for ${holder}'s engine gate`

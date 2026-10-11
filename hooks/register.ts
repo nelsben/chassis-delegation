@@ -151,7 +151,7 @@ import {
   shouldEval,
   type EvalTier,
 } from './lib/evaltrigger'
-import { gateTemplatesOf, resolveGateRuns } from './lib/gates'
+import { engineLockDecision, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
 import { currentLine } from './lib/legacy'
 import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
@@ -265,6 +265,8 @@ const K = {
   live: (sessionId: string) => `delegation.eval.live.${sessionId}`,
   /** Every eval block the runners reported. */
   evals: 'delegation.evals',
+  /** MOD-20: whose engine-suite gate (`claude plugin test`) is running; verifiers take turns on it. */
+  engineGate: 'delegation.engineGate',
 }
 
 const PROBE_EVERY_MS = 24 * 60 * 60 * 1000
@@ -2133,6 +2135,52 @@ async function recordWorkPresent(
   return attempt
 }
 
+/** MOD-20: the lock's read-check-write, one verifier at a time inside this process (the store has no compare-and-set). */
+let engineGuard: Promise<unknown> = Promise.resolve()
+const alone = <T>(fn: () => Promise<T>): Promise<T> => {
+  const next = engineGuard.then(fn, fn)
+  engineGuard = next.catch(() => undefined)
+  return next
+}
+let engineSeq = 0
+
+/**
+ * MOD-20: waits for this session's turn at the engine suite. Two engine gates at once blow the
+ * engine's per-test timeout, so a verifier takes `delegation.engineGate` before its
+ * `claude plugin test` and clears it after; another verifier's live lock is waited for, a poll at a
+ * time. The lock expires after the gate's own timeout, so a crashed holder never wedges the rest. A
+ * store that cannot be read or written runs the gate without a turn rather than not at all.
+ */
+async function takeEngineTurn($: Host, label: string): Promise<{ line?: string; release: () => Promise<void> }> {
+  const started = await now($)
+  const token = `${label}#${started}#${(engineSeq += 1)}`
+  let holder: string | undefined
+  try {
+    for (;;) {
+      const t = await now($)
+      const d = await alone(async () => {
+        const decision = engineLockDecision(readEngineLock(await $.store.get(K.engineGate)), t, token)
+        if (decision.take) await $.store.set(K.engineGate, { holder: label, token, since: t, until: t + GATE_TIMEOUT_MS } satisfies EngineLock)
+        return decision
+      })
+      if (d.take) break
+      holder = d.holder
+      await $.clock.sleep(d.waitMs)
+    }
+  } catch (err) {
+    debug($, `${label}: engine gate turn not taken (${String(err)}); the gate runs without it`)
+    return { release: async () => undefined }
+  }
+  const release = async () => {
+    try {
+      if (readEngineLock(await $.store.get(K.engineGate))?.token === token) await $.store.delete(K.engineGate)
+    } catch (err) {
+      debug($, `${label}: engine gate turn not released (${String(err)}); it expires on its own`)
+    }
+  }
+  return holder === undefined ? { release } : { line: waitedLine((await now($)) - started, holder), release }
+}
+
 async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<VerifyResult> {
   await loadRepoConfig($)
   const root = await $.session.root()
@@ -2173,7 +2221,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
       ...(cfg.baseRef ? { baseRef: cfg.baseRef } : {}),
       ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),
     },
-    { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path) },
+    { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)) },
   )
   return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
 }
@@ -2197,8 +2245,17 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   for (const p of sc.inScope) (await exists($, p)) ? present.push(p) : missing.push(p)
   const gates = resolveGateRuns(contract.gate, cfg.gateMap, argv => checkArgv(argv, allowCfg()).ok, filesPath, scopeRoot)
   const outcomes: { label: string; exitCode?: number; error?: string }[] = []
+  const waits: string[] = []
   for (const g of gates.runs) {
-    const r = await run($, g.argv, { cwd: scopeRoot, timeoutMs: GATE_TIMEOUT_MS })
+    // MOD-20: an engine gate takes its turn here too
+    const turn = isEngineGate(g.argv) ? await takeEngineTurn($, taskLabel(report.task ?? 'no-repo', report.subtask ?? 'main')) : undefined
+    if (turn?.line) waits.push(turn.line)
+    let r: RunOut
+    try {
+      r = await run($, g.argv, { cwd: scopeRoot, timeoutMs: GATE_TIMEOUT_MS })
+    } finally {
+      await turn?.release()
+    }
     outcomes.push(r.ok ? { label: g.label, exitCode: r.exitCode } : { label: g.label, error: r.why })
     if (r.ok && r.exitCode !== 0) break
   }
@@ -2212,7 +2269,7 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
     notRerun: gates.notRerun.map(n => n.id),
     noGate: gates.none === true,
   })
-  return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...v.lines], noRepo: true }
+  return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...waits, ...v.lines], noRepo: true }
 }
 
 /**

@@ -187,11 +187,21 @@ type Tok = { k: 'word' | 'sep' | 'out' | 'dup' | 'in'; t: string }
  * Shell-like tokens: quotes and backslashes honoured; separators; an unquoted
  * `>` / `>>` / `&>` as an `out` token (`>&` a `dup`, `<` an `in`) with its fd
  * prefix dropped; comments and heredoc bodies skipped.
+ *
+ * MOD-20: a `$( )` or backtick substitution inside double quotes is a command
+ * of its own, read like any other (its separators, its redirects, its quotes):
+ * the quoted text round it stays quoted, and a `>` inside the substitution's
+ * own quotes is no redirect. The word before it is cut with a `$` on its end, so
+ * a target that holds a substitution stays unknown.
  */
 function lex(text: string): Tok[] {
   const toks: Tok[] = []
   let word = ''
   let inWord = false
+  // inside double quotes, as opposed to the command text round them
+  let dq = false
+  // what each open `(`, `$(` or backtick returns to when it closes: the double quotes it opened in, or command text
+  const open: { dq: boolean; tick: boolean }[] = []
   const docs: { delim: string; dash: boolean }[] = []
   const flush = () => {
     if (inWord) toks.push({ k: 'word', t: word })
@@ -202,6 +212,24 @@ function lex(text: string): Tok[] {
   let i = 0
   while (i < n) {
     const c = text[i] as string
+    if (dq) {
+      if (c === '"') dq = false
+      else if (c === '\\' && i + 1 < n) {
+        word += text[i + 1]
+        i += 1
+      } else if ((c === '$' && text[i + 1] === '(') || c === '`') {
+        const sub = c === '`' ? '`' : '$('
+        word += '$'
+        flush()
+        toks.push({ k: 'sep', t: sub })
+        open.push({ dq: true, tick: c === '`' })
+        dq = false
+        i += sub.length
+        continue
+      } else word += c
+      i += 1
+      continue
+    }
     if (c === '\\' && i + 1 < n) {
       if (text[i + 1] !== '\n') {
         word += text[i + 1]
@@ -218,14 +246,9 @@ function lex(text: string): Tok[] {
       continue
     }
     if (c === '"') {
-      let j = i + 1
-      while (j < n && text[j] !== '"') {
-        if (text[j] === '\\' && j + 1 < n) j += 1
-        word += text[j]
-        j += 1
-      }
+      dq = true
       inWord = true
-      i = j + 1
+      i += 1
       continue
     }
     if (c === '#' && !inWord) {
@@ -297,6 +320,13 @@ function lex(text: string): Tok[] {
       flush()
       toks.push({ k: 'sep', t: sep })
       i += sep.length
+      // a closing ) or backtick goes back to the double quotes its substitution opened in
+      const closing = sep === ')' ? open.pop() : sep === '`' && open.at(-1)?.tick ? open.pop() : undefined
+      if (sep === '(' || sep === '$(' || (sep === '`' && !closing)) open.push({ dq: false, tick: sep === '`' })
+      if (closing?.dq) {
+        dq = true
+        inWord = true
+      }
       continue
     }
     word += c

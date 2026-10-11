@@ -33,7 +33,7 @@
 // unverified, never consistent. No files.txt is written and no gate runs.
 // Pure apart from `io`: no `$`.
 import { effectiveList, parseAmends, parseHeader, type Report } from './brief'
-import { resolveGateRuns, type GateResolution } from './gates'
+import { isEngineGate, resolveGateRuns, type GateResolution, type GateRun } from './gates'
 import { isGitRef } from './repoconfig'
 
 export type ExecOut = { ok: true; exitCode: number; stdout: string; stderr: string } | { ok: false; why: string }
@@ -43,6 +43,11 @@ export type NativeIo = {
   write: (path: string, text: string) => Promise<void>
   /** Reads the red evidence at an absolute path inside the worker's tree (GH-20); absent, a named file is unchecked. */
   readRed?: (path: string) => Promise<RedEvidence>
+  /**
+   * MOD-20: waits for this session's turn at the engine suite (`claude plugin test`) and holds it
+   * until `release`; `line` says how long it waited and for whom. Called for engine gates only.
+   */
+  turn?: (argv: readonly string[]) => Promise<{ line?: string; release: () => Promise<void> }>
 }
 
 export type NativeInput = {
@@ -402,6 +407,98 @@ export function redClaim(i: RedClaimInput): RedClaim | undefined {
   return { status: 'held', detail: `${path}, ${bytes} bytes, first failure line: ${line.trim().slice(0, RED_LINE_CAP)}` }
 }
 
+/** One failing test of a test run's output (`claude plugin test` prints `(fail) <name> [<ms>]`, the detail indented under it). */
+export type GateFailure = {
+  /** The file header above it (`tests/a.test.ts:`), as printed; absent when none came before. */
+  file?: string
+  name: string
+  /** Its whole detail is the engine's `timed out after N ms`: nothing else went wrong in it. */
+  timeout: boolean
+}
+
+const FAIL_LINE = /^\(fail\)\s+(.*?)(?:\s+\[[\d.]+\s*m?s\])?\s*$/
+const FILE_HEADER = /^(?![\s(])(\S.*):\s*$/
+const TIMEOUT_DETAIL = /^\s*(?:[A-Za-z]*Error:\s*)?timed out after \d+\s*ms\.?\s*$/i
+const RUN_TOTAL = /^\s*(\d+) (pass|fail|skip|todo)\s*$/
+const RUN_END = /^Ran \d+ tests?\b/
+
+/**
+ * MOD-20: the failing tests a test run printed, each with the file header
+ * above it and whether it failed only by timing out, and the run's own
+ * ` N fail` total when it printed one (to check nothing was missed).
+ */
+export function gateFailures(output: string): { failures: GateFailure[]; summary?: number } {
+  const failures: GateFailure[] = []
+  let summary: number | undefined
+  let file: string | undefined
+  let detail: string[] | undefined
+  const close = () => {
+    if (detail === undefined) return
+    const last = failures.at(-1) as GateFailure
+    const said = detail.filter(l => l.trim() !== '')
+    last.timeout = said.length > 0 && said.every(l => TIMEOUT_DETAIL.test(l))
+    detail = undefined
+  }
+  for (const raw of output.split('\n')) {
+    const line = raw.replace(/\r$/, '')
+    const fail = FAIL_LINE.exec(line)
+    if (fail) {
+      close()
+      failures.push({ ...(file !== undefined ? { file } : {}), name: (fail[1] as string).trim(), timeout: false })
+      detail = []
+      continue
+    }
+    const total = RUN_TOTAL.exec(line)
+    if (total || RUN_END.test(line)) {
+      close()
+      if (total?.[2] === 'fail') summary = Number(total[1])
+      continue
+    }
+    if (detail !== undefined && (line.trim() === '' || /^\s/.test(line))) {
+      detail.push(line)
+      continue
+    }
+    close()
+    const header = FILE_HEADER.exec(line)
+    if (header) file = (header[1] as string).trim()
+  }
+  close()
+  return { failures, ...(summary !== undefined ? { summary } : {}) }
+}
+
+/** A file the run printed, as a repo-relative path (the repo prefix and `./` off). */
+const repoPath = (file: string, repo?: string): string => {
+  const root = (repo ?? '').replace(/\/+$/, '')
+  const rel = root !== '' && file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file
+  return rel.replace(/^(\.\/)+/, '')
+}
+
+export type TimeoutRerun = { rerun: true; timeouts: number } | { rerun: false; why: string }
+
+/**
+ * MOD-20: whether a red gate is run once more. Yes only when every failing
+ * test failed with nothing but the engine's `timed out after N ms` and none of
+ * them sits in a file the delta changed: a gate that timed out on tests the
+ * worker never touched says the machine was busy, not that the work is wrong.
+ * Anything that cannot be told (no delta, a failure the output does not show,
+ * a total that counts more failures than were read) is no.
+ */
+export function timeoutRerun(output: string, delta: readonly string[] | undefined, repo?: string): TimeoutRerun {
+  const { failures, summary } = gateFailures(output)
+  const no = (why: string): TimeoutRerun => ({ rerun: false, why })
+  if (failures.length === 0) return no('no failing test could be read from the gate output')
+  if (summary === undefined) return no('the gate output has no fail total to check the failures against')
+  if (summary !== failures.length) return no(`the gate output counts ${summary} failures but ${failures.length} could be read`)
+  const other = failures.find(f => !f.timeout)
+  if (other) return no(`"${other.name}" failed with more than a timeout`)
+  if (delta === undefined) return no('the delta is unknown, so which test files the worker touched is unknown')
+  const unplaced = failures.find(f => f.file === undefined)
+  if (unplaced) return no(`"${unplaced.name}" timed out in a file the output does not name`)
+  const touched = failures.find(f => delta.includes(repoPath(f.file as string, repo)))
+  if (touched) return no(`"${touched.name}" timed out in ${touched.file}, a file the delta changed`)
+  return { rerun: true, timeouts: failures.length }
+}
+
 /** The last lines a gate printed (stdout then stderr), for under a failed gate claim. */
 function outputTail(stdout: string, stderr: string): string[] {
   const all = `${stdout}\n${stderr}`.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '')
@@ -579,8 +676,25 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       let code = 0
       let tail: string[] = []
       let stopped: string | undefined
+      // MOD-20: timeouts in tests the delta never touched, seen on a first run that was then run again
+      let reranTimeouts = 0
+      const runGate = async (run: GateRun): Promise<{ r: ExecOut; timeouts: number }> => {
+        // an engine gate waits for another worker's engine gate to finish; the turn is held across a rerun
+        const turn = io.turn && isEngineGate(run.argv) ? await io.turn(run.argv).catch(() => undefined) : undefined
+        if (turn?.line) lines.push(turn.line)
+        try {
+          const go = () => io.exec(run.argv, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS })
+          const first = await go()
+          if (!first.ok || first.exitCode === 0 || first.exitCode === 126 || first.exitCode === 127) return { r: first, timeouts: 0 }
+          const again = timeoutRerun(`${first.stdout}\n${first.stderr}`, delta, repo)
+          return again.rerun ? { r: await go(), timeouts: again.timeouts } : { r: first, timeouts: 0 }
+        } finally {
+          await turn?.release().catch(() => undefined)
+        }
+      }
       for (const run of gates.runs) {
-        const r = await io.exec(run.argv, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS })
+        const { r, timeouts } = await runGate(run)
+        reranTimeouts += timeouts
         if (!r.ok) {
           stopped = `gate ${run.label} did not run: ${r.why}`
           break
@@ -598,9 +712,10 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       const said = (report.gate ?? '').trim()
       const at = here ? `in the shared checkout ${repo}` : `at ${sha}`
       const hereNote = here ? '; repo=here: the dirty tree is allowed, the clean-tree rule does not apply' : ''
+      const green = reranTimeouts > 0 ? `gate green on rerun (first run: ${plural(reranTimeouts, 'timeout')} in untouched tests)` : 'gate green'
       if (stopped) claim('gate', 'unchecked', stopped)
       else if (said === 'pass') {
-        if (code === 0) claim('gate', 'held', `gate green ${at} (gate=pass confirmed${hereNote})`)
+        if (code === 0) claim('gate', 'held', `${green} ${at} (gate=pass confirmed${hereNote})`)
         else {
           claim('gate', 'failed', `gate=pass claimed but the gate is RED ${at} (exit ${code}${hereNote})`)
           lines.push(...tail)
@@ -609,6 +724,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         if (code !== 0) claim('gate', 'held', `gate=fail confirmed (gate red ${at}${hereNote}) — an honest terminal state`)
         else claim('gate', 'unchecked', 'gate=fail claimed but the gate is green — not a refutation, recorded')
       } else claim('gate', 'unchecked', `report gate='${said}' is not pass|fail`)
+      if (code !== 0 && reranTimeouts > 0) lines.push(`note: the gate was re-run once after ${plural(reranTimeouts, 'timeout')} in untouched tests, and was red again`)
     }
   }
 
