@@ -19,7 +19,8 @@
   saw, or `/delegation accept`) or its card on origin/main reads `status: merged`; sha ancestry is not asked and never
   retires the task for it, because a worker that committed nothing reports a base sha already on origin/main. The row
   is still posted and recorded, the debug line stays `wake skipped: <task> already merged`, and any ready lines still
-  wake the brain.
+  wake the brain. This also closes a gap in 0.9.2: MOD-51's delivery-time check counted sha ancestry for any verdict,
+  so a refuted no-work hand-back held to the turn's end could be retired as merged and its wake dropped.
 
 ## 0.9.2 — 2026-10-11
 
