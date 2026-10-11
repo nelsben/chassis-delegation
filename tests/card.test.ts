@@ -195,6 +195,24 @@ describe('MOD-29: the dry run warns when a forbid glob collides with the card', 
   })
 })
 
+describe('MOD-52: a done-when path in markdown bold or trailing punctuation is cleaned before the forbid check', () => {
+  test('the issue 108 example: a bold path in scope, with forbid data/** and docs/**, gives no warning', () => {
+    expect(forbidCollisions(['some/file.html'], ['data/**', 'docs/**'], ['**some/file.html:** load the page.'])).toEqual([])
+  })
+
+  test('the colon inside or outside the bold markers reads the same path, and a backticked word is cleaned too', () => {
+    expect(forbidCollisions([], ['docs/**'], ['**docs/notes.md:** is written.'])).toEqual(['warning: forbid docs/** matches docs/notes.md named in done-when'])
+    expect(forbidCollisions([], ['docs/**'], ['**docs/notes.md**: is written.'])).toEqual(['warning: forbid docs/** matches docs/notes.md named in done-when'])
+    expect(forbidCollisions([], ['docs/**'], ['`**docs/notes.md**`: is written.'])).toEqual(['warning: forbid docs/** matches docs/notes.md named in done-when'])
+  })
+
+  test('a bold path outside scope that a forbid matches is warned once, naming the cleaned path', () => {
+    expect(forbidCollisions(['src/**'], ['docs/**'], ['**docs/notes.md:** and **docs/notes.md**: are written.'])).toEqual([
+      'warning: forbid docs/** matches docs/notes.md named in done-when',
+    ])
+  })
+})
+
 describe('MOD-40: a frontmatter value with a space and a hash is not cut there', () => {
   const legacy = (redLine: string) => `---
 id: OPS-1

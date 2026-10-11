@@ -390,10 +390,27 @@ function collides(entry: string, forbid: string): boolean {
   return mine.some(x => theirs.some(y => globsCollide(x, y)))
 }
 
-/** The path-like words of one done-when statement: a word with a slash and a dot, in backticks or bare. */
+/** MOD-52: a word with its markdown emphasis (`*`, `_`) and trailing punctuation off, in either order: `**a/b.md:**` and `**a/b.md**:` both give `a/b.md`. */
+const cleanWord = (w: string): string => {
+  let s = w
+  for (;;) {
+    const next = s.replace(/^["'(*_]+/, '').replace(/["'),;:!?.*_]+$/, '')
+    if (next === s) return s
+    s = next
+  }
+}
+
+/** MOD-52: whether a scope entry names this path: equal to it, or a glob that matches it under the rule of its own kind (repo or absolute). */
+function namedBy(path: string, entry: string): boolean {
+  if (entry === path) return true
+  if (isAbsoluteGlob(entry) !== isAbsoluteGlob(path)) return false
+  return isAbsoluteGlob(entry) ? matchGlob(path, entry) : globMatches(path, entry)
+}
+
+/** The path-like words of one done-when statement: a word with a slash and a dot, in backticks or bare, cleaned (MOD-52). */
 export function donePaths(statement: string): string[] {
-  const ticked = [...statement.matchAll(/`([^`]+)`/g)].map(m => m[1] as string)
-  const bare = statement.replace(/`[^`]*`/g, ' ').split(/\s+/).map(w => w.replace(/^["'(]+|["'),;:!?.]+$/g, ''))
+  const ticked = [...statement.matchAll(/`([^`]+)`/g)].map(m => cleanWord(m[1] as string))
+  const bare = statement.replace(/`[^`]*`/g, ' ').split(/\s+/).map(cleanWord)
   return [...ticked, ...bare].filter(w => w.includes('/') && w.includes('.') && !/\s/.test(w))
 }
 
@@ -426,6 +443,8 @@ export function forbidCollisions(scope: readonly string[], forbid: readonly stri
       if (line !== undefined && collides(s, f) && !out.includes(line)) out.push(line)
     }
     for (const p of paths) {
+      // MOD-52: a path the scope already names is covered by the scope warning above
+      if (scope.some(s => s !== '' && namedBy(p, s))) continue
       const line = `warning: forbid ${f} matches ${p} named in done-when`
       if (collides(p, f) && !out.includes(line)) out.push(line)
     }
