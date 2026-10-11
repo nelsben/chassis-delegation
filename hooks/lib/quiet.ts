@@ -7,6 +7,7 @@
 //   silent          no row at all; a toast; the brain reads the store
 
 import { currentVerdict, isConsistent } from './legacy'
+import { reviewClause, type ReviewTally } from './review'
 
 export type Verbosity = 'line' | 'full' | 'silent'
 export const VERBOSITIES: readonly Verbosity[] = ['line', 'full', 'silent']
@@ -87,9 +88,12 @@ export function amendClauses(lines: readonly string[]): string[] {
 }
 
 const RESUME_TAIL = ' — SendMessage it the verifier lines below'
+/** MOD-21: a review's resume carries the refuted rows under the line, not the verifier's. */
+const REVIEW_RESUME_TAIL = ' — SendMessage it the refuted rows below'
 
 /** The advice as the one line carries it: a resume names the agent alone (the failure is on the line). */
-export const shortNext = (next: string): string => (next.endsWith(RESUME_TAIL) ? next.slice(0, -RESUME_TAIL.length) : next)
+export const shortNext = (next: string): string =>
+  next.endsWith(RESUME_TAIL) ? next.slice(0, -RESUME_TAIL.length) : next.endsWith(REVIEW_RESUME_TAIL) ? next.slice(0, -REVIEW_RESUME_TAIL.length) : next
 
 export type QuietInput = {
   task: string
@@ -120,6 +124,31 @@ export function quietLine(v: QuietInput): string {
   if (v.alias) parts.push(v.alias)
   if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
   parts.push(...amendClauses(v.lines))
+  parts.push(`next=${shortNext(v.next)}`)
+  return parts.join(' · ')
+}
+
+export type ReviewLineInput = {
+  task: string
+  /** The attempt reviewed. */
+  attempt: number
+  budget: number
+  alias?: string
+  usd?: number
+  usdApprox?: boolean
+  counts: ReviewTally | undefined
+  next: string
+}
+
+/**
+ * `chassis-delegation: OPS-232 attempt 1/3 reviewed · haiku · $0.05 · review: 3 confirmed, 1 unverifiable · next=accept`.
+ * The refuted rows, when there are any, go on lines of their own under it.
+ */
+export function reviewLine(v: ReviewLineInput): string {
+  const parts = [`chassis-delegation: ${v.task} attempt ${v.attempt}/${v.budget} reviewed`]
+  if (v.alias) parts.push(v.alias)
+  if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
+  parts.push(reviewClause(v.counts))
   parts.push(`next=${shortNext(v.next)}`)
   return parts.join(' · ')
 }

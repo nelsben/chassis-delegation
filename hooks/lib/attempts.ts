@@ -20,9 +20,17 @@ import type { Tier, TierSource } from './tier'
  * of the report matched git. `LegacyVerified` is the old word as a record written
  * before the rename holds it: read as consistent until 0.9.0, never written.
  */
-export type AttemptVerdict = 'pending' | 'consistent' | LegacyVerified | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present' | 'over-spend'
-/** `verify` (GH-104): no worker ran; the attempt is the work found in the worktree, judged by `--verify`. */
-export type AttemptKind = 'spawn' | 'resume' | 'verify'
+export type AttemptVerdict = 'pending' | 'consistent' | LegacyVerified | 'unverified' | 'refuted' | 'no-report' | 'refused' | 'work-present' | 'over-spend' | 'reviewed'
+/**
+ * `verify` (GH-104): no worker ran; the attempt is the work found in the worktree, judged by `--verify`.
+ * `review` (MOD-21): a read-only reviewer read a consistent hand-back against the diff. It carries the number of
+ * the attempt it reviewed, is judged `reviewed`, and is not on the ladder: it is never counted against `budget=`
+ * (see `attemptsFor`), never numbered among the worker's attempts, and never patched by `patchRecord`.
+ */
+export type AttemptKind = 'spawn' | 'resume' | 'verify' | 'review'
+
+/** MOD-21: what a reviewer's `[[review]]` block counted. */
+export type ReviewResult = { confirmed: number; refuted: number; unverifiable: number }
 
 export type AttemptRecord = {
   task: string
@@ -48,6 +56,8 @@ export type AttemptRecord = {
    * work: a respawn past it is not stopped by the look at the worktree.
    */
   sha?: string
+  /** MOD-21: a `review` attempt's counts; absent when its hand-back carried no (well-formed) review block. */
+  review?: ReviewResult
   /** The red evidence the report named (`red=`, as written) and read in the worker's tree (GH-20). */
   red?: string
   /** sha-256 of that file's bytes: a later attempt naming the same bytes is refuted on red. */
@@ -89,8 +99,13 @@ const inLane = (r: AttemptRecord, lane?: Lane): boolean =>
 
 const FAILING: readonly AttemptVerdict[] = ['refuted', 'no-report']
 
+/** The worker's attempts of a subtask, oldest first: the ladder. A reviewer's attempt (MOD-21) is not on it. */
 export const attemptsFor = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): AttemptRecord[] =>
-  records.filter(r => r.subtask === subtask && inLane(r, lane)).sort((a, b) => a.attempt - b.attempt)
+  records.filter(r => r.kind !== 'review' && r.subtask === subtask && inLane(r, lane)).sort((a, b) => a.attempt - b.attempt)
+
+/** MOD-21: the reviewer attempts of a subtask (any attempt reviewed), oldest first. */
+export const reviewsFor = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): AttemptRecord[] =>
+  records.filter(r => r.kind === 'review' && r.subtask === subtask && inLane(r, lane))
 
 export const nextAttempt = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): number =>
   attemptsFor(records, subtask, lane).reduce((n, r) => Math.max(n, r.attempt), 0) + 1
@@ -162,9 +177,14 @@ export function verifyTarget(records: readonly AttemptRecord[], subtask: string,
   return { attempt: nextAttempt(records, subtask, lane), rejudge: false }
 }
 
-/** Replaces the record with the same subtask + attempt by `patch` applied to it. */
+/** Replaces the worker's record with the same subtask + attempt by `patch` applied to it (a reviewer's record never matches). */
 export function patchRecord(records: readonly AttemptRecord[], subtask: string, attempt: number, patch: Partial<AttemptRecord>, lane?: Lane): AttemptRecord[] {
-  return records.map(r => (r.subtask === subtask && r.attempt === attempt && inLane(r, lane) ? { ...r, ...patch } : r))
+  return records.map(r => (r.kind !== 'review' && r.subtask === subtask && r.attempt === attempt && inLane(r, lane) ? { ...r, ...patch } : r))
+}
+
+/** MOD-21: replaces the reviewer attempt the spawn `toolUseId` made by `patch` applied to it. */
+export function patchReview(records: readonly AttemptRecord[], toolUseId: string, patch: Partial<AttemptRecord>): AttemptRecord[] {
+  return records.map(r => (r.kind === 'review' && r.toolUseId === toolUseId ? { ...r, ...patch } : r))
 }
 
 /** The fields a replay attempt carries. */

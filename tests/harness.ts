@@ -93,6 +93,8 @@ export type WorldOptions = {
   transcripts?: Record<string, unknown[]>
   /** What `$.session.model()` answers (GH-113); default a sonnet brain. */
   model?: string
+  /** MOD-21: reading hooks/templates/review.md fails (ENOENT), as it does when the mod is installed without it. */
+  noReviewTemplate?: true
 }
 
 const RESOLVED: Record<string, string> = {
@@ -162,7 +164,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('session.usage', () => ({ value: { startedAt: 0, context: { window: 200000, percent: 12 }, rateLimits: [], cost: { usd: w.usd } } }))
   hook('fs.exists', (e: { path: string }) => ({ value: w.files.has(e.path) || dirs.has(e.path) }))
   hook('fs.read', (e: { path: string; as?: string }) => {
-    const text = w.files.get(e.path) ?? (e.path.endsWith('/templates/brief.md') ? TEMPLATE : e.path.endsWith('/templates/review.md') ? REVIEW_TEMPLATE : undefined)
+    const text = w.files.get(e.path) ?? (e.path.endsWith('/templates/brief.md') ? TEMPLATE : e.path.endsWith('/templates/review.md') && !options.noReviewTemplate ? REVIEW_TEMPLATE : undefined)
     if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
     // `{ as: 'bytes' }` answers the file's UTF-8 bytes as `{ base64 }`, as the engine does
     if (e.as === 'bytes') return { value: { base64: btoa(Array.from(new TextEncoder().encode(text), b => String.fromCharCode(b)).join('')) } }
