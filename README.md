@@ -1792,12 +1792,15 @@ In breadcrumbs mode a debrief is held to four rules (MOD-10):
    flags a `corrections` or `tool_denials` list the window's breadcrumbs cannot
    contain. It prints one line each, then `debrief check: clean` or the counts.
    A correction whose `at` is a timestamp inside the window is looked up in the session
-   transcript (read through the engine's session messages call): when its quoted text
-   (surrounding quotes stripped, whitespace and case collapsed, at least 12 characters;
-   apostrophes are not folded) sits in a user message within two minutes of `at`, the
-   entry is marked `source: transcript` and no longer counts toward the flag (MOD-38).
-   When that was the only flag, the line reads `debrief check: clean (n corrections
-   evidenced by the transcript, none in the breadcrumbs)`, the record moves and the
+   transcript file (`~/.claude/projects/<root with non-alphanumerics as dashes>/<session id>.jsonl`,
+   read with the mod's own file read): when its quoted text (surrounding quotes stripped,
+   whitespace, case and apostrophes folded, at least 12 characters) sits in a user message
+   within two minutes of `at`, the entry is marked `source: transcript` and no longer
+   counts toward the flag (MOD-38). If the file cannot be read, the engine's session
+   messages call gives user rows without times; the quote alone is matched, the entry is
+   marked `source: transcript-untimed` and the check line says so. When that was the only
+   flag, the line reads `debrief check: clean (n corrections evidenced by the transcript,
+   none in the breadcrumbs)`, the record moves and the
    watermark message is sent. `tool_denials` still need the breadcrumbs.
 3. **A record that moves only when clean.** The debrief record (`lastAt`,
    watermark, lines) moves only when nothing was stripped or flagged; otherwise

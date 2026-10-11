@@ -48,41 +48,75 @@ export function windowAsk(w: DebriefWindow): string {
   ].join('\n')
 }
 
-/** MOD-38: one user message of the session transcript: its time in ms and its text. */
-export type UserMessage = { ms: number; text: string }
+/** MOD-38: one user message of the session transcript: its text and, from the transcript file, its time in ms (none from the engine's messages call, which carries no times). */
+export type UserMessage = { ms?: number; text: string }
 
 /** MOD-38: how far from a correction's `at` a user message may be and still evidence it. */
 export const EVIDENCE_WINDOW_MS = 2 * 60 * 1000
 /** MOD-38: the fewest characters of a quote that evidence anything. */
 export const EVIDENCE_MIN_CHARS = 12
 
-/** Whitespace collapsed and case folded; apostrophes and other punctuation are left as written. */
-const squash = (s: string): string => s.replace(/\s+/g, ' ').trim().toLowerCase()
+/** Whitespace collapsed, case folded, apostrophes (straight and curly) taken out. */
+const squash = (s: string): string => s.replace(/['\u2018\u2019\u02bc`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
 
-/** The user messages (role user, with text and a usable time: `timestamp`, `at`, `ts` or `time`, an ISO string or ms) of transcript rows. */
+/** The text of a message content: a string, or the text parts of an array of blocks joined. */
+function contentText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return undefined
+  const parts = content.flatMap(b => (b !== null && typeof b === 'object' && typeof (b as Record<string, unknown>).text === 'string' ? [(b as { text: string }).text] : []))
+  return parts.length > 0 ? parts.join('\n') : undefined
+}
+
+/** MOD-38: the user messages, with times, of a session transcript file (JSONL: rows of type user, message.role user, an ISO timestamp). */
+export function userMessagesFromJsonl(jsonl: string): UserMessage[] {
+  const out: UserMessage[] = []
+  for (const line of jsonl.split('\n')) {
+    if (line.trim() === '') continue
+    try {
+      const r = JSON.parse(line) as Record<string, unknown> | null
+      if (r === null || typeof r !== 'object' || r.type !== 'user') continue
+      const m = r.message as Record<string, unknown> | undefined
+      if (m === undefined || m === null || m.role !== 'user') continue
+      const text = contentText(m.content)
+      const ms = typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : Number.NaN
+      if (text !== undefined && !Number.isNaN(ms)) out.push({ ms, text: squash(text) })
+    } catch {
+      // a line that is not JSON is no message
+    }
+  }
+  return out
+}
+
+/** MOD-38: the user rows of the engine's session messages call (no times). */
 export function userMessagesOf(rows: readonly unknown[]): UserMessage[] {
   const out: UserMessage[] = []
   for (const row of rows) {
     if (row === null || typeof row !== 'object') continue
     const r = row as Record<string, unknown>
-    if (r.role !== 'user' || typeof r.text !== 'string') continue
-    const raw = r.timestamp ?? r.at ?? r.ts ?? r.time
-    const ms = typeof raw === 'number' && Number.isFinite(raw) ? raw : typeof raw === 'string' ? Date.parse(raw) : Number.NaN
-    if (!Number.isNaN(ms)) out.push({ ms, text: squash(r.text) })
+    if (r.role === 'user' && typeof r.text === 'string') out.push({ text: squash(r.text) })
   }
   return out
 }
 
-/** MOD-38: the quote (surrounding quotes stripped, whitespace and case collapsed, 12+ characters) sits in a user message within two minutes of `atMs`. */
-export function quoteEvidenced(quote: string, atMs: number, users: readonly UserMessage[]): boolean {
+/** MOD-38: the transcript file of a session: <home>/.claude/projects/<root with every non-alphanumeric as '-'>/<session id>.jsonl. */
+export const transcriptPath = (home: string, root: string, sessionId: string): string => `${home.replace(/\/+$/, '')}/.claude/projects/${root.replace(/\/+$/, '').replace(/[^A-Za-z0-9]/g, '-')}/${sessionId}.jsonl`
+
+/**
+ * MOD-38: whether the quote (surrounding quotes stripped, whitespace, case and apostrophes folded, 12+ characters) sits in a user message:
+ * `transcript` when one within two minutes of `atMs` holds it, `transcript-untimed` when only a message with no time does.
+ */
+export function quoteEvidenced(quote: string, atMs: number, users: readonly UserMessage[]): 'transcript' | 'transcript-untimed' | undefined {
   const q = squash(quote.trim().replace(/^["'\u201c\u2018]+|["'\u201d\u2019]+$/g, ''))
-  if (q.length < EVIDENCE_MIN_CHARS) return false
-  return users.some(u => Math.abs(u.ms - atMs) <= EVIDENCE_WINDOW_MS && u.text.includes(q))
+  if (q.length < EVIDENCE_MIN_CHARS) return undefined
+  if (users.some(u => u.ms !== undefined && Math.abs(u.ms - atMs) <= EVIDENCE_WINDOW_MS && u.text.includes(q))) return 'transcript'
+  return users.some(u => u.ms === undefined && u.text.includes(q)) ? 'transcript-untimed' : undefined
 }
 
 export type DebriefCheck = {
   /** MOD-38: corrections the transcript evidenced (marked source: transcript, not counted toward the flag). */
   evidenced: number
+  /** Of those, matched on the quote alone (the transcript file could not be read). */
+  untimed: number
   /** false: the text is not a JSON object, nothing could be checked. */
   parsed: boolean
   /** The debrief with out-of-window entries removed. */
@@ -138,9 +172,9 @@ export function checkDebrief(text: string, window: DebriefWindow | undefined, us
   } catch {
     j = undefined
   }
-  if (j === null || typeof j !== 'object' || Array.isArray(j)) return { parsed: false, evidenced: 0, debrief: {}, stripped: [], strippedCount: 0, flagged: [], noAt: 0, clean: true, lines: [] }
+  if (j === null || typeof j !== 'object' || Array.isArray(j)) return { parsed: false, evidenced: 0, untimed: 0, debrief: {}, stripped: [], strippedCount: 0, flagged: [], noAt: 0, clean: true, lines: [] }
   const debrief: Record<string, unknown> = { ...(j as Record<string, unknown>) }
-  if (!window) return { parsed: true, evidenced: 0, debrief, stripped: [], strippedCount: 0, flagged: [], noAt: 0, clean: true, lines: ['debrief check: clean (no breadcrumb window to check against)'] }
+  if (!window) return { parsed: true, evidenced: 0, untimed: 0, debrief, stripped: [], strippedCount: 0, flagged: [], noAt: 0, clean: true, lines: ['debrief check: clean (no breadcrumb window to check against)'] }
   const firstMs = Date.parse(window.firstTs)
   const lastMs = Date.parse(window.lastTs)
   const stripped: string[] = []
@@ -148,6 +182,7 @@ export function checkDebrief(text: string, window: DebriefWindow | undefined, us
   let strippedCount = 0
   let noAt = 0
   let evidenced = 0
+  let untimed = 0
   let flaggedByEvidence = false
   for (const key of AT_LISTS) {
     const list = debrief[key]
@@ -168,9 +203,11 @@ export function checkDebrief(text: string, window: DebriefWindow | undefined, us
       } else if (Number.isNaN(firstMs) || Number.isNaN(lastMs) || (at.ms >= firstMs && at.ms <= lastMs)) {
         // MOD-38: a correction whose quote the transcript holds at its time is evidence whatever the breadcrumbs say
         const quote = key === 'corrections' ? quoteOf(entry) : undefined
-        if (quote !== undefined && quoteEvidenced(quote, at.ms, users)) {
+        const how = quote === undefined ? undefined : quoteEvidenced(quote, at.ms, users)
+        if (how !== undefined) {
           proven += 1
-          kept.push({ ...(entry as Record<string, unknown>), source: 'transcript' })
+          if (how === 'transcript-untimed') untimed += 1
+          kept.push({ ...(entry as Record<string, unknown>), source: how })
         } else kept.push(entry)
       } else why.push(`${new Date(at.ms).toISOString()} is ${at.ms < firstMs ? 'before' : 'after'} ${window.firstTs} to ${window.lastTs}`)
     }
@@ -191,8 +228,8 @@ export function checkDebrief(text: string, window: DebriefWindow | undefined, us
   const lines = [...stripped, ...flagged]
   if (noAt > 0) lines.push(`kept ${noAt} ${noAt === 1 ? 'entry' : 'entries'} with no usable at`)
   const onlyEvidence = clean && evidenced > 0 && flaggedByEvidence
-  lines.unshift(onlyEvidence ? `debrief check: clean (${evidenced} ${evidenced === 1 ? 'correction' : 'corrections'} evidenced by the transcript, none in the breadcrumbs)` : clean ? 'debrief check: clean' : `debrief check: ${strippedCount} stripped, ${flagged.length} flagged`)
-  return { parsed: true, evidenced, debrief, stripped, strippedCount, flagged, noAt, clean, lines }
+  lines.unshift(onlyEvidence ? `debrief check: clean (${evidenced} ${evidenced === 1 ? 'correction' : 'corrections'} evidenced by the transcript${untimed > 0 ? `, ${untimed} untimed: the transcript file could not be read, so the quote alone was matched` : ''}, none in the breadcrumbs)` : clean ? 'debrief check: clean' : `debrief check: ${strippedCount} stripped, ${flagged.length} flagged`)
+  return { parsed: true, evidenced, untimed, debrief, stripped, strippedCount, flagged, noAt, clean, lines }
 }
 
 const HOST_TEXT = /permission classifier|\bclassifier\b|safety check|\bengine\b|\bhost'?s?\b|\b(?:your|the user'?s|the person'?s|user|their|own) hooks?\b/i
