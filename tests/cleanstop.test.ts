@@ -115,6 +115,36 @@ describe('5E: the debrief without the harness', () => {
     for (const t of ['no, the other one', 'Stop.', "DON'T touch that", 'actually use pnpm', 'dont']) expect(isCorrection(t)).toBe(true)
     for (const t of ['now do it', 'nothing else', 'please stop', '', 'actuallyx']) expect(isCorrection(t)).toBe(false)
   })
+  test('MOD-39: pushback and challenge questions are corrections, anywhere in the message (issue 89)', () => {
+    // The card quotes these by fragment; the tails are completed here.
+    const caught = [
+      'i dont agree here and i think we should keep the old gate',
+      'shouldnt it open a browser window?',
+      'the gate reported on something false then alerted. bug?',
+    ]
+    for (const t of caught) expect(isCorrection(t)).toBe(true)
+    // A priority reversal with no marker: documented as not caught.
+    expect(isCorrection('do the release first, then the fix')).toBe(false)
+  })
+  test('MOD-39: thirteen benign prompts do not trip the detector', () => {
+    const benign = [
+      'do you agree with this plan?',
+      'if you disagree say so',
+      'what does it do?',
+      'go ahead and dispatch',
+      'can you check for new issues please?',
+      'lets fold in the new release',
+      'is there a bug tracker for this?',
+      'add a test for the bug path',
+      'it should open a browser window',
+      'great that sounds like what we need',
+      'why does the gate take so long? just curious',
+      'whats waiting on me at this point?',
+      'go for it do it',
+    ]
+    expect(benign.length).toBe(13)
+    for (const t of benign) expect(isCorrection(t)).toBe(false)
+  })
   test('friction events: appended with their kind, capped, counted', () => {
     let list: FrictionEvent[] = []
     for (let i = 0; i < 120; i += 1) list = addFriction(list, { kind: 'denial', detail: `Bash ${i}`, at: i })
