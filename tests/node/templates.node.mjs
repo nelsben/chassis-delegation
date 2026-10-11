@@ -24,6 +24,20 @@ describe('5C: hooks/templates/brief.md is repo-neutral', () => {
     // no line STARTS with an amend block: the verifier would read it as an amendment of every brief
     expect(t.split('\n').some(l => l.trim().startsWith('[[amend'))).toBe(false)
   })
+  test('MOD-16: it tells the worker its identity, and that the mod already sets it in every Bash call', async () => {
+    const { renderSections } = await import('../../hooks/lib/dispatch.ts')
+    const t = read('hooks/templates/brief.md')
+    const lines = t.split('\n').filter(l => l.includes('CHASSIS_SESSION_ID'))
+    expect(lines).toHaveLength(1)
+    for (const want of ['{{id}}-a<attempt>', 'CHASSIS_TASK', 'CHASSIS_ATTEMPT', 'already exports', 'every Bash call', 'do not set them yourself']) expect(lines[0].includes(want)).toBe(true)
+    // both modes carry it, and it is not an amend or report line
+    for (const here of [true, false]) {
+      const out = renderSections(t, here)
+      expect(out.split('\n').filter(l => l.includes('CHASSIS_SESSION_ID'))).toHaveLength(1)
+      expect(out.split('\n').some(l => l.includes('CHASSIS_SESSION_ID') && (l.trim().startsWith('[[amend') || l.trim().startsWith('[[report')))).toBe(false)
+    }
+  })
+
   test('GH-20: it says to save the red output before any source change, a NEW file per attempt, and to name it red= in the report', () => {
     const t = read('hooks/templates/brief.md')
     for (const want of ['before you change any source', '.delegation/{{id}}/red-<attempt>.txt', 'make the folder', 'gitignored', 'the verifier reads the tree, not git', 'NEW file', 'red=<path>']) {

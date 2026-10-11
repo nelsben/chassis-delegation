@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Each worker gets its own identity in its Bash environment (MOD-16; public
+  issue #24).** Workers inherited the brain's session id, and a vendored lock
+  script keys a hold on role plus session id, so two sibling workers on one
+  shared environment could release each other's live hold. Since 0.7.0 the mod
+  sees every worker's Bash calls, so its `tool.call` hook now runs a recorded
+  worker's command behind `export CHASSIS_SESSION_ID=<task>-a<attempt>
+  CHASSIS_TASK=<task> CHASSIS_ATTEMPT=<n>; ` (values shell-quoted; a subtask
+  other than `main` reads `BE-101.ui-a1`). The brain's own Bash, ad hoc agents
+  with no attempt record, the debrief and eval runners, and a command that
+  already sets `CHASSIS_SESSION_ID` are never rewritten. The git guard,
+  `delegateOnly` and the spend check judge the command as typed (the rewrite hook
+  is registered after them), so no refusal text or decision changes. The
+  identity is a pure function in the new `hooks/lib/identity.ts`; the brief
+  template gains one line telling the worker its identity and that it is already
+  set in every Bash call. No new option. The README's new "A worker's identity"
+  says what is set, for whom, and why; a `briefExtra` line asking workers to
+  prefix lock calls by hand is no longer needed.
+
 - **Work keeps moving without the person (MOD-15).** Since 0.7.0 dispatch prints
   an Agent call the brain makes, so the queue and the respawn ladder are advice,
   and a verdict row reached the brain only inside the person's next message.
