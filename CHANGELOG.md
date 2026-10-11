@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- **The debrief shows the agent's own process proposals, mod findings post to
+  the mod's tracker from any repo, and a post refuses while the redact list is
+  empty (MOD-18).** Does `/delegation debrief` cover the agent's process
+  improvements, improvements to the mod, and posting to the public repo? It half
+  did: the agent's proposals sat in a file nobody opened, and a finding could be
+  filed only where the repo file set `issueRepo`.
+  - When a debrief hands back, after the findings lines, the mod prints the
+    agent's own proposals from the debrief JSON: `proposals: n for you to
+    review (never posted)`, one `target · proposed_diff_summary` line per
+    `proposed_harness_changes` entry (cut to one line), and a count of
+    `harness_gaps` and `stale_memory`. None prints nothing.
+    `/delegation debrief post` shows the same block under the findings. The
+    proposals stay in the debrief file; they are never written to the
+    `.findings.json` and never posted.
+  - `issueRepo` defaults to the mod's own repository, read from the `repository`
+    (else `homepage`) field of `.claude-plugin/plugin.json`, which now carries
+    `repository`. A repo file that leaves the key out gets it, so a finding can
+    be posted from any repo the mod runs in (the first adopter's repo set none,
+    so nothing could be filed there). An explicit `"issueRepo": ""` in the repo
+    file still turns posting off. `/delegation` prints `issues: <owner/name>
+    (the mod's own tracker)` for the default. `init` and `setup` no longer
+    write `"issueRepo": ""` into a new repo file, which would now switch posting
+    off; they leave the key out and say so in a `_issueRepo` note. A repo file
+    written by an earlier init that already carries `"issueRepo": ""` keeps
+    posting off until you remove the line.
+  - `/delegation debrief post <n|all>` refuses to file anything while the
+    `redact` option in `/config` is empty, saying: set redact in /config to the
+    product, customer, employer and repo names this session must never publish,
+    then post again. The automatic scrub knows only the repo's folder name,
+    origin and git identity, so a product name that differs from the folder name
+    would otherwise reach a public issue. The read-only `post` still shows the
+    drafts, headed by the same warning.
+  - The README's debrief section names what each list is for (`mod_findings`:
+    the tracker after your go; `host_findings`: never; the agent's proposals:
+    you, never posted), the default `issueRepo` and the empty-redact refusal.
+
 - **The verdict says what it checked: `verified` becomes `consistent`
   (MOD-19; public issue #1).** Two adopters reported it independently: when
   every claim held, the row said `verified` and `next=accept`, which reads as

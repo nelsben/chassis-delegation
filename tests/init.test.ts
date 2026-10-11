@@ -92,6 +92,12 @@ describe('5B: the scaffolded files are usable as written', () => {
     expect(e.domains).toEqual(['frontend', 'backend', 'ops', 'dispatcher', 'cross', 'shared'])
     expect(JSON.parse(CONFIG_TEMPLATE)._comment).toContain('defaults < this file < /config')
   })
+  test("MOD-18: a fresh config leaves issueRepo unset, so the mod's own tracker is the default; the comment says how to turn posting off", () => {
+    const o = JSON.parse(CONFIG_TEMPLATE) as Record<string, unknown>
+    expect('issueRepo' in o).toBe(false)
+    expect(String(o._issueRepo)).toContain("mod's own tracker")
+    expect(String(o._issueRepo)).toContain('""')
+  })
   test('the cards README names the frontmatter fields', () => {
     for (const f of ['id:', 'title:', 'domain:', 'tier:', 'status:', 'scope:', 'forbid:', 'red_test:', 'gate:', 'budget:']) expect(TASKS_README).toContain(f)
   })

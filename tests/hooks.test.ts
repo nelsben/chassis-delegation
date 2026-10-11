@@ -2426,7 +2426,7 @@ describe('MOD-7: /delegation debrief post', () => {
     expect(w.runs.some(r => r.argv.join(' ').includes('issue list'))).toBe(true)
   })
 
-  test('post 1 runs exactly one gh issue create with that argv and records the number', { options: { autoEval: false } }, async ($, on) => {
+  test('post 1 runs exactly one gh issue create with that argv and records the number', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
     const w = world(on, { files, dirs, run: ghRun })
     await $.session.start(sessionStart)
     const out = String((await $.command.run(delegation('debrief post 1'))).text)
@@ -2441,7 +2441,7 @@ describe('MOD-7: /delegation debrief post', () => {
     expect(w.runs.filter(r => isWrite(r.argv)).map(r => r.argv[6])).toEqual(['Accepted row stayed owed', '[went well] Debrief wrote findings at once'])
   })
 
-  test('a covered finding is skipped under all and commented when named', { options: { autoEval: false } }, async ($, on) => {
+  test('a covered finding is skipped under all and commented when named', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
     const covered = JSON.stringify([{ number: 9, title: 'Accepted row stayed owed forever', body: '**Surface:** /delegation accept' }])
     const w = world(on, { files, dirs, run: argv => (argv[2] === 'list' ? { exitCode: 0, stdout: covered } : ghRun(argv)) })
     await $.session.start(sessionStart)
@@ -2454,7 +2454,7 @@ describe('MOD-7: /delegation debrief post', () => {
     expect(w.runs.filter(r => isWrite(r.argv)).map(r => r.argv.slice(0, 5))).toContainEqual(['gh', 'issue', 'comment', '9', '--repo'])
   })
 
-  test('MOD-10: post with two mod findings and one host finding lists two and says one set aside; it files only the two', { options: { autoEval: false } }, async ($, on) => {
+  test('MOD-10: post with two mod findings and one host finding lists two and says one set aside; it files only the two', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
     const host = one({ surface: 'permission classifier', title: 'The classifier denied a read' })
     const withHost = JSON.stringify({ findings: JSON.parse(FILE).findings, host_findings: [host] })
     const w = world(on, { files: { [FINDINGS]: withHost, [REPO_FILE]: '{"issueRepo":"owner/mod"}' }, dirs, run: ghRun })
@@ -2468,8 +2468,8 @@ describe('MOD-7: /delegation debrief post', () => {
     expect(w.runs.filter(r => isWrite(r.argv))).toHaveLength(2)
   })
 
-  test('with issueRepo empty it says so and posts nothing', { options: { autoEval: false } }, async ($, on) => {
-    const w = world(on, { files: { [FINDINGS]: FILE }, dirs, run: ghRun })
+  test('with issueRepo empty it says so and posts nothing', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { files: { [FINDINGS]: FILE, [REPO_FILE]: '{"issueRepo":""}' }, dirs, run: ghRun })
     await $.session.start(sessionStart)
     const out = String((await $.command.run(delegation('debrief post 1'))).text)
     expect(out).toContain('issueRepo')
@@ -2484,6 +2484,153 @@ describe('MOD-7: /delegation debrief post', () => {
     const body = w.files.get(`${FOLDER}/2026-10-10-mod-run.post-1.md`) ?? ''
     expect(body.toLowerCase()).not.toContain('globex')
     expect(body).toContain('<redacted> broke it')
+  })
+
+  const REDACT_WARNING = 'set redact in /config to the product, customer, employer and repo names this session must never publish, then post again'
+  const MANIFEST = JSON.stringify({ name: 'chassis-delegation', version: '0.7.0', repository: 'https://github.com/acme/mod' })
+  /** Puts the mod's manifest where the loaded copy keeps it; the plugin folder is the one /delegation says it loaded from. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const withManifest = async ($: any, w: { files: Map<string, string> }, text: string = MANIFEST): Promise<void> => {
+    const first = String((await $.command.run(delegation(''))).text)
+    const root = /loaded from (\S+)/.exec(first)?.[1] ?? ''
+    w.files.set(`${root}/.claude-plugin/plugin.json`, text)
+  }
+
+  test('MOD-18: with the redact list empty, post 1 runs no gh write and prints the set-redact line', { options: { autoEval: false } }, async ($, on) => {
+    const w = world(on, { files, dirs, run: ghRun })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief post 1'))).text)
+    expect(out).toContain(REDACT_WARNING)
+    expect(w.runs.some(r => isWrite(r.argv))).toBe(false)
+    expect(w.files.has(`${FOLDER}/2026-10-10-mod-run.post-1.md`)).toBe(false)
+    expect(JSON.parse(w.files.get(FINDINGS) ?? '{}').findings[0].issue).toBeUndefined()
+    // all is refused the same way
+    expect(String((await $.command.run(delegation('debrief post all'))).text)).toContain(REDACT_WARNING)
+    expect(w.runs.some(r => isWrite(r.argv))).toBe(false)
+  })
+
+  test('MOD-18: with the redact list set, post 1 files as before', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { files, dirs, run: ghRun })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief post 1'))).text)
+    expect(out).not.toContain(REDACT_WARNING)
+    expect(w.runs.filter(r => isWrite(r.argv)).map(r => r.argv[2])).toEqual(['create'])
+    expect(out).toContain('#31')
+  })
+
+  test('MOD-18: post alone with the redact list empty still shows the drafts, headed by the same warning', { options: { autoEval: false } }, async ($, on) => {
+    const w = world(on, { files, dirs, run: ghRun })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief post'))).text)
+    expect(out.split('\n')[0]).toContain(REDACT_WARNING)
+    expect(out).toContain('[1] new')
+    expect(out).toContain('[2] new')
+    expect(w.runs.some(r => isWrite(r.argv))).toBe(false)
+  })
+
+  test('MOD-18: post alone with the redact list set carries no warning', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    world(on, { files, dirs, run: ghRun })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief post'))).text)
+    expect(out).not.toContain(REDACT_WARNING)
+    expect(out).toContain('[1] new')
+  })
+
+  test('MOD-18: a repo file without issueRepo shows the mod\'s own tracker on /delegation, and one that names a repo shows only that', { options: { autoEval: false } }, async ($, on) => {
+    const w = world(on, { files: { [REPO_FILE]: '{"maxWorkers":2}' } })
+    await $.session.start(sessionStart)
+    await withManifest($, w)
+    const out = String((await $.command.run(delegation(''))).text)
+    expect(out).toContain("issues: acme/mod (the mod's own tracker)")
+    w.files.set(REPO_FILE, '{"issueRepo":"owner/other"}')
+    const named = String((await $.command.run(delegation(''))).text)
+    expect(named).toContain('issues: owner/other')
+    expect(named).not.toContain("own tracker")
+    w.files.set(REPO_FILE, '{"issueRepo":""}')
+    expect(String((await $.command.run(delegation(''))).text)).not.toContain('issues:')
+  })
+
+  test('MOD-18: with no issueRepo in the repo file the default repo is the one gh is asked about, and a post goes to it', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { files: { [FINDINGS]: FILE, [REPO_FILE]: '{"maxWorkers":2}' }, dirs, run: ghRun })
+    await $.session.start(sessionStart)
+    await withManifest($, w)
+    const out = String((await $.command.run(delegation('debrief post 1'))).text)
+    expect(out).toContain('#31')
+    const gh = w.runs.filter(r => r.argv[0] === 'gh').map(r => r.argv)
+    expect(gh.map(a => a[a.indexOf('--repo') + 1])).toEqual(['acme/mod', 'acme/mod'])
+    expect(gh.map(a => a[2])).toEqual(['list', 'create'])
+  })
+
+  test('MOD-18: a manifest that names no repository leaves posting off, as before', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { files: { [FINDINGS]: FILE }, dirs, run: ghRun })
+    await $.session.start(sessionStart)
+    await withManifest($, w, JSON.stringify({ name: 'chassis-delegation', version: '0.7.0' }))
+    const out = String((await $.command.run(delegation('debrief post 1'))).text)
+    expect(out).toContain('issueRepo')
+    expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
+  })
+
+  describe("MOD-18: the agent's own proposals under the findings", () => {
+    const DEBRIEF = `${FOLDER}/2026-10-10-mod-run.json`
+    const PROPOSALS = {
+      proposed_harness_changes: [
+        { target: 'CLAUDE.md', rationale: 'r1', proposed_diff_summary: 'Add a rule that a card names its gate.' },
+        { target: 'memory/feedback.md', rationale: 'r2', proposed_diff_summary: 'Note that the verdict row is read first.' },
+      ],
+      harness_gaps: ['a rule would have stopped the rework'],
+      stale_memory: ['the old gate note'],
+    }
+    const finding = one({})
+    const shown = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
+
+    test('the hand-back prints the proposals after the findings lines', { options: { autoEval: false } }, async ($, on) => {
+      const w = world(on, { listAgents: true, files: { [DEBRIEF]: JSON.stringify({ summary: 'x', mod_findings: [finding], ...PROPOSALS }) } })
+      await $.session.start(sessionStart)
+      await $.command.run(delegation('debrief'))
+      await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+      const text = shown(w)
+      expect(text).toContain('proposals: 2 for you to review (never posted)')
+      expect(text).toContain('CLAUDE.md · Add a rule that a card names its gate.')
+      expect(text).toContain('memory/feedback.md · Note that the verdict row is read first.')
+      expect(text).toContain('harness_gaps: 1 · stale_memory: 1')
+      expect(text.indexOf('proposals: 2')).toBeGreaterThan(text.indexOf(`drafts: ${FINDINGS}`))
+      // never posted: they are not in the findings file
+      expect(w.files.get(FINDINGS) ?? '').not.toContain('Add a rule')
+    })
+
+    test('proposals still print when there are no mod findings', { options: { autoEval: false } }, async ($, on) => {
+      const w = world(on, { listAgents: true, files: { [DEBRIEF]: JSON.stringify({ mod_findings: [], ...PROPOSALS }) } })
+      await $.session.start(sessionStart)
+      await $.command.run(delegation('debrief'))
+      await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+      const text = shown(w)
+      expect(text).toContain('no findings')
+      expect(text.indexOf('proposals: 2')).toBeGreaterThan(text.indexOf('no findings'))
+    })
+
+    test('a debrief with none prints no proposals line', { options: { autoEval: false } }, async ($, on) => {
+      const w = world(on, { listAgents: true, files: { [DEBRIEF]: JSON.stringify({ mod_findings: [finding], proposed_harness_changes: [], harness_gaps: [], stale_memory: [] }) } })
+      await $.session.start(sessionStart)
+      await $.command.run(delegation('debrief'))
+      await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+      expect(shown(w)).not.toContain('proposals:')
+    })
+
+    test('/delegation debrief post shows the same block under the findings, from the debrief the findings file names', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+      const named = JSON.stringify({ debrief: DEBRIEF, modVersion: '0.7.0', scrubbed: true, findings: [finding] })
+      const w = world(on, { files: { [FINDINGS]: named, [DEBRIEF]: JSON.stringify({ mod_findings: [finding], ...PROPOSALS }), [REPO_FILE]: '{"issueRepo":"owner/mod"}' }, dirs, run: ghRun })
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(delegation('debrief post'))).text)
+      expect(out).toContain('proposals: 2 for you to review (never posted)')
+      expect(out).toContain('CLAUDE.md · Add a rule that a card names its gate.')
+      expect(out.indexOf('proposals: 2')).toBeGreaterThan(out.indexOf('[1] new'))
+      const filed = String((await $.command.run(delegation('debrief post 1'))).text)
+      expect(filed).toContain('proposals: 2 for you to review (never posted)')
+      expect(w.runs.filter(r => isWrite(r.argv))).toHaveLength(1)
+      // and with none in the debrief, nothing
+      w.files.set(DEBRIEF, JSON.stringify({ mod_findings: [finding] }))
+      expect(String((await $.command.run(delegation('debrief post'))).text)).not.toContain('proposals:')
+    })
   })
 })
 
