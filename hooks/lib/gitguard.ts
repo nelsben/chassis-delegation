@@ -297,3 +297,61 @@ export function guardDeny(w: GitWrite, currentBranch: string | undefined, guarde
   if (w.state.kind === 'on') return deny(w.state.branch)
   return currentBranch !== undefined && guarded.includes(currentBranch) ? deny(currentBranch) : undefined
 }
+
+// ---- MOD-35: what a merge command names ----------------------------------------------------
+export type MergeTargets = {
+  /** Branches named by `git merge` or `gh pr merge` (a bare `gh pr merge` names none: it merges the current branch). */
+  branches: string[]
+  /** PR numbers named by `gh pr merge <n | url>`. */
+  prs: string[]
+  /** A `gh pr merge` that names no PR or branch: it merges the current branch's PR. */
+  current: boolean
+}
+
+const MERGE_SEPS = new Set(SEPS)
+// gh pr merge flags that take a value in the next word
+const GH_MERGE_VALUE_FLAGS = new Set(['-b', '--body', '-F', '--body-file', '-t', '--subject', '-A', '--author-email', '--match-head-commit', '-R', '--repo'])
+const GIT_MERGE_VALUE_FLAGS = new Set(['-m', '--message', '-F', '--file', '-s', '--strategy', '-X', '--strategy-option', '-S', '--gpg-sign'])
+
+/** `agent/<domain>/<id>` (or `origin/agent/<domain>/<id>`) → the task id; anything else → undefined. */
+export const taskOfBranch = (branch: string): string | undefined => /^(?:origin\/|refs\/heads\/)?agent\/[^/\s]+\/([^/\s]+)$/.exec(branch)?.[1]
+
+/**
+ * Reads a Bash command for the merges it makes: `gh pr merge <pr | branch | url>`
+ * and `git merge <branch>`, each only at the head of a command. Flags are skipped.
+ */
+export function mergeTargets(command: string): MergeTargets {
+  const out: MergeTargets = { branches: [], prs: [], current: false }
+  const toks = tokenize(command)
+  for (let i = 0; i < toks.length; i += 1) {
+    if (i > 0 && !MERGE_SEPS.has(toks[i - 1] as string)) continue
+    let j = i
+    while (toks[j] === 'env' || /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[j] ?? '')) j += 1
+    const gh = toks[j] === 'gh' && toks[j + 1] === 'pr' && toks[j + 2] === 'merge'
+    let k = -1
+    if (gh) k = j + 3
+    else if (toks[j] === 'git') {
+      let m = j + 1
+      while (m < toks.length && (toks[m] === '-C' || toks[m] === '-c')) m += 2
+      if (toks[m] === 'merge') k = m + 1
+    }
+    if (k < 0) continue
+    const valueFlags = gh ? GH_MERGE_VALUE_FLAGS : GIT_MERGE_VALUE_FLAGS
+    let named = false
+    for (; k < toks.length && !MERGE_SEPS.has(toks[k] as string); k += 1) {
+      const w = toks[k] as string
+      if (w.startsWith('-')) {
+        if (valueFlags.has(w)) k += 1
+        continue
+      }
+      named = true
+      if (gh) {
+        const pr = /^(?:#)?(\d+)$/.exec(w)?.[1] ?? /\/pull\/(\d+)(?:[/?#].*)?$/.exec(w)?.[1]
+        if (pr) out.prs.push(pr)
+        else out.branches.push(w)
+      } else out.branches.push(w)
+    }
+    if (gh && !named) out.current = true
+  }
+  return out
+}

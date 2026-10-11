@@ -30,6 +30,8 @@ import {
   patchRecord,
   patchReview,
   priorRedHashes,
+  acceptRow,
+  ledgerHas,
   retireDue,
   retirePatch,
   verifyTarget,
@@ -178,7 +180,7 @@ import {
 } from './lib/evaltrigger'
 import { engineLockDecision, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
 import { currentLine } from './lib/legacy'
-import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguard'
+import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
@@ -1523,6 +1525,11 @@ function appendLedger($: Host, row: Record<string, unknown>): Promise<unknown> {
     async () => {
       const path = `${await $.session.root()}/${LEDGER_FILE}`
       const prev = (await readText($, path)) ?? ''
+      // MOD-35: one row per key (an accept per task attempt; a verdict per task, attempt, sha, verdict): a second arrival of the same hand-back writes nothing
+      if (ledgerHas(prev, row)) {
+        debug($, `ledger row for ${String(row.task)} attempt ${String(row.attempt)} already written; repeat skipped`)
+        return
+      }
       await $.fs.write(path, `${prev}${prev === '' || prev.endsWith('\n') ? '' : '\n'}${JSON.stringify(row)}\n`)
     },
     () => undefined,
@@ -1635,6 +1642,7 @@ async function retireCheck($: Host, label: string, t: number): Promise<{ retired
     if (!retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
     const patch = retirePatch(await retireProbe($, task, last.sha), t)
     await storeSet($, K.tasks(task), patchRecord(await loadAttempts($, task), subtask, last.attempt, patch))
+    if (patch.retired === 'merged') await appendLedger($, acceptRow(last, 'merged', t))
     return { retired: patch.retired !== undefined, checked: patch.retireCheckedAt !== undefined || last.retireCheckedAt !== undefined }
   } catch (err) {
     debug($, `${label}: retire check failed: ${String(err)}`)
@@ -1651,8 +1659,60 @@ async function acceptTask($: Host, rest: string): Promise<string> {
   const last = attemptsFor(records, subtask).at(-1)
   if (!last) return `/delegation accept: no attempts recorded for ${id}; nothing changed`
   const note = words.join(' ')
-  await storeSet($, K.tasks(task), patchRecord(records, subtask, last.attempt, { retired: 'accepted', accepted: { ...(note ? { note } : {}), at: await now($) } }))
+  const at = await now($)
+  await storeSet($, K.tasks(task), patchRecord(records, subtask, last.attempt, { retired: 'accepted', accepted: { ...(note ? { note } : {}), at } }))
+  await appendLedger($, { ...acceptRow(last, 'accepted', at), sessionId: await sessionIdOf($) })
   return `accepted ${id} by hand (attempt ${last.attempt})${note ? `: ${note}` : ''}; its owed row is retired`
+}
+
+/**
+ * MOD-35: is this hand-back's task already on the default branch (or accepted)? MOD-4's retire check answers: the
+ * attempt's sha an ancestor of origin/main, the card there reading merged, or an accept already recorded. Only a
+ * consistent verdict of a real worker is asked about; a refuted, over-spend or reviewed one is always woken for.
+ */
+async function alreadyMerged($: Host, spawn: SpawnRecord): Promise<boolean> {
+  if (spawn.adhoc || spawn.review || spawn.replay) return false
+  try {
+    const rec = attemptsFor(await loadAttempts($, spawn.task), spawn.subtask).find(r => r.attempt === spawn.attempt)
+    if (rec?.verdict !== 'consistent') return false
+    return (await retireCheck($, taskLabel(spawn.task, spawn.subtask), await now($))).retired
+  } catch (err) {
+    debug($, `${taskLabel(spawn.task, spawn.subtask)}: merged check failed: ${String(err)}`)
+    return false
+  }
+}
+
+/** MOD-35: the brain ran `gh pr merge` / `git merge` naming a task's branch or PR: its last attempt retires as merged, with an accept row. */
+async function noteMergeCommand($: Host, command: string): Promise<void> {
+  const targets = mergeTargets(command)
+  const tasks = new Set<string>()
+  for (const b of targets.branches) {
+    const id = taskOfBranch(b)
+    if (id) tasks.add(id)
+  }
+  if (targets.current) {
+    const id = taskOfBranch((await branchOf($, await bashCwd($, undefined))) ?? '')
+    if (id) tasks.add(id)
+  }
+  if (targets.prs.length > 0) {
+    const sid = await sessionIdOf($)
+    const recent = sid ? ((await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []) : []
+    for (const r of recent) {
+      if (r.pr && targets.prs.some(n => new RegExp(`(^|[/#])${n}$`).test(r.pr as string))) tasks.add(splitLabel(r.task).task)
+    }
+  }
+  const t = await now($)
+  for (const id of tasks) {
+    try {
+      const records = await loadAttempts($, id)
+      const last = attemptsFor(records, 'main').at(-1) ?? records.filter(r => r.kind !== 'review' && !r.replay).sort((a, b) => a.attempt - b.attempt).at(-1)
+      if (!last) continue
+      if (!last.retired) await storeSet($, K.tasks(id), patchRecord(records, last.subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }))
+      await appendLedger($, { ...acceptRow(last, 'merged', t), sessionId: await sessionIdOf($) })
+    } catch (err) {
+      debug($, `${id}: merge not recorded: ${String(err)}`)
+    }
+  }
 }
 
 async function recipeDir($: Host): Promise<string | undefined> {
@@ -4653,6 +4713,16 @@ export const register: Register = (on, opts) => {
     return out
   })
 
+  // ---- MOD-35: the brain merges a task: the ledger gets its accept row ---------------
+  // Registered ahead of the git guard so it sees what the guard let through.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const command = typeof e.command === 'string' ? e.command : ''
+    const out = await next(e)
+    if (e.agentId || out.deny !== undefined || out.isError === true || !/\bmerge\b/.test(command)) return out
+    await noteMergeCommand($, command)
+    return out
+  })
+
   // ---- 5D: the git guard on Bash -----------------------------------------------------
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     if (!cfg.gitGuard) return next(e)
@@ -4795,7 +4865,11 @@ export const register: Register = (on, opts) => {
         const text = [...(row !== undefined ? [row] : []), ...ready].join('\n')
         await appendRow($, text)
         // MOD-15: the verdict wakes the brain as a turn of its own (a foreground worker's rides its Agent result: no row here)
-        await wakeBrain($, text)
+        // MOD-35: not for a task already on the default branch: its next=accept is stale; a `ready:` line still wakes
+        if (row !== undefined && spawn && (await alreadyMerged($, spawn))) {
+          debug($, `wake skipped: ${taskLabel(spawn.task, spawn.subtask)} already merged`)
+          await wakeBrain($, ready.join('\n'))
+        } else await wakeBrain($, text)
       }
       // idle counts from the last turn of either loop
       if (!inTurn) armIdle($)
