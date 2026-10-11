@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.9.1, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.2, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,19 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.9.1 to 0.9.2
+
+What the brain will see:
+
+- **A stale verdict wake no longer arrives (MOD-51, MOD-57).** A held verdict wake is dropped once the brain has resumed the worker or the task has merged, so the brain is not woken for a verdict it already acted on.
+- **A once-a-session row starts a fresh session (MOD-53).** `/delegation` and the dashboard show a fresh-session row past the option `freshSessionTokens`, default 400K, so the brain can start a fresh session when a long one has grown past it.
+- **Dispatch warns on a wide scope and hints at economy (MOD-54).** A scope of more than six files warns at dispatch, and a small card gets a hint that economy would do.
+- **Bold done-when paths no longer warn (MOD-52).** A path set in bold in a card's done-when is read as the path it names, so it does not raise a warning.
+- **A gate failure that only a forbidden file can fix comes back with an amend (MOD-55).** The brain gets a `forbid-=` amend to approve, then resumes the worker.
+- **A worker stopped by a usage limit is recorded as rate limited (MOD-56).** It reads `no-report (rate limited)`, and the queue says `held:` instead of `ready:` until the brain spawns again.
+
+What to do: nothing in an existing repo's config needs to change; set `freshSessionTokens` to `0` in `/config` to turn the fresh-session row off.
 
 ### From 0.9.0 to 0.9.1
 

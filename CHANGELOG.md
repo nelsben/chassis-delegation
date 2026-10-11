@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.2 — 2026-10-12
 
 - **A held wake is dropped when the brain already messaged its worker (MOD-57).** A resume after a consistent
   verdict is recorded only at the worker's next hand-back, so a held `next=accept` wake still reached the brain at
