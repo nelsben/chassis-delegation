@@ -40,6 +40,8 @@ export type QueuedSpawn = {
   cwd?: string
   task: string
   subtask?: string
+  /** MOD-44: the other local repo the task is for (its absolute path); absent for a task of the session's own repo. */
+  repo?: string
   /** ms since the epoch when it was queued. */
   at: number
 }

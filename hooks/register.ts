@@ -179,7 +179,7 @@ import {
   shouldEval,
   type EvalTier,
 } from './lib/evaltrigger'
-import { engineLockDecision, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
+import { engineLockDecision, gateCommandTemplates, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
 import { currentLine } from './lib/legacy'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
@@ -189,7 +189,8 @@ import { CARD_TOOL, cardsFromFields, cardSummary, doneWhenOf, forbidCollisions, 
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
-import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type RepoConfig, type ReviewMode } from './lib/repoconfig'
+import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
+import { isRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
 import {
   parseReviewBlock,
   parseReviewMarker,
@@ -314,6 +315,8 @@ const K = {
   engineGate: 'delegation.engineGate',
   /** MOD-22: the listing of a research card's absolute scope and forbid roots, taken at /dispatch. */
   outside: (task: string) => `delegation.outside.${task}`,
+  /** MOD-44: the other local repo a task is for (its absolute path), so the id alone finds its card, brief and tree. */
+  taskRepo: (task: string) => `delegation.taskRepo.${task}`,
 }
 
 const PROBE_EVERY_MS = 24 * 60 * 60 * 1000
@@ -403,6 +406,8 @@ type SpawnRecord = {
   verdictLine?: string
   /** GH-16: a repo=here worker: the checkout it shares (the session root). */
   here?: string
+  /** MOD-44: the other local repo this worker's task is for (its absolute path); absent for a task of the session's own repo. */
+  repo?: string
   /**
    * MOD-21: set on a reviewer's record. `attempt` is the attempt it reviews; `worker` is that worker's agent id
    * (the resume goes to it), `sha` the commit under review. A reviewer is on no ladder, holds no slot, and edits nothing.
@@ -623,7 +628,9 @@ let templatesLoad: Promise<LoadedTemplates> | undefined
 /** MOD-3: the folder this copy of the mod loaded from; the one dir `git merge --ff-only origin/main` may run in. */
 let loadedRoot = ''
 let sessionRoot = ''
-const allowCfg = (): AllowConfig => ({ gateTemplates: cfg.gateTemplates, domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}) })
+/** MOD-44: the tasks that work in another local repo, by id: the checkout, its own domains and the gate commands its tasks may run. Filled when a task is dispatched or judged. */
+const taskRepos = new Map<string, { path: string; domains: string[]; gateTemplates: string[][] }>()
+const allowCfg = (): AllowConfig => ({ gateTemplates: taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates, ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}) })
 
 // ---- small host helpers (fail-open) ---------------------------------------
 function debug($: Host, text: string) {
@@ -757,6 +764,120 @@ async function loadRepoConfig($: Host): Promise<void> {
   const errors = [...parsed.errors, ...next.errors]
   for (const err of errors) debug($, `${REPO_CONFIG_FILE}: ${err}`)
   if (errors.length > 0) $.ui.toast(`${PLUGIN}: ${REPO_CONFIG_FILE}: ${errors[0]}${errors.length > 1 ? ` (+${errors.length - 1} more in the debug log)` : ''}`)
+}
+
+// ---- MOD-44: a task for another local repo ---------------------------------------------------------
+/** What the mod needs of another local repo for the tasks that name it: its config (when it has one), else its detected gate. */
+type Target = {
+  path: string
+  name: string
+  /** It has its own .chassis-delegation.json. */
+  hasConfig: boolean
+  /** Its gate map: the config's, else `{ test: <detected command> }`; empty when it has neither. */
+  gateMap: Record<string, string>
+  /** The gate map came from detection (no config, or a config with no gateMap). */
+  detected: boolean
+  domains: string[]
+  cardDir: string
+  spendByTier: Effective['spendByTier']
+  baseRef: string
+}
+
+/** `repo` as a checkout of another local repo: its normalised path, or why it is refused. */
+async function resolveRepo($: Host, value: string, root: string): Promise<{ path: string } | { error: string }> {
+  const checked = repoPathCheck(value, await homeOf($), root)
+  if ('error' in checked) return checked
+  return (await exists($, `${checked.path}/.git`)) ? checked : { error: NOT_A_CHECKOUT }
+}
+
+/** setup's detectGate on another folder: the test command it already has (package.json scripts.test, pytest, cargo, go), or undefined. */
+async function detectGateIn($: Host, dir: string): Promise<string | undefined> {
+  const markers: string[] = []
+  for (const m of ROOT_MARKERS) if (await exists($, `${dir}/${m}`)) markers.push(m)
+  const packageJson = markers.includes('package.json') ? await readText($, `${dir}/package.json`) : undefined
+  let pyTests = false
+  try {
+    pyTests = (await $.fs.list(`${dir}/tests`)).some(e => /^test_.*\.py$/.test(e.name))
+  } catch {
+    pyTests = false
+  }
+  const onPath: string[] = []
+  if (markers.includes('pyproject.toml') || pyTests) {
+    let path = ''
+    try {
+      path = (await $.env.get('PATH')) ?? ''
+    } catch {
+      path = ''
+    }
+    for (const d of path.split(':').filter(x => x !== '')) {
+      if (await exists($, `${d.replace(/\/+$/, '')}/pytest`)) {
+        onPath.push('pytest')
+        break
+      }
+    }
+  }
+  return detectGate({ markers, ...(packageJson !== undefined ? { packageJson } : {}), pyTests, onPath } as unknown as SetupProbe)?.command
+}
+
+/** The checkout at `path` (already resolved): its config read fresh, its gate detected when the config names none. */
+async function loadTarget($: Host, path: string): Promise<Target> {
+  const text = await readText($, `${path}/${REPO_CONFIG_FILE}`)
+  const parsed = text === undefined ? { config: {} as RepoConfig, errors: [] as string[] } : parseRepoConfig(text)
+  for (const err of parsed.errors) debug($, `${path}/${REPO_CONFIG_FILE}: ${err}`)
+  const eff = mergeConfig(parsed.config, {})
+  let gateMap = eff.gateMap
+  let detected = false
+  if (Object.keys(gateMap).length === 0) {
+    const found = await detectGateIn($, path)
+    if (found) {
+      gateMap = { test: found }
+      detected = true
+    }
+  }
+  return { path, name: repoFolderName(path), hasConfig: text !== undefined, gateMap, detected, domains: eff.domains, cardDir: eff.cardDir, spendByTier: eff.spendByTier, baseRef: eff.baseRef }
+}
+
+/** Where a target's cards are: its own cardDir when it has a config, else the session's .delegation/cards/<its folder name>/. */
+const targetCardsDir = (root: string, t: Target): string => (t.hasConfig ? cardDirPath(t.path, t.cardDir) : sessionCardsFor(root, t.path))
+
+/** The gate a card names in a target's own terms: each id as its command, a one-off command as itself. */
+const gateCommands = (t: Target, ids: readonly string[]): string => ids.map(g => t.gateMap[g] ?? g).join(', ')
+
+/** `repo: <path> (config: its own | none, gate: <cmd>)`: what the dry run prints. */
+const repoLine = (t: Target, ids: readonly string[]): string => `repo: ${t.path} (config: ${t.hasConfig ? 'its own' : 'none'}, gate: ${gateCommands(t, ids) || '(none)'})`
+
+/** The commands a card's one-off gate entries name: those that are not ids in the target's gate map and pass the gate rules. */
+const oneOffGates = (t: Target, ids: readonly string[]): string[][] =>
+  ids.filter(g => t.gateMap[g] === undefined && /\s/.test(g)).flatMap(g => {
+    const parsed = gateCommandTemplates(g)
+    return 'templates' in parsed ? parsed.templates : []
+  })
+
+/** Lets the allowlist see this task's repo: `git -C <path> worktree add` for the task, and the repo's gate commands. */
+function registerTaskRepo(task: string, t: Target, gateIds: readonly string[]): void {
+  const templates = [...gateTemplatesOf(t.gateMap), ...oneOffGates(t, gateIds)]
+  taskRepos.set(task, { path: t.path, domains: t.domains, gateTemplates: templates })
+}
+
+/**
+ * MOD-44: the other repo a brief names (`repo=<abs path>`), loaded and registered with the allowlist; undefined for a
+ * brief of the session's own repo (or `repo=here|none`). A brief written before MOD-44 may hold `repo=<worktree dir>`:
+ * that is read as a checkout too, harmlessly (it only lets that task name that folder).
+ */
+async function adoptRepo($: Host, task: string, header: BriefHeader | undefined): Promise<Target | undefined> {
+  const value = header?.repo
+  if (!value || !value.startsWith('/')) return undefined
+  let root = ''
+  try {
+    root = (await $.session.root()).replace(/\/+$/, '')
+  } catch {
+    return undefined
+  }
+  const path = value.replace(/\/+$/, '')
+  if (path === root) return undefined
+  const t = await loadTarget($, path)
+  registerTaskRepo(task, t, (header?.gate ?? '').split(',').map(g => g.trim()).filter(Boolean))
+  return t
 }
 
 // ---- $.state for the band/pane (part 4 reads it) ---------------------------
@@ -962,7 +1083,7 @@ async function worktreeList($: Host, root: string, t: number): Promise<string> {
 }
 
 /** Everything the band and the pane draw: the session's facts gathered, the model made by live.ts. */
-async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number }[]; waits: ReadonlyMap<string, ResourceWait> }> {
+async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number; repo?: string }[]; waits: ReadonlyMap<string, ResourceWait> }> {
   const t = await now($)
   const live = await liveState($)
   const queue = await readQueue($)
@@ -1010,7 +1131,7 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     owed: live.pending.length,
     ...(brain ? { brain } : {}),
   })
-  return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t })), waits }
+  return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits }
 }
 
 /** One sample of the session's dollars; the next waits 15 s while a worker is live or queued, else 60 s. */
@@ -1106,7 +1227,7 @@ async function sessionIdOf($: Host): Promise<string> {
   }
 }
 /** MOD-37: who made an attempt: the session whose brain spawned it and that session's root. */
-async function ownerFields($: Host): Promise<{ sessionId?: string; root?: string }> {
+async function ownerFields($: Host, repo?: string): Promise<{ sessionId?: string; root?: string }> {
   const sessionId = await sessionIdOf($)
   let root = ''
   try {
@@ -1114,7 +1235,17 @@ async function ownerFields($: Host): Promise<{ sessionId?: string; root?: string
   } catch {
     // no repo
   }
+  // MOD-44: a task for another local repo records that repo as its root
+  if (repo) root = repo
   return { ...(sessionId ? { sessionId } : {}), ...(root ? { root } : {}) }
+}
+/** The session root, '' when there is none. */
+async function sessionRootOf($: Host): Promise<string> {
+  try {
+    return await $.session.root()
+  } catch {
+    return ''
+  }
 }
 async function readText($: Host, path: string): Promise<string | undefined> {
   try {
@@ -1145,7 +1276,7 @@ type Live = {
   /** Briefed workers running with their verdict still out: what holds a scheduler slot. */
   workers: { label: string; agentId: string; spawn: SpawnRecord }[]
   /** Briefed workers that handed back and whose verdict is not in, and verifies in flight. */
-  pending: { task: string; agentId?: string }[]
+  pending: { task: string; agentId?: string; repo?: string }[]
   queued: number
 }
 
@@ -1165,7 +1296,7 @@ async function liveState($: Host, exclude?: string): Promise<Live> {
       if (spawn.review) {
         if (isOpen(spawn)) out.pending.push({ task: label, agentId: a.id })
       } else if (!spawn.adhoc && isOpen(spawn)) out.workers.push({ label, agentId: a.id, spawn })
-    } else if (a.status === 'completed' && !spawn.adhoc && isOpen(spawn)) out.pending.push({ task: label, agentId: a.id })
+    } else if (a.status === 'completed' && !spawn.adhoc && isOpen(spawn)) out.pending.push({ task: label, agentId: a.id, ...(spawn.repo ? { repo: spawn.repo } : {}) })
   }
   for (const key of finalizing.keys()) {
     const label = key.split(':')[0] ?? key
@@ -1209,17 +1340,19 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
       return { token: slotSeq }
     }
     const entered = enqueue(queue, item)
+    // MOD-44: a task for another local repo shows that repo's folder name beside it
+    const shown = withRepoName(label, item.repo, sessionRoot)
     if (entered.existing) {
       const kept = entered.existing
-      return { deny: blocked ? resourceDeny(label, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(label, kept.at, kept.position) }
+      return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position) }
     }
     await writeQueue($, entered.queue)
     if (blocked) {
       debug($, `queued ${label}: ${blocked.holder} holds resource ${blocked.resource}`)
-      return { deny: resourceDeny(label, blocked.resource, blocked.holder) }
+      return { deny: resourceDeny(shown, blocked.resource, blocked.holder) }
     }
     debug($, `queued ${label}: ${holders.length} workers hold the ${cfg.maxWorkers} slots`)
-    return { deny: queuedDeny(label, holders, entered.queue.map(q => taskLabel(q.task, q.subtask ?? 'main'))) }
+    return { deny: queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot))) }
   })
 }
 
@@ -1607,8 +1740,11 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   const s = emptySnapshot()
   const sid = await sessionIdOf($)
   const live = await liveState($)
-  s.running = live.workers.map(w => ({ task: w.label, tier: w.spawn.tier, agentId: w.agentId, ...(w.spawn.at !== undefined ? { at: w.spawn.at } : {}) }))
-  s.pending = live.pending
+  // MOD-44: a task for another local repo shows that repo's folder name beside it
+  const here0 = await sessionRootOf($)
+  const tag = (label: string, repo: string | undefined): string => withRepoName(label, repo, here0)
+  s.running = live.workers.map(w => ({ task: tag(w.label, w.spawn.repo), tier: w.spawn.tier, agentId: w.agentId, ...(w.spawn.at !== undefined ? { at: w.spawn.at } : {}) }))
+  s.pending = live.pending.map(p => ({ task: tag(p.task, p.repo), ...(p.agentId ? { agentId: p.agentId } : {}) }))
   // MOD-12: the rows a free slot waits for read `ready:`; the brain makes their spawn. MOD-23: not a row whose resource is held
   const queue = await readQueue($)
   const plan = await planOfQueue($, live, queue)
@@ -1618,23 +1754,24 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   s.queued = []
   for (const [i, q] of queue.entries()) {
     const label = queuedLabel(q)
+    const shown = tag(label, q.repo)
     let line: string | undefined
     const waiting = plan.waits.get(label)
     if (plan.ready.includes(label)) {
-      line = readyLine(label, q.task)
+      line = readyLine(shown, q.task)
       // MOD-15: a row the fallback will never start says how long it has waited, once it is past the timeout
       const since = readySince.get(label)
       if (since !== undefined && fallbackDue(since, clock, cfg.readyFallbackMs / MIN_MS)) {
         const kind = await queuedKind($, q)
-        if (kind !== 'worktree') line = readyWaitLine(label, q.task, waitedMinutes(since, clock), kind)
+        if (kind !== 'worktree') line = readyWaitLine(shown, q.task, waitedMinutes(since, clock), kind)
       }
     }
-    s.queued.push({ task: label, position: i + 1, ...(line !== undefined ? { ready: line } : {}), ...(waiting ? { waits: waitsText(waiting) } : {}) })
+    s.queued.push({ task: shown, position: i + 1, ...(line !== undefined ? { ready: line } : {}), ...(waiting ? { waits: waitsText(waiting) } : {}) })
   }
   if (!sid) return s
   const recent = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
   s.recent = recent.map(r => ({ line: currentLine(r.line), at: r.at }))
-  const busy = new Set([...s.running.map(r => r.task), ...s.pending.map(p => p.task), ...s.queued.map(q => q.task)])
+  const busy = new Set([...live.workers.map(w => w.label), ...live.pending.map(p => p.task), ...queue.map(q => queuedLabel(q))])
   const t = await now($)
   const rows: { task: string; text: string; at: number; checked?: boolean }[] = []
   const retired = new Set<string>()
@@ -1673,14 +1810,18 @@ const splitLabel = (label: string): { task: string; subtask: string } => {
 }
 
 /** What two read-only git calls say of a task's last attempt: is its sha on origin/main, does its card there read merged. undefined: could not say. */
-async function retireProbe($: Host, task: string, sha: string | undefined): Promise<{ ancestor?: boolean; card?: string }> {
-  const root = await $.session.root()
+async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string): Promise<{ ancestor?: boolean; card?: string }> {
+  const sessionHome = await $.session.root()
+  // MOD-44: a task for another local repo is looked for in that repo's origin/main; its card is not read (it sits under a folder the allowlist does not name)
+  const other = repo !== undefined && repo.replace(/\/+$/, '') !== sessionHome.replace(/\/+$/, '')
+  const root = other ? (repo as string).replace(/\/+$/, '') : sessionHome
   const out: { ancestor?: boolean; card?: string } = {}
   if (sha !== undefined && isSha(sha)) {
     const r = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, 'origin/main'], { cwd: root, timeoutMs: 10000 })
     if (r.ok && r.exitCode === 0) return { ancestor: true }
     if (r.ok && r.exitCode === 1) out.ancestor = false
   }
+  if (other) return out
   const dir = (cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')
   const listed = await run($, ['git', '-C', root, 'ls-tree', '--name-only', 'origin/main', `${dir}/`], { cwd: root, timeoutMs: 10000 })
   if (!listed.ok || listed.exitCode !== 0) return out
@@ -1705,7 +1846,7 @@ async function retireCheck($: Host, label: string, t: number, force = false): Pr
     if (!last) return { retired: false, checked: false }
     if (last.retired) return { retired: true, checked: true }
     if (!force && !retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
-    const patch = retirePatch(await retireProbe($, task, last.sha), t)
+    const patch = retirePatch(await retireProbe($, task, last.sha, last.root), t)
     await storeSet($, K.tasks(task), patchRecord(await loadAttempts($, task), subtask, last.attempt, patch))
     if (patch.retired === 'merged') await appendLedger($, acceptRow(last, 'merged', t))
     return { retired: patch.retired !== undefined, checked: patch.retireCheckedAt !== undefined || last.retireCheckedAt !== undefined }
@@ -2616,6 +2757,11 @@ async function readRed($: Host, path: string): Promise<RedEvidence> {
 
 /** The worker's own worktree: the header's repo=, else the spawn's cwd, else the sibling worktree, else the root. */
 async function workerRepo($: Host, spawn: Pick<SpawnRecord, 'cwd' | 'task' | 'replay'>, headerRepo: string | undefined, root: string): Promise<string> {
+  // MOD-44: repo=<checkout> names the repo the task is for; its worktree is the sibling <repo>-<id> (an older repo=<dir> is the tree itself)
+  if (headerRepo && headerRepo.startsWith('/')) {
+    const sibling = worktreePath(headerRepo.replace(/\/+$/, ''), spawn.task, spawn.replay)
+    return (await exists($, sibling)) ? sibling : headerRepo
+  }
   if (headerRepo) return headerRepo
   if (spawn.cwd && (await exists($, spawn.cwd))) return spawn.cwd
   const sibling = worktreePath(root, spawn.task, spawn.replay, cfg.worktreeRoot)
@@ -2642,10 +2788,11 @@ async function workInWorktree($: Host, s: LookFor, header: BriefHeader | undefin
   } catch {
     return undefined
   }
+  const other = await adoptRepo($, s.task, header)
   const repo = (await workerRepo($, s, header?.repo, root)).replace(/\/+$/, '')
   if (repo === root) return undefined
   const briefBase = (header?.fields.base ?? '').trim()
-  const base = s.base || (briefBase && isGitRef(briefBase) ? briefBase : '') || cfg.baseRef || undefined
+  const base = s.base || (briefBase && isGitRef(briefBase) ? briefBase : '') || (other ? other.baseRef : cfg.baseRef) || undefined
   const label = taskLabel(s.task, s.subtask)
   const seen = await probeWork({ repo, ...(base ? { base } : {}), judged: judgedShas(records, s.subtask, lane) }, (argv, init) => run($, [...argv], init))
   if (!seen.present) {
@@ -2664,7 +2811,7 @@ async function workInWorktree($: Host, s: LookFor, header: BriefHeader | undefin
  */
 async function recordWorkPresent(
   $: Host,
-  s: { task: string; subtask: string; tier: Tier; alias: string; purpose: string; briefPath?: string; agentId?: string },
+  s: { task: string; subtask: string; tier: Tier; alias: string; purpose: string; briefPath?: string; agentId?: string; repo?: string },
   w: WorkPresent,
   lane: Lane | undefined,
 ): Promise<number> {
@@ -2679,7 +2826,7 @@ async function recordWorkPresent(
   const agentId = s.agentId ?? last?.agentId
   const briefPath = s.briefPath ?? last?.briefPath
   const rec: HereRecord = {
-    ...(await ownerFields($)),
+    ...(await ownerFields($, s.repo)),
     task: s.task,
     subtask: s.subtask,
     attempt,
@@ -2853,6 +3000,10 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   // the verifier reads the brief as it now stands: header + amend blocks
   briefText = (await readText($, briefPath)) ?? briefText
   const header = parseHeader(briefText)
+  // MOD-44: a task for another local repo is judged in that repo's worktree, against its origin/main, with its gate map
+  const other = await adoptRepo($, spawn.task, header)
+  const gateMap = other && Object.keys(other.gateMap).length > 0 ? other.gateMap : cfg.gateMap
+  const baseRef = other ? other.baseRef : cfg.baseRef
   const report = parseReport(block)
   const filesPath = filesPathFor(scratchFor(briefPath), spawn.task)
   const allowed = (argv: readonly string[]) => checkArgv(argv, allowCfg()).ok
@@ -2871,13 +3022,13 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
       repo,
       report,
       briefText,
-      gateMap: cfg.gateMap,
+      gateMap,
       allowed,
       filesPath,
       gateTimeoutMs: GATE_TIMEOUT_MS,
       priorRed,
       ...(spawn.replay && spawn.base ? { base: spawn.base } : {}),
-      ...(cfg.baseRef ? { baseRef: cfg.baseRef } : {}),
+      ...(baseRef ? { baseRef } : {}),
       ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),
       ...(outside ? { outside } : {}),
     },
@@ -3345,7 +3496,7 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   const t = await now($)
   const attempt = nextAttempt(records, spawn.subtask, lane)
   const rec: HereRecord = {
-    ...(await ownerFields($)),
+    ...(await ownerFields($, spawn.repo)),
     task: spawn.task,
     subtask: spawn.subtask,
     attempt,
@@ -3415,6 +3566,60 @@ async function cardsInTree($: Host, tasksDir: string, id: string): Promise<{ nam
     }
   }
   return found
+}
+
+/**
+ * MOD-44: which repo a task is for, and where its card is. `repoArg` (the dispatch's repo) wins, then the repo the card
+ * tool remembered for this id; else the session's own card folder, and (the id found nowhere there) the session's
+ * `.delegation/cards/<folder>/` boards, whose card may say `repo: <path>`. A card that says a path other than the one
+ * given is refused. Returns the target (none for the session's own repo), the folder the card was looked for in, and
+ * the cards found there; a string is the refusal.
+ */
+async function locateTask($: Host, id: string, repoArg: string | undefined, root: string, replay: boolean): Promise<{ target?: Target; tasksDir: string; found: { name: string; card: Card }[] | string } | string> {
+  let target: Target | undefined
+  if (repoArg !== undefined) {
+    const r = await resolveRepo($, repoArg, root)
+    if ('error' in r) return `/dispatch ${id}: refused repo ${repoArg}: ${r.error}`
+    target = await loadTarget($, r.path)
+  } else if (!replay) {
+    const saved = await storeGet<string>($, K.taskRepo(id))
+    if (saved) {
+      const r = await resolveRepo($, saved, root)
+      if ('path' in r) target = await loadTarget($, r.path)
+    }
+  }
+  let tasksDir = target ? targetCardsDir(root, target) : cardDirPath(root, cfg.cardDir)
+  let found = replay ? [] : await cardsInTree($, tasksDir, id)
+  // the id alone, a card on one of the session's boards for another repo
+  if (!target && !replay && Array.isArray(found) && found.length === 0) {
+    let boards: string[] = []
+    try {
+      boards = (await $.fs.list(`${root.replace(/\/+$/, '')}/.delegation/cards`)).map(e => e.name)
+    } catch {
+      boards = []
+    }
+    for (const board of boards) {
+      const dir = `${root.replace(/\/+$/, '')}/.delegation/cards/${board}`
+      const here = await cardsInTree($, dir, id)
+      if (Array.isArray(here) && here.length > 0) {
+        tasksDir = dir
+        found = here
+        break
+      }
+    }
+  }
+  if (!replay && Array.isArray(found) && found.length === 1) {
+    const said = (found[0] as { card: Card }).card.repo
+    if (said !== undefined && isRepoPath(said)) {
+      const r = await resolveRepo($, said, root)
+      if ('error' in r) return `/dispatch ${id}: refused the card's repo ${said}: ${r.error}`
+      if (target && target.path !== r.path) return `/dispatch ${id}: the card says repo: ${said} but the dispatch names ${target.path}`
+      target ??= await loadTarget($, r.path)
+    } else if (target && said !== undefined && said !== 'worktree') {
+      return `/dispatch ${id}: the card says repo: ${said}, which is not a task for ${target.path}`
+    }
+  }
+  return { ...(target ? { target } : {}), tasksDir, found }
 }
 
 /** The cards for `id` at the base commit (replay): `git ls-tree`, then `git show` per match, both read-only. */
@@ -3526,9 +3731,12 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const replay = parsed.replay === true
   const out: string[] = []
   const root = await $.session.root()
-  const tasksDir = cardDirPath(root, cfg.cardDir)
+  // MOD-44: the repo this task is for (repo set to a path), else the session's own
+  const located = await locateTask($, id, parsed.repo, root, replay)
+  if (typeof located === 'string') return located
+  const { target, tasksDir } = located
   // replay reads the default folder: the allowlist's git shapes name agents/tasks/
-  const found = replay ? await cardsAtBase($, root, id, base) : await cardsInTree($, tasksDir, id)
+  const found = replay ? await cardsAtBase($, root, id, base) : located.found
   if (typeof found === 'string') return found
   const where = replay ? `${cardDirPath(root)} at ${base}` : tasksDir
   if (found.length !== 1) {
@@ -3537,12 +3745,19 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       : `/dispatch ${id}: ${found.length} cards claim ${id} (${found.map(f => f.name).join(', ')}); fix the board first`
   }
   const { name, card } = found[0] as { name: string; card: Card }
-  const refusal = checkStatus(card) ?? checkDomain(card, cfg.domains)
+  const refusal = checkStatus(card) ?? checkDomain(card, target ? target.domains : cfg.domains)
   if (refusal) return `/dispatch ${id}: ${refusal}${replay ? ` (read at ${base})` : ''}`
+  // the repo the work is cut from and judged in: the target's, else the session's
+  const repoRoot = target ? target.path : root
+  if (target) {
+    await storeSet($, K.taskRepo(id), target.path)
+    registerTaskRepo(id, target, card.gate)
+  }
 
   // MOD-34: the domain's lessons file beside the cards, carried into a brief written now; the line is printed whether or not a brief is written
-  const lessonsAt = lessonsPath(root, cfg.cardDir, card.domain)
-  const lessonsText = await readText($, lessonsAt)
+  // MOD-44: another repo's lessons sit beside its own cards, so only a repo with a config has any
+  const lessonsAt = lessonsPath(target ? target.path : root, target ? target.cardDir : cfg.cardDir, card.domain)
+  const lessonsText = target && !target.hasConfig ? undefined : await readText($, lessonsAt)
   const lessons = lessonsText !== undefined && lessonLineCount(lessonsText) > 0 ? { text: lessonsText, path: lessonsAt } : undefined
 
   // An existing brief is reused, never overwritten, and it decides the mode.
@@ -3560,7 +3775,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const reusedBase = (reusedHeader?.fields.base ?? '').trim()
   if (!replay && !here && base === 'origin/main' && reusedBase && isGitRef(reusedBase)) base = reusedBase
 
-  const worktree = here || none ? root : worktreePath(root, id, replay, cfg.worktreeRoot)
+  const worktree = here || none ? root : worktreePath(repoRoot, id, replay, target ? undefined : cfg.worktreeRoot)
   let branch = none ? 'none' : branchName(card.domain, id, replay)
   if (here) {
     const current = await run($, currentBranchArgv(root), { cwd: root, timeoutMs: 10000 })
@@ -3574,6 +3789,10 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       : `1. card ${cardPath} (status ${card.status}, domain ${card.domain})`,
   )
   if (replay && (card.repo === 'here' || card.repo === 'none')) out.push(`   note: the card says repo: ${card.repo}; a replay works in its own worktree at the base`)
+  if (target) {
+    out.push(`   ${repoLine(target, card.gate)}`)
+    for (const g of card.gate) if (target.gateMap[g] === undefined && !/\s/.test(g)) out.push(`   warning: gate ${g} is not in ${target.name}'s gate map (${Object.keys(target.gateMap).join(', ') || 'empty'}); the verifier will not re-run it`)
+  }
 
   // GH-16: the other repo=here cards in flight in this checkout; a scope overlapping theirs is refused.
   // MOD-24: a shared resource is not overlap: both cards do not touch the same paths, and the queue sequences them (the
@@ -3596,7 +3815,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const alias = finalAlias({ tier, source: 'brief' }, cfg.tierMap[tier]).alias
   const budget = budgetAttempts(card.budget, cfg.defaultBudget)
   // GH-106: the card's spend: wins, else the tier's default; 0 is no ceiling
-  const spend = spendCeiling(card.spend, tier, cfg.spendByTier)
+  const spend = spendCeiling(card.spend, tier, target ? target.spendByTier : cfg.spendByTier)
   // MOD-22: scope and forbid may hold absolute paths and globs, a leading ~ the home folder; the first absolute scope entry is the outdir
   const home = await homeOf($)
   const expandAll = (list: readonly string[]): string[] => list.map(e => expandTilde(e, home))
@@ -3622,7 +3841,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'none', ...folders })
   } else {
     // GH-105: a base that is not the default is written, so the verifier diffs from the commit the worktree was cut from
-    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, ...(base !== 'origin/main' ? { base } : {}), ...folders })
+    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, ...(target ? { repo: target.path } : {}), ...(base !== 'origin/main' ? { base } : {}), ...folders })
   }
   let briefPath: string
   let shown = header
@@ -3659,13 +3878,15 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     }
     let rootNames: string[] = []
     try {
-      rootNames = (await $.fs.list(root)).map(e => e.name)
+      rootNames = (await $.fs.list(repoRoot)).map(e => e.name)
     } catch {
       rootNames = []
     }
     // MOD-22: the report line gains artefacts= and metrics= for a card that has an output folder
     const reportExtra = outdir ? ' artefacts=<comma list of the files you delivered, relative to the output folder or absolute> metrics="<k=v,k=v>"' : ''
-    const rendered = renderBriefChecked(template, { card, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
+    // MOD-44: a worker in another repo is told the gate as that repo's command, not a bare id
+    const briefCard: Card = target ? { ...card, gateText: card.gate.map(g => (target.gateMap[g] !== undefined ? `${g} (\`${target.gateMap[g]}\`)` : g)).join(', ') } : card
+    const rendered = renderBriefChecked(template, { card: briefCard, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
     // MOD-28: a brief with a marker left in it never reaches a worker; nothing is written, no worktree is made
     if (rendered.leftover !== undefined) return [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n')
     const written = await writeBrief($, root, fileName, `${header}\n\n${rendered.text}`)
@@ -3721,14 +3942,14 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   else if (none) out.push(`3. no worktree (repo=none): the worker runs in ${root} and writes outside the repo`)
   else if (await exists($, worktree)) out.push(`3. worktree ${worktree} exists — reused`)
   else {
-    const fetched = await run($, fetchArgv(root), { cwd: root, timeoutMs: 120000 })
+    const fetched = await run($, fetchArgv(repoRoot), { cwd: repoRoot, timeoutMs: 120000 })
     const fetchWhy = fetched.ok ? fetched.stderr.trim() || `exit ${fetched.exitCode}` : fetched.why
     if (!fetched.ok || fetched.exitCode !== 0) {
       // a sha base needs no fetch; origin/main does
       if (base === 'origin/main') return [...out, `3. git fetch failed: ${fetchWhy} (the repo needs an origin remote with a main branch, or pass a sha base, or dispatch with --here)`].join('\n')
       out.push(`   note: git fetch failed (${fetchWhy}); continuing from ${base}`)
     }
-    const added = await run($, worktreeAddArgv(root, card.domain, id, base, replay, cfg.worktreeRoot), { cwd: root, timeoutMs: 120000 })
+    const added = await run($, worktreeAddArgv(repoRoot, card.domain, id, base, replay, target ? undefined : cfg.worktreeRoot), { cwd: repoRoot, timeoutMs: 120000 })
     if (!added.ok || added.exitCode !== 0) {
       return [...out, `3. git worktree add failed: ${added.ok ? added.stderr.trim() : added.why}`].join('\n')
     }
@@ -3771,8 +3992,10 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   await loadRepoConfig($)
   const head = `/dispatch ${id} --verify ${sha}`
   const root = await $.session.root()
-  const tasksDir = cardDirPath(root, cfg.cardDir)
-  const found = await cardsInTree($, tasksDir, id)
+  // MOD-44: a task for another local repo: its card, its domains, its worktree
+  const located = await locateTask($, id, undefined, root, false)
+  if (typeof located === 'string') return located
+  const { tasksDir, found } = located
   if (typeof found === 'string') return found
   if (found.length !== 1) {
     return found.length === 0
@@ -3780,7 +4003,7 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
       : `${head}: ${found.length} cards claim ${id} (${found.map(f => f.name).join(', ')}); fix the board first`
   }
   const { card } = found[0] as { name: string; card: Card }
-  const refusal = checkDomain(card, cfg.domains)
+  const refusal = checkDomain(card, located.target ? located.target.domains : cfg.domains)
   if (refusal) return `${head}: ${refusal}`
   const briefPath = await existingBrief($, root, briefFileName(id))
   if (!briefPath) return `${head}: no brief for ${id} under ${briefDirFor(root, cfg.briefDir)} (dispatch it first; --verify judges a dispatched task's work)`
@@ -3790,7 +4013,9 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   const here = header?.repo === 'here'
   const subtask = header?.subtask ?? 'main'
   const label = taskLabel(id, subtask)
-  const repo = here ? root : header?.repo || worktreePath(root, id, false, cfg.worktreeRoot)
+  const other = located.target ?? (await adoptRepo($, id, header))
+  if (other) registerTaskRepo(id, other, (header?.gate ?? '').split(',').map(g => g.trim()).filter(Boolean))
+  const repo = here ? root : other ? await workerRepo($, { task: id }, other.path, root) : header?.repo || worktreePath(root, id, false, cfg.worktreeRoot)
   if (!here && !(await exists($, repo))) return `${head}: no worktree at ${repo}`
   let branch = branchName(card.domain, id)
   if (here) {
@@ -3806,7 +4031,7 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
 
   // the synthetic report: the delta the verifier will take, and the newest red file when the brief asks for one
   const contract = briefContract(briefText)
-  const base = (contract.ok ? contract.base : undefined) || cfg.baseRef || undefined
+  const base = (contract.ok ? contract.base : undefined) || (other ? other.baseRef : cfg.baseRef) || undefined
   const delta = await branchDelta({ repo, sha, ...(base ? { base } : {}) }, (argv, init) => run($, [...argv], init))
   if ('why' in delta) return `${head}: ${delta.why}`
   // MOD-1: --verify at the last attempt's own sha re-judges that attempt instead of opening another
@@ -3829,7 +4054,7 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   const attempt = target.attempt
   if (!target.rejudge && last?.verdict !== 'work-present') {
     const rec: HereRecord = {
-      ...(await ownerFields($)),
+      ...(await ownerFields($, other?.path)),
       task: id,
       subtask,
       attempt,
@@ -3867,6 +4092,7 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
     ...(rec?.agentId ? { agentId: rec.agentId } : {}),
     at: t,
     ...(here ? { here: root } : {}),
+    ...(other ? { repo: other.path } : {}),
   }
   const rendered = await finalize($, spawn, report)
   const rejudged = target.rejudge ? [`re-judging attempt ${attempt}/${spawn.budget} at ${sha}`] : []
@@ -4036,17 +4262,35 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   if (input.dispatch !== undefined && typeof input.dispatch !== 'boolean') return 'card: dispatch must be true or false'
   await loadRepoConfig($)
   const root = await $.session.root()
-  const dir = cardDirPath(root, cfg.cardDir)
-  let names: string[] = []
-  try {
-    names = (await $.fs.list(dir)).map(e => e.name)
-  } catch {
-    names = []
+  // MOD-44: repo set to a path delegates into that checkout: its card folder, its gate map, domains and spend
+  let target: Target | undefined
+  const repoIn = typeof input.repo === 'string' ? input.repo.trim() : undefined
+  if (repoIn !== undefined && isRepoPath(repoIn)) {
+    const r = await resolveRepo($, repoIn, root)
+    if ('error' in r) return `card refused: repo ${repoIn} ${r.error}`
+    target = await loadTarget($, r.path)
   }
+  const dir = target ? targetCardsDir(root, target) : cardDirPath(root, cfg.cardDir)
+  const listNames = async (folder: string): Promise<string[]> => {
+    try {
+      return (await $.fs.list(folder)).map(e => e.name)
+    } catch {
+      return []
+    }
+  }
+  // an id is free in the session's own board too: the ledger, the briefs and the store are keyed by the id alone
+  const names = target ? [...new Set([...(await listNames(dir)), ...(await listNames(cardDirPath(root, cfg.cardDir)))])] : await listNames(dir)
   // repo=here when the repo has no origin/main (worktree mode cuts from it); a baseRef alone says nothing about the mode
-  const originMain = await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', 'origin/main'])
-  const here = !(originMain.ok && originMain.exitCode === 0)
-  const made = cardsFromFields(input, { domains: cfg.domains, gateIds: Object.keys(cfg.gateMap), names, spendByTier: cfg.spendByTier, here })
+  const originMain = target ? undefined : await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', 'origin/main'])
+  const here = target ? false : !(originMain?.ok && originMain.exitCode === 0)
+  const made = cardsFromFields(input, {
+    domains: target ? target.domains : cfg.domains,
+    gateIds: Object.keys(target ? target.gateMap : cfg.gateMap),
+    names,
+    spendByTier: target ? target.spendByTier : cfg.spendByTier,
+    here,
+    ...(target ? { repoPath: target.path } : {}),
+  })
   if ('error' in made) return `card refused: ${made.error}`
   // all or none: every lane's file is checked before the first is written
   for (const c of made) {
@@ -4062,9 +4306,11 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       return [...wrote, `card not written: ${path}: ${String(err)}`].join('\n')
     }
     wrote.push(`wrote ${path}`)
+    // MOD-44: the id alone finds a card for another repo
+    if (target) await storeSet($, K.taskRepo(c.id), target.path)
   }
   // MOD-22: dispatch reads the mode from the card (`repo:`); here is passed only when the card says repo: here
-  const dispatchArgs = (c: NewCard, dryRun: boolean): DispatchArgs => ({ id: c.id, dryRun, base: 'origin/main', ...(c.repo === 'here' ? { here: true as const } : {}) })
+  const dispatchArgs = (c: NewCard, dryRun: boolean): DispatchArgs => ({ id: c.id, dryRun, base: 'origin/main', ...(c.repo === 'here' ? { here: true as const } : {}), ...(target ? { repo: target.path } : {}) })
   if (input.dispatch === true) {
     if (made.length === 1) return [...wrote, await runDispatch($, dispatchArgs(made[0] as NewCard, false))].join('\n')
     const results: string[] = []
@@ -4083,7 +4329,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       continue
     }
     const alias = finalAlias({ tier: c.tier, source: 'brief' }, cfg.tierMap[c.tier]).alias
-    const notes = lines.filter(l => /^\s+(note|warning):/.test(l)).map(l => l.trim())
+    const notes = lines.filter(l => /^\s+(note|warning|repo):/.test(l)).map(l => l.trim())
     // GH-114: one classifier call per card written, on the dry run only
     let second: string | undefined
     if (cfg.classifierSecondOpinion) {
@@ -4293,6 +4539,9 @@ type SpawnPlan = {
   cwd?: string
 }
 
+/** The brief file's header, as planSpawn read it (undefined: no brief file, or the prompt carries the header). */
+const briefText0 = (p: SpawnPlan): BriefHeader | undefined => (p.briefText !== undefined ? parseHeader(p.briefText) : undefined)
+
 async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
   const t = await now($)
   spawnSeq += 1
@@ -4388,7 +4637,7 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
     const work = await workInWorktree($, look, fileHeader ?? p.header, p.records, p.lane)
     if (work) {
       const last = attemptsFor(p.records, p.subtask, p.lane).at(-1)
-      await recordWorkPresent($, { task: p.task, subtask: p.subtask, tier: last?.tier ?? 'standard', alias: last?.alias ?? cfg.tierMap.standard, purpose: p.header?.purpose ?? 'build', ...(p.named ? { briefPath: p.named } : {}) }, work, p.lane)
+      await recordWorkPresent($, { task: p.task, subtask: p.subtask, tier: last?.tier ?? 'standard', alias: last?.alias ?? cfg.tierMap.standard, purpose: p.header?.purpose ?? 'build', ...(p.named ? { briefPath: p.named } : {}), ...((fileHeader ?? p.header)?.repo?.startsWith('/') ? { repo: (fileHeader ?? p.header)?.repo } : {}) }, work, p.lane)
       const deny = workPresentDeny(p.label, p.task, work)
       debug($, deny)
       await dropQueued($, p.task, p.subtask)
@@ -4396,7 +4645,8 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
     }
   }
   // 2F: a briefed spawn takes a worker slot or waits in the queue; an ad hoc one never waits.
-  return claimSlot($, { ...item, ...(p.cwd ? { cwd: p.cwd } : {}), task: p.task, subtask: p.subtask, at: p.t }, p.label, claim, p.resources)
+  const repo = (p.briefText !== undefined ? parseHeader(p.briefText)?.repo : undefined) ?? p.header?.repo
+  return claimSlot($, { ...item, ...(p.cwd ? { cwd: p.cwd } : {}), ...(repo?.startsWith('/') ? { repo } : {}), task: p.task, subtask: p.subtask, at: p.t }, p.label, claim, p.resources)
 }
 
 /**
@@ -4465,6 +4715,9 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
         here = undefined
       }
     }
+    // MOD-44: the other local repo this task is for (its path), when the brief names one
+    const fileHeader = briefText0(p)
+    const other = !adhoc ? await adoptRepo($, task, fileHeader ?? header) : undefined
     const usdAtStart = await sessionUsd($)
     const res = await start(alias, p.cwd)
     if (res.deny !== undefined) return res
@@ -4483,7 +4736,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
 
     const classifierTier = !adhoc && attempt === 1 ? (await storeGet<{ classifier?: Tier }>($, K.classifier(task)))?.classifier : undefined
     const rec: HereRecord = {
-      ...(await ownerFields($)),
+      ...(await ownerFields($, other?.path)),
       task,
       subtask,
       attempt,
@@ -4531,6 +4784,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(lane ? { replay: true, ...(lane.base ? { base: lane.base } : {}) } : {}),
       at: t,
       ...(here ? { here } : {}),
+      ...(other ? { repo: other.path } : {}),
     }
     await storeSet($, K.spawn(key), spawn)
     if (res.agentId) await storeSet($, K.agent(res.agentId), key)
@@ -4596,7 +4850,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
   if (res.deny !== undefined) return res
   const briefPath = worker?.briefPath ?? reviewed?.briefPath
   const rec: AttemptRecord = {
-    ...(await ownerFields($)),
+    ...(await ownerFields($, worker?.repo)),
     task: marker.task,
     subtask: marker.subtask,
     attempt: marker.attempt,
@@ -5212,13 +5466,14 @@ export const register: Register = (on, opts) => {
     try {
       const { view, since, records, running, waits } = await liveModel($)
       const mine = sessionRecords(records, since, await ownerFields($))
+      const here0 = await sessionRootOf($)
       const items: BandItem[] = [
-        ...running.map((r): BandItem => ({ kind: 'running', task: r.label, tier: r.tier, alias: r.alias, at: r.at, phase: 'building' })),
+        ...running.map((r): BandItem => ({ kind: 'running', task: withRepoName(r.label, r.repo, here0), tier: r.tier, alias: r.alias, at: r.at, phase: 'building' })),
         ...(await readQueue($)).map((q, i): BandItem => {
           const task = taskLabel(q.task, q.subtask ?? 'main')
           // MOD-24: a row waiting for a resource carries it, and who holds it; a row waiting for a slot carries nothing
           const wait = waits.get(task)
-          return { kind: 'queued', task, position: i + 1, ...(wait ? { waits: wait } : {}) }
+          return { kind: 'queued', task: withRepoName(task, q.repo, here0), position: i + 1, ...(wait ? { waits: wait } : {}) }
         }),
       ]
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable

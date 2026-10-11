@@ -13,6 +13,9 @@
 //                                        <worktree>: <root>-<id>[-replay], or
 //                                        <worktreeRoot>/<repo name>-<id>[-replay];
 //                                        the literal -replay suffix on both or neither)
+//   git -C <task repo> worktree add -q -b agent/<domain>/<id> <task repo>-<id> <origin/main|sha>
+//                                       (MOD-44: <task repo> is the absolute path the task <id> names as its repo,
+//                                        <domain>: that repo's own; with the session root known, no other -C passes)
 //   git -C <root> ls-tree --name-only <sha> agents/tasks/    (exact; /dispatch --replay)
 //   git -C <root> show <sha>:agents/tasks/<id>-<name>.md     (exact; /dispatch --replay)
 //   the same two with origin/main for <sha> and the configured cardDir for agents/tasks
@@ -35,7 +38,10 @@ export const DEFAULT_DOMAINS = ['frontend', 'backend', 'ops', 'dispatcher', 'cro
 export type Check = { ok: true } | { ok: false; reason: string }
 
 /** What the allowlist reads of the config: the gate templates (gateTemplatesOf(gateMap)), the domains, the worktree root. */
-export type AllowConfig = { gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string; /** MOD-7: the one repo `gh issue` may name (owner/name); empty or absent = no issue form passes. */ issueRepo?: string; /** MOD-7: the session root, whose .delegation/debriefs/ holds the only body files. */ root?: string }
+/** MOD-44: a task that works in another local repo: the checkout's path, and that repo's own domains when it has them. */
+export type TaskRepo = { path: string; domains?: readonly string[] }
+
+export type AllowConfig = { /** MOD-44: the task ids that name another local repo as theirs, and that repo; `git -C <path> worktree add` passes for those tasks only. */ taskRepos?: Readonly<Record<string, TaskRepo>>; gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string; /** MOD-7: the one repo `gh issue` may name (owner/name); empty or absent = no issue form passes. */ issueRepo?: string; /** MOD-7: the session root, whose .delegation/debriefs/ holds the only body files. */ root?: string }
 
 const GIT_READ = ['diff', 'merge-base', 'rev-parse', 'status', 'log']
 const GIT_WRITEY_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|-O)/
@@ -131,10 +137,17 @@ function checkWorktreeAdd(dirs: readonly string[], args: readonly string[], allo
     return refuse('git worktree add must be exactly: -q -b agent/<domain>/<id> <worktree> <base>')
   }
   const [, , branch, path, base] = args as [string, string, string, string, string]
-  const domains: readonly string[] = allow.domains && allow.domains.length > 0 ? allow.domains : DEFAULT_DOMAINS
   const m = new RegExp(`^agent/([A-Za-z0-9_-]+)/(${TASK_ID_SRC})(${REPLAY})?$`).exec(branch)
+  // MOD-44: with the session root known, -C is that root, or the repo the task named by this branch names as its own
+  const session = (allow.root ?? '').replace(/\/+$/, '')
+  const taskRepo = m ? allow.taskRepos?.[m[2] as string] : undefined
+  const other = session !== '' && root !== session
+  if (other && !(taskRepo && taskRepo.path.replace(/\/+$/, '') === root && m?.[3] === undefined)) {
+    return refuse(`git -C ${root} worktree add is for the session's own repo, or for a task that names ${root} as its repo${m ? ` (${m[2]} ${taskRepo ? `names ${taskRepo.path}` : 'names no other repo'})` : ''}`)
+  }
+  const domains: readonly string[] = other ? (taskRepo?.domains && taskRepo.domains.length > 0 ? taskRepo.domains : DEFAULT_DOMAINS) : allow.domains && allow.domains.length > 0 ? allow.domains : DEFAULT_DOMAINS
   if (!m || !domains.includes(m[1] as string)) return refuse(`branch ${branch} is not agent/<${domains.join('|')}>/<id>[-replay]`)
-  const want = worktreePath(root, m[2] as string, m[3] !== undefined, allow.worktreeRoot)
+  const want = worktreePath(root, m[2] as string, m[3] !== undefined, other ? undefined : allow.worktreeRoot)
   if (path !== want) return refuse(`worktree path ${path} is not ${want}`)
   if (!isBaseRef(base)) return refuse(`base ${base} is not origin/main or a 7-40 hex sha`)
   return ok

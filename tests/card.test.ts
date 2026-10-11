@@ -123,8 +123,8 @@ describe('GH-111: cardFromFields', () => {
     expect(ok(cardFromFields(input(), ctx({ here: true }))).text).toContain('\nrepo: here\n')
     expect(ok(cardFromFields(input({ repo: 'none' }), ctx({ here: true }))).text).toContain('\nrepo: none\n')
     expect(ok(cardFromFields(input({ repo: 'worktree' }), ctx({ here: true }))).text).not.toContain('repo:')
-    expect(cardFromFields(input({ repo: 'sideways' }), ctx())).toEqual({ error: 'repo must be worktree, here or none (got "sideways")' })
-    expect(cardFromFields(input({ repo: 3 }), ctx())).toEqual({ error: 'repo must be worktree, here or none (got "3")' })
+    expect(cardFromFields(input({ repo: 'sideways' }), ctx())).toEqual({ error: 'repo must be worktree, here, none or the absolute path of a git checkout (got "sideways")' })
+    expect(cardFromFields(input({ repo: 3 }), ctx())).toEqual({ error: 'repo must be worktree, here, none or the absolute path of a git checkout (got "3")' })
   })
 
   test('MOD-22: scope and forbid may hold absolute paths and globs, and a tilde', () => {
@@ -252,5 +252,37 @@ A card written before the change.
     const c = parseCard(legacy('red_test: npm test # the unit tests'))
     if ('error' in c) throw new Error(c.error)
     expect(c.redTest).toBe('npm test')
+  })
+})
+
+describe('MOD-44: a card for another local repo', () => {
+  const other = (over: Partial<CardCtx> = {}) => ctx({ repoPath: '/Users/b/notes-app', gateIds: ['test'], ...over })
+  test('repo is the path the caller resolved: the card says it, the gate and the domain are that repo\'s', () => {
+    const r = ok(cardFromFields(input({ repo: '/Users/b/notes-app' }), other()))
+    expect(r.repo).toBe('/Users/b/notes-app')
+    expect(r.text).toContain('\nrepo: /Users/b/notes-app\n')
+    expect(r.gate).toEqual(['test'])
+    expect(cardSummary(r, 'sonnet')).toContain('repo /Users/b/notes-app')
+    expect(parseCard(r.text)).toMatchObject({ repo: '/Users/b/notes-app', gate: ['test'] })
+  })
+  test('a path nobody resolved is refused, the words keep working', () => {
+    expect(cardFromFields(input({ repo: '/Users/b/notes-app' }), ctx())).toEqual({ error: 'repo must be worktree, here, none or the absolute path of a git checkout (got "/Users/b/notes-app")' })
+    expect(ok(cardFromFields(input({ repo: 'none' }), ctx())).repo).toBe('none')
+  })
+  test('a repo with no gate at all needs a one-off command; a command passes the gate rules and holds no comma', () => {
+    const bare = other({ gateIds: [] })
+    expect(cardFromFields(input(), bare)).toEqual({ error: '/Users/b/notes-app has no gate: no gateMap in its .chassis-delegation.json and no test command found (package.json scripts.test, pytest, cargo or go); name one in gate, e.g. "npm run build"' })
+    const one = ok(cardFromFields(input({ gate: 'npm run build' }), bare))
+    expect(one.gate).toEqual(['npm run build'])
+    expect(one.text).toContain('\ngate: npm run build\n')
+    expect(parseCard(one.text)).toMatchObject({ gate: ['npm run build'] })
+    expect(ok(cardFromFields(input({ gate: 'npm run build' }), other())).gate).toEqual(['npm run build'])
+    expect(cardFromFields(input({ gate: 'npm run build, npm test' }), bare)).toEqual({ error: 'a one-off gate command cannot hold a comma; name one command, or gate ids from gateMap' })
+    expect(cardFromFields(input({ gate: 'curl http://x' }), bare)).toEqual({ error: 'gate command refused: a gate may not run curl' })
+    // ids still work beside it, and an unknown id is named
+    expect(ok(cardFromFields(input({ gate: 'test' }), other())).gate).toEqual(['test'])
+    expect(cardFromFields(input({ gate: 'lint' }), other())).toEqual({ error: 'gate lint is not in gateMap; the ids are test' })
+    // the session's own repo takes no one-off command
+    expect(cardFromFields(input({ gate: 'npm run build' }), ctx())).toEqual({ error: 'gate npm run build is not in gateMap; the ids are test, lint' })
   })
 })
