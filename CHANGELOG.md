@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The legacy verdict reader is removed (MOD-49).** `hooks/lib/legacy.ts` is gone; the old verdict word
+  `verified` is no longer read as a verdict. A stored attempt record or recent-verdict row written before
+  0.8.0 that still carries it is read as `consistent` by one normaliser (`readRecord`, `readLine` in
+  `hooks/lib/attempts.ts`) at the two read sites, and each one is logged once at debug level. A metrics
+  object written before the rename still folds its counts into `consistent`. The ledger is not rewritten.
+  `tests/node/consistent.node.mjs` no longer exempts a file: any `verified` in `hooks/` or `bin/` fails the build.
+
 - **The brain sees what driving costs it (MOD-48).** `/delegation` and the dashboard's spend block show
   `brain calls: N run-or-poll · N read · N edit · N spawn · average context 562K per call`: the brain's
   main-loop tool calls this session by what they did (run or poll: Bash `run_in_background`, `until` and

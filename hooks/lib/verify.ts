@@ -4,18 +4,17 @@
 // respawn or an auto-resume, and the synthetic report `--verify` judges. Pure:
 // no `$` (git runs through an injected `exec`).
 import { escalatesOn, ESCALATING_CLAIMS } from './attempts'
-import { isConsistent, type LegacyVerified } from './legacy'
 import { parseClaimLine, type ClaimLine } from './quiet'
 import { nextTier, type Tier } from './tier'
 import { BASE_REFS, type ExecOut } from './verify-native'
 
 /**
- * `consistent` (MOD-19, renamed; see ./legacy.ts) means every machine-checkable claim of the
+ * `consistent` (MOD-19, renamed; see readRecord in ./attempts.ts) means every machine-checkable claim of the
  * report matches git. It is not a review: the brain still reads the diff.
  */
 export type Verdict = 'consistent' | 'unverified' | 'refuted' | 'no-report' | 'refused'
-/** A verdict as a caller may hold it: the old word from a record written before the rename is read as consistent until 0.9.0. */
-export type StoredVerdict = Verdict | LegacyVerified
+/** A verdict as a caller holds it (a stored record is read through readRecord in ./attempts.ts first). */
+export type StoredVerdict = Verdict
 
 /** `<scratch>`: the folder holding the `briefs/` folder the brief sits in, else the brief's own folder. */
 export function scratchFor(briefPath: string): string {
@@ -95,9 +94,9 @@ export const budgetDenyMessage = (label: string, attempts: number, briefPath?: s
  */
 export function advise(input: AdviseInput): Advice {
   // a cardless hand-back has no brief to resume or respawn against (GH-1 item 2)
-  if (input.adhoc && input.cardless) return isConsistent(input.verdict) && input.reportGate !== 'fail' ? { kind: 'accept', next: 'accept' } : { kind: 'check', next: 'check the diff' }
+  if (input.adhoc && input.cardless) return input.verdict === 'consistent' && input.reportGate !== 'fail' ? { kind: 'accept', next: 'accept' } : { kind: 'check', next: 'check the diff' }
   if (input.adhoc) return { kind: 'none', next: 'none — ad hoc spawn, no brief' }
-  if (isConsistent(input.verdict) && input.reportGate !== 'fail') return input.review ? { kind: 'review', next: 'review' } : { kind: 'accept', next: 'accept' }
+  if (input.verdict === 'consistent' && input.reportGate !== 'fail') return input.review ? { kind: 'review', next: 'review' } : { kind: 'accept', next: 'accept' }
   if (input.verdict === 'refused') return { kind: 'fix-brief', next: 'fix the brief — the verifier refused it (not charged to the worker)' }
   if (!isFailing(input.verdict, input.reportGate)) {
     // GH-1 item 5: unverified is actionable — resume the worker with the claims it has to prove

@@ -5,7 +5,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { parseReport } from '../hooks/lib/brief'
 import { advise, verdictLine, type AdviseInput } from '../hooks/lib/verify'
-import { escalatesOn, escalationSource, type AttemptRecord } from '../hooks/lib/attempts'
+import { escalatesOn, escalationSource, readLine, readRecord, readVerdict, type AttemptRecord } from '../hooks/lib/attempts'
 import { quietLine } from '../hooks/lib/quiet'
 import { noRepoVerdict, noRepoVerdictText } from '../hooks/lib/norepo'
 import { verifyNative, type ExecOut, type RedEvidence } from '../hooks/lib/verify-native'
@@ -117,25 +117,34 @@ describe('MOD-19: a report whose every claim holds is consistent, not verified',
 
 // ---- the old word, read until 0.9.0: a record or row written before the rename --------------------------
 
-describe('MOD-19: a stored verdict saying verified is read exactly as consistent', () => {
-  const input: AdviseInput = { verdict: OLD, task: 'T-1', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard', adhoc: false, agentId: 'agent-1' }
+describe('MOD-19, MOD-49: a stored verdict saying verified is read as consistent at the read sites only', () => {
+  const input: AdviseInput = { verdict: 'consistent', task: 'T-1', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard', adhoc: false, agentId: 'agent-1' }
+  test('the normaliser reads the old record and row as consistent; a new word is untouched', () => {
+    expect(readVerdict(OLD)).toBe('consistent')
+    expect(readVerdict('refuted')).toBe('refuted')
+    expect(readRecord(rec({ task: 'T-1', verdict: OLD })).verdict).toBe('consistent')
+    expect(readRecord(rec({ task: 'T-1', verdict: 'refuted' })).verdict).toBe('refuted')
+    expect(readLine(`chassis-delegation: T-4 attempt 1/2 ${OLD} (report gate=fail) · opus`)).toBe('chassis-delegation: T-4 attempt 1/2 consistent (report gate=fail) · opus')
+    expect(readLine(`chassis-delegation: verdict=${OLD} task=T-4`)).toBe('chassis-delegation: verdict=consistent task=T-4')
+    expect(readLine('chassis-delegation: T-4 attempt 1/2 refuted')).toBe('chassis-delegation: T-4 attempt 1/2 refuted')
+  })
   test('accept, and a confirmed gate=fail still resumes and escalates', () => {
     expect(advise(input)).toEqual({ kind: 'accept', next: 'accept' })
     expect(advise({ ...input, reportGate: 'fail' }).kind).toBe('resume')
     expect(advise({ ...input, adhoc: true, cardless: true })).toEqual({ kind: 'accept', next: 'accept' })
-    expect(escalatesOn(OLD, 'fail')).toBe(true)
-    expect(escalatesOn(OLD, 'pass')).toBe(false)
-    expect(escalationSource([rec({ task: 'T-1', verdict: OLD, reportGate: 'fail' })], 'main')).toBe('standard')
+    expect(escalatesOn('consistent', 'fail')).toBe(true)
+    expect(escalatesOn('consistent', 'pass')).toBe(false)
+    expect(escalationSource([rec({ task: 'T-1', verdict: 'consistent', reportGate: 'fail' })], 'main')).toBe('standard')
   })
   test('the row prints the new word for the old one', () => {
-    expect(quietLine({ task: 'T-4', attempt: 1, budget: 2, verdict: OLD, reportGate: 'fail', alias: 'opus', next: 'resume agent-4', lines: [] })).toBe(
+    expect(quietLine({ task: 'T-4', attempt: 1, budget: 2, verdict: 'consistent', reportGate: 'fail', alias: 'opus', next: 'resume agent-4', lines: [] })).toBe(
       'chassis-delegation: T-4 attempt 1/2 consistent (report gate=fail) · opus · next=resume agent-4',
     )
-    expect(verdictMark(OLD)).toMatchObject({ icon: '✓', word: 'consistent' })
-    expect(decisionText({ verdict: OLD, advice: 'accept', approval: true })).toBe('consistent · amend needs approval')
+    expect(verdictMark('consistent')).toMatchObject({ icon: '✓', word: 'consistent' })
+    expect(decisionText({ verdict: 'consistent', advice: 'accept', approval: true })).toBe('consistent · amend needs approval')
   })
-  test('spend by model and first try count it as a success', () => {
-    const records = [rec({ task: 'A', usd: 1.5, tokens: 1000, verdict: OLD }), rec({ task: 'B', usd: 1, tokens: 500, verdict: 'refuted' })]
+  test('spend by model and first try count a read record as a success', () => {
+    const records = [rec({ task: 'A', usd: 1.5, tokens: 1000, verdict: 'consistent' }), rec({ task: 'B', usd: 1, tokens: 500, verdict: 'refuted' })]
     expect(spendByModel(records).find(r => r.family === 'sonnet')).toMatchObject({ usd: 2.5, tokens: 1500, consistent: 1 })
     expect(firstTry(records)).toEqual({ n: 1, m: 2 })
     const view = liveView({ root: '/r', porcelain: '', records, queue: [], liveAt: {}, now: NOW, budget: 3, since: 0, usd: 2.5, series: [], owed: 0 })
@@ -147,11 +156,9 @@ describe('MOD-19: a stored verdict saying verified is read exactly as consistent
     expect(m.verdicts).toEqual({ consistent: 3, unverified: 1, refuted: 2, falseRefuted: 1 })
     expect(m.consistentBy).toEqual({ haiku: 0, sonnet: 2, opus: 1 })
     expect(Object.keys(m.verdicts)).not.toContain(OLD)
-    // and a new verdict adds to the folded count
     expect(applyMetric(stored, { kind: 'verdict', verdict: 'consistent', alias: 'sonnet' }, NOW).verdicts.consistent).toBe(4)
-    expect(applyMetric(stored, { kind: 'verdict', verdict: OLD, alias: 'sonnet' }, NOW).verdicts.consistent).toBe(4)
-    expect(metricsFromRecords([rec({ task: 'A', verdict: OLD })], NOW).verdicts.consistent).toBe(1)
+    expect(metricsFromRecords([rec({ task: 'A', verdict: 'consistent' })], NOW).verdicts.consistent).toBe(1)
     expect(emptyMetrics(NOW).verdicts.consistent).toBe(0)
-    expect(isFalseRefute({ verdict: 'refuted', reportSha: 'abc' }, { verdict: OLD, reportSha: 'abc', amended: false })).toBe(true)
+    expect(isFalseRefute({ verdict: 'refuted', reportSha: 'abc' }, { verdict: 'consistent', reportSha: 'abc', amended: false })).toBe(true)
   })
 })

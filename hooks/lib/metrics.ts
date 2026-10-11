@@ -1,7 +1,7 @@
 // Part 4C: the dashboard's per-session numbers, `delegation.metrics.<sessionId>`
 // in the store, updated by the hooks that already handle each event, and the
 // six series the pane's sparklines draw over the last 14 sessions. Pure: no `$`.
-import { currentVerdict, foldLegacyMetrics, isConsistent } from './legacy'
+import { RETIRED_VERDICT, readVerdict } from './attempts'
 import { aliasOf } from './tier'
 
 type ByAlias = { haiku: number; sonnet: number; opus: number }
@@ -55,13 +55,38 @@ const tierKey = (alias: string): keyof ByAlias | undefined => {
   return a === 'haiku' || a === 'sonnet' || a === 'opus' ? a : undefined
 }
 
+/** A metrics object written before the rename (MOD-19): its retired-word counts fold into `consistent`; an object already in the new shape is returned as it was. */
+function foldRetired(stored: unknown): unknown {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored
+  const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+  const count = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  const BY = `${RETIRED_VERDICT}By`
+  const out: Record<string, unknown> = { ...(stored as Record<string, unknown>) }
+  const verdicts = out.verdicts
+  if (isRecord(verdicts) && RETIRED_VERDICT in verdicts) {
+    const { [RETIRED_VERDICT]: old, ...rest } = verdicts
+    out.verdicts = { ...rest, consistent: count(rest.consistent) + count(old) }
+  }
+  const by = out[BY]
+  if (by !== undefined) {
+    delete out[BY]
+    if (isRecord(by)) {
+      const now: Record<string, unknown> = isRecord(out.consistentBy) ? out.consistentBy : {}
+      const merged: Record<string, number> = {}
+      for (const k of new Set([...Object.keys(by), ...Object.keys(now)])) merged[k] = count(now[k]) + count(by[k])
+      out.consistentBy = merged
+    }
+  }
+  return out
+}
+
 /**
  * A stored object read back whole: fields an older release did not write start
- * at zero, and one written before the rename (MOD-19, see ./legacy.ts) folds
+ * at zero, and one written before the rename (MOD-19, see foldRetired) folds
  * its counts into `consistent`.
  */
 export function fillMetrics(stored: Partial<Metrics> | undefined, now: number): Metrics {
-  const m = foldLegacyMetrics(stored) as Partial<Metrics> | undefined
+  const m = foldRetired(stored) as Partial<Metrics> | undefined
   const base = emptyMetrics(m?.firstSeen ?? now)
   if (!m) return base
   return {
@@ -90,7 +115,7 @@ export function applyMetric(prev: Partial<Metrics> | undefined, ev: MetricEvent,
     case 'resume':
       return { ...m, escalations: { ...m.escalations, resume: m.escalations.resume + 1 } }
     case 'verdict': {
-      const word = currentVerdict(ev.verdict)
+      const word = readVerdict(ev.verdict)
       if (word !== 'consistent' && word !== 'unverified' && word !== 'refuted') return m
       const verdicts = { ...m.verdicts, [word]: m.verdicts[word] + 1, falseRefuted: m.verdicts.falseRefuted + (ev.falseRefute ? 1 : 0) }
       const k = tierKey(ev.alias)
@@ -116,7 +141,7 @@ export function applyMetric(prev: Partial<Metrics> | undefined, ev: MetricEvent,
  * hand), or consistent because an amend made the difference.
  */
 export function isFalseRefute(prev: { verdict: string; reportSha?: string } | undefined, cur: { verdict: string; reportSha?: string; amended: boolean }): boolean {
-  if (!prev || prev.verdict !== 'refuted' || !isConsistent(cur.verdict)) return false
+  if (!prev || prev.verdict !== 'refuted' || cur.verdict !== 'consistent') return false
   if (cur.amended) return true
   return prev.reportSha !== undefined && prev.reportSha !== '' && prev.reportSha === cur.reportSha
 }
@@ -185,7 +210,7 @@ export function metricsFromRecords(
     if (r.kind === 'spawn' && a) m.spawns[a] += 1
     if (r.kind === 'resume') m.escalations.resume += 1
     m.usd += r.usd ?? 0
-    if (isConsistent(r.verdict)) {
+    if (r.verdict === 'consistent') {
       m.verdicts.consistent += 1
       if (a) m.consistentBy[a] += 1
     } else if (r.verdict === 'unverified') m.verdicts.unverified += 1
