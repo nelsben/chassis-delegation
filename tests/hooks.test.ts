@@ -3519,3 +3519,338 @@ describe('MOD-20: a gate that ran beside another worker does not false-refute', 
     expect(delivered(w)).not.toContain('waited')
   })
 })
+
+describe('MOD-21: an optional reviewer stage after a consistent verdict', () => {
+  type Tester = Parameters<Parameters<typeof test>[2]>[0]
+  type On = Parameters<Parameters<typeof test>[2]>[1]
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=2-attempts report=chassis.report.v1]]'
+  const REPORT = (sha: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass files=a/x.ts]]`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const FULL = { verdictVerbosity: 'full', ...GM }
+  const ON = { options: { review: 'on', ...FULL } }
+  const ledgerOf = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+  const kinds = (w: { store: Map<string, unknown> }, kind: string) => records(w, 'T-4').filter(r => r.kind === kind)
+  const recentOf = (w: { store: Map<string, unknown> }) => (w.store.get('delegation.recent.sess-1') ?? []) as { owed?: string; line: string }[]
+  const REVIEW_REFUTED = ['confirmed: a/x.ts gains the parser — a/x.ts:12', 'refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1', '[[review v=1 task=T-4 confirmed=1 refuted=1 unverifiable=0]]'].join('\n')
+  const REVIEW_CLEAN = ['confirmed: a/x.ts gains the parser — a/x.ts:12', 'confirmed: the README is untouched — git diff --stat', 'unverifiable: CI is green — no network here', '[[review v=1 task=T-4 confirmed=2 refuted=0 unverifiable=1]]'].join('\n')
+  /** What reached the engine's own tool, past every hook of the mod (the Bash command as it would run). */
+  let bottom: { tool: unknown; command?: unknown; agentId?: unknown }[] = []
+  /** What the mod delivered after a mark: the appended rows, then the log lines. */
+  const mark = (w: { appended: unknown[]; logs: string[] }) => ({ a: w.appended.length, l: w.logs.length })
+  const since = (w: { appended: { text: string }[]; logs: string[] }, m: { a: number; l: number }) => [...w.appended.slice(m.a).map(x => x.text), ...w.logs.slice(m.l)].join('\n')
+  const delegationText = async ($: Tester) => String((await $.command.run({ command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)).text)
+
+  // The worker hands back a consistent report (agent-4); a review spawn, when the brain makes it, is agent-2.
+  const handBack = async ($: Tester, on: On, over: { header?: string; cwd?: string; dirs?: Record<string, string[]> } = {}) => {
+    const w = world(on, { files: { [BRIEF]: (over.header ?? HEADER) + '\nbody' }, ...(over.dirs ? { dirs: over.dirs } : {}), run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    bottom = []
+    // the engine's own tool, at the bottom; an Agent call goes on to a test's own hook
+    ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async (_$: unknown, e: { tool: unknown; command?: unknown; agentId?: unknown }, next: (x: unknown) => unknown) => {
+      if (e.tool === 'Agent') return next(e)
+      bottom.push({ tool: e.tool, command: e.command, agentId: e.agentId })
+      return { result: 'ok' }
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, ...(over.cwd ? { cwd: over.cwd } : {}) }))
+    await $.turn.complete(turnInput('agent-4', 'Added the parser.\n' + REPORT('1234abcd')))
+    return w
+  }
+  const review = async ($: Tester, w: Parameters<typeof delivered>[0]) => brainSpawn($, delivered(w), { tool_use_id: 'toolu_REVIEW01' })
+  const reviewed = async ($: Tester, on: On, text: string, header?: string) => {
+    const w = await handBack($, on, header ? { header } : {})
+    await review($, w)
+    const m = mark(w)
+    await $.turn.complete(turnInput('agent-2', text, usage('claude-haiku-4-5', 40_000, 2_000)))
+    return { w, row: since(w, m) }
+  }
+
+  test('review off (the default): a consistent hand-back says next=accept and prints no spawn block', { options: FULL }, async ($, on) => {
+    const w = await handBack($, on)
+    expect(delivered(w)).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=1/2 usd=~0.00 model=claude-sonnet-5-5 next=accept')
+    expect(delivered(w)).not.toContain('spawn: Agent')
+    expect(delivered(w)).not.toContain('review')
+    expect(w.spawns).toHaveLength(1)
+    expect(kinds(w, 'review')).toHaveLength(0)
+    expect(await delegationText($)).not.toContain('review')
+  })
+
+  test('review on: a consistent hand-back prints next=review and the reviewer spawn block, one tier below the worker', ON, async ($, on) => {
+    const w = await handBack($, on)
+    const row = delivered(w)
+    expect(row).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=1/2 usd=~0.00 model=claude-sonnet-5-5 next=review')
+    expect(row).not.toContain('next=accept')
+    const call = spawnCallOf(row) as SpawnCall
+    expect(call.model).toBe('haiku')
+    expect(call.subagent_type).toBe('general-purpose')
+    expect(call.description).toBe('T-4 review economy haiku')
+    expect(call.prompt.split('\n')[0]).toBe('[[review-of v=1 task=T-4 subtask=main attempt=1 worker=agent-4 sha=1234abcd]]')
+    expect(call.prompt).toContain(`read the brief ${BRIEF}`)
+    expect(call.prompt).toContain('Added the parser.')
+    expect(call.prompt).toContain('Edit nothing.')
+    // the brain is woken with the same text; the review is owed until it is made
+    expect(w.submitted[0]?.text).toContain('next=review')
+    expect(w.submitted[0]?.text).toContain('spawn: Agent')
+    expect(ledgerOf(w).at(-1)).toMatchObject({ task: 'T-4', attempt: 1, verdict: 'consistent', next: 'review' })
+    expect(recentOf(w).at(-1)?.owed).toBe('T-4: review')
+  })
+
+  test('the one-line row carries the block too, and /delegation says review is on', { options: { review: 'on', ...GM } }, async ($, on) => {
+    const w = await handBack($, on)
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/2 consistent · sonnet')
+    expect(delivered(w)).toContain('next=review')
+    expect(spawnCallOf(delivered(w))?.model).toBe('haiku')
+    expect(await delegationText($)).toContain('review: on')
+  })
+
+  test('on-frontier: a standard card is accepted as before', { options: { review: 'on-frontier', ...FULL } }, async ($, on) => {
+    const w = await handBack($, on)
+    expect(delivered(w)).toContain('next=accept')
+    expect(delivered(w)).not.toContain('spawn: Agent')
+  })
+
+  test('on-frontier: a frontier card is reviewed, by a sonnet', { options: { review: 'on-frontier', ...FULL } }, async ($, on) => {
+    const w = await handBack($, on, { header: HEADER.replace('tier=standard model=sonnet', 'tier=frontier model=opus') })
+    expect(delivered(w)).toContain('next=review')
+    expect(spawnCallOf(delivered(w))?.model).toBe('sonnet')
+    expect(spawnCallOf(delivered(w))?.description).toBe('T-4 review standard sonnet')
+  })
+
+  test('reviewTier overrides the tier below the worker', { options: { review: 'on', reviewTier: 'frontier', ...FULL } }, async ($, on) => {
+    const w = await handBack($, on)
+    expect(spawnCallOf(delivered(w))?.model).toBe('opus')
+  })
+
+  test('the repo file sets the option: review on in .chassis-delegation.json', { options: { ...FULL } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ review: 'on' }) }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Added the parser.\n' + REPORT('1234abcd')))
+    expect(delivered(w)).toContain('next=review')
+  })
+
+  test('review changes nothing for a refuted hand-back', ON, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 1 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
+    expect(delivered(w)).toContain('verdict=refuted')
+    expect(delivered(w)).not.toContain('next=review')
+    expect(delivered(w)).not.toContain('spawn: Agent')
+  })
+
+  test('the reviewer is recorded as an attempt of kind review, and it never counts against budget=', ON, async ($, on) => {
+    const w = await handBack($, on)
+    const r = await review($, w)
+    expect(r.deny).toBeUndefined()
+    expect(w.spawns[1]?.model).toBe('haiku')
+    expect(w.notices.at(-1)).toBe('tier=economy → haiku (review)')
+    expect(kinds(w, 'review')).toEqual([
+      expect.objectContaining({ task: 'T-4', subtask: 'main', attempt: 1, kind: 'review', lineage: 1, tier: 'economy', alias: 'haiku', source: 'review', verdict: 'pending', agentId: 'agent-2', toolUseId: 'toolu_REVIEW01', briefPath: BRIEF }),
+    ])
+    // budget=2-attempts: the worker has used one; the reviewer is not a second
+    const again = await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_02WORKER' }))
+    expect(again.deny).toBeUndefined()
+    expect(kinds(w, 'spawn').map(x => x.attempt)).toEqual([1, 2])
+    // the budget really spent, the denial counts the worker attempts alone
+    const third = await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_03WORKER' }))
+    expect(third.deny).toContain('budget exhausted for T-4 (2 attempts)')
+  })
+
+  test('the reviewer runs where the worker ran and steps at the engine default effort; the worker record is left as it was', ON, async ($, on) => {
+    const wt = `${ROOT}-T-4`
+    const w = await handBack($, on, { cwd: wt, dirs: { [wt]: [] } })
+    await review($, w)
+    expect(w.spawns[1]).toMatchObject({ cwd: wt })
+    for await (const chunk of $.turn.step(stepInput('agent-2', 'xhigh'))) void chunk
+    expect(w.steps.at(-1)).toEqual({ agentId: 'agent-2', effort: 'xhigh' })
+    expect(kinds(w, 'spawn')[0]?.effort).toBeUndefined()
+    expect(kinds(w, 'review')[0]?.effort).toBeUndefined()
+  })
+
+  test('while the reviewer runs the task is pending, not a worker holding a slot, and the review is no longer owed', ON, async ($, on) => {
+    const w = await handBack($, on)
+    w.agents.push({ id: 'agent-4', type: 'general-purpose', description: 'T-4', status: 'completed' })
+    await review($, w)
+    w.agents.push({ id: 'agent-2', type: 'general-purpose', description: 'T-4 review economy haiku', status: 'running' })
+    const state = await delegationText($)
+    expect(state).toContain('pending verdict: T-4 agent agent-2')
+    expect(state).not.toContain('running: T-4')
+    expect(state).not.toContain('owed: T-4: review')
+  })
+
+  describe('the reviewer never edits', () => {
+    const tool = async ($: Tester, w: Parameters<typeof workerCall>[1], agentId: string, input: Record<string, unknown>) => {
+      const out = await workerCall($, w, agentId, input)
+      return out.seen ? out.result.deny : 'unseen'
+    }
+
+    test('Edit, Write, MultiEdit and NotebookEdit are refused with one line saying a reviewer never edits', ON, async ($, on) => {
+      const w = await handBack($, on)
+      await review($, w)
+      for (const input of [
+        { tool: 'Edit', file_path: `${ROOT}/a/x.ts`, old_string: 'a', new_string: 'b' },
+        { tool: 'Write', file_path: `${ROOT}/a/x.ts`, content: 'x' },
+        { tool: 'MultiEdit', file_path: `${ROOT}/a/x.ts`, edits: [] },
+        { tool: 'NotebookEdit', notebook_path: `${ROOT}/a/n.ipynb`, new_source: 'x' },
+        { tool: 'Write', file_path: '/tmp/notes.md', content: 'x' },
+      ]) {
+        const deny = await tool($, w, 'agent-2', input)
+        expect(deny).toContain('a reviewer never edits')
+        expect(deny).toContain('T-4')
+        expect(deny?.includes('\n')).toBe(false)
+      }
+      expect(bottom.filter(b => b.agentId === 'agent-2')).toEqual([])
+    })
+
+    test('a Bash command the delegateOnly lexer counts as a write is refused: a redirection, sed -i, tee, cp, a commit; reads run', ON, async ($, on) => {
+      const w = await handBack($, on)
+      await review($, w)
+      for (const command of ['echo x > a/x.ts', "sed -i 's/a/b/' a/x.ts", 'cat a/x.ts | tee a/y.ts', 'cp a/x.ts a/z.ts', 'git commit -am fix', 'git diff HEAD~1 && echo done >> notes.txt']) {
+        expect(await tool($, w, 'agent-2', { tool: 'Bash', command })).toContain('a reviewer never edits')
+      }
+      for (const command of ['git diff HEAD~1 -- a/x.ts', 'git show 1234abcd:a/x.ts', 'cat a/x.ts', 'grep -n parser a/x.ts', 'git log --oneline -3 2>/dev/null']) {
+        expect(await tool($, w, 'agent-2', { tool: 'Bash', command })).toBeUndefined()
+      }
+      expect(await tool($, w, 'agent-2', { tool: 'Read', file_path: `${ROOT}/a/x.ts` })).toBeUndefined()
+      // the hand-back itself is never refused
+      expect(await tool($, w, 'agent-2', { tool: 'SubagentHandback', message: REVIEW_CLEAN })).toBeUndefined()
+    })
+
+    test('a reviewer in the worker worktree: a write there is refused too, not only one in the session root', ON, async ($, on) => {
+      const wt = `${ROOT}-T-4`
+      const w = await handBack($, on, { cwd: wt, dirs: { [wt]: [] } })
+      await review($, w)
+      expect(await tool($, w, 'agent-2', { tool: 'Bash', command: `echo x > ${wt}/a/x.ts` })).toContain('a reviewer never edits')
+      expect(await tool($, w, 'agent-2', { tool: 'Bash', command: `cd ${wt} && echo x > a/x.ts` })).toContain('a reviewer never edits')
+      expect(await tool($, w, 'agent-2', { tool: 'Bash', command: `git -C ${wt} commit -m x` })).toContain('a reviewer never edits')
+      expect(await tool($, w, 'agent-2', { tool: 'Bash', command: `git -C ${wt} diff HEAD~1` })).toBeUndefined()
+    })
+
+    test('the worker and the brain keep their tools: only the reviewer is held', ON, async ($, on) => {
+      const w = await handBack($, on)
+      await review($, w)
+      expect(await tool($, w, 'agent-4', { tool: 'Write', file_path: `${ROOT}/a/x.ts`, content: 'x' })).toBeUndefined()
+      expect(await tool($, w, 'agent-4', { tool: 'Bash', command: 'echo x > a/x.ts' })).toBeUndefined()
+      expect(((await $.tool.call({ tool: 'Write', file_path: `${ROOT}/a/x.ts`, content: 'x' } as never)) as { deny?: string }).deny).toBeUndefined()
+    })
+
+    test('the reviewer is not given the worker identity in its Bash environment; a worker still is', ON, async ($, on) => {
+      const w = await handBack($, on)
+      await review($, w)
+      await workerCall($, w, 'agent-2', { tool: 'Bash', command: 'git diff HEAD~1' })
+      await workerCall($, w, 'agent-4', { tool: 'Bash', command: 'git status' })
+      expect(bottom.find(b => b.agentId === 'agent-2')?.command).toBe('git diff HEAD~1')
+      expect(String(bottom.find(b => b.agentId === 'agent-4')?.command)).toContain('CHASSIS_SESSION_ID=T-4-a1')
+    })
+  })
+
+  describe('the reviewer hands back', () => {
+    test('refuted=0: next=accept with the confirmed and unverifiable counts; the record and the ledger carry them', ON, async ($, on) => {
+      const { w, row } = await reviewed($, on, REVIEW_CLEAN)
+      expect(row).toContain('chassis-delegation: review task=T-4 attempt=1/2')
+      expect(row).toContain('confirmed=2 refuted=0 unverifiable=1')
+      expect(row).toContain('next=accept')
+      expect(row).toContain('review: 2 confirmed, 1 unverifiable')
+      expect(row).not.toContain('next=resume')
+      expect(kinds(w, 'review')[0]).toMatchObject({ verdict: 'reviewed', review: { confirmed: 2, refuted: 0, unverifiable: 1 } })
+      expect(typeof kinds(w, 'review')[0]?.usd).toBe('number')
+      expect(ledgerOf(w).at(-1)).toMatchObject({ task: 'T-4', kind: 'review', verdict: 'reviewed', review: { confirmed: 2, refuted: 0, unverifiable: 1 }, next: 'accept', agentId: 'agent-2' })
+      expect(recentOf(w).at(-1)?.owed).toBeUndefined() // nothing is owed any more
+      expect(w.submitted.at(-1)?.text).toContain('next=accept')
+    })
+
+    test('the one-line row reads: reviewed, the reviewer, its cost, the counts, next=accept', { options: { review: 'on', ...GM } }, async ($, on) => {
+      const { row } = await reviewed($, on, REVIEW_CLEAN)
+      expect(row).toMatch(/chassis-delegation: T-4 attempt 1\/2 reviewed · haiku · ~?\$0\.\d\d · review: 2 confirmed, 1 unverifiable · next=accept/)
+    })
+
+    test('refuted=1: next=resume naming the worker, and the refuted row quoted (the confirmed ones are not)', ON, async ($, on) => {
+      const { w, row } = await reviewed($, on, REVIEW_REFUTED)
+      expect(row).toContain('confirmed=1 refuted=1 unverifiable=0')
+      expect(row).toContain('next=resume agent=agent-4')
+      expect(row).toContain('refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1')
+      expect(row).not.toContain('a/x.ts gains the parser')
+      expect(row).not.toContain('next=accept')
+      expect(kinds(w, 'review')[0]).toMatchObject({ verdict: 'reviewed', review: { confirmed: 1, refuted: 1, unverifiable: 0 } })
+      expect(w.sent).toHaveLength(0) // advice only, as every resume is without autoEscalate
+      expect(recentOf(w).at(-1)?.owed).toBe('T-4: resume agent=agent-4')
+    })
+
+    test('the one-line row quotes the refuted row under it', { options: { review: 'on', ...GM } }, async ($, on) => {
+      const { row } = await reviewed($, on, REVIEW_REFUTED)
+      expect(row).toMatch(/chassis-delegation: T-4 attempt 1\/2 reviewed · haiku · .*review: 1 confirmed, 1 refuted, 0 unverifiable · next=resume agent=agent-4\n/)
+      expect(row).toContain('refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1')
+    })
+
+    test('the brain sends the worker the refuted rows: that message is the worker\'s second attempt, and the reviewer did not spend it', ON, async ($, on) => {
+      const { w } = await reviewed($, on, REVIEW_REFUTED)
+      // budget=2-attempts: one worker attempt so far; counting the review it would be two and this would be refused
+      const sent = (await $.session.send({ to: 'agent-4', text: 'refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1', origin: { kind: 'model' } } as never)) as { isDelivered?: boolean; reason?: string }
+      expect(sent.isDelivered).toBe(true)
+      expect([...kinds(w, 'spawn'), ...kinds(w, 'resume')].map(r => [r.attempt, r.kind, r.lineage])).toEqual([[1, 'spawn', 1], [2, 'resume', 1]])
+    })
+
+    test('autoEscalate: the mod sends the worker the refuted rows itself', { options: { review: 'on', autoEscalate: true, ...FULL } }, async ($, on) => {
+      const { w, row } = await reviewed($, on, REVIEW_REFUTED)
+      expect(row).toContain('next=resumed agent=agent-4 (autoEscalate)')
+      expect(w.sent).toHaveLength(1)
+      expect(w.sent[0]?.to).toBe('agent-4')
+      expect(w.sent[0]?.text).toContain('refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1')
+      expect(w.sent[0]?.text).not.toContain('a/x.ts gains the parser')
+      expect(w.sent[0]?.text).toContain('[[report v=1')
+      expect(kinds(w, 'resume')).toEqual([expect.objectContaining({ attempt: 2, kind: 'resume', lineage: 1, agentId: 'agent-4' })])
+    })
+
+    test('a worker that hands back again is reviewed again: the second consistent verdict prints a new block for the new sha', { options: { review: 'on', autoEscalate: true, ...FULL } }, async ($, on) => {
+      const { w } = await reviewed($, on, REVIEW_REFUTED)
+      await $.turn.complete(turnInput('agent-4', 'Fixed the gate.\n' + REPORT('5678abcd')))
+      expect(delivered(w)).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=2/2')
+      expect(delivered(w)).toContain('[[review-of v=1 task=T-4 subtask=main attempt=2 worker=agent-4 sha=5678abcd]]')
+    })
+
+    test('refuted>0 with the budget spent: check by hand, not a resume the budget would refuse', { options: { review: 'on', ...FULL } }, async ($, on) => {
+      const { w, row } = await reviewed($, on, REVIEW_REFUTED, HEADER.replace('budget=2-attempts', 'budget=1-attempts'))
+      expect(row).toContain('next=check by hand')
+      expect(row).toContain('budget')
+      expect(row).toContain('refuted: the gate passes')
+      expect(row).not.toContain('next=resume')
+      expect(kinds(w, 'review')[0]).toMatchObject({ verdict: 'reviewed', review: { refuted: 1 } })
+    })
+
+    test('no review block: next=accept with `review: no review block` (the review never blocks on its own failure)', ON, async ($, on) => {
+      const { w, row } = await reviewed($, on, 'Looks fine to me. confirmed: a/x.ts gains the parser — a/x.ts:12')
+      expect(row).toContain('next=accept')
+      expect(row).toContain('review: no review block')
+      expect(kinds(w, 'review')[0]).toMatchObject({ verdict: 'reviewed' })
+      expect(kinds(w, 'review')[0]?.review).toBeUndefined()
+      expect(ledgerOf(w).at(-1)).toMatchObject({ kind: 'review', verdict: 'reviewed', next: 'accept' })
+    })
+
+    test('a malformed review block is no block', ON, async ($, on) => {
+      const { row } = await reviewed($, on, 'refuted: all of it\n[[review v=1 task=T-4 confirmed=2 refuted=lots unverifiable=0]]')
+      expect(row).toContain('next=accept')
+      expect(row).toContain('review: no review block')
+      expect(row).not.toContain('next=resume')
+    })
+
+    test('a foreground reviewer is judged from its Agent result, like a foreground worker', ON, async ($, on) => {
+      const w = await handBack($, on)
+      await review($, w)
+      on('tool.call', { tool: 'Agent' }, () => agentResult(REVIEW_REFUTED, 'agent-2'))
+      const r = await $.tool.call({ tool: 'Agent', description: 'T-4 review economy haiku', prompt: 'x', tool_use_id: 'toolu_REVIEW01' } as never)
+      const context = (r.context ?? []).join('\n')
+      expect(context).toContain('chassis-delegation: review task=T-4 attempt=1/2')
+      expect(context).toContain('next=resume agent=agent-4')
+      expect(context).toContain('refuted: the gate passes')
+      expect(kinds(w, 'review')[0]).toMatchObject({ verdict: 'reviewed', review: { refuted: 1 } })
+    })
+
+    test('one review is posted once: a second turn.complete does not post or ledger it again', ON, async ($, on) => {
+      const { w } = await reviewed($, on, REVIEW_CLEAN)
+      const rows = () => w.appended.flatMap(a => a.text.split('\n')).filter(l => l.startsWith('chassis-delegation: review task=T-4'))
+      expect(rows()).toHaveLength(1)
+      await $.turn.complete(turnInput('agent-2', REVIEW_CLEAN))
+      expect(rows()).toHaveLength(1)
+      expect(ledgerOf(w).filter(l => l.kind === 'review')).toHaveLength(1)
+    })
+  })
+})

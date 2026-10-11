@@ -78,3 +78,38 @@ describe('5E: hooks/templates/debrief.md, the built-in debrief', () => {
     expect(t.includes('"kind": "went_wrong"')).toBe(true)
   })
 })
+
+describe('MOD-21: hooks/templates/review.md, the reviewer prompt', () => {
+  // the keys register.ts fills (hooks/lib/review.ts, ReviewVars)
+  const KEYS = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback']
+
+  test('it fills only keys the mod knows, and uses the ones a reviewer cannot do without', () => {
+    const t = read('hooks/templates/review.md')
+    const used = [...new Set([...t.matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))]
+    for (const key of used) expect(KEYS.includes(key)).toBe(true)
+    for (const key of ['id', 'brief', 'worktree', 'sha', 'report', 'handback']) expect(used.includes(key)).toBe(true)
+  })
+
+  test('it says: read the brief, the report and the diff at the sha; one row per claim; the three labels; the deciding command or file:line; edit nothing', () => {
+    const t = read('hooks/templates/review.md')
+    for (const want of ['the brief', 'the report', 'the diff', 'one row per', 'confirmed', 'refuted', 'unverifiable', 'file:line', 'Edit nothing', 'never fix']) expect(t.includes(want)).toBe(true)
+  })
+
+  test('it ends with the review block the mod parses, and no line of it starts as a brief, report or amend block', () => {
+    const t = read('hooks/templates/review.md').trimEnd()
+    expect(t.split('\n').at(-1)).toBe('[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]')
+    for (const line of t.split('\n')) {
+      expect(line.trim().startsWith('[[brief')).toBe(false)
+      expect(line.trim().startsWith('[[report')).toBe(false)
+      expect(line.trim().startsWith('[[amend')).toBe(false)
+    }
+  })
+
+  test('the row format it asks for is the one the mod reads: a label, a colon, the claim, the evidence', async () => {
+    const { reviewRows } = await import('../../hooks/lib/review.ts')
+    const t = read('hooks/templates/review.md')
+    const example = t.split('\n').filter(l => /^(confirmed|refuted|unverifiable): /.test(l))
+    expect(example.map(l => l.split(':')[0])).toEqual(['confirmed', 'refuted', 'unverifiable'])
+    expect(reviewRows(example.join('\n')).map(r => r.label)).toEqual(['confirmed', 'refuted', 'unverifiable'])
+  })
+})

@@ -102,6 +102,14 @@ const RESOLVED: Record<string, string> = {
 }
 
 const TEMPLATE = 'Work in {{worktree}} on {{branch}}; card {{cardPath}}.\n\n{{body}}'
+/** MOD-21: the reviewer prompt the mod builds from hooks/templates/review.md (a stand-in: an engine test cannot read the file). */
+export const REVIEW_TEMPLATE = [
+  'Review {{id}} attempt {{attempt}}/{{budget}}: read the brief {{brief}}, the report and the diff at {{sha}} in {{worktree}} (base {{base}}).',
+  'Report: {{report}}',
+  'Hand-back:',
+  '{{handback}}',
+  'Edit nothing. End with [[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]',
+].join('\n')
 
 export function world(on: On, options: WorldOptions = {}): World {
   const w: World = {
@@ -154,7 +162,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('session.usage', () => ({ value: { startedAt: 0, context: { window: 200000, percent: 12 }, rateLimits: [], cost: { usd: w.usd } } }))
   hook('fs.exists', (e: { path: string }) => ({ value: w.files.has(e.path) || dirs.has(e.path) }))
   hook('fs.read', (e: { path: string; as?: string }) => {
-    const text = w.files.get(e.path) ?? (e.path.endsWith('/templates/brief.md') ? TEMPLATE : undefined)
+    const text = w.files.get(e.path) ?? (e.path.endsWith('/templates/brief.md') ? TEMPLATE : e.path.endsWith('/templates/review.md') ? REVIEW_TEMPLATE : undefined)
     if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
     // `{ as: 'bytes' }` answers the file's UTF-8 bytes as `{ base64 }`, as the engine does
     if (e.as === 'bytes') return { value: { base64: btoa(Array.from(new TextEncoder().encode(text), b => String.fromCharCode(b)).join('')) } }
