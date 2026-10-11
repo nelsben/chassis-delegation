@@ -554,7 +554,7 @@ describe('GH-6: an inline [[brief]] header and no brief file', () => {
     await $.turn.complete(turnInput('agent-6', REPORT(PADDED).replace(/FE-232/g, 'FE-233').replace('subtask=e2e', 'subtask=main')))
     expect(delivered(w)).toContain('chassis-delegation: verdict=unverified task=FE-233')
     expect(delivered(w)).toContain('note: no brief file named in the prompt; the inline header lacks gate= (or repo=none); verify skipped')
-    expect(w.runs.some(r => r.argv[0] === 'git')).toBe(false)
+    expect(w.runs.some(r => r.argv[0] === 'git' && !['merge-base', 'ls-tree'].includes(r.argv[3] ?? ''))).toBe(false) // MOD-60: the merged check reads origin/main and its card
   })
 
   test('scope and gate both missing are both named; repo=none stands in for a gate', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
@@ -1668,7 +1668,7 @@ describe('GH-104: spend guards', () => {
       [2, 'verify', 'work-present', HEAD],
     ])
     // only allowlisted git reads, in the worker's worktree
-    expect(w.runs.every(x => x.argv[0] === 'git' && x.argv[2] === WT && ['rev-parse', 'status', 'log'].includes(x.argv[3] ?? ''))).toBe(true)
+    expect(w.runs.every(x => x.argv[0] === 'git' && (x.argv[2] === WT ? ['rev-parse', 'status', 'log'] : ['merge-base', 'ls-tree']).includes(x.argv[3] ?? ''))).toBe(true) // MOD-60: the merged check reads origin/main from the repo root
     // the delegation state says what is owed
     const section = (await $.prompt.compose(composeInput(['Agent']))).sections.at(-1)?.text ?? ''
     expect(section).toContain(`- owed: T-4: verify sha=${HEAD}`)
@@ -5064,13 +5064,37 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(0)
   })
 
-  test('a refuted hand-back is woken for even when the sha reads as merged', { options: { ...GM } }, async ($, on) => {
+  test('MOD-60: a refuted hand-back whose sha is on origin/main submits no wake, logs the skip and still posts its row', { options: { ...GM } }, async ($, on) => {
     const base = nativeRun() // gate red: the claim gate=pass is refuted
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 0, stdout: '' } : base(argv)), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toEqual([])
+    expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 already merged'))).toBe(true)
+    expect(delivered(w)).toContain('refuted')
+    expect(ledgerOf(w).some(r => r.verdict === 'refuted')).toBe(true)
+  })
+
+  test('MOD-60: a refuted hand-back not merged submits its wake', { options: { ...GM } }, async ($, on) => {
+    const base = nativeRun()
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 1, stdout: '' } : base(argv)), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
     expect(w.submitted).toHaveLength(1)
     expect(w.submitted[0]?.text).toContain('refuted')
+  })
+
+  test('MOD-60: a non-consistent hand-back for a task accepted by hand submits no wake', { options: { ...GM } }, async ($, on) => {
+    const base = nativeRun() // gate red: refuted
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 1, stdout: '' } : base(argv)), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toHaveLength(1) // not merged, not accepted yet: woken as today
+    await $.session.start(sessionStart)
+    await $.command.run(delegationCmd('accept T-4 by hand'))
+    w.submitted.length = 0
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(w.submitted).toEqual([])
   })
 
   const mainEnd = () => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' }) as never

@@ -10,6 +10,12 @@
   claim is that no-marker red, with gate=pass, is advised `check red by hand` (accept if the file shows the red state,
   else resume to prove red). Every other unverified case is advised as before.
 
+- **A non-consistent verdict for a task already merged or accepted no longer wakes the brain on arrival (MOD-60).**
+  The merged check before a worker's hand-back wake (MOD-35) asked only about a consistent verdict, so an
+  unverified or refuted row for a task already on the default branch (or accepted by hand) still woke the brain with
+  a stale `next=resume`. It now asks about any verdict, as MOD-51 does at delivery: the row is still posted and
+  recorded, the debug line stays `wake skipped: <task> already merged`, and any ready lines still wake the brain.
+
 ## 0.9.2 — 2026-10-11
 
 - **A held wake is dropped when the brain already messaged its worker (MOD-57).** A resume after a consistent
