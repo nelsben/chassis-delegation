@@ -317,7 +317,10 @@ The four blocks:
    under the mod's naming (`<repo>-<ID>`, or under `worktreeRoot`): task, model
    (a chip in the model's colour and its name), state (`live 04:12`,
    `queued #2`, `verdict owed`, or the verdict with its icon), worktree folder
-   and branch, tokens, cost, and attempt over budget.
+   and branch, tokens, cost, and attempt over budget. While a worker holds an
+   exclusive resource (MOD-23; see [Exclusive resources](#exclusive-resources-and-fan-out)),
+   a `resource` column names it (`blender-live`), and a queued row waiting for one
+   says `waits blender-live`; the column is absent while no row has one.
 4. **Spend by model**: a bar each for haiku, sonnet and opus (anything else is
    "other"), labelled `sonnet · $3.10 · 412k tok · 4 consistent`.
 
@@ -349,7 +352,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool; the model then makes the Agent call its result ends with |
-| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test (and `repo`: `none` or `here` for research or extraction with outputs outside the repo, see [Research cards](#research-cards)); it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
+| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test (and `repo`: `none` or `here` for research or extraction with outputs outside the repo, see [Research cards](#research-cards); `resources` for a live app only one worker may use, and `lanes` to write several research cards at once, see [Exclusive resources and fan-out](#exclusive-resources-and-fan-out)); it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
 | `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (no input) |
 
@@ -520,6 +523,7 @@ fix when a field is wrong, writing nothing. You can still write one by hand. `<I
     repo: here                  # optional: here = no worktree, the worker shares this checkout (see repo=here); none = no repo at all (see Research cards)
     outdir: /out/hair           # optional: the output folder outside the repo; default the folder of the first absolute scope entry
     scratch: /tmp/hair-scratch  # optional: where the worker puts helper files; default <system temp>/chassis-delegation/<ID>
+    resources: [blender-live]   # optional: exclusive resources the worker holds while it runs; a card naming one a running worker holds waits in the queue (see Exclusive resources)
     ---
     ## Why … ## Done when …
 
@@ -562,7 +566,9 @@ starts with one header line:
     [[brief v=1 task=<ID> subtask=main purpose=build tier=<tier> model=<alias> scope=<globs> forbid=<globs> red_test="<cmd>" gate=<ids> spend=<usd> budget=<n>-attempts report=chassis.report.v1]]
 
 A card with an output folder or no repo adds `repo=`, `outdir=<abs>` and
-`scratch=<abs>` after the gate and before `spend=` (see [Research cards](#research-cards)).
+`scratch=<abs>` after the gate and before `spend=` (see [Research cards](#research-cards)),
+and a card that names resources adds `resources=<a,b>` after those (see
+[Exclusive resources and fan-out](#exclusive-resources-and-fan-out)).
 
 `spend=` is the per-attempt ceiling in dollars (GH-106): the card's `spend:`
 when it has one, else the tier's entry in `spendByTier`; `0` writes none. The
@@ -602,6 +608,7 @@ Only a brief with no `scope=` at all is refused. Other header fields are optiona
 
 - `repo=none` marks a task with no git repo, and `repo=<dir>` names the folder to verify; a `repo: none` card dispatches with no worktree, no fetch and no git (see [Research cards](#research-cards));
 - `outdir=<abs>` is the card's output folder, outside the repo: the card's `outdir:`, else the folder of its first absolute scope entry. A gate command may name it as `{outdir}`, and a relative `artefacts=` path is read against it. `scratch=<abs>` is where the worker puts helper files (the card's `scratch:`, else `<system temp>/chassis-delegation/<ID>`), never in the repo; the brief template says so. `scratch=` is written whenever there is an `outdir=`, the card is `repo: none` or `repo: here`, or it names a scratch folder, and neither is written for a plain worktree card, so its header is the one it always was;
+- `resources=<a,b>` (MOD-23) names the exclusive resources the task holds while its worker runs: free-form words such as `blender-live` (letters, digits, `.` `_` `:` `-`). A spawn of a brief that names a resource another running worker holds is queued, not started (see [Exclusive resources and fan-out](#exclusive-resources-and-fan-out)). Absent, the brief holds nothing and is held up by nothing;
 - `repo=here` marks a task worked in the session's own checkout, no worktree (see [repo=here](#repohere-the-main-checkout));
 - `base=<ref>` names where the delta starts when the worker commits (GH-10): a branch, `HEAD~2`, a sha. It beats `baseRef` and the `origin/main` chain. A value that is not a git ref (one starting with `-`, or a `a..b` range) makes the brief **refused**. `/dispatch <ID> --base <sha>` (and the tool's `base`) writes it whenever the base is not the default `origin/main`, in worktree mode and repo=here alike (GH-105): a card stacked on an unpushed sibling is cut from that sha and judged on what the worker added to it, not on the sibling's files. The brief's `base=` is the cut point and the diff base, and a dispatch that names a base writes it (MOD-2): against a reused worktree brief it sets or replaces `base=` in the header alone, amend blocks and body untouched, and the reuse line says so (`reused, base= set to <sha>` or `reused, base= replaced <old> → <new>`); a dispatch naming no base against a reused brief that carries one cuts the worktree from it. `--verify <sha>` takes its delta from the same `base=`. The verdict's scope line names the base it diffed from (`every changed path since <base> is within …`);
 - `ignore=<globs>` (repo=here only) names paths taken off the delta before scope and files are checked.
@@ -670,7 +677,9 @@ The hook refuses a spawn with the same one line the dispatch result gives:
 - a spawn past the budget, or one whose worktree holds finished work (see
   **Look before you respawn** below);
 - a spawn while every worker slot is taken:
-  `queued: BE-101 — the mod will tell you when a slot frees (2 live: BE-99, BE-100; 1 queued: BE-101)`.
+  `queued: BE-101 — the mod will tell you when a slot frees (2 live: BE-99, BE-100; 1 queued: BE-101)`;
+- a spawn of a brief whose `resources=` names one a running worker holds (MOD-23), a free slot or not:
+  `queued: BE-101 — waiting for resource blender-live (held by BE-99)`.
 
 **The queue.** The queue is advice. A queued task waits; when a hand-back frees
 a slot, the verdict row says `ready: BE-101 — run its spawn block (/dispatch
@@ -679,10 +688,19 @@ next prompt says it while it holds (a worker that ended with no hand-back frees
 its slot there). The brain makes the spawn, which takes the task's queued place
 (`started queued BE-101 (waited 4 min)`). A respawn verdict carries the next
 spawn block in its advice the same way. While any row is ready or a respawn block
-is pending, the state section carries one posture line: make a ready row's spawn
-call, or a respawn block's Agent call, without asking the person; ask only when a
-verdict is refuted on a claim the brain cannot amend, a worker is over-spend, or
-an amend needs the person's approval.
+is pending, or a reviewer's spawn block is (MOD-21: `owed: T-4: review`), the
+state section carries one posture line: make a ready row's spawn call, a respawn
+block's Agent call or a pending review block's Agent call, without asking the
+person; ask only when a verdict is refuted on a claim the brain cannot amend, a
+worker is over-spend, or an amend needs the person's approval.
+
+A row that waits for a resource (MOD-23) is not ready while a running worker, or a
+queued row ahead of it, names the same resource, whatever the free slots: the
+state section says what it waits for, `- queued: BE-101 (position 1) — waiting
+for resource blender-live (held by BE-99)`, and no posture line comes of it. The
+hand-back of the worker that held the resource carries the `ready:` line for the
+next row that wanted it, and only that row: a second card for the same resource
+stays queued behind the first. A row with no resources is never held up.
 
 When the brain still does not act, `readyFallbackMinutes` (default 10; `0` is off)
 is the last resort: a ready row left unclaimed that long is started by the mod
@@ -908,7 +926,13 @@ is at when `baseRef` is `HEAD`. The steps say:
 
   `--force-overlap` (the tool's `forceOverlap: true`) lets it through with a
   `warning:` line instead. A record whose worker died stays "in flight" until
-  it gets a verdict; force past it, or judge it.
+  it gets a verdict; force past it, or judge it. A shared resource is overlap too
+  (MOD-23): a card whose `resources` name one that an in-flight repo=here card's
+  brief names is refused the same way, naming the resource and the other card
+  (`/dispatch BE-101: refused — BE-101 holds resource blender-live, which in-flight
+  GH-19 holds in the shared checkout; both would use it at once (pass --force-overlap
+  to dispatch anyway; it then waits for the resource)`); `--force-overlap` lets it
+  through, and the queue then holds it while the other worker still runs.
 - `--here` and `--replay` do not mix: a replay works in its own worktree.
 
 **Verify.** The tree is the session root. Each claim:
@@ -1162,6 +1186,103 @@ on the repo delta; had it written into `~/exports/avatar/`, on the outside delta
 had it named a render it never made, the artefacts claim would have failed naming
 it; and had the check script failed, the gate claim would have said so, whatever
 the report said.
+
+### Exclusive resources and fan-out
+
+Two research lanes could not run at once because there was one live Blender with
+one open file. Until MOD-23 that was a line the brain wrote into every brief and
+hoped was followed. A card can now name the resources it holds, and the queue
+enforces them; and the `card` tool can write several lanes from one sentence.
+
+**Resources.** A card may carry `resources: [blender-live]` (a list of free-form
+words: letters, digits, `.` `_` `:` `-`; the name means nothing to the mod beyond
+"the same word is the same thing"). The brief header carries them as
+`resources=blender-live` after `outdir=` and `scratch=`, before `spend=`. A card with no resources writes
+the header it always did and is held up by nothing.
+
+- A worker holds its card's resources from its spawn until it hands back (or its
+  run ends with no hand-back).
+- A dispatch, or the brain's own Agent call, for a card whose resource is held by
+  a running or starting worker is **queued**, whether or not a slot is free, with
+  `queued: OPS-9 — waiting for resource blender-live (held by OPS-8)`. The dispatch
+  result prints no spawn block and the hook starts nothing; a second ask keeps its
+  place (`…; already queued since 14:02 (position 1)`).
+- **The hand-back that frees the resource carries the `ready:` line for it**
+  (`ready: OPS-9 — run its spawn block (/dispatch OPS-9 prints it again)`), in the
+  same wake as the verdict row. Of several queued cards that name one resource only
+  the first is ready; the others wait for it in turn, and a card with no resources
+  or others is ready in its place. A row that waits for a resource takes no worker
+  slot, and the "Delegation state" section names what it waits for.
+- The worktree table of the dashboard and its text fallback show the resource a
+  worker holds and the one a queued row waits for (see [Dashboard](#dashboard)).
+- For `repo: here` cards the overlap check that guards the shared checkout
+  (see [repo=here](#repohere-the-main-checkout)) counts a shared resource as overlap.
+
+**Fan-out.** Research usually fans out: two or three workers at once, each owning
+an output folder, all wanting the same shared notes file. The `card` tool takes
+`lanes: [{ title, scope, doneWhen? }]` beside the shared fields (`title` and
+`doneWhen` as the umbrella, `why`, `gate`, `tier`, `repo`, `redTest`, `budget`,
+`spend`, `resources`, `forbid`). It writes **one card per lane**, all or none:
+sequential ids (`OPS-41`, `OPS-42`), the shared why, gate, tier, repo, resources
+and forbid, and each lane its own title, scope (so its own output folder: the first
+absolute entry) and `doneWhen` (the shared list when the lane has none). A shared
+`scope` beside lanes is refused. Two lanes whose scopes overlap are refused, naming
+both:
+
+    card refused: lanes overlap: lane 1 "Extract the hair model" scope /out/avatar/** overlaps lane 2 "Extract the eye model" scope /out/avatar/eyes/**; give each lane its own output folder
+
+The dry run prints every lane's summary and brief header, then says go for all of
+them (`Say go and Claude dispatches OPS-41, OPS-42.`); with `dispatch: true` it
+dispatches each lane in order, one spawn block per lane under `--- OPS-41 ---`,
+and the queue keeps lanes that hold one resource from running together.
+
+**Worked example: two extraction lanes, one notes file.** The avatar is built in a
+running Blender; the person wants the hair and the eye model extracted, and both
+lanes would like to append to `/out/notes/avatar.md`. That file is the brain's to
+merge afterwards, so it is the shared `forbid`: neither lane may touch it, and the
+outside delta fails a lane that does. The brain calls the tool once:
+
+    {
+      "title": "Extract the avatar parts",
+      "why": "The avatar is built in the running Blender; the hair and the eyes are extracted as separate models.",
+      "doneWhen": ["each part is a glTF in its lane folder and not empty"],
+      "repo": "none",
+      "redTest": "none",
+      "gate": "hair-check",
+      "resources": ["blender-live"],
+      "forbid": ["/out/notes/avatar.md"],
+      "lanes": [
+        { "title": "Extract the hair model", "scope": ["/out/hair/**"] },
+        { "title": "Extract the eye model", "scope": ["/out/eyes/**"], "doneWhen": ["eyes.gltf and a render are in the lane folder"] }
+      ]
+    }
+
+It writes `OPS-41` and `OPS-42`, which differ in title, scope and done-when and
+agree on everything else:
+
+    id: OPS-41
+    title: Extract the hair model
+    …
+    repo: none
+    scope: [/out/hair/**]
+    forbid: [/out/notes/avatar.md]
+    resources: [blender-live]
+
+and prints their two headers:
+
+    [[brief v=1 task=OPS-41 … scope=/out/hair/** forbid=/out/notes/avatar.md red_test="none" gate=hair-check repo=none outdir=/out/hair scratch=/tmp/chassis-delegation/OPS-41 resources=blender-live spend=10 budget=2-attempts report=chassis.report.v1]]
+    [[brief v=1 task=OPS-42 … scope=/out/eyes/** forbid=/out/notes/avatar.md red_test="none" gate=hair-check repo=none outdir=/out/eyes scratch=/tmp/chassis-delegation/OPS-42 resources=blender-live spend=10 budget=2-attempts report=chassis.report.v1]]
+
+When the person says go, the brain dispatches both and makes both Agent calls.
+`OPS-41` starts; the second call is refused, though a worker slot is free:
+
+    queued: OPS-42 — waiting for resource blender-live (held by OPS-41)
+
+`OPS-41` hands back, and its verdict row ends with
+`ready: OPS-42 — run its spawn block (/dispatch OPS-42 prints it again)`; the brain
+makes the call and `OPS-42` runs with the Blender to itself. Had the lanes needed
+no shared app, the card would carry no `resources` and both would run at once, each
+in its own folder, still sharing the forbid on the notes file.
 
 ## Review
 
@@ -1848,7 +1969,10 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
   starting spawns hold slots, never queue rows. A queued row leaves the queue
   only once its spawn succeeds: a spawn the engine refuses leaves it at the head.
   A refusal retrying cannot cure (budget exhausted, work present in the
-  worktree) removes the row.
+  worktree) removes the row. A resource (`resources=`, MOD-23) queues a spawn
+  too, slot or no slot: `queued: BE-314 — waiting for resource blender-live
+  (held by BE-310)`. Only a running or starting worker holds a resource; a
+  worker that has handed back holds none, even while its verdict is still out.
 - **The git guard reads the command text.** It cannot see a commit made inside
   a script, or a folder named through a variable.
 - **The background runners act on the session's permissions.** The built-in

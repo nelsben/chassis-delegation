@@ -32,6 +32,8 @@ export type Card = {
   outdir?: string
   /** MOD-22: where the worker puts helper files, when the card names it; else a folder under the system temp dir. */
   scratch?: string
+  /** MOD-23: the exclusive resources the card holds while it runs (`resources: [blender-live]`); another card naming one waits. */
+  resources: string[]
   /** The card's markdown below the frontmatter, verbatim. */
   body: string
   fields: Record<string, FieldValue>
@@ -159,6 +161,7 @@ export function parseCard(text: string): Card | { error: string } {
     repo: asText(f.repo).trim() || undefined,
     outdir: asText(f.outdir).trim() || undefined,
     scratch: asText(f.scratch).trim() || undefined,
+    resources: asList(f.resources),
     body: fm.body,
     fields: f,
   }
@@ -193,6 +196,7 @@ const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
  * GH-16: a repo=here brief adds `repo=here`, `base=<ref>` when one is named,
  * and `ignore=<globs>` after the gate. MOD-22: `repo=none` likewise, and a card
  * with an output folder adds `outdir=<abs>` and `scratch=<abs>` after those.
+ * MOD-23: a card that names resources adds `resources=<a,b>` after those.
  */
 export function renderHeader(input: {
   card: Card
@@ -218,7 +222,8 @@ export function renderHeader(input: {
     (input.base ? ` base=${input.base}` : '') +
     (input.ignore && input.ignore.length > 0 ? ` ignore=${input.ignore.join(',')}` : '') +
     (input.outdir ? ` outdir=${input.outdir}` : '') +
-    (input.scratch ? ` scratch=${input.scratch}` : '')
+    (input.scratch ? ` scratch=${input.scratch}` : '') +
+    (c.resources.length > 0 ? ` resources=${c.resources.join(',')}` : '')
   return (
     `[[brief v=1 task=${c.id} subtask=main purpose=build tier=${input.tier} model=${input.alias}` +
     ` scope=${scope.map(oneLine).join(',')} forbid=${forbid.map(oneLine).join(',')}` +
@@ -272,6 +277,14 @@ export const overlapRefusal = (id: string, mine: string, card: string, theirs: s
 /** GH-16: the same overlap, let through by --force-overlap. */
 export const overlapWarning = (id: string, mine: string, card: string, theirs: string): string =>
   `warning: ${id} scope ${mine} overlaps in-flight ${card} scope ${theirs} in the shared checkout (--force-overlap: dispatched anyway)`
+
+/** MOD-23: the refusal when this repo=here card names a resource an in-flight repo=here card holds: both would use it at once. */
+export const resourceOverlapRefusal = (id: string, resource: string, card: string): string =>
+  `/dispatch ${id}: refused — ${id} holds resource ${resource}, which in-flight ${card} holds in the shared checkout; both would use it at once (pass --force-overlap to dispatch anyway; it then waits for the resource)`
+
+/** MOD-23: the same overlap, let through by --force-overlap. */
+export const resourceOverlapWarning = (id: string, resource: string, card: string): string =>
+  `warning: ${id} holds resource ${resource}, which in-flight ${card} holds in the shared checkout (--force-overlap: dispatched anyway; it waits for the resource)`
 
 /**
  * The brief body from the template: `{{id}} {{title}} {{domain}} {{worktree}}

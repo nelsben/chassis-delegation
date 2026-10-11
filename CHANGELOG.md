@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+- **Exclusive resources and fan-out (MOD-23).** Public issues #33 (ask B) and #32
+  (ask 3). Two research lanes could not run at once because there was one live
+  Blender with one open file; the brain wrote that into every brief and hoped it
+  was followed. And research fans out: two or three workers, each owning an output
+  folder, all wanting the same shared notes file, which the brain coordinated by
+  hand. The queue now understands a resource name, and the card tool writes N
+  lanes from one sentence. See "Exclusive resources and fan-out" in the README.
+  - **A card may carry `resources: [blender-live]`.** Free-form words (letters,
+    digits, `.` `_` `:` `-`). The brief header carries `resources=blender-live`
+    after `outdir=`/`scratch=` and before `spend=`; a card with none writes the
+    header it always did. `resources` is a recognised header field, so the value
+    before it keeps its end.
+  - **The queue enforces it.** A dispatch, or the brain's own Agent call, for a card
+    whose resource is held by a running (or starting) worker is queued, whether or
+    not a slot is free: `queued: OPS-9 — waiting for resource blender-live (held by
+    OPS-8)`. The dispatch prints no spawn block, the hook starts nothing, and a
+    second ask keeps its place. The hand-back that frees the resource carries the
+    `ready:` line for it, in the same wake as the verdict row. Of several queued
+    cards that name one resource only the first is ready; a row waiting for a
+    resource takes no slot, and a card with no resources is never held up. A worker
+    that has handed back holds nothing, even while its verdict is out. New pure
+    `planQueue`, `resourceBlock`, `resourceDeny` and `waitsText` in
+    `hooks/lib/scheduler.ts`; `resourcesOf` and `sharedResource` in
+    `hooks/lib/brief.ts`.
+  - **The `card` tool takes `lanes: [{ title, scope, doneWhen? }]` and `resources`.**
+    It writes one card per lane, all or none: sequential ids (N, N+1, …), the shared
+    why, gate, tier, repo, budget, resources and forbid, and each lane its own scope
+    (so its own output folder) and `doneWhen` (the shared one when a lane has none).
+    Lanes whose scopes overlap are refused, naming both; a shared `scope` beside
+    lanes is refused; the tool's `scope` is no longer in `required` (a single card
+    without one is still refused). The dry run prints every lane's summary and
+    header and says go for all of them; `dispatch: true` dispatches each lane in
+    order under `--- <ID> ---`. New pure `cardsFromFields` in `hooks/lib/card.ts`;
+    `cardFromFields` still renders one card.
+  - **The repo=here overlap check treats a shared resource as overlap.** A card
+    whose `resources` name one an in-flight repo=here card's brief names is refused
+    like an overlapping scope (naming the resource and the card), and
+    `--force-overlap` lets it through with a warning; the queue then holds it.
+  - **The delegation-state posture line also covers a pending review spawn
+    block** (MOD-21): an owed `T-4: review` row now carries the posture line, like a
+    ready row or a respawn block, so the brain makes the reviewer's Agent call
+    without asking. A row waiting on a resource is named with what it waits for
+    (`- queued: T-9 (position 1) — waiting for resource blender-live (held by T-1)`)
+    and calls for nothing.
+  - **The dashboard shows the resource.** The worktree table (pane) and its text
+    fallback gain a resource column while any worker holds one or any queued row
+    waits for one (`blender-live`, `waits blender-live`); without one the table is
+    unchanged.
+
 - **Research cards (MOD-22).** Public issues #32 and #33 (two adopter repos,
   2026-10-09/10): research and extraction lanes write their outputs outside the
   repo (an exported model, renders, a sound file, notes), often need the live
