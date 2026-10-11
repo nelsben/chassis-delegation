@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { CARD_TOOL, cardFromFields, cardSummary, forbidCollisions, type CardCtx } from '../hooks/lib/card'
+import { CARD_TOOL, cardFromFields, cardSummary, donePaths, forbidCollisions, type CardCtx } from '../hooks/lib/card'
 import { parseCard } from '../hooks/lib/dispatch'
 
 const ctx = (over: Partial<CardCtx> = {}): CardCtx => ({
@@ -204,6 +204,19 @@ describe('MOD-52: a done-when path in markdown bold or trailing punctuation is c
     expect(forbidCollisions([], ['docs/**'], ['**docs/notes.md:** is written.'])).toEqual(['warning: forbid docs/** matches docs/notes.md named in done-when'])
     expect(forbidCollisions([], ['docs/**'], ['**docs/notes.md**: is written.'])).toEqual(['warning: forbid docs/** matches docs/notes.md named in done-when'])
     expect(forbidCollisions([], ['docs/**'], ['`**docs/notes.md**`: is written.'])).toEqual(['warning: forbid docs/** matches docs/notes.md named in done-when'])
+  })
+
+  test('glob words keep their stars: **/*.md, a/b.*, tests/*.test.* and .claude-plugin/** come through unchanged', () => {
+    expect(donePaths('the docs are **/*.md and a/b.* and tests/*.test.* and .claude-plugin/** exist.')).toEqual([
+      '**/*.md',
+      'a/b.*',
+      'tests/*.test.*',
+      '.claude-plugin/**',
+    ])
+  })
+
+  test('a done-when glob **/*.md still warns against forbid docs/**, naming the glob as written', () => {
+    expect(forbidCollisions([], ['docs/**'], ['**/*.md is written.'])).toEqual(['warning: forbid docs/** matches **/*.md named in done-when'])
   })
 
   test('a bold path outside scope that a forbid matches is warned once, naming the cleaned path', () => {
