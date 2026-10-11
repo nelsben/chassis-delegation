@@ -13,8 +13,9 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { blocksFor, openItemLines } from './lib/dashboard'
+import { callKind, driveCall, driveLines, driveStep, driveTurn, emptyWatch, ranBefore, DRIVE_THRESHOLD_TOKENS, type DriveRecord, type Watch } from './lib/drive'
 import { bandTree } from './lib/band'
-import { bashCommits, bashWrites, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
+import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
 import { paneTree, type PaneTable } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
@@ -486,6 +487,10 @@ type Config = {
   postFindings: PostMode
   /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
   readyFallbackMs: number
+  /** MOD-48: the warn row for a command the brain keeps re-running or polling at a large context. */
+  driveWarn: boolean
+  /** MOD-48: the context, in tokens, from which that row speaks. */
+  driveWarnTokens: number
   /** MOD-21: a read-only reviewer after a consistent verdict: off, on, or on-frontier (frontier and premium cards only). */
   review: ReviewMode
   /** MOD-21: the reviewer's tier; '' = one below the worker's. */
@@ -552,6 +557,8 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       wakeOnVerdict: o.wakeOnVerdict !== false,
       postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
+      driveWarn: o.driveWarn !== false,
+      driveWarnTokens: num('driveWarnTokens', DRIVE_THRESHOLD_TOKENS),
       review: eff.review,
       reviewTier: eff.reviewTier,
     },
@@ -1005,6 +1012,56 @@ async function adhocSpend($: Host, since: number, who: { sessionId?: string; roo
 
 /** One warn row per main-loop turn. */
 let brainWarnedThisTurn = false
+
+// ---- MOD-48: what the brain's driving costs it ------------------------------------------
+/** The drive counts ride in the brain record (the manifest declares no state key of their own). */
+type WithDrive = BrainRecord & { drive?: DriveRecord }
+/** The Bash commands of the brain's open turn, and whether the drive warn row has spoken. */
+let driveWatch: Watch = emptyWatch()
+/** The calls the brain's open turn has made. */
+let driveTurnCalls = 0
+
+const readDrive = async ($: Host): Promise<DriveRecord | undefined> => ((await readBrain($)) as WithDrive | undefined)?.drive
+
+/** A brain-record update that keeps the drive counts a brainTurn would drop. */
+const keepDrive = (fn: (r: BrainRecord | undefined) => BrainRecord) => (r: BrainRecord | undefined): BrainRecord => ({ ...fn(r), ...((r as WithDrive | undefined)?.drive ? { drive: (r as WithDrive).drive } : {}) }) as BrainRecord
+
+async function updateDrive($: Host, fn: (r: DriveRecord | undefined) => DriveRecord) {
+  await updateBrain($, r => ({ ...(r ?? emptyBrain()), drive: fn((r as WithDrive | undefined)?.drive) }) as BrainRecord)
+}
+
+/** The brain's context now, in tokens: the window times the percent `session.usage` reports. */
+async function brainContextTokens($: Host): Promise<number> {
+  try {
+    const c = (await $.session.usage()).context
+    return c ? Math.round((c.window * c.percent) / 100) : 0
+  } catch {
+    return 0
+  }
+}
+
+/** MOD-48: a main-loop call is counted by kind; a Bash command the brain keeps re-running or polling at a large context raises one row a turn. */
+async function driveGuard($: Host, e: { tool: unknown; agentId?: string }): Promise<void> {
+  const tool = String(e.tool)
+  if (e.agentId) return
+  try {
+    const input = e as unknown as Record<string, unknown>
+    const command = tool === 'Bash' && typeof input.command === 'string' ? input.command : ''
+    const writes = command !== '' && bashWrites(command, await $.session.root(), (await $.env.get('HOME')) || undefined).paths.length > 0
+    const kind = callKind(tool, input, writes, command !== '' && ranBefore(driveWatch, command))
+    if (kind === undefined) return
+    driveTurnCalls += 1
+    await updateDrive($, r => driveCall(r, kind))
+    if (command === '') return
+    await loadRepoConfig($)
+    const model = (await $.session.model().catch(() => undefined)) || undefined
+    const step = driveStep(driveWatch, { command, context: cfg.driveWarn ? await brainContextTokens($) : 0, threshold: cfg.driveWarnTokens, model, enabled: cfg.driveWarn })
+    driveWatch = step.state
+    if (step.row) await appendRow($, step.row)
+  } catch (err) {
+    debug($, `drive call not counted: ${String(err)}`)
+  }
+}
 
 /** GH-113 delegateOnly: the brain's own writes are counted, and (opus, fable) warned or denied. Undefined = go on. */
 async function brainGuard($: Host, e: { tool: unknown; agentId?: string }): Promise<{ deny: string } | undefined> {
@@ -4388,6 +4445,7 @@ async function statusReport($: Host): Promise<string> {
     '',
     ...(split.hasBrain ? [brainLine(split.summary)] : []),
     ...(split.hasEdits ? [`brain edits: ${split.summary.edits}`] : []),
+    ...driveLines(await readDrive($)),
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
     ...(await codeSkewLines($)),
     ...(await updateStatusLines($)),
@@ -5098,6 +5156,7 @@ export const register: Register = (on, opts) => {
 
   // ---- every tool call: the worker's SubagentHandback text; denials as friction (5E) ---
   on('tool.call', async ($, e, next) => {
+    await driveGuard($, e)
     const refused = await brainGuard($, e)
     if (refused) {
       void noteFriction($, { kind: 'denial', detail: `${String(e.tool)}: ${refused.deny.slice(0, 160)}`, at: await now($) })
@@ -5298,10 +5357,18 @@ export const register: Register = (on, opts) => {
       inTurn = false
       turnOpen = false
       brainWarnedThisTurn = false
+      // MOD-48: the turn's calls take its input + cache-read tokens; the next turn starts a new watch
+      if (e.usage && driveTurnCalls > 0) {
+        const calls = driveTurnCalls
+        const t = e.usage.input_tokens + (e.usage.cache_read_input_tokens || 0)
+        await updateDrive($, r => driveTurn(r, t, calls))
+      }
+      driveTurnCalls = 0
+      driveWatch = emptyWatch()
       // GH-113: the brain's own turn, priced apart from the workers'
       if (e.usage) {
         const u = e.usage
-        await updateBrain($, r => brainTurn(r, u))
+        await updateBrain($, keepDrive(r => brainTurn(r, u)))
       }
       armIdle($)
       await flushWakes($)
@@ -5473,7 +5540,7 @@ export const register: Register = (on, opts) => {
         // it never opened
       }
       const { view } = await liveModel($)
-      return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view)].join('\n') }
+      return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
     return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|accept <id> [note]]' }
@@ -5510,7 +5577,7 @@ export const register: Register = (on, opts) => {
         }),
       ]
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      const blocks = blocksFor({ current: metricsFromRecords(mine, since), history: [metricsFromRecords(mine, since)] })
+      const blocks = blocksFor({ current: metricsFromRecords(mine, since), history: [metricsFromRecords(mine, since)], driveLines: driveLines(await readDrive($)) })
       return paneTree(p, { blocks, open: openItemLines(items, view.now), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e) }, () => void $.ui.close({ id: DASH_PANE })) as never
     } catch (err) {
       debug($, `pane not drawn: ${String(err)}`)

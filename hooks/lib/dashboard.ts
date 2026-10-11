@@ -128,6 +128,8 @@ export function blocksFor(input: {
   history: readonly Metrics[]
   rateLimits?: readonly { kind: string; percentUsed: number }[]
   owedRows?: readonly string[]
+  /** MOD-48: the brain's calls by kind and its average context. */
+  driveLines?: readonly string[]
 }): Block[] {
   const m = input.current
   const series = (key: string) => {
@@ -181,7 +183,7 @@ export function blocksFor(input: {
       key: 'spend',
       heading: 'Spend',
       number: `$${m.usd.toFixed(2)} on workers · ${window ? `${window.kind} window ${window.percentUsed}%` : 'window –'}`,
-      detail: [],
+      detail: [...(input.driveLines ?? [])],
       series: series('spend'),
       alt: 'worker dollars per session',
     },

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **The brain sees what driving costs it (MOD-48).** `/delegation` and the dashboard's spend block show
+  `brain calls: N run-or-poll · N read · N edit · N spawn · average context 562K per call`: the brain's
+  main-loop tool calls this session by what they did (run or poll: Bash `run_in_background`, `until` and
+  `sleep` loops, a command run again in the same turn; read: Read, grep/sed/cat/ls; edit: Edit, Write,
+  MultiEdit, a Bash write into the root; spawn: Agent, SendMessage), with the input plus cache-read tokens
+  of the turns that made calls over those calls. A warn row, on by default (option `driveWarn`, off with
+  `false`; `driveWarnTokens`, default 200000): at or above that context, the third command sharing its
+  first 60 characters in a turn, or a poll, raises one row a turn naming the command, the count, the
+  context and the dollars a call costs on the brain's model, and saying a standard card (with
+  `resources` for a one-client app) would drive it. README: What the brain keeps and what it hands off.
+
 ## 0.9.0 — 2026-10-11
 
 - **`init` and `setup` take a path, so the brain can scaffold a sibling repo before delegating into it

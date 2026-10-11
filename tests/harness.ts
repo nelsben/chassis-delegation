@@ -38,6 +38,8 @@ export type World = {
   commands: string[]
   /** The session cost `session.usage` reports; a test moves it to give an attempt a cost. */
   usd: number
+  /** MOD-48: the context `session.usage` reports. */
+  context: { window: number; percent: number }
   /** `$.state` values, keyed `<plugin>.<key>`. */
   state: Map<string, unknown>
   /** What `$.agent.list()` answers; with `listAgents` each spawn adds itself as running. */
@@ -153,6 +155,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     spawns: [],
     commands: [],
     usd: 1.5,
+    context: { window: 200000, percent: 12 },
     state: new Map(),
     agents: [],
     tools: [],
@@ -187,7 +190,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('session.cwd', () => ({ value: ROOT }))
   hook('session.model', () => ({ value: w.model }))
   hook('session.id', () => ({ value: options.sessionId ?? 'sess-1' }))
-  hook('session.usage', () => ({ value: { startedAt: 0, context: { window: 200000, percent: 12 }, rateLimits: [], cost: { usd: w.usd } } }))
+  hook('session.usage', () => ({ value: { startedAt: 0, context: w.context, rateLimits: [], cost: { usd: w.usd } } }))
   // MOD-22: a folder under a tree root exists when it is the root or a file lies under it
   const underTree = (path: string) => [...w.trees].some(t => path === t || path.startsWith(`${t}/`))
   const treeDir = (path: string) => underTree(path) && (w.trees.has(path) || [...w.files.keys()].some(k => k.startsWith(`${path}/`)))

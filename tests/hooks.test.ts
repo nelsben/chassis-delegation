@@ -2253,6 +2253,19 @@ describe('GH-113: the brain spend and delegate-only', () => {
     expect(out.text).toContain('brain: fable $2.25 over 2 turns · workers $0.00 (0 attempts) · brain share 100%')
   })
 
+  test('MOD-48: after a turn with three identical Bash runs, /delegation shows 3 run-or-poll calls and the average context; at 300K the third raises one warn row', async ($, on) => {
+    const w = world(on, { model: FABLE })
+    w.context = { window: 1_000_000, percent: 30 }
+    on('tool.call', { tool: 'Bash' }, passed)
+    await $.session.start(sessionStart)
+    for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Bash', command: './bench.sh --scene 3 --frames 600 --out /tmp/one.csv' } as never)
+    await $.turn.complete(mainTurn(usage(FABLE, 0, 1_000, 900_000, 0)))
+    const out = await $.command.run(delegation)
+    expect(out.text).toContain('3 run-or-poll')
+    expect(out.text).toContain('300K')
+    expect(w.appended.filter(a => a.text.includes('bench.sh --scene 3'))).toHaveLength(1)
+  })
+
   test('MOD-37: another session\'s attempt is not this one\'s workers; an ad hoc spawn is its own figure', async ($, on) => {
     const other = { task: 'T-77', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'consistent', at: 5, usd: 50, sessionId: 'sess-other', root: '/elsewhere' }
     const w = world(on, { model: FABLE, store: { 'delegation.tasks.T-77': [other] } })
