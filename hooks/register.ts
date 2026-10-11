@@ -110,7 +110,7 @@ import {
   windowFacts,
   type FrictionEvent,
 } from './lib/cleanstop'
-import { checkDebrief, windowOf, userMessagesOf, type DebriefWindow, type UserMessage } from './lib/debriefcheck'
+import { checkDebrief, windowOf, userMessagesOf, userMessagesFromJsonl, transcriptPath, type DebriefWindow, type UserMessage } from './lib/debriefcheck'
 import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedRowsFrom, prsFrom, renderState, SECTION_ID, splitOwed, type RecentVerdict, type StateSnapshot } from './lib/compaction'
 import {
   agentTypeFor,
@@ -2223,8 +2223,22 @@ async function redactRules($: Host): Promise<RedactRules> {
   }
 }
 
-/** MOD-38: the user messages of the main conversation, read through the engine's session messages call (never by path); [] when it cannot be read. */
+/**
+ * MOD-38: the user messages of this session, with their times, from the transcript file
+ * (<home>/.claude/projects/<root as folder>/<session id>.jsonl, read with the mod's own fs read);
+ * when that cannot be read, the user rows of the engine's session messages call, which carry no times.
+ */
 async function sessionUsers($: Host): Promise<UserMessage[]> {
+  try {
+    const sid = await sessionIdOf($)
+    const home = await homeOf($)
+    if (sid !== '' && home !== '') {
+      const text = await readText($, transcriptPath(home, await $.session.root(), sid))
+      if (text !== undefined) return userMessagesFromJsonl(text)
+    }
+  } catch (err) {
+    debug($, `no transcript file for the debrief check: ${String(err)}`)
+  }
   try {
     const rows = await $.session.messages({})
     if (Array.isArray(rows)) return userMessagesOf(rows)

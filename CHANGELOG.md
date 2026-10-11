@@ -17,12 +17,15 @@
 
 - **The debrief check accepts a correction the transcript holds at its time (MOD-38, issue
   #90).** A corrections entry whose `at` is inside the window is matched against the user
-  messages of the session transcript (the engine's session messages call): its quote,
-  compared after collapsing whitespace and case, at least 12 characters, within two minutes
-  of `at`, marks it `source: transcript` and it stops counting toward the flag. A check whose
-  only flag was such corrections prints `debrief check: clean (n corrections evidenced by the
-  transcript, none in the breadcrumbs)`, moves the record and sends the watermark message.
-  `tool_denials` are unchanged.
+  messages of the session transcript file (`~/.claude/projects/<root as dashes>/<session
+  id>.jsonl`, rows of type user with their ISO timestamps): its quote, compared after
+  collapsing whitespace, case and apostrophes, at least 12 characters, within two minutes of
+  `at`, marks it `source: transcript` and it stops counting toward the flag. If the file
+  cannot be read, the engine's session messages (which carry no times) are matched on the
+  quote alone, marked `source: transcript-untimed`, and the check line says so. A check
+  whose only flag was such corrections prints `debrief check: clean (n corrections evidenced
+  by the transcript, none in the breadcrumbs)`, moves the record and sends the watermark
+  message. `tool_denials` are unchanged.
 
 ## 0.8.2 — 2026-10-11
 
