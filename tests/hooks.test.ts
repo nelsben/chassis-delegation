@@ -3152,3 +3152,87 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(w.debugLogs.some(l => l.startsWith('chassis-delegation: brain not woken:'))).toBe(true)
   })
 })
+
+describe('MOD-19: the verdict says what it checked (verified became consistent; the old word is read until 0.9.0)', () => {
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const REPORT = (sha: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass files=a/x.ts]]`
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const delegationCmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const ledgerOf = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+
+  test('a report whose every claim holds: the long row, the one-line row, the record and the ledger line all say consistent', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    const row = delivered(w)
+    expect(row).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=accept')
+    expect(row).not.toMatch(/(^|[^n])verified/)
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'consistent' })
+    expect(ledgerOf(w).at(-1)).toMatchObject({ task: 'T-4', attempt: 1, verdict: 'consistent', next: 'accept' })
+  })
+
+  test('the one-line row reads consistent and still says next=accept; the brain is woken with it', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
+    expect(w.submitted[0]?.text).toContain('consistent')
+    expect(w.submitted[0]?.text).toContain('next=accept')
+  })
+
+  // A store and a ledger as 0.7.x wrote them: the verdict word is `verified`. Nothing in them is rewritten; the mod reads them as it reads consistent.
+  const OLD = 'verified'
+  const SHA_OWED = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
+  const legacyRecord = (task: string, o: Record<string, unknown>) => ({ task, subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: OLD, at: NOW - 600_000, verdictAt: NOW - 300_000, ...o })
+  const legacyStore = {
+    // T-4: the report was consistent with git but declared gate=fail honestly, so a resume is owed
+    'delegation.tasks.T-4': [legacyRecord('T-4', { reportGate: 'fail', sha: SHA_OWED, agentId: 'agent-4', usd: 0.4, tokens: 2000 })],
+    // T-5: a plain success
+    'delegation.tasks.T-5': [legacyRecord('T-5', { reportGate: 'pass', sha: 'b'.repeat(40), usd: 0.19, tokens: 1000 })],
+    'delegation.recent.sess-1': [
+      { task: 'T-4', attempt: 1, verdict: OLD, line: `chassis-delegation: T-4 attempt 1/3 ${OLD} (report gate=fail) · sonnet · next=resume agent=agent-4`, at: NOW - 300_000, owed: 'T-4: resume agent=agent-4' },
+      { task: 'T-5', attempt: 1, verdict: OLD, line: `chassis-delegation: T-5 attempt 1/3 ${OLD} · sonnet · $0.19 · next=accept`, at: NOW - 200_000 },
+    ],
+  }
+  const legacyLedger = [
+    { task: 'T-4', subtask: 'main', attempt: 1, verdict: OLD, reportGate: 'fail', next: 'resume agent=agent-4', sessionId: 'sess-0' },
+    { task: 'T-5', subtask: 'main', attempt: 1, verdict: OLD, reportGate: 'pass', next: 'accept', sessionId: 'sess-0' },
+  ]
+  const ledgerFile = { [`${ROOT}/.delegation/ledger.jsonl`]: legacyLedger.map(l => JSON.stringify(l)).join('\n') + '\n' }
+  const merged = (ancestor: number) => (argv: string[]): RunAnswer | undefined => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: ancestor, stdout: '' } : undefined)
+
+  test('a store written before the rename: the owed row is there, then retires when the work is on origin/main', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = world(on, { files: ledgerFile, store: legacyStore, run: merged(0) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegationCmd(''))).text)
+    expect(out).not.toContain('owed: T-4')
+    expect(records(w, 'T-4').at(-1)).toMatchObject({ verdict: OLD, retired: 'merged' })
+    expect(w.runs.some(x => x.argv.includes('--is-ancestor') && x.argv.includes(SHA_OWED))).toBe(true)
+  })
+
+  test('a store written before the rename: an owed row whose work is not on origin/main stays', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    world(on, { files: ledgerFile, store: legacyStore, run: merged(1) })
+    await $.session.start(sessionStart)
+    expect(String((await $.command.run(delegationCmd(''))).text)).toContain('- owed: T-4: resume agent=agent-4')
+  })
+
+  test('a store written before the rename: both records count as successes on the dashboard, in whichever word it uses', { options: { ...GM } }, async ($, on) => {
+    world(on, { files: ledgerFile, store: legacyStore, run: merged(1), panesUnplaced: 'no panes here' })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegationCmd('dashboard'))).text)
+    expect(out).toMatch(/2 of 2 \w+ on the first attempt/)
+    expect(out).toMatch(/sonnet · \$0\.59 · 3k tok · 2 \w+/)
+  })
+
+  test('a ledger written before the rename stays as it was; the next verdict is appended after it, saying consistent', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { ...ledgerFile, [BRIEF]: HEADER + '\nbody' }, store: legacyStore, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    const lines = ledgerOf(w)
+    expect(lines.slice(0, 2)).toEqual(legacyLedger)
+    expect(lines).toHaveLength(3)
+    expect(lines[2]).toMatchObject({ task: 'T-4', verdict: 'consistent', next: 'accept' })
+  })
+})
