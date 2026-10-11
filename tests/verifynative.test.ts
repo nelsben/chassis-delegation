@@ -287,8 +287,12 @@ describe('GH-20: redClaim, the red-test evidence a report names (red=)', () => {
     expect(redClaim({ ...ev, bytes: undefined, text: undefined, error: 'over 4 MiB' })).toEqual({ status: 'unchecked', detail: 'red=.delegation/T-1/red-1.txt could not be read: over 4 MiB' })
   })
   test('no failure marker in the text: unchecked', () => {
-    expect(redClaim({ ...ev, text: 'all good\n 3 pass\n', bytes: 18 })).toEqual({ status: 'unchecked', detail: 'no failure marker found in red=.delegation/T-1/red-1.txt (18 bytes)' })
+    expect(redClaim({ ...ev, text: 'all good\n 3 pass\n', bytes: 18 })).toEqual({ status: 'unchecked', detail: 'no failure marker found in red=.delegation/T-1/red-1.txt (18 bytes); a state check\'s red file ends with an "expected: …; got: …" line' })
     expect(redClaim({ ...ev, text: 'exit code 0\n', bytes: 12 })?.status).toBe('unchecked')
+  })
+  test('MOD-59: a state check red file with an expected/got line is held', () => {
+    const text = 'Total number of records retrieved: 0.\nexpected: 3 records; got: 0 records\n'
+    expect(redClaim({ ...ev, text, bytes: text.length })?.status).toBe('held')
   })
   test('any one marker suffices, case-insensitive', () => {
     for (const line of ['FAILED: 2', 'failing test', 'Error: boom', 'not ok 3 - sums', '\u2717 sums', 'Exit code 2', 'exit 1', 'AssertionError [ERR_ASSERTION]', 'Expected: 4', 'expected 3 toBe 4']) {

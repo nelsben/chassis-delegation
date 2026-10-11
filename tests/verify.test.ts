@@ -142,6 +142,20 @@ describe('verdict, advice and budgets', () => {
     expect(advise({ ...base, verdict: 'unverified', attempts: 2, budget: 2, lineageResumes: 0, tier: 'standard', lines }).next).toBe('check by hand — unverified is not a pass')
     expect(advise({ ...base, agentId: undefined, verdict: 'unverified', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard', lines }).next).toBe('check by hand — unverified is not a pass')
   })
+  test('MOD-59: red unchecked only for a missing failure marker, gate=pass, is a check by hand, not a resume', () => {
+    const noMarker = 'claim red: unchecked — no failure marker found in red=.delegation/FE-1/red-1.txt (40 bytes); a state check\'s red file ends with an "expected: …; got: …" line'
+    const inp = { ...base, verdict: 'unverified' as const, attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard' as const, reportGate: 'pass' as const, lines: ['claim branch: held — refs/heads/x', noMarker] }
+    expect(advise(inp)).toEqual({ kind: 'check', next: 'check red by hand — no failure marker in .delegation/FE-1/red-1.txt; if it shows the red state, accept; else resume agent=agent-7 — prove: red' })
+    expect(advise({ ...inp, agentId: undefined })).toEqual({ kind: 'check', next: 'check red by hand — no failure marker in .delegation/FE-1/red-1.txt' })
+    // red plus another unchecked claim: a resume to prove both, as today
+    const both = advise({ ...inp, lines: ['claim gate: unchecked — gate not re-run: test (not in gateMap)', noMarker] })
+    expect(both.kind).toBe('resume')
+    expect(both.next).toContain('resume agent=agent-7 — prove: gate (')
+    // red unchecked for another reason: a resume, as today
+    const unnamed = advise({ ...inp, lines: ["claim red: unchecked — no red= evidence named; the brief asks for the red test's failing output"] })
+    expect(unnamed.kind).toBe('resume')
+    expect(unnamed.next).toBe("resume agent=agent-7 — prove: red (no red= evidence named; the brief asks for the red test's failing output)")
+  })
   test('GH-1 item 2: a cardless hand-back accepts when consistent, else says check the diff; never resume or respawn', () => {
     const cardless = { ...base, adhoc: true, cardless: true, attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard' as const }
     expect(advise({ ...cardless, verdict: 'consistent' })).toEqual({ kind: 'accept', next: 'accept' })

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **A state check's red file gets a marker line; a red file with no marker is checked by hand (MOD-59).** A red test
+  that is a query or a file check can have correct red output with no failure word in it, so the red claim came back
+  unchecked and the verdict said to resume the worker, who could only write the same bytes. The brief now tells the
+  worker to end such a red file with `expected: <the green condition>; got: <what the output shows>` (the red marker
+  already matches `expected`), the no-marker detail names that line, and an unverified verdict whose only unchecked
+  claim is that no-marker red, with gate=pass, is advised `check red by hand` (accept if the file shows the red state,
+  else resume to prove red). Every other unverified case is advised as before.
+
 ## 0.9.2 — 2026-10-11
 
 - **A held wake is dropped when the brain already messaged its worker (MOD-57).** A resume after a consistent

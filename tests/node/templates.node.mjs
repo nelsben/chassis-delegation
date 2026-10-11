@@ -47,6 +47,16 @@ describe('5C: hooks/templates/brief.md is repo-neutral', () => {
     expect(reportLine.includes(' red=')).toBe(true)
   })
 
+  test('MOD-59: the rendered brief tells a state check to end its red file with an expected/got line', async () => {
+    const { renderSections } = await import('../../hooks/lib/dispatch.ts')
+    const t = read('hooks/templates/brief.md')
+    for (const here of [true, false]) {
+      const out = renderSections(t, here)
+      expect(out.includes('not a test runner')).toBe(true)
+      expect(out.includes('`expected: <the green condition>; got: <what the output shows>`')).toBe(true)
+    }
+  })
+
   test('GH-16: a repo=here section says the checkout is shared, touch only your scope, commit only if the card says, report sha=HEAD', async () => {
     const { renderSections } = await import('../../hooks/lib/dispatch.ts')
     const t = read('hooks/templates/brief.md')

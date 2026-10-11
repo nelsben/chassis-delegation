@@ -127,6 +127,14 @@ export function advise(input: AdviseInput): Advice {
   if (!isFailing(input.verdict, input.reportGate)) {
     // GH-1 item 5: unverified is actionable — resume the worker with the claims it has to prove
     const prove = proveList(input.lines ?? [])
+    // MOD-59: a red file with no failure marker is one the worker cannot change by a resume; look at it
+    const unchecked = uncheckedClaimLines(input.lines ?? []).map(parseClaimLine)
+    const only = unchecked.length === 1 ? unchecked[0] : undefined
+    const noMarker = only?.name === 'red' ? /^no failure marker found in red=(\S+) \(\d+ bytes\)/.exec(only.detail) : null
+    if (noMarker && input.reportGate === 'pass') {
+      const resume = input.agentId && input.attempts < input.budget ? `; else resume agent=${input.agentId} — prove: red` : ''
+      return { kind: 'check', next: `check red by hand — no failure marker in ${noMarker[1]}; if it shows the red state, accept${resume}` }
+    }
     if (prove !== '' && input.agentId && input.attempts < input.budget) return { kind: 'resume', next: `resume agent=${input.agentId} — prove: ${prove}` }
     return { kind: 'check', next: 'check by hand — unverified is not a pass' }
   }
