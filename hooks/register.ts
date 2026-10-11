@@ -61,7 +61,6 @@ import {
   parseReport,
   resourcesOf,
   scopeOverlap,
-  sharedResource,
   spendOf,
   type BriefHeader,
 } from './lib/brief'
@@ -119,8 +118,6 @@ import {
   cardDirPath,
   overlapRefusal,
   overlapWarning,
-  resourceOverlapRefusal,
-  resourceOverlapWarning,
   parseCard,
   parseDispatchArgs,
   parseDispatchTool,
@@ -867,7 +864,7 @@ async function worktreeList($: Host, root: string, t: number): Promise<string> {
 }
 
 /** Everything the band and the pane draw: the session's facts gathered, the model made by live.ts. */
-async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number }[] }> {
+async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number }[]; waits: ReadonlyMap<string, ResourceWait> }> {
   const t = await now($)
   const live = await liveState($)
   const queue = await readQueue($)
@@ -893,7 +890,7 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
   // MOD-23: the resource a worker holds, and what a queued row waits for, ride the worktree rows
   const holds: Record<string, string[]> = {}
   for (const w of live.workers) if ((w.spawn.resources ?? []).length > 0) holds[w.label] = w.spawn.resources as string[]
-  const waits = Object.fromEntries((await planOfQueue($, live, queue)).waits)
+  const waits = (await planOfQueue($, live, queue)).waits
   const view = liveView({
     root,
     ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}),
@@ -902,7 +899,7 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     queue,
     liveAt,
     holds,
-    waits,
+    waits: Object.fromEntries(waits),
     now: t,
     budget: cfg.defaultBudget,
     since,
@@ -911,7 +908,7 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     owed: live.pending.length,
     ...(brain ? { brain } : {}),
   })
-  return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t })) }
+  return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t })), waits }
 }
 
 /** One sample of the session's dollars; the next waits 15 s while a worker is live or queued, else 60 s. */
@@ -3100,7 +3097,9 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   )
   if (replay && (card.repo === 'here' || card.repo === 'none')) out.push(`   note: the card says repo: ${card.repo}; a replay works in its own worktree at the base`)
 
-  // GH-16: the other repo=here cards in flight in this checkout; a scope overlapping theirs is refused
+  // GH-16: the other repo=here cards in flight in this checkout; a scope overlapping theirs is refused.
+  // MOD-24: a shared resource is not overlap: both cards do not touch the same paths, and the queue sequences them (the
+  // second waits for the resource and is ready when the first hands back), so a dispatch that shares only one goes on.
   const inflight = here ? await inFlightHere($, root, id) : []
   if (here) {
     const reusedContract = reusedText !== undefined ? briefContract(reusedText) : undefined
@@ -3109,17 +3108,10 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       const pair = scopeOverlap(mine, c.scope)
       return pair ? [{ card: c.label, ...pair }] : []
     })
-    // MOD-23: a resource an in-flight repo=here card holds is overlap too: both would use the one live app
-    const mineResources = reusedHeader ? resourcesOf(reusedHeader) : card.resources
-    const clashes = inflight.flatMap(c => {
-      const resource = sharedResource(mineResources, c.resources)
-      return resource !== undefined ? [{ card: c.label, resource }] : []
-    })
-    if ((overlaps.length > 0 || clashes.length > 0) && parsed.forceOverlap !== true) {
-      return [...out, ...overlaps.map(o => overlapRefusal(id, o.mine, o.card, o.theirs)), ...clashes.map(c => resourceOverlapRefusal(id, c.resource, c.card))].join('\n')
+    if (overlaps.length > 0 && parsed.forceOverlap !== true) {
+      return [...out, ...overlaps.map(o => overlapRefusal(id, o.mine, o.card, o.theirs))].join('\n')
     }
     for (const o of overlaps) out.push(`   ${overlapWarning(id, o.mine, o.card, o.theirs)}`)
-    for (const c of clashes) out.push(`   ${resourceOverlapWarning(id, c.resource, c.card)}`)
   }
 
   const tier: Tier = tierOf(card.tier) ?? 'standard'
@@ -4694,11 +4686,16 @@ export const register: Register = (on, opts) => {
   })
   on('ui.render', { component: 'Pane', requestId: DASH_PANE }, async ($, e, next) => {
     try {
-      const { view, since, records, running } = await liveModel($)
+      const { view, since, records, running, waits } = await liveModel($)
       const mine = sessionRecords(records, since)
       const items: BandItem[] = [
         ...running.map((r): BandItem => ({ kind: 'running', task: r.label, tier: r.tier, alias: r.alias, at: r.at, phase: 'building' })),
-        ...(await readQueue($)).map((q, i): BandItem => ({ kind: 'queued', task: taskLabel(q.task, q.subtask ?? 'main'), position: i + 1 })),
+        ...(await readQueue($)).map((q, i): BandItem => {
+          const task = taskLabel(q.task, q.subtask ?? 'main')
+          // MOD-24: a row waiting for a resource carries it, and who holds it; a row waiting for a slot carries nothing
+          const wait = waits.get(task)
+          return { kind: 'queued', task, position: i + 1, ...(wait ? { waits: wait } : {}) }
+        }),
       ]
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
       const blocks = blocksFor({ current: metricsFromRecords(mine, since), history: [metricsFromRecords(mine, since)] })

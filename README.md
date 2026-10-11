@@ -926,13 +926,17 @@ is at when `baseRef` is `HEAD`. The steps say:
 
   `--force-overlap` (the tool's `forceOverlap: true`) lets it through with a
   `warning:` line instead. A record whose worker died stays "in flight" until
-  it gets a verdict; force past it, or judge it. A shared resource is overlap too
-  (MOD-23): a card whose `resources` name one that an in-flight repo=here card's
-  brief names is refused the same way, naming the resource and the other card
-  (`/dispatch BE-101: refused — BE-101 holds resource blender-live, which in-flight
-  GH-19 holds in the shared checkout; both would use it at once (pass --force-overlap
-  to dispatch anyway; it then waits for the resource)`); `--force-overlap` lets it
-  through, and the queue then holds it while the other worker still runs.
+  it gets a verdict; force past it, or judge it. **A shared resource is not
+  overlap** (MOD-24): a card whose `resources` name one that an in-flight
+  repo=here card's brief names is not refused. Overlapping paths corrupt each
+  other's dirty-tree delta, which is why a scope overlap refuses; a shared resource
+  only needs sequencing, which the queue does. The card is dispatched, and while a
+  worker that holds the resource still runs it is queued with the waiting line
+  (`queued: BE-101 — waiting for resource blender-live (held by GH-19)`, see
+  [Exclusive resources](#exclusive-resources-and-fan-out)) and made ready when that
+  worker hands back. No `--force-overlap` is needed for it. A scope overlap
+  refuses exactly as above, with or without a shared resource, and still needs
+  `--force-overlap`.
 - `--here` and `--replay` do not mix: a replay works in its own worktree.
 
 **Verify.** The tree is the session root. Each claim:
@@ -1215,8 +1219,14 @@ the header it always did and is held up by nothing.
   slot, and the "Delegation state" section names what it waits for.
 - The worktree table of the dashboard and its text fallback show the resource a
   worker holds and the one a queued row waits for (see [Dashboard](#dashboard)).
-- For `repo: here` cards the overlap check that guards the shared checkout
-  (see [repo=here](#repohere-the-main-checkout)) counts a shared resource as overlap.
+- For `repo: here` cards a shared resource **queues, it does not refuse** (MOD-24):
+  the overlap check that guards the shared checkout
+  (see [repo=here](#repohere-the-main-checkout)) refuses a scope overlap, which would
+  corrupt each other's dirty-tree delta, but two cards with disjoint scopes that name
+  one resource are both dispatched and the second waits as above. The pane's open
+  item for a queued card that waits for a resource reads
+  `OPS-9: queued (position 1) — waits for blender-live (held by OPS-8)` instead of
+  `… — starts when a worker slot frees`; a card waiting for a slot reads as before.
 
 **Fan-out.** Research usually fans out: two or three workers at once, each owning
 an output folder, all wanting the same shared notes file. The `card` tool takes

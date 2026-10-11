@@ -60,7 +60,7 @@ export type BandItem =
       agentId?: string
     }
   | { kind: 'decision'; task: string; text: string; next: string }
-  | { kind: 'queued'; task: string; position: number }
+  | { kind: 'queued'; task: string; position: number; /** MOD-24: the resource the row waits for and the label that holds it; absent for a row that waits for a slot. */ waits?: { resource: string; holder: string } }
   | { kind: 'eval-failed'; tier: string; pass?: number; total?: number; at: number; sha: string }
   | { kind: 'runner'; what: string; at: number }
 
