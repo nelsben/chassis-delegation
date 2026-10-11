@@ -112,3 +112,16 @@ export function driveStep(
     row: `chassis-delegation: the brain ${what} at ${tokText(i.context)} context${cost}. A standard card would drive this loop from a small context on a cheaper model; add resources for a one-client app so workers take turns.`,
   }
 }
+
+// ---- the fresh-session row (MOD-53) ---------------------------------------------------
+
+/** Default context, in tokens, from which the brain is told to start a fresh session. */
+export const FRESH_SESSION_TOKENS = 400_000
+
+const kText = (n: number): string => `${Math.round(n / 1000)}K`
+
+/** At or above `threshold` the row that says a fresh session is cheaper; none below it, or when `threshold` is 0 (off). */
+export function freshSessionRow(context: number, threshold: number): string | undefined {
+  if (!(threshold > 0) || context < threshold) return undefined
+  return `chassis-delegation: brain context ${kText(context)} (freshSessionTokens ${kText(threshold)}): start a fresh session at the next phase boundary; cards, the ledger and lessons carry over`
+}

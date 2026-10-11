@@ -13,7 +13,7 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { blocksFor, openItemLines } from './lib/dashboard'
-import { callKind, driveCall, driveLines, driveStep, driveTurn, emptyWatch, ranBefore, DRIVE_THRESHOLD_TOKENS, type DriveRecord, type Watch } from './lib/drive'
+import { callKind, driveCall, driveLines, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
 import { bandTree } from './lib/band'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
 import { paneTree, type PaneTable } from './lib/pane'
@@ -304,6 +304,8 @@ const K = {
   posted: (attemptKey: string) => `delegation.posted.${attemptKey}`,
   /** This session's verdict lines, for the compaction block and the system prompt section (2E). */
   recent: (sessionId: string) => `delegation.recent.${sessionId}`,
+  /** MOD-53: set once the fresh-session row is posted in a session. */
+  freshSession: (sessionId: string) => `delegation.freshSession.${sessionId}`,
   /** The background debrief of a session (2C). */
   debrief: (sessionId: string) => `delegation.debrief.${sessionId}`,
   /** MOD-31: the post-findings question a debrief left waiting for the person (count, repo). */
@@ -497,6 +499,8 @@ type Config = {
   driveWarn: boolean
   /** MOD-48: the context, in tokens, from which that row speaks. */
   driveWarnTokens: number
+  /** MOD-53: the brain context, in tokens, from which it is told once to start a fresh session; 0 = off. */
+  freshSessionTokens: number
   /** MOD-21: a read-only reviewer after a consistent verdict: off, on, or on-frontier (frontier and premium cards only). */
   review: ReviewMode
   /** MOD-21: the reviewer's tier; '' = one below the worker's. */
@@ -565,6 +569,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
       driveWarn: o.driveWarn !== false,
       driveWarnTokens: num('driveWarnTokens', DRIVE_THRESHOLD_TOKENS),
+      freshSessionTokens: num('freshSessionTokens', FRESH_SESSION_TOKENS),
       review: eff.review,
       reviewTier: eff.reviewTier,
     },
@@ -1087,6 +1092,22 @@ async function driveGuard($: Host, e: { tool: unknown; agentId?: string }): Prom
     if (step.row) await appendRow($, step.row)
   } catch (err) {
     debug($, `drive call not counted: ${String(err)}`)
+  }
+}
+
+/** MOD-53: when the brain's own turn ends at or above freshSessionTokens, one row a session says a fresh session is cheaper. */
+async function freshSessionGuard($: Host): Promise<void> {
+  try {
+    await loadRepoConfig($)
+    if (!(cfg.freshSessionTokens > 0)) return
+    const row = freshSessionRow(await brainContextTokens($), cfg.freshSessionTokens)
+    if (!row) return
+    const key = K.freshSession(await $.session.id())
+    if (await storeGet<boolean>($, key)) return
+    await storeSet($, key, true)
+    await appendRow($, row)
+  } catch (err) {
+    debug($, `fresh-session check skipped: ${String(err)}`)
   }
 }
 
@@ -5435,6 +5456,7 @@ export const register: Register = (on, opts) => {
       }
       driveTurnCalls = 0
       driveWatch = emptyWatch()
+      await freshSessionGuard($)
       // GH-113: the brain's own turn, priced apart from the workers'
       if (e.usage) {
         const u = e.usage

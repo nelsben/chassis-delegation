@@ -2159,6 +2159,9 @@ not edit source or run the test suite yourself." The section keeps its
 edit, spawn) and its average context per call (input plus cache-read tokens over calls). Past a context of
 `driveWarnTokens` (default 200K; `driveWarn: false` turns the row off) the mod adds one row a turn when the
 brain runs the same command a third time or polls a job, with the dollars one call costs at that context.
+`freshSessionTokens` (default 400K; `0` turns it off) sets the context at which the brain's own turn end adds one
+row, once a session, telling it to start a fresh session at the next phase boundary: the cards, the ledger and the
+lessons are on disk, so a new session reads them for far less than the grown one re-reads itself each turn.
 
 The worked example is one long Game-Decompiler session on an Opus 5.5 brain with a median context of
 490-650K tokens. Of its 3,705 main-loop calls, 1,653 drove an emulator lab (builds, boots, bench runs,

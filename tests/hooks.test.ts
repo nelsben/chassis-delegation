@@ -2266,6 +2266,25 @@ describe('GH-113: the brain spend and delegate-only', () => {
     expect(w.appended.filter(a => a.text.includes('bench.sh --scene 3'))).toHaveLength(1)
   })
 
+  test('MOD-53: two brain turns ending above freshSessionTokens append the fresh-session row once', async ($, on) => {
+    const w = world(on, { model: FABLE })
+    w.context = { window: 1_000_000, percent: 51 }
+    await $.session.start(sessionStart)
+    await $.turn.complete(mainTurn(usage(FABLE, 0, 1_000, 510_000, 0)))
+    await $.turn.complete(mainTurn(usage(FABLE, 0, 1_000, 520_000, 0)))
+    const rows = w.appended.filter(a => a.text.includes('start a fresh session at the next phase boundary'))
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.text).toContain('brain context 510K (freshSessionTokens 400K)')
+  })
+
+  test('MOD-53: below the threshold, or with freshSessionTokens 0, no row', { options: { freshSessionTokens: 0 } }, async ($, on) => {
+    const w = world(on, { model: FABLE })
+    w.context = { window: 1_000_000, percent: 90 }
+    await $.session.start(sessionStart)
+    await $.turn.complete(mainTurn(usage(FABLE, 0, 1_000, 900_000, 0)))
+    expect(w.appended.filter(a => a.text.includes('fresh session'))).toHaveLength(0)
+  })
+
   test('MOD-37: another session\'s attempt is not this one\'s workers; an ad hoc spawn is its own figure', async ($, on) => {
     const other = { task: 'T-77', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'consistent', at: 5, usd: 50, sessionId: 'sess-other', root: '/elsewhere' }
     const w = world(on, { model: FABLE, store: { 'delegation.tasks.T-77': [other] } })
