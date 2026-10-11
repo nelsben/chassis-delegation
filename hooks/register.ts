@@ -190,7 +190,7 @@ import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detect
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
-import { isRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
+import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
 import {
   parseReviewBlock,
   parseReviewMarker,
@@ -4100,8 +4100,26 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
 }
 
 // ---- part 5B: /delegation init and the init tool ----------------------------------------
-async function runInit($: Host): Promise<string> {
-  const root = (await $.session.root()).replace(/\/+$/, '')
+/**
+ * MOD-45: init and setup take an optional `path`: the absolute path of a git checkout (`~` expanded). Without one (or with the
+ * session's own root) the session root, unchanged; with one, that repo; else the one-line refusal.
+ */
+async function targetRoot($: Host, who: 'init' | 'setup', pathIn: string | undefined): Promise<{ root: string; other: boolean } | { refused: string }> {
+  const sessionRoot = (await $.session.root()).replace(/\/+$/, '')
+  const given = pathIn?.trim()
+  if (given === undefined || given === '') return { root: sessionRoot, other: false }
+  const home = await homeOf($)
+  const v = normRepoPath(given, home)
+  if (given.startsWith('/') || given === '~' || given.startsWith('~/')) if (v === sessionRoot) return { root: sessionRoot, other: false }
+  const r = await resolveRepo($, given, sessionRoot)
+  if ('error' in r) return { refused: `${who} refused: path ${given} ${r.error}` }
+  return { root: r.path, other: true }
+}
+
+async function runInit($: Host, pathIn?: string): Promise<string> {
+  const target = await targetRoot($, 'init', pathIn)
+  if ('refused' in target) return target.refused
+  const root = target.root
   const existing: Record<string, string | undefined> = {}
   const unreadable = new Set<string>()
   // the plugin manifest decides the card folder; the plan only reads it
@@ -4123,9 +4141,11 @@ async function runInit($: Host): Promise<string> {
       failed[step.path] = String(err)
     }
   }
-  repoText = undefined
-  await loadRepoConfig($)
-  return initText(root, plan, failed, true)
+  if (!target.other) {
+    repoText = undefined
+    await loadRepoConfig($)
+  }
+  return initText(root, plan, failed, !target.other)
 }
 
 // ---- GH-109: /delegation setup and the setup tool ----------------------------------------
@@ -4197,8 +4217,10 @@ async function gatherSetup($: Host, root: string): Promise<SetupProbe> {
   }
 }
 
-async function runSetup($: Host, viaTool = false): Promise<string> {
-  const root = (await $.session.root()).replace(/\/+$/, '')
+async function runSetup($: Host, viaTool = false, pathIn?: string): Promise<string> {
+  const target = await targetRoot($, 'setup', pathIn)
+  if ('refused' in target) return target.refused
+  const root = target.root
   await loadRepoConfig($)
   const facts = await gatherSetup($, root)
   const lines = setupChecks(facts)
@@ -4231,8 +4253,10 @@ async function runSetup($: Host, viaTool = false): Promise<string> {
       failed[step.path] = String(err)
     }
   }
-  repoText = undefined
-  await loadRepoConfig($)
+  if (!target.other) {
+    repoText = undefined
+    await loadRepoConfig($)
+  }
   const wroteConfig = plan.some(s => s.path === configPath && s.action === 'write' && !failed[s.path])
   return [
     head,
@@ -4243,6 +4267,7 @@ async function runSetup($: Host, viaTool = false): Promise<string> {
     '',
     handoverText(detectGate(facts)),
     ...(viaTool ? [BRAIN_HANDOVER] : []),
+    ...(target.other ? [`Next: call the card tool with repo set to ${root}, so the first card goes into that repo.`] : []),
   ].join('\n')
 }
 
@@ -5019,19 +5044,27 @@ async function selfSpawnReady($: Host, head: QueuedSpawn, waited: number): Promi
   return true
 }
 
-/** The input schema of the `init` tool: none. */
+/** MOD-45: the `path` a setup or init tool call carries; a non-string is kept as text so it is refused, not ignored. */
+const pathOfCall = (e: unknown): string | undefined => {
+  const v = (e as { path?: unknown }).path
+  return v === undefined ? undefined : typeof v === 'string' ? v : String(v)
+}
+
+const PATH_PROP = { type: 'string', description: 'Optional: the absolute path of another local git checkout (the folder holding .git; ~ expanded) to check and scaffold instead of this session\'s repo; writes nothing here.' } as const
+
+/** The input schema of the `init` and `setup` tools: an optional path. */
 const SETUP_TOOL = {
   name: 'setup',
   description:
     'Checks the repo for chassis-delegation and returns what to fix; run the fixes, then call it again. When every required check holds it scaffolds the config and returns the first card to write.',
-  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  inputSchema: { type: 'object', properties: { path: PATH_PROP }, additionalProperties: false },
 } as const
 
 const INIT_TOOL = {
   name: 'init',
   description:
     'Scaffold chassis-delegation in this repo: a card folder (agents/tasks/, or docs/cards/ in a plugin repo) with its README and a sample card, .chassis-delegation.json with its defaults, and .delegation/ in .gitignore. Never overwrites a file; says what it wrote.',
-  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  inputSchema: { type: 'object', properties: { path: PATH_PROP }, additionalProperties: false },
 } as const
 
 export const register: Register = (on, opts) => {
@@ -5346,7 +5379,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup|init|update|dashboard|accept <id> [note]]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|accept <id> [note]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -5414,8 +5447,8 @@ export const register: Register = (on, opts) => {
   // ---- /delegation [init] and the init tool: one function (5B) ----------------------
   on('command.run', { command: 'delegation' }, async ($, e) => {
     const arg = e.args.trim()
-    if (arg === 'init') return { text: await runInit($) }
-    if (arg === 'setup') return { text: await runSetup($) }
+    if (arg === 'init' || arg.startsWith('init ')) return { text: await runInit($, arg.slice(4)) }
+    if (arg === 'setup' || arg.startsWith('setup ')) return { text: await runSetup($, false, arg.slice(5)) }
     if (arg === 'update') return { text: await runUpdate($) }
     if (arg === 'debrief') return { text: await runDebrief($) }
     if (arg === 'debrief apply' || arg.startsWith('debrief apply ')) return { text: await runDebriefApply($, arg.slice('debrief apply'.length)) }
@@ -5446,8 +5479,8 @@ export const register: Register = (on, opts) => {
     return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|accept <id> [note]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
-  on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async $ => ({ result: await runInit($) }))
-  on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async $ => ({ result: await runSetup($, true) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async ($, e) => ({ result: await runInit($, pathOfCall(e)) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async ($, e) => ({ result: await runSetup($, true, pathOfCall(e)) }))
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

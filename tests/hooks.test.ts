@@ -716,6 +716,41 @@ describe('5B: /delegation init and the init tool', () => {
     expect(viaTool).toContain('Set up. Tell Claude your first task')
   })
 
+  test('MOD-45: /delegation setup /other scaffolds the other repo with its detected gate and writes nothing in the session root', async ($, on) => {
+    const answer = (argv: string[]): RunAnswer | undefined => {
+      if (argv[0] !== 'git' || argv[2] !== '/other') return { exitCode: 1, stdout: '' }
+      const rest = argv.slice(3).join(' ')
+      if (rest === 'rev-parse --is-inside-work-tree') return { exitCode: 0, stdout: 'true\n' }
+      if (rest === 'rev-parse --show-toplevel') return { exitCode: 0, stdout: '/other\n' }
+      if (rest === 'rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n' }
+      if (rest === 'rev-parse --verify --quiet HEAD') return { exitCode: 0, stdout: 'abc1234\n' }
+      if (rest === 'rev-parse --verify --quiet origin/main') return { exitCode: 0, stdout: 'abc1234\n' }
+      return { exitCode: 0, stdout: '' }
+    }
+    const w = world(on, {
+      run: answer,
+      files: { '/other/package.json': '{"scripts":{"test":"node --test"}}', '/usr/bin/git': '', '/usr/bin/node': '', '/usr/bin/npm': '' },
+      dirs: { '/other': ['package.json'], '/other/.git': [] },
+    })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(delegation('setup /other'))
+    expect(out.text).toContain('chassis-delegation setup in /other: 6 of 6 required checks hold')
+    expect(JSON.parse(w.files.get('/other/.chassis-delegation.json') ?? '{}').gateMap).toEqual({ test: 'npm test' })
+    expect(w.files.get('/other/agents/tasks/README.md')).toContain('Task cards')
+    expect(w.files.get('/other/.gitignore')).toBe('.delegation/\n')
+    expect([...w.files.keys()].filter(k => k.startsWith(`${ROOT}/`))).toEqual([])
+    expect(String(out.text).trimEnd().split('\n').at(-1)).toContain('card tool with repo set to /other')
+    // the tool takes the same path; a relative path and a folder with no .git are refused in one line, writing nothing
+    const rel = resultText(await $.tool.call({ tool: 'mcp__chassis-delegation__setup', path: 'other' } as never))
+    expect(rel).toContain('not an absolute path')
+    expect(rel.trim().split('\n').length).toBe(1)
+    const none = resultText(await $.tool.call({ tool: 'mcp__chassis-delegation__init', path: '/nowhere' } as never))
+    expect(none).toContain('is not a git checkout')
+    expect([...w.files.keys()].filter(k => k.startsWith('/nowhere') || k.startsWith(`${ROOT}/`))).toEqual([])
+    const viaInit = resultText(await $.tool.call({ tool: 'mcp__chassis-delegation__init', path: '/other' } as never))
+    expect(viaInit).toContain('left /other/.chassis-delegation.json (exists; never overwritten)')
+  })
+
   test('GH-109: /delegation with no config adds the not-set-up line', async ($, on) => {
     world(on)
     await $.session.start(sessionStart)
