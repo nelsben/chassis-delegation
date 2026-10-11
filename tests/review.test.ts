@@ -1,0 +1,267 @@
+import { test, expect, describe } from 'claude-code/testing'
+import { advise, type AdviseInput } from '../hooks/lib/verify'
+import { attemptsFor, nextAttempt, patchRecord, type AttemptRecord } from '../hooks/lib/attempts'
+import { parseRepoConfig, mergeConfig, settingsLayer } from '../hooks/lib/repoconfig'
+import { reviewerTier } from '../hooks/lib/tier'
+import { reviewLine, shortNext } from '../hooks/lib/quiet'
+import {
+  parseReviewBlock,
+  parseReviewMarker,
+  refutedRows,
+  renderReview,
+  reviewAdvice,
+  reviewClause,
+  reviewDue,
+  reviewMarker,
+  reviewPlan,
+  reviewResumeText,
+  reviewRows,
+  type ReviewPlanInput,
+} from '../hooks/lib/review'
+
+// MOD-21: the optional reviewer stage. Pure parts: the [[review]] block, the rows, the tier, the advice.
+
+const BLOCK = '[[review v=1 task=T-4 confirmed=3 refuted=1 unverifiable=0]]'
+
+describe('MOD-21: the [[review]] block', () => {
+  test('a well-formed block gives its task and the three counts', () => {
+    expect(parseReviewBlock(`rows above\n${BLOCK}`)).toEqual({ task: 'T-4', confirmed: 3, refuted: 1, unverifiable: 0 })
+    expect(parseReviewBlock('[[review v=1 task=MOD-21 confirmed=0 refuted=0 unverifiable=7]]')).toEqual({ task: 'MOD-21', confirmed: 0, refuted: 0, unverifiable: 7 })
+  })
+
+  test('a malformed block gives none: a word for a count, a missing count, a wrong version, the template line itself', () => {
+    expect(parseReviewBlock('[[review v=1 task=T-4 confirmed=3 refuted=x unverifiable=0]]')).toBeUndefined()
+    expect(parseReviewBlock('[[review v=1 task=T-4 confirmed=3 refuted=1]]')).toBeUndefined()
+    expect(parseReviewBlock('[[review v=2 task=T-4 confirmed=3 refuted=1 unverifiable=0]]')).toBeUndefined()
+    expect(parseReviewBlock('[[review v=1 task=T-4 confirmed=N refuted=N unverifiable=N]]')).toBeUndefined()
+    expect(parseReviewBlock('[[review v=1 task=T-4 confirmed=-1 refuted=1 unverifiable=0]]')).toBeUndefined()
+    expect(parseReviewBlock('no block at all')).toBeUndefined()
+    expect(parseReviewBlock('')).toBeUndefined()
+  })
+
+  test('the last well-formed block wins; a block for another task is not this review', () => {
+    const text = `${BLOCK}\nthen I recounted\n[[review v=1 task=T-4 confirmed=4 refuted=0 unverifiable=0]]\n[[review v=1 task=T-4 confirmed=N refuted=N unverifiable=N]]`
+    expect(parseReviewBlock(text)).toEqual({ task: 'T-4', confirmed: 4, refuted: 0, unverifiable: 0 })
+    expect(parseReviewBlock(BLOCK, 'T-4')).toEqual({ task: 'T-4', confirmed: 3, refuted: 1, unverifiable: 0 })
+    expect(parseReviewBlock(BLOCK, 'T-9')).toBeUndefined()
+  })
+})
+
+describe('MOD-21: the rows', () => {
+  const TEXT = [
+    'I read the diff at 1234abcd.',
+    'confirmed: a/x.ts gains the parser — a/x.ts:12',
+    '- refuted: the gate passes — ran `npx prettier --check a/x.ts`, exit 1',
+    '* unverifiable: the CI run is green — no network from here',
+    '2. **Refuted** - the README names the option — README.md has no such line (grep -n review README.md)',
+    'refuted claims are listed above, none hidden.',
+    BLOCK,
+  ].join('\n')
+
+  test('each labelled line is a row: confirmed, refuted or unverifiable, bullets and bold stripped', () => {
+    expect(reviewRows(TEXT).map(r => r.label)).toEqual(['confirmed', 'refuted', 'unverifiable', 'refuted'])
+    expect(reviewRows(TEXT)[1]).toEqual({ label: 'refuted', text: 'the gate passes — ran `npx prettier --check a/x.ts`, exit 1', line: 'refuted: the gate passes — ran `npx prettier --check a/x.ts`, exit 1' })
+  })
+
+  test('the refuted rows are quoted as the reviewer wrote them, in order; prose that merely starts with the word is no row', () => {
+    expect(refutedRows(TEXT)).toEqual([
+      'refuted: the gate passes — ran `npx prettier --check a/x.ts`, exit 1',
+      'refuted: the README names the option — README.md has no such line (grep -n review README.md)',
+    ])
+    expect(refutedRows('nothing refuted here\nconfirmed: x — y')).toEqual([])
+  })
+})
+
+describe('MOD-21: when a review is due, and at which tier', () => {
+  test('off reviews nothing; on reviews every tier; on-frontier only frontier and premium', () => {
+    for (const t of ['economy', 'standard', 'frontier', 'premium'] as const) {
+      expect(reviewDue('off', t)).toBe(false)
+      expect(reviewDue('on', t)).toBe(true)
+    }
+    expect(reviewDue('on-frontier', 'economy')).toBe(false)
+    expect(reviewDue('on-frontier', 'standard')).toBe(false)
+    expect(reviewDue('on-frontier', 'frontier')).toBe(true)
+    expect(reviewDue('on-frontier', 'premium')).toBe(true)
+  })
+
+  test('the reviewer is one tier below the worker, the floor is economy, and reviewTier overrides', () => {
+    expect(reviewerTier('premium')).toBe('frontier')
+    expect(reviewerTier('frontier')).toBe('standard')
+    expect(reviewerTier('standard')).toBe('economy')
+    expect(reviewerTier('economy')).toBe('economy')
+    expect(reviewerTier('standard', 'frontier')).toBe('frontier')
+    expect(reviewerTier('frontier', 'economy')).toBe('economy')
+  })
+})
+
+describe('MOD-21: the advice for a consistent verdict', () => {
+  const base: AdviseInput = { verdict: 'consistent', reportGate: 'pass', task: 'T-4', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', agentId: 'agent-4', briefPath: '/s/briefs/T-4.brief.md', adhoc: false }
+
+  test('review off: next=accept, as before', () => {
+    expect(advise(base)).toEqual({ kind: 'accept', next: 'accept' })
+    expect(advise({ ...base, review: false })).toEqual({ kind: 'accept', next: 'accept' })
+  })
+
+  test('review on: next=review instead of next=accept', () => {
+    expect(advise({ ...base, review: true })).toEqual({ kind: 'review', next: 'review' })
+  })
+
+  test('review changes nothing but a consistent verdict: a gate=fail report, a refuted, an unverified one and a cardless hand-back are advised as they were', () => {
+    expect(advise({ ...base, review: true, reportGate: 'fail' }).kind).toBe('resume')
+    expect(advise({ ...base, review: true, verdict: 'refuted', lines: ['claim gate: failed — red'] }).kind).toBe('resume')
+    expect(advise({ ...base, review: true, verdict: 'unverified' }).kind).toBe('check')
+    expect(advise({ ...base, review: true, adhoc: true, cardless: true })).toEqual({ kind: 'accept', next: 'accept' })
+    expect(advise({ ...base, review: true, adhoc: true }).kind).toBe('none')
+  })
+})
+
+describe('MOD-21: the reviewer spawn block', () => {
+  const TEMPLATE = 'Review {{id}} attempt {{attempt}}.\nBrief: {{brief}}\nTree: {{worktree}}\nSha: {{sha}}\nBase: {{base}}\nReport: {{report}}\nHand-back:\n{{handback}}\n[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]'
+  const TIER_MAP = { economy: 'haiku', standard: 'sonnet', frontier: 'opus', premium: 'fable' } as const
+  const plan = (over: Partial<ReviewPlanInput> = {}) =>
+    reviewPlan({
+      template: TEMPLATE,
+      workerTier: 'standard',
+      tierMap: TIER_MAP,
+      label: 'T-4',
+      marker: { task: 'T-4', subtask: 'main', attempt: 1, worker: 'agent-4', sha: '1234abcd' },
+      vars: { id: 'T-4', subtask: 'main', attempt: '1', budget: '3', brief: '/s/briefs/T-4.brief.md', worktree: '/repo/acme-app-T-4', branch: 'agent/frontend/T-4', sha: '1234abcd', base: 'origin/main', report: '[[report v=1 task=T-4 sha=1234abcd gate=pass files=a/x.ts]]', handback: 'Added the parser.' },
+      ...over,
+    })
+
+  test('the model is one tier below the worker: a standard worker gets haiku, a frontier worker sonnet, a premium worker opus', () => {
+    expect(plan().alias).toBe('haiku')
+    expect(plan().tier).toBe('economy')
+    expect(plan({ workerTier: 'frontier' }).alias).toBe('sonnet')
+    expect(plan({ workerTier: 'premium' }).alias).toBe('opus')
+    expect(plan({ workerTier: 'economy' }).alias).toBe('haiku') // the floor
+  })
+
+  test('the tier map decides the alias; reviewTier overrides the tier; fable is never spawned', () => {
+    expect(plan({ tierMap: { ...TIER_MAP, economy: 'sonnet' } }).alias).toBe('sonnet')
+    expect(plan({ override: 'frontier' }).alias).toBe('opus')
+    const p = plan({ override: 'premium' })
+    expect(p.alias).toBe('opus')
+    expect(p.tier).toBe('frontier')
+  })
+
+  test('the block is the Agent call as fenced JSON: the task, kind review, the model, and a prompt built from the template', () => {
+    const p = plan()
+    expect(p.call.model).toBe('haiku')
+    expect(p.call.subagent_type).toBe('general-purpose')
+    expect(p.call.description).toBe('T-4 review economy haiku')
+    expect(p.block.startsWith('spawn: Agent\n```json\n')).toBe(true)
+    const json = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(p.block)?.[1] ?? '{}')
+    expect(json).toEqual(p.call)
+    expect(p.call.prompt.startsWith('[[review-of v=1 task=T-4 subtask=main attempt=1 worker=agent-4 sha=1234abcd]]\n')).toBe(true)
+    expect(p.call.prompt).toContain('Review T-4 attempt 1.')
+    expect(p.call.prompt).toContain('Brief: /s/briefs/T-4.brief.md')
+    expect(p.call.prompt).toContain('Hand-back:\nAdded the parser.')
+    expect(p.call.prompt).toContain('[[review v=1 task=T-4 confirmed=N refuted=N unverifiable=N]]')
+    expect(p.block).toContain('edits nothing')
+  })
+})
+
+describe('MOD-21: the marker the spawn hook recognises', () => {
+  test('a marker round-trips; only the first line of a prompt is a marker', () => {
+    const marker = { task: 'T-4', subtask: 'main', attempt: 2, worker: 'agent-4', sha: '1234abcd' }
+    const line = reviewMarker(marker)
+    expect(line).toBe('[[review-of v=1 task=T-4 subtask=main attempt=2 worker=agent-4 sha=1234abcd]]')
+    expect(parseReviewMarker(`${line}\nthe rest`)).toEqual(marker)
+    expect(parseReviewMarker(`  \n${line}\nthe rest`)).toEqual(marker)
+    expect(parseReviewMarker(`Your brief is the file /s/briefs/T-4.brief.md.\n${line}`)).toBeUndefined()
+    expect(parseReviewMarker('[[brief v=1 task=T-4]]')).toBeUndefined()
+    expect(parseReviewMarker('[[review-of v=1 subtask=main attempt=1]]')).toBeUndefined() // no task
+    expect(parseReviewMarker('[[review-of v=1 task=T-4 attempt=x]]')).toBeUndefined()
+  })
+
+  test('a template renders its {{keys}} once; an unknown key and text in a value stay as they are', () => {
+    expect(renderReview('{{id}} {{x}} {{handback}}', { id: 'T-4', handback: 'see {{id}} and $& here' })).toBe('T-4 {{x}} see {{id}} and $& here')
+  })
+})
+
+describe('MOD-21: what the review hand-back advises', () => {
+  const rows = ['refuted: the gate passes — exit 1', 'refuted: no other file changed — a/y.ts:3']
+  const base = { counts: { task: 'T-4', confirmed: 3, refuted: 0, unverifiable: 1 }, refuted: [] as string[], agentId: 'agent-4', attempts: 1, budget: 3, label: 'T-4' }
+
+  test('refuted=0: next=accept; the clause counts confirmed and unverifiable', () => {
+    expect(reviewAdvice(base)).toEqual({ kind: 'accept', next: 'accept' })
+    expect(reviewClause(base.counts)).toBe('review: 3 confirmed, 1 unverifiable')
+  })
+
+  test('a missing or malformed block: next=accept and the clause says so (the review never blocks on its own failure)', () => {
+    expect(reviewAdvice({ ...base, counts: undefined })).toEqual({ kind: 'accept', next: 'accept' })
+    expect(reviewClause(undefined)).toBe('review: no review block')
+  })
+
+  test('refuted>0: next=resume naming the worker; the clause counts all three', () => {
+    const advice = reviewAdvice({ ...base, counts: { task: 'T-4', confirmed: 3, refuted: 2, unverifiable: 0 }, refuted: rows })
+    expect(advice.kind).toBe('resume')
+    expect(advice.next).toBe('resume agent=agent-4 — SendMessage it the refuted rows below')
+    expect(shortNext(advice.next)).toBe('resume agent=agent-4')
+    expect(reviewClause({ task: 'T-4', confirmed: 3, refuted: 2, unverifiable: 0 })).toBe('review: 3 confirmed, 2 refuted, 0 unverifiable')
+  })
+
+  test('refuted>0 with the budget spent, or no worker to resume: check by hand, never a resume that would be refused', () => {
+    const refuted = { ...base, counts: { task: 'T-4', confirmed: 0, refuted: 1, unverifiable: 0 }, refuted: [rows[0] as string] }
+    expect(reviewAdvice({ ...refuted, attempts: 3 }).kind).toBe('check')
+    expect(reviewAdvice({ ...refuted, attempts: 3 }).next).toContain('budget')
+    expect(reviewAdvice({ ...refuted, agentId: undefined }).kind).toBe('check')
+  })
+
+  test('the resume message quotes the refuted rows; with no row parsed it quotes what the reviewer said', () => {
+    const text = reviewResumeText({ label: 'T-4', attempt: 1, budget: 3, refuted: rows, said: 'ignored' })
+    expect(text).toContain('T-4 (attempt 1/3)')
+    for (const row of rows) expect(text).toContain(row)
+    expect(text).not.toContain('ignored')
+    expect(text).toContain('[[report v=1')
+    const none = reviewResumeText({ label: 'T-4', attempt: 1, budget: 3, refuted: [], said: 'the gate claim is false, see out.txt:4' })
+    expect(none).toContain('the gate claim is false, see out.txt:4')
+  })
+
+  test('the one-line row: the label, the attempt, the alias and the cost, the clause, then next= last', () => {
+    expect(reviewLine({ task: 'T-4', attempt: 1, budget: 3, alias: 'haiku', usd: 0.05, counts: base.counts, next: 'accept' })).toBe('chassis-delegation: T-4 attempt 1/3 reviewed · haiku · $0.05 · review: 3 confirmed, 1 unverifiable · next=accept')
+    expect(reviewLine({ task: 'T-4', attempt: 1, budget: 3, counts: undefined, next: 'accept' })).toBe('chassis-delegation: T-4 attempt 1/3 reviewed · review: no review block · next=accept')
+    expect(reviewLine({ task: 'T-4', attempt: 1, budget: 3, alias: 'haiku', counts: { task: 'T-4', confirmed: 3, refuted: 1, unverifiable: 0 }, next: 'resume agent=agent-4 — SendMessage it the refuted rows below' })).toBe(
+      'chassis-delegation: T-4 attempt 1/3 reviewed · haiku · review: 3 confirmed, 1 refuted, 0 unverifiable · next=resume agent=agent-4',
+    )
+  })
+})
+
+describe('MOD-21: a review is an attempt of kind review that never counts against budget=', () => {
+  const rec = (attempt: number, kind: AttemptRecord['kind'], verdict: AttemptRecord['verdict']): AttemptRecord => ({ task: 'T-4', subtask: 'main', attempt, kind, lineage: 1, tier: 'standard', alias: 'sonnet', verdict, at: attempt })
+
+  test('attemptsFor, nextAttempt and patchRecord pass a review record by', () => {
+    const records = [rec(1, 'spawn', 'consistent'), rec(1, 'review', 'pending')]
+    expect(attemptsFor(records, 'main')).toHaveLength(1)
+    expect(attemptsFor(records, 'main')[0]?.kind).toBe('spawn')
+    expect(nextAttempt(records, 'main')).toBe(2)
+    const patched = patchRecord(records, 'main', 1, { sha: 'abc1234' })
+    expect(patched[0]).toMatchObject({ kind: 'spawn', sha: 'abc1234' })
+    expect(patched[1]).toMatchObject({ kind: 'review' })
+    expect((patched[1] as AttemptRecord).sha).toBeUndefined()
+  })
+})
+
+describe('MOD-21: the review option', () => {
+  test('review defaults to off; the repo file and /config set it; /config off is unset; a bad value is named and dropped', () => {
+    expect(mergeConfig({}, {}).review).toBe('off')
+    const repo = parseRepoConfig('{"review":"on-frontier"}')
+    expect(repo.errors).toEqual([])
+    expect(mergeConfig(repo.config, {}).review).toBe('on-frontier')
+    expect(mergeConfig(repo.config, settingsLayer({ review: 'on' }).config).review).toBe('on')
+    expect(mergeConfig(repo.config, settingsLayer({ review: 'off' }).config).review).toBe('on-frontier') // the manifest default is unset
+    const bad = parseRepoConfig('{"review":"always"}')
+    expect(bad.errors.join()).toContain('review')
+    expect(mergeConfig(bad.config, {}).review).toBe('off')
+  })
+
+  test('reviewTier defaults to none; a tier sets it; a word that is no tier is named and dropped', () => {
+    expect(mergeConfig({}, {}).reviewTier).toBe('')
+    expect(mergeConfig(parseRepoConfig('{"reviewTier":"standard"}').config, {}).reviewTier).toBe('standard')
+    expect(mergeConfig({}, settingsLayer({ reviewTier: 'frontier' }).config).reviewTier).toBe('frontier')
+    const bad = parseRepoConfig('{"reviewTier":"fast"}')
+    expect(bad.errors.join()).toContain('reviewTier')
+    expect(mergeConfig(bad.config, {}).reviewTier).toBe('')
+  })
+})
