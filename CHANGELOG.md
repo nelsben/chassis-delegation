@@ -13,8 +13,13 @@
 - **A non-consistent verdict for a task already merged or accepted no longer wakes the brain on arrival (MOD-60).**
   The merged check before a worker's hand-back wake (MOD-35) asked only about a consistent verdict, so an
   unverified or refuted row for a task already on the default branch (or accepted by hand) still woke the brain with
-  a stale `next=resume`. It now asks about any verdict, as MOD-51 does at delivery: the row is still posted and
-  recorded, the debug line stays `wake skipped: <task> already merged`, and any ready lines still wake the brain.
+  a stale `next=resume`. It now asks about any verdict, on arrival and, as MOD-51 does, at delivery. For a consistent
+  verdict the rule is unchanged (sha ancestry of origin/main, the card there reading merged, or a retire already
+  recorded). For any other verdict the wake is skipped only when the task is already retired (a merge command the mod
+  saw, or `/delegation accept`) or its card on origin/main reads `status: merged`; sha ancestry is not asked and never
+  retires the task for it, because a worker that committed nothing reports a base sha already on origin/main. The row
+  is still posted and recorded, the debug line stays `wake skipped: <task> already merged`, and any ready lines still
+  wake the brain.
 
 ## 0.9.2 — 2026-10-11
 

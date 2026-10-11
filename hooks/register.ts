@@ -1960,13 +1960,13 @@ const splitLabel = (label: string): { task: string; subtask: string } => {
 }
 
 /** What two read-only git calls say of a task's last attempt: is its sha on origin/main, does its card there read merged. undefined: could not say. */
-async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string): Promise<{ ancestor?: boolean; card?: string }> {
+async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string, cardOnly = false): Promise<{ ancestor?: boolean; card?: string }> {
   const sessionHome = await $.session.root()
   // MOD-44: a task for another local repo is looked for in that repo's origin/main; its card is not read (it sits under a folder the allowlist does not name)
   const other = repo !== undefined && repo.replace(/\/+$/, '') !== sessionHome.replace(/\/+$/, '')
   const root = other ? (repo as string).replace(/\/+$/, '') : sessionHome
   const out: { ancestor?: boolean; card?: string } = {}
-  if (sha !== undefined && isSha(sha)) {
+  if (!cardOnly && sha !== undefined && isSha(sha)) {
     const r = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, 'origin/main'], { cwd: root, timeoutMs: 10000 })
     if (r.ok && r.exitCode === 0) return { ancestor: true }
     if (r.ok && r.exitCode === 1) out.ancestor = false
@@ -1988,7 +1988,7 @@ async function retireProbe($: Host, task: string, sha: string | undefined, repo?
  * 15 minutes, the sha is looked for in origin/main and the card there for
  * `status: merged`; a check that gets no answer leaves the row as it is.
  */
-async function retireCheck($: Host, label: string, t: number, force = false): Promise<{ retired: boolean; checked: boolean }> {
+async function retireCheck($: Host, label: string, t: number, force = false, cardOnly = false): Promise<{ retired: boolean; checked: boolean }> {
   const { task, subtask } = splitLabel(label)
   try {
     const records = await loadAttempts($, task)
@@ -1996,7 +1996,9 @@ async function retireCheck($: Host, label: string, t: number, force = false): Pr
     if (!last) return { retired: false, checked: false }
     if (last.retired) return { retired: true, checked: true }
     if (!force && !retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
-    const patch = retirePatch(await retireProbe($, task, last.sha, last.root), t)
+    const patch = retirePatch(await retireProbe($, task, last.sha, last.root, cardOnly), t)
+    // a card-only check (a non-consistent verdict) records nothing unless the card reads merged: it must not hold off the sha check of the 15-minute retire sweep
+    if (cardOnly && patch.retired === undefined) return { retired: false, checked: last.retireCheckedAt !== undefined }
     await storeSet($, K.tasks(task), patchRecord(await loadAttemptsRaw($, task), subtask, last.attempt, patch))
     if (patch.retired === 'merged') await appendLedger($, acceptRow(last, 'merged', t))
     return { retired: patch.retired !== undefined, checked: patch.retireCheckedAt !== undefined || last.retireCheckedAt !== undefined }
@@ -2024,14 +2026,16 @@ async function acceptTask($: Host, rest: string): Promise<string> {
 /**
  * MOD-35: is this hand-back's task already on the default branch (or accepted)? MOD-4's retire check answers: the
  * attempt's sha an ancestor of origin/main, the card there reading merged, or an accept already recorded. A verdict of any kind (`anyVerdict`)
- * is asked about, on arrival (MOD-60) and at delivery (MOD-51); a caller may still ask only about a consistent one.
+ * is asked about, on arrival (MOD-60) and at delivery (MOD-51). For a consistent verdict the sha ancestry counts; for any other
+ * (a refuted or no-work hand-back can report a base sha already on origin/main) only a retire already recorded or a card on
+ * origin/main reading merged does, and the check never retires the task from ancestry.
  */
 async function alreadyMerged($: Host, spawn: SpawnRecord, force = false, anyVerdict = false): Promise<boolean> {
   if (spawn.adhoc || spawn.review || spawn.replay) return false
   try {
     const rec = attemptsFor(await loadAttempts($, spawn.task), spawn.subtask).find(r => r.attempt === spawn.attempt)
     if (!anyVerdict && rec?.verdict !== 'consistent') return false
-    return (await retireCheck($, taskLabel(spawn.task, spawn.subtask), await now($), force)).retired
+    return (await retireCheck($, taskLabel(spawn.task, spawn.subtask), await now($), force, rec?.verdict !== 'consistent')).retired
   } catch (err) {
     debug($, `${taskLabel(spawn.task, spawn.subtask)}: merged check failed: ${String(err)}`)
     return false

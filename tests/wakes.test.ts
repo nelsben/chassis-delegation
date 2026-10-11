@@ -49,9 +49,9 @@ describe('MOD-51: a held verdict wake is dropped at delivery when its task has m
     expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 attempt 1 superseded by attempt 2'))).toBe(true)
   })
 
-  test('(2) a refuted wake whose task is accepted before the turn ends is not submitted', { options: { ...GM } }, async ($, on) => {
+  test('(2) a consistent wake whose task is merged before the turn ends is not submitted', { options: { ...GM } }, async ($, on) => {
     let ancestor = 1
-    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 1, ancestor: () => ancestor }), agentId: 'agent-4' })
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => ancestor }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.start({ text: '', turnId: 'turn-main' } as never)
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
@@ -62,11 +62,22 @@ describe('MOD-51: a held verdict wake is dropped at delivery when its task has m
     expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 merged before delivery'))).toBe(true)
   })
 
+  test('(2b) MOD-60: a refuted wake whose sha is only an ancestor of origin/main is still delivered at the turn\'s end', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 1, ancestor: () => 0 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(w.submitted).toEqual([])
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('refuted')
+  })
+
   test('(3) a ready line is submitted alone when its verdict is dropped', { options: { ...GM, briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     let ancestor = 1
     const other = '[[brief v=1 task=T-5 subtask=main purpose=build tier=standard]]\nDo it.'
     const queued = '[[brief v=1 task=T-9 subtask=main purpose=build tier=standard]]\nDo it.'
-    const w = world(on, { listAgents: true, files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 1, ancestor: () => ancestor }) })
+    const w = world(on, { listAgents: true, files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => ancestor }) })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: other, tool_use_id: 'toolu_B0000002' }))
     const q = await $.agent.spawn(spawnInput({ prompt: queued, tool_use_id: 'toolu_C0000009' }))
