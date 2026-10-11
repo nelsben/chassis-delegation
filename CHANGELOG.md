@@ -25,6 +25,15 @@
   statements and a red_test that is not `none`. Both come from pure functions (`scopeSizeWarning`, `tierHint`);
   the card tool's dry-run summary carries them. Nothing is refused or changed on the card.
 
+- **A worker stopped by a usage limit is recorded as rate limited, and the queue holds (MOD-56).** A hand-back with
+  no `[[report]]` block that names `429`, `hit your weekly limit`, `usage limit` or `rate limit` (any case) is a
+  usage-limit stop (`turn.complete` carries no error text, so the text is read). The attempt record and ledger row
+  carry `stop: rate_limited` (and `resetsAt` when a reset time is named), the verdict row reads
+  `no-report (rate limited[, resets <time>])`, and `next=` is unchanged (`verify sha=` when work is present). While
+  the last worker stopped so, a freed slot says `held: <task> queued; the last worker stopped on a usage limit at
+  HH:MM[, resets …]; dispatch it when the limit resets` instead of `ready:`, and the ready fallback starts nothing;
+  the next spawn the brain makes clears the hold.
+
 - **A held verdict wake is dropped at delivery when its task has moved on (MOD-51).** MOD-42 holds a wake while
   the brain's turn is open; at the turn's end it dropped only a consistent wake whose task was merged, so a refuted,
   no-report, unverified or over-spend wake for attempt 1 reached the brain after attempt 2 had passed. Now

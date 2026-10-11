@@ -1129,6 +1129,22 @@ budget and the escalation ladder read only attempts that had a brief. An ad
 hoc spawn that hands back no report is judged as before: `no-report` in the
 foreground, nothing in the background.
 
+**A worker stopped by a usage limit (MOD-56).** The engine's `turn.complete` event
+carries no error text (only `reason`), so the mod reads the hand-back text, and only
+when it holds no `[[report]]` block (a worker writing rate-limit code is never taken
+for a stopped one). Any of `429`, `hit your weekly limit`, `usage limit`, `rate limit`,
+in any case, marks the stop. The attempt record and its ledger row then carry
+`stop: rate_limited` (and `resetsAt` when the text names a reset time), and the
+verdict row reads `no-report (rate limited[, resets <time>])`. `next=` is what a
+no-report always had: `verify sha=<sha>` when finished work is in the worktree. While
+the last worker of the session stopped this way, a freed slot does not announce a
+queued task ready; the row reads
+
+    held: <task> queued; the last worker stopped on a usage limit at HH:MM[, resets <time>]; dispatch it when the limit resets
+
+and the mod's own ready fallback starts nothing. The hold clears on the next spawn the
+brain makes.
+
 ### repo=here: the main checkout
 
 `repo=none` is the far end (no git at all). `repo=here` is the middle: a git

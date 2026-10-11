@@ -63,6 +63,10 @@ export type AttemptRecord = {
   verdict: AttemptVerdict
   /** GH-115: a refuted attempt's first failed claim (branch, sha, scope, files, gate, red, pr). */
   firstFailed?: string
+  /** MOD-56: the worker stopped on a usage limit (its hand-back had no report and named one). */
+  stop?: 'rate_limited'
+  /** MOD-56: the reset time the hand-back named, as written. */
+  resetsAt?: string
   /** The report's own `gate=` claim. */
   reportGate?: string
   /**

@@ -3,6 +3,9 @@ import {
   isFailing,
   advise,
   verdictLine,
+  detectRateLimit,
+  RATE_LIMIT_MARKERS,
+  rateLimitedVerdict,
   contextBlock,
   budgetDenyMessage,
   scratchFor,
@@ -318,5 +321,27 @@ describe('GH-104: look before you respawn', () => {
       `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${HEAD} gate=pass red=.delegation/T-4/red-2.txt files=a/x.ts,a/y.ts]]`,
     )
     expect(syntheticReport({ task: 'T-4', subtask: 'main', branch: 'b', sha: HEAD, files: [] })).toBe(`[[report v=1 task=T-4 subtask=main branch=b pr=none sha=${HEAD} gate=pass files=none]]`)
+  })
+})
+
+describe('MOD-56: a usage-limit stop', () => {
+  const REPORT = '[[report v=1 task=T-4 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]'
+  test('each marker is read, whatever its case, in a hand-back with no report', () => {
+    expect(RATE_LIMIT_MARKERS).toEqual(['429', 'hit your weekly limit', 'usage limit', 'rate limit'])
+    for (const m of RATE_LIMIT_MARKERS) expect(detectRateLimit(`Stopped: ${m.toUpperCase()} reached.`)).toEqual({})
+    expect(detectRateLimit('API Error: 429 You\'ve hit your weekly limit')).toEqual({})
+  })
+  test('a hand-back with a report is never read, nor one that names no marker', () => {
+    expect(detectRateLimit(`I added rate limit handling (429).\n${REPORT}`)).toBeUndefined()
+    expect(detectRateLimit('All done.')).toBeUndefined()
+    expect(detectRateLimit('')).toBeUndefined()
+  })
+  test('a named reset time is carried', () => {
+    expect(detectRateLimit("You've hit your weekly limit · resets 3pm (America/Los_Angeles)")).toEqual({ resetsAt: '3pm (America/Los_Angeles)' })
+    expect(detectRateLimit('usage limit reached. Resets at 14:30.')).toEqual({ resetsAt: '14:30' })
+  })
+  test('the verdict reads no-report (rate limited[, resets <time>])', () => {
+    expect(rateLimitedVerdict({})).toBe('no-report (rate limited)')
+    expect(rateLimitedVerdict({ resetsAt: '3pm' })).toBe('no-report (rate limited, resets 3pm)')
   })
 })
