@@ -4167,7 +4167,10 @@ describe('MOD-23: exclusive resources and fan-out', () => {
     const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
 
     test('owed review: one posture line right under the header, naming the reviewer’s call; gone once the brain makes it', { options: { review: 'on', verdictVerbosity: 'full', ...GM } }, async ($, on) => {
-      const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+      const verifier = nativeRun({ gate: 0 })
+      // the work is not on origin/main (MOD-4's retire check): the owed row stays
+      const run = (argv: string[]): RunAnswer | undefined => (argv.includes('--is-ancestor') && argv.at(-1) === 'origin/main' ? { exitCode: 1, stdout: '' } : verifier(argv))
+      const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run, agentId: 'agent-4' })
       await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
       await $.turn.complete(turnInput('agent-4', 'Added the parser.\n[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'))
       expect(delivered(w)).toContain('next=review')
@@ -4202,7 +4205,7 @@ describe('MOD-23: exclusive resources and fan-out', () => {
       ],
     }
     const empty = (on: Parameters<typeof world>[0]) =>
-      world(on, { dirs: { [tasksDir]: ['README.md'] }, trees: ['/out/hair', '/out/eyes'], run, store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+      world(on, { dirs: { [tasksDir]: ['README.md'] }, trees: ['/out/hair', '/out/eyes'], run, listAgents: true, store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
 
     test('the dry run writes one card per lane and prints every lane’s header, then says go for all of them', { options: OPTIONS }, async ($, on) => {
       const w = empty(on)

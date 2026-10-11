@@ -10,7 +10,7 @@ import { globMatches } from './verify-native'
 
 export const BRIEF_FIELDS = [
   'v', 'task', 'subtask', 'purpose', 'tier', 'model', 'scope', 'forbid', 'scope_globs', 'forbid_globs',
-  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'outdir', 'scratch', 'context', 'note',
+  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'outdir', 'scratch', 'resources', 'context', 'note',
 ] as const
 
 /**
@@ -292,6 +292,22 @@ export function scopeOverlap(mine: readonly string[], theirs: readonly string[])
   }
   return undefined
 }
+
+/** MOD-23: a resource name is one plain word, safe in a card's list and in the header (no space, comma, quote or bracket). */
+export const RESOURCE_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
+
+/** MOD-23: the resources the header's `resources=` names (a comma list), each once; none when the field is absent or empty. */
+export function resourcesOf(h: Pick<BriefHeader, 'fields'> | undefined): string[] {
+  const out: string[] = []
+  for (const part of (h?.fields.resources ?? '').split(',')) {
+    const name = part.trim()
+    if (name !== '' && !out.includes(name)) out.push(name)
+  }
+  return out
+}
+
+/** MOD-23: the first resource two lists share, or undefined. Two attempts that share one cannot run at once. */
+export const sharedResource = (mine: readonly string[], theirs: readonly string[]): string | undefined => mine.find(r => theirs.includes(r))
 
 /** Each `scope+=` path of the block that lies inside a forbid glob, with that glob. */
 export function amendScopeInsideForbid(a: Amend, forbid: readonly string[]): { path: string; forbid: string }[] {

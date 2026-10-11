@@ -12,9 +12,10 @@ export type StateSnapshot = {
   /**
    * The scheduler queue, head first. MOD-12: `ready` is the advice line for a
    * row a free slot waits for (the brain makes its spawn); it replaces the row's
-   * queued line.
+   * queued line. MOD-23: `waits` says what a row waits for when it is a resource
+   * (`waiting for resource blender-live (held by T-1)`); it is no call for the brain.
    */
-  queued: { task: string; position: number; ready?: string }[]
+  queued: { task: string; position: number; ready?: string; waits?: string }[]
   /** Advice the brain (or Ben) has not acted on: `<task>: <next>`. */
   owed: string[]
   /** MOD-4: owed tasks checked and older than 24 hours: counted on one line, not printed. */
@@ -64,16 +65,20 @@ export const prsFrom = (recent: readonly RecentVerdict[]): string[] =>
 /**
  * MOD-15: the posture line the state section carries while the brain has a
  * call of its own to make: a `ready:` row's spawn call, or a respawn block's
- * Agent call. The person is asked about the three things the brain cannot decide alone.
+ * Agent call. MOD-23: or a review block's (MOD-21: the reviewer's Agent call).
+ * The person is asked about the three things the brain cannot decide alone.
  */
 export const ACT_POSTURE =
-  'Posture: make a ready: row’s spawn call or a respawn block’s Agent call without asking the person; ask only when a verdict is refuted on a claim you cannot amend, a worker is over-spend, or an amend needs the person’s approval.'
+  'Posture: make a ready: row’s spawn call, a respawn block’s Agent call or a pending review block’s Agent call without asking the person; ask only when a verdict is refuted on a claim you cannot amend, a worker is over-spend, or an amend needs the person’s approval.'
 
 /** MOD-15: an owed row whose advice is a respawn: its spawn block is the brain's to make. */
 export const isRespawnOwed = (owed: string): boolean => /^[^\s:]+: respawn at \S+ — /.test(owed)
 
-/** MOD-15: is a row ready (a free slot waits for it) or a respawn block pending? */
-export const actPending = (s: Pick<StateSnapshot, 'queued' | 'owed'>): boolean => s.queued.some(q => q.ready !== undefined) || s.owed.some(isRespawnOwed)
+/** MOD-23: an owed row whose advice is a review (MOD-21): its reviewer spawn block is the brain's to make. */
+export const isReviewOwed = (owed: string): boolean => /^[^\s:]+: review$/.test(owed)
+
+/** MOD-15: is a row ready (a free slot waits for it), a respawn block pending, or (MOD-23) a review spawn block? */
+export const actPending = (s: Pick<StateSnapshot, 'queued' | 'owed'>): boolean => s.queued.some(q => q.ready !== undefined) || s.owed.some(o => isRespawnOwed(o) || isReviewOwed(o))
 
 export const emptySnapshot = (): StateSnapshot => ({ running: [], pending: [], recent: [], queued: [], owed: [], prs: [] })
 
@@ -100,7 +105,7 @@ export function renderState(s: StateSnapshot, reserve = 0): string[] {
   const live = [
     ...s.running.map(r => `- running: ${r.task} ${r.tier} agent ${r.agentId}${r.at !== undefined ? ` since ${stamp(r.at)}` : ''}`),
     ...s.pending.map(p => `- pending verdict: ${p.task}${p.agentId ? ` agent ${p.agentId}` : ''}`),
-    ...s.queued.map(q => (q.ready ? `- ${q.ready}` : `- queued: ${q.task} (position ${q.position})`)),
+    ...s.queued.map(q => (q.ready ? `- ${q.ready}` : `- queued: ${q.task} (position ${q.position})${q.waits ? ` — ${q.waits}` : ''}`)),
     ...s.owed.map(o => `- owed: ${o}`),
   ]
   const older = s.owedOlder ?? []

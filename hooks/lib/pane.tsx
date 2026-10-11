@@ -131,7 +131,10 @@ function worktreeTable(p: PaneTable, v: LiveView, scheme: Scheme, columns: numbe
   const modelW = w(r => (r.model === r.family || r.model === '–' ? r.family : `${r.family} ${r.model}`), 5, 28) + 2
   const stateW = w(r => r.state, 5, 16) + 2
   const folderW = w(r => (r.branch ? `${r.folder} ${r.branch}` : r.folder), 8, 40)
-  const wide = columns >= taskW + modelW + stateW + folderW + 26
+  // MOD-23: a resource column appears while a worker holds a resource or a row waits for one
+  const anyRes = rows.some(r => r.resource !== undefined)
+  const resW = anyRes ? w(r => r.resource ?? '–', 8, 24) : 0
+  const wide = columns >= taskW + modelW + stateW + folderW + (anyRes ? resW + 1 : 0) + 26
   return (
     <Box key="dash-worktrees" flexDirection="column">
       <Text bold>Worktrees</Text>
@@ -142,6 +145,7 @@ function worktreeTable(p: PaneTable, v: LiveView, scheme: Scheme, columns: numbe
           <Text dimColor>{pad('model', modelW + 1)}</Text>
           <Text dimColor>{pad('state', stateW + 1)}</Text>
           {wide ? <Text dimColor>{pad('worktree · branch', folderW + 1)}</Text> : null}
+          {anyRes ? <Text dimColor>{pad('resource', resW + 1)}</Text> : null}
           <Text dimColor>{pad('tok', 7)}</Text>
           <Text dimColor>{pad('cost', 8)}</Text>
           <Text dimColor>att</Text>
@@ -159,6 +163,7 @@ function worktreeTable(p: PaneTable, v: LiveView, scheme: Scheme, columns: numbe
             </Box>
             {stateCell(p, r, stateW + 1)}
             {wide ? <Text wrap="truncate-end">{pad(r.branch ? `${r.folder} ${r.branch}` : r.folder, folderW + 1)}</Text> : null}
+            {anyRes ? <Text wrap="truncate-end">{pad(r.resource ?? '–', resW + 1)}</Text> : null}
             <Text>{pad(r.tokens === undefined ? '–' : tokText(r.tokens), 7)}</Text>
             <Text>{pad(usdCell(r.usd), 8)}</Text>
             <Text>{r.attempt}</Text>

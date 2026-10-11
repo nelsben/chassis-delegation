@@ -153,6 +153,8 @@ export type WorktreeRow = {
   usd?: number
   /** `n/b`: the latest attempt over the budget. */
   attempt: string
+  /** MOD-23: the resources a live worker holds (`blender-live`), or what a queued row waits for (`waits blender-live`); absent when neither. */
+  resource?: string
 }
 
 export type WorktreeInput = {
@@ -169,6 +171,10 @@ export type WorktreeInput = {
   now: number
   /** The attempt budget shown after the slash. */
   budget: number
+  /** MOD-23: task label to the resources its live worker holds. */
+  holds?: Readonly<Record<string, readonly string[]>>
+  /** MOD-23: task label to the resource a queued row waits for and who holds it. */
+  waits?: Readonly<Record<string, { resource: string; holder: string }>>
 }
 
 /** The worktrees `git worktree list --porcelain` names: path and branch. */
@@ -232,6 +238,10 @@ export function worktreeRows(input: WorktreeInput): WorktreeRow[] {
       state = 'verdict owed'
       kind = 'owed'
     }
+    // MOD-23: a live worker names the resources it holds; a queued row, the resource it waits for
+    const held = kind === 'live' ? (input.holds?.[label] ?? []) : []
+    const waiting = kind === 'queued' ? input.waits?.[label] : undefined
+    const resource = held.length > 0 ? held.join(', ') : waiting ? `waits ${waiting.resource}` : undefined
     rows.push({
       task: label,
       family: latest ? recordFamily(latest) : 'other',
@@ -244,6 +254,7 @@ export function worktreeRows(input: WorktreeInput): WorktreeRow[] {
       ...(toks.length > 0 ? { tokens: toks.reduce((a, b) => a + b, 0) } : {}),
       ...(usds.length > 0 ? { usd: round4(usds.reduce((a, b) => a + b, 0)) } : {}),
       attempt: `${latest?.attempt ?? 0}/${input.budget}`,
+      ...(resource !== undefined ? { resource } : {}),
     })
   }
   for (const [id, wt] of disk) {
@@ -367,12 +378,14 @@ export function dashboardText(v: LiveView): string {
   lines.push('')
   if (v.rows.length === 0) lines.push('No worktrees or tasks this session.')
   else {
-    lines.push('| Task | Model | State | Worktree | Tokens | Cost | Attempt |', '| --- | --- | --- | --- | --- | --- | --- |')
+    // MOD-23: a Resource column appears while a worker holds a resource or a row waits for one
+    const res = v.rows.some(r => r.resource !== undefined)
+    lines.push(`| Task | Model | State | Worktree |${res ? ' Resource |' : ''} Tokens | Cost | Attempt |`, `| --- | --- | --- | --- |${res ? ' --- |' : ''} --- | --- | --- |`)
     for (const r of v.rows) {
       const mark = r.verdict ? verdictMark(r.verdict) : undefined
       const state = mark ? `${mark.icon} ${r.state}` : r.state
       const where = r.folder === '–' ? '–' : `${r.folder}${r.branch ? ` · ${r.branch}` : ''}`
-      lines.push(`| ${cell(r.task)} | ${cell(r.family === 'other' ? r.model : `${r.family} (${r.model})`)} | ${cell(state)} | ${cell(where)} | ${r.tokens !== undefined ? tokText(r.tokens) : '–'} | ${r.usd !== undefined ? dollars(r.usd) : '–'} | ${r.attempt} |`)
+      lines.push(`| ${cell(r.task)} | ${cell(r.family === 'other' ? r.model : `${r.family} (${r.model})`)} | ${cell(state)} | ${cell(where)} |${res ? ` ${cell(r.resource ?? '–')} |` : ''} ${r.tokens !== undefined ? tokText(r.tokens) : '–'} | ${r.usd !== undefined ? dollars(r.usd) : '–'} | ${r.attempt} |`)
     }
   }
   if (v.brain) lines.push('', `Spend split: ${brainTileText(v.brain)}${v.brain.edits > 0 ? ` · ${v.brain.edits} brain ${v.brain.edits === 1 ? 'edit' : 'edits'}` : ''}`)

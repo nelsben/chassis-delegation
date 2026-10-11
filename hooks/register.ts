@@ -59,7 +59,9 @@ import {
   parseHeader,
   setHeaderField,
   parseReport,
+  resourcesOf,
   scopeOverlap,
+  sharedResource,
   spendOf,
   type BriefHeader,
 } from './lib/brief'
@@ -117,6 +119,8 @@ import {
   cardDirPath,
   overlapRefusal,
   overlapWarning,
+  resourceOverlapRefusal,
+  resourceOverlapWarning,
   parseCard,
   parseDispatchArgs,
   parseDispatchTool,
@@ -159,7 +163,7 @@ import { gitWrites, guardDeny, joinDir, parseGuardBranches } from './lib/gitguar
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
-import { CARD_TOOL, cardFromFields, cardSummary, sayGo } from './lib/card'
+import { CARD_TOOL, cardsFromFields, cardSummary, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
@@ -179,7 +183,7 @@ import {
   shownRefuted,
   type ReviewMarker,
 } from './lib/review'
-import { alreadyQueuedDeny, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, promptKey, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, runningDeny, startingOthers, waitedMinutes, type FallbackKind } from './lib/scheduler'
+import { alreadyQueuedDeny, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, planQueue, promptKey, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, resourceBlock, resourceDeny, runningDeny, startingOthers, waitedMinutes, waitsText, type FallbackKind, type ResourceWait, type Wanting } from './lib/scheduler'
 import {
   aliasOf,
   CLASSIFIER_LABELS,
@@ -329,7 +333,7 @@ type IssueOneFields = { requestedAlias?: Alias; adhoc?: true }
 type ClassifierFields = { classifierTier?: Tier }
 type HereRecord = AttemptRecord & HereFields & IssueOneFields & ClassifierFields
 /** GH-16: another repo=here card in flight in the same checkout: a record without a verdict. */
-type InFlight = { label: string; scope: string[]; files: string[] }
+type InFlight = { label: string; scope: string[]; files: string[]; /** MOD-23: the resources its brief names. */ resources: string[] }
 
 /** What the mod keeps per spawned worker under `delegation.spawn.<key>` (key = the spawn's tool_use_id). */
 type SpawnRecord = {
@@ -357,6 +361,8 @@ type SpawnRecord = {
   usdAtStart?: number
   /** GH-106: the brief's `spend=` ceiling in dollars (absent: none). */
   spend?: number
+  /** MOD-23: the exclusive resources the brief's `resources=` names; the worker holds them while it runs. */
+  resources?: string[]
   verdictAttempt?: number
   verdictBlock?: string
   lastFailed?: boolean
@@ -554,6 +560,8 @@ let debriefBusy = false
 let evalBusy = false
 let slotSeq = 0
 const starting = new Map<number, string>() // slot token → the task label of a spawn holding a slot before $.agent.list shows it
+/** MOD-23: slot token → the resources that spawn names, held from the claim until $.agent.list shows the worker. */
+const startingResources = new Map<number, string[]>()
 /** MOD-12: the queued tasks the mod has said `ready:` for and that are still ready; each is said once. */
 const announced = new Set<string>()
 /** MOD-15: label → ms the queued row became ready (the fallback's clock); a row leaves with the queue or when it is no longer ready. */
@@ -882,6 +890,10 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
   const brain = await readBrain($)
   const liveAt: Record<string, number> = {}
   for (const w of live.workers) liveAt[w.label] = w.spawn.at ?? t
+  // MOD-23: the resource a worker holds, and what a queued row waits for, ride the worktree rows
+  const holds: Record<string, string[]> = {}
+  for (const w of live.workers) if ((w.spawn.resources ?? []).length > 0) holds[w.label] = w.spawn.resources as string[]
+  const waits = Object.fromEntries((await planOfQueue($, live, queue)).waits)
   const view = liveView({
     root,
     ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}),
@@ -889,6 +901,8 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     records,
     queue,
     liveAt,
+    holds,
+    waits,
     now: t,
     budget: cfg.defaultBudget,
     since,
@@ -1068,22 +1082,32 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
  * looks: a free slot is not taken, a full one queues the task all the same.
  * A spawn of the same task still starting is refused (MOD-12: never twice).
  */
-async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true): Promise<{ token?: number } | { deny: string }> {
+async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true, wants: readonly string[] = []): Promise<{ token?: number } | { deny: string }> {
   return withLock(async () => {
     if ([...starting.values()].includes(label)) return { deny: runningDeny(label) }
     const live = await liveState($)
     const others = startingOthers(starting.values(), label)
     const holders = [...(await liveLabels($, live.workers)), ...others]
     const queue = await readQueue($)
-    if (hasSlot(live.workers.length, others.length, cfg.maxWorkers)) {
+    // MOD-23: a resource a running attempt (or a spawn starting) holds queues the task whether or not a slot is free
+    const blocked = resourceBlock(wants, heldResources(live.workers), label)
+    if (!blocked && hasSlot(live.workers.length, others.length, cfg.maxWorkers)) {
       if (!claim) return {}
       slotSeq += 1
       starting.set(slotSeq, label)
+      startingResources.set(slotSeq, [...wants])
       return { token: slotSeq }
     }
     const entered = enqueue(queue, item)
-    if (entered.existing) return { deny: alreadyQueuedDeny(label, entered.existing.at, entered.existing.position) }
+    if (entered.existing) {
+      const kept = entered.existing
+      return { deny: blocked ? resourceDeny(label, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(label, kept.at, kept.position) }
+    }
     await writeQueue($, entered.queue)
+    if (blocked) {
+      debug($, `queued ${label}: ${blocked.holder} holds resource ${blocked.resource}`)
+      return { deny: resourceDeny(label, blocked.resource, blocked.holder) }
+    }
     debug($, `queued ${label}: ${holders.length} workers hold the ${cfg.maxWorkers} slots`)
     return { deny: queuedDeny(label, holders, entered.queue.map(q => taskLabel(q.task, q.subtask ?? 'main'))) }
   })
@@ -1107,11 +1131,45 @@ async function dropQueued($: Host, task: string, subtask: string): Promise<Queue
 async function readyQueued($: Host, exclude?: string): Promise<QueuedSpawn[]> {
   const queue = await readQueue($)
   if (queue.length === 0) return []
-  const live = await liveState($, exclude)
-  return queue.slice(0, readyCount(live.workers.length, starting.size, cfg.maxWorkers))
+  const plan = await planOfQueue($, await liveState($, exclude), queue)
+  const ready = new Set(plan.ready)
+  return queue.filter(q => ready.has(queuedLabel(q)))
 }
 
 const queuedLabel = (q: QueuedSpawn): string => taskLabel(q.task, q.subtask ?? 'main')
+
+/** MOD-23: the resources the running workers and the spawns still starting hold (a spawn's own label is skipped by the check). */
+function heldResources(workers: readonly { label: string; spawn: SpawnRecord }[]): Wanting[] {
+  return [
+    ...workers.map(w => ({ label: w.label, resources: w.spawn.resources ?? [] })),
+    ...[...starting.entries()].map(([token, label]) => ({ label, resources: startingResources.get(token) ?? [] })),
+  ]
+}
+
+/** MOD-23: the resources a queued row names, read once per row: its brief file's header, else the header in its prompt. Unreadable is none. */
+const queuedResourceCache = new Map<string, string[]>()
+async function queuedResources($: Host, q: QueuedSpawn): Promise<string[]> {
+  const key = `${queuedLabel(q)}@${q.at}`
+  const known = queuedResourceCache.get(key)
+  if (known) return known
+  const path = findBriefPath(q.prompt)
+  const text = path ? await readText($, path) : undefined
+  const names = resourcesOf((text !== undefined ? parseHeader(text) : undefined) ?? parseHeader(q.prompt))
+  queuedResourceCache.set(key, names)
+  return names
+}
+
+/**
+ * MOD-23: which queued rows are ready (head first, as many as the slots free, none whose resource a running attempt
+ * or a row ahead of it holds) and which wait for a resource, and for whom.
+ */
+async function planOfQueue($: Host, live: Live, queue: readonly QueuedSpawn[]): Promise<{ ready: string[]; waits: Map<string, ResourceWait> }> {
+  const names = new Set(queue.map(q => `${queuedLabel(q)}@${q.at}`))
+  for (const key of [...queuedResourceCache.keys()]) if (!names.has(key)) queuedResourceCache.delete(key)
+  const wants: Wanting[] = []
+  for (const q of queue) wants.push({ label: queuedLabel(q), resources: await queuedResources($, q) })
+  return planQueue(wants, heldResources(live.workers), readyCount(live.workers.length, starting.size, cfg.maxWorkers))
+}
 
 /**
  * MOD-12: the queue is advice. The queued rows a free slot now waits for
@@ -1409,17 +1467,18 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   const live = await liveState($)
   s.running = live.workers.map(w => ({ task: w.label, tier: w.spawn.tier, agentId: w.agentId, ...(w.spawn.at !== undefined ? { at: w.spawn.at } : {}) }))
   s.pending = live.pending
-  // MOD-12: the rows a free slot waits for read `ready:`; the brain makes their spawn
-  const free = readyCount(live.workers.length, starting.size, cfg.maxWorkers)
+  // MOD-12: the rows a free slot waits for read `ready:`; the brain makes their spawn. MOD-23: not a row whose resource is held
   const queue = await readQueue($)
+  const plan = await planOfQueue($, live, queue)
   // MOD-15: the clock of the fallback starts here too, for a slot that freed with no hand-back
-  await noteReady($, queue.slice(0, free).map(queuedLabel), false)
+  await noteReady($, plan.ready, false)
   const clock = await now($)
   s.queued = []
   for (const [i, q] of queue.entries()) {
     const label = queuedLabel(q)
     let line: string | undefined
-    if (i < free) {
+    const waiting = plan.waits.get(label)
+    if (plan.ready.includes(label)) {
       line = readyLine(label, q.task)
       // MOD-15: a row the fallback will never start says how long it has waited, once it is past the timeout
       const since = readySince.get(label)
@@ -1428,7 +1487,7 @@ async function snapshot($: Host): Promise<StateSnapshot> {
         if (kind !== 'worktree') line = readyWaitLine(label, q.task, waitedMinutes(since, clock), kind)
       }
     }
-    s.queued.push({ task: label, position: i + 1, ...(line !== undefined ? { ready: line } : {}) })
+    s.queued.push({ task: label, position: i + 1, ...(line !== undefined ? { ready: line } : {}), ...(waiting ? { waits: waitsText(waiting) } : {}) })
   }
   if (!sid) return s
   const recent = (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []
@@ -2054,7 +2113,12 @@ async function inFlightHere($: Host, root: string, except: string): Promise<InFl
       const briefPath = open.briefPath ?? mine.findLast(r => r.briefPath !== undefined)?.briefPath
       const text = briefPath ? await readText($, briefPath) : undefined
       const contract = text !== undefined ? briefContract(text) : undefined
-      out.push({ label, scope: contract !== undefined && contract.ok ? contract.scope : [], files: [...new Set(mine.flatMap(r => r.files ?? []))] })
+      out.push({
+        label,
+        scope: contract !== undefined && contract.ok ? contract.scope : [],
+        files: [...new Set(mine.flatMap(r => r.files ?? []))],
+        resources: text !== undefined ? resourcesOf(parseHeader(text)) : [],
+      })
     }
   }
   return out
@@ -3045,8 +3109,17 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       const pair = scopeOverlap(mine, c.scope)
       return pair ? [{ card: c.label, ...pair }] : []
     })
-    if (overlaps.length > 0 && parsed.forceOverlap !== true) return [...out, ...overlaps.map(o => overlapRefusal(id, o.mine, o.card, o.theirs))].join('\n')
+    // MOD-23: a resource an in-flight repo=here card holds is overlap too: both would use the one live app
+    const mineResources = reusedHeader ? resourcesOf(reusedHeader) : card.resources
+    const clashes = inflight.flatMap(c => {
+      const resource = sharedResource(mineResources, c.resources)
+      return resource !== undefined ? [{ card: c.label, resource }] : []
+    })
+    if ((overlaps.length > 0 || clashes.length > 0) && parsed.forceOverlap !== true) {
+      return [...out, ...overlaps.map(o => overlapRefusal(id, o.mine, o.card, o.theirs)), ...clashes.map(c => resourceOverlapRefusal(id, c.resource, c.card))].join('\n')
+    }
     for (const o of overlaps) out.push(`   ${overlapWarning(id, o.mine, o.card, o.theirs)}`)
+    for (const c of clashes) out.push(`   ${resourceOverlapWarning(id, c.resource, c.card)}`)
   }
 
   const tier: Tier = tierOf(card.tier) ?? 'standard'
@@ -3136,6 +3209,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     out.push(`   repo=here: base=${f.base || 'the chain (origin/main, main, origin/master, master)'} · ignore=${f.ignore || '(none)'}`)
   }
   if (shownHeader?.fields.outdir) out.push(`   research card: outdir=${shownHeader.fields.outdir} · scratch=${shownHeader.fields.scratch || '(none)'}`)
+  const heldNames = resourcesOf(shownHeader)
+  if (heldNames.length > 0) out.push(`   resources: ${heldNames.join(', ')} (held while the worker runs; another card naming one waits in the queue)`)
   if (dryRun) return [...out, '', shown].join('\n')
   // MOD-13: the card's own effort: (it wins over effortByTier for this task's workers); cleared when the card has none
   await storeSet($, K.effort(id), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
@@ -3458,6 +3533,11 @@ async function runSetup($: Host, viaTool = false): Promise<string> {
  * `/dispatch <ID> --dry-run` runs) and answers the card's path, a one-line
  * summary, the brief header and "say go"; with `dispatch: true`, dispatches.
  * A refusal writes nothing.
+ *
+ * MOD-23: with `lanes` it writes one card per lane (sequential ids, the shared
+ * fields, each lane its own scope), all or none; the dry run prints every lane's
+ * summary and header, and `dispatch: true` dispatches each lane in order (the
+ * lanes that hold one resource then run one at a time, the queue seeing to it).
  */
 async function runCard($: Host, input: Record<string, unknown>): Promise<string> {
   if (input.dispatch !== undefined && typeof input.dispatch !== 'boolean') return 'card: dispatch must be true or false'
@@ -3473,39 +3553,63 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   // repo=here when the repo has no origin/main (worktree mode cuts from it); a baseRef alone says nothing about the mode
   const originMain = await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', 'origin/main'])
   const here = !(originMain.ok && originMain.exitCode === 0)
-  const made = cardFromFields(input, { domains: cfg.domains, gateIds: Object.keys(cfg.gateMap), names, spendByTier: cfg.spendByTier, here })
+  const made = cardsFromFields(input, { domains: cfg.domains, gateIds: Object.keys(cfg.gateMap), names, spendByTier: cfg.spendByTier, here })
   if ('error' in made) return `card refused: ${made.error}`
-  const path = `${dir}/${made.file}`
-  if (names.includes(made.file) || (await exists($, path))) return `card refused: ${path} exists; cards are never overwritten`
-  try {
-    await $.fs.write(path, made.text)
-  } catch (err) {
-    return `card not written: ${path}: ${String(err)}`
+  // all or none: every lane's file is checked before the first is written
+  for (const c of made) {
+    const path = `${dir}/${c.file}`
+    if (names.includes(c.file) || (await exists($, path))) return `card refused: ${path} exists; cards are never overwritten`
   }
-  const wrote = `wrote ${path}`
-  // MOD-22: dispatch reads the mode from the card (`repo:`); here is passed only when the card says repo: here
-  const dispatchHere = made.repo === 'here'
-  if (input.dispatch === true) return [wrote, await runDispatch($, { id: made.id, dryRun: false, base: 'origin/main', ...(dispatchHere ? { here: true as const } : {}) })].join('\n')
-  const dry = await runDispatch($, { id: made.id, dryRun: true, base: 'origin/main', ...(dispatchHere ? { here: true as const } : {}) })
-  const lines = dry.split('\n')
-  const header = lines.at(-1) ?? ''
-  if (!header.startsWith('[[brief ')) return [wrote, dry].join('\n')
-  const alias = finalAlias({ tier: made.tier, source: 'brief' }, cfg.tierMap[made.tier]).alias
-  const notes = lines.filter(l => /^\s+(note|warning):/.test(l)).map(l => l.trim())
-  // GH-114: one classifier call per card written, on the dry run only
-  let second: string | undefined
-  if (cfg.classifierSecondOpinion) {
+  const wrote: string[] = []
+  for (const c of made) {
+    const path = `${dir}/${c.file}`
     try {
-      const said = await $.model.classify(classifierText(made.text), CLASSIFIER_LABELS)
-      if ((CLASSIFIER_LABELS as readonly string[]).includes(said ?? '')) {
-        await storeSet($, K.classifier(made.id), { card: made.tier, classifier: said })
-        second = said === made.tier ? `card says ${made.tier} · classifier agrees` : `card says ${made.tier} · classifier says ${said}`
-      }
+      await $.fs.write(path, c.text)
     } catch (err) {
-      debug($, `classifier second opinion failed: ${String(err)}`)
+      return [...wrote, `card not written: ${path}: ${String(err)}`].join('\n')
     }
+    wrote.push(`wrote ${path}`)
   }
-  return [wrote, cardSummary(made, alias), ...(second ? [second] : []), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : []), '', sayGo(made.id)].join('\n')
+  // MOD-22: dispatch reads the mode from the card (`repo:`); here is passed only when the card says repo: here
+  const dispatchArgs = (c: NewCard, dryRun: boolean): DispatchArgs => ({ id: c.id, dryRun, base: 'origin/main', ...(c.repo === 'here' ? { here: true as const } : {}) })
+  if (input.dispatch === true) {
+    if (made.length === 1) return [...wrote, await runDispatch($, dispatchArgs(made[0] as NewCard, false))].join('\n')
+    const results: string[] = []
+    for (const c of made) results.push(`--- ${c.id} ---`, await runDispatch($, dispatchArgs(c, false)))
+    return [...wrote, ...results].join('\n')
+  }
+  const shown: string[] = []
+  const shownIds: string[] = []
+  for (const c of made) {
+    const dry = await runDispatch($, dispatchArgs(c, true))
+    const lines = dry.split('\n')
+    const header = lines.at(-1) ?? ''
+    if (!header.startsWith('[[brief ')) {
+      // the dry run stopped before a header (a refusal): say so for this card, and carry on to the others
+      shown.push(dry)
+      continue
+    }
+    const alias = finalAlias({ tier: c.tier, source: 'brief' }, cfg.tierMap[c.tier]).alias
+    const notes = lines.filter(l => /^\s+(note|warning):/.test(l)).map(l => l.trim())
+    // GH-114: one classifier call per card written, on the dry run only
+    let second: string | undefined
+    if (cfg.classifierSecondOpinion) {
+      try {
+        const said = await $.model.classify(classifierText(c.text), CLASSIFIER_LABELS)
+        if ((CLASSIFIER_LABELS as readonly string[]).includes(said ?? '')) {
+          await storeSet($, K.classifier(c.id), { card: c.tier, classifier: said })
+          second = said === c.tier ? `card says ${c.tier} · classifier agrees` : `card says ${c.tier} · classifier says ${said}`
+        }
+      } catch (err) {
+        debug($, `classifier second opinion failed: ${String(err)}`)
+      }
+    }
+    shown.push([cardSummary(c, alias), ...(second ? [second] : []), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : [])].join('\n'))
+    shownIds.push(c.id)
+  }
+  // a dry run that showed no header for the only card is its own answer, as it was before lanes
+  if (shownIds.length === 0) return [...wrote, ...shown].join('\n')
+  return [...wrote, ...shown.flatMap((block, i) => (i === 0 ? [block] : ['', block])), '', sayGo(shownIds)].join('\n')
 }
 
 /** `/delegation` with no argument: the delegation state and where the config came from. */
@@ -3671,6 +3775,8 @@ type SpawnPlan = {
   /** The budget= as written (the brief file's, else the prompt's), for the warning. */
   budgetRaw?: string
   spend?: number
+  /** MOD-23: the resources the brief names (the file's header wins over the prompt's). */
+  resources: string[]
   lane?: Lane
   /** The task's attempts, less the cardless ones (GH-1 item 2: on the record, never on the ladder). */
   records: AttemptRecord[]
@@ -3719,6 +3825,7 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
     ...(budgetRaw !== undefined ? { budgetRaw } : {}),
     // GH-106: the spend ceiling, read the same way
     ...(spendOf(fileHeader ?? header) !== undefined ? { spend: spendOf(fileHeader ?? header) } : {}),
+    resources: resourcesOf(fileHeader ?? header),
     ...(lane ? { lane } : {}),
     records,
     prior: attemptsFor(records, subtask, lane).length,
@@ -3780,7 +3887,7 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
     }
   }
   // 2F: a briefed spawn takes a worker slot or waits in the queue; an ad hoc one never waits.
-  return claimSlot($, { ...item, ...(p.cwd ? { cwd: p.cwd } : {}), task: p.task, subtask: p.subtask, at: p.t }, p.label, claim)
+  return claimSlot($, { ...item, ...(p.cwd ? { cwd: p.cwd } : {}), task: p.task, subtask: p.subtask, at: p.t }, p.label, claim, p.resources)
 }
 
 /**
@@ -3910,6 +4017,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(res.model ? { resolvedModel: res.model } : {}),
       ...(usdAtStart !== undefined ? { usdAtStart } : {}),
       ...(spend !== undefined && !adhoc ? { spend } : {}),
+      ...(p.resources.length > 0 && !adhoc ? { resources: p.resources } : {}),
       ...(lane ? { replay: true, ...(lane.base ? { base: lane.base } : {}) } : {}),
       at: t,
       ...(here ? { here } : {}),
@@ -3942,7 +4050,10 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     return res
   } finally {
     // the slot is held by the record (and $.agent.list) from here on
-    if (token !== undefined) starting.delete(token)
+    if (token !== undefined) {
+      starting.delete(token)
+      startingResources.delete(token)
+    }
   }
 }
 

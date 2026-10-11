@@ -10,6 +10,8 @@ export const DEFAULT_MAX_WORKERS = 2
 export const QUEUED_PREFIX = 'queued: '
 /** MOD-12: what a queued task waits for; the mod says `ready:` when it comes. */
 export const SLOT_FREES = 'the mod will tell you when a slot frees'
+/** MOD-23: what a queued task waits for when a running attempt holds a resource it names. */
+const RESOURCE_WAIT = ' — waiting for resource '
 
 export const parseMaxWorkers = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : DEFAULT_MAX_WORKERS)
 
@@ -46,7 +48,7 @@ export const waitedMinutes = (since: number, now: number): number => Math.max(0,
 /** The queue index of a task and subtask, or -1. */
 export const queuedIndex = (queue: readonly QueuedSpawn[], task: string, subtask: string): number => queue.findIndex(q => q.task === task && (q.subtask ?? 'main') === subtask)
 
-export const isQueuedDeny = (deny: string): boolean => deny.startsWith(QUEUED_PREFIX) && deny.includes(` — ${SLOT_FREES}`)
+export const isQueuedDeny = (deny: string): boolean => deny.startsWith(QUEUED_PREFIX) && (deny.includes(` — ${SLOT_FREES}`) || deny.includes(RESOURCE_WAIT))
 
 export const queuedText = (position: number): string => `queued (position ${position})`
 
@@ -130,3 +132,49 @@ export const readyWaitLine = (label: string, task: string, waited: number, kind:
 export const fallbackRow = (v: { label: string; waited: number; attempt: number; budget: number; agentId?: string; alias?: string }): string =>
   `chassis-delegation: ${v.label} was ready for ${v.waited} min and the brain had not spawned it; the mod started it itself (attempt ${v.attempt}/${v.budget}${v.alias ? `, ${v.alias}` : ''}${v.agentId ? `, agent ${v.agentId}` : ''}). ` +
   "It runs outside the mod's hooks: no git guard, no effort setting, cost known only at the end."
+
+// ---- MOD-23: exclusive resources -----------------------------------------------------------------
+
+/** A task label and the resources its brief names (`resources=`): a running attempt holds them, a queued one wants them. */
+export type Wanting = { label: string; resources: readonly string[] }
+/** The resource a card waits for, and the label of the attempt (or the queued card ahead of it) that holds it. */
+export type ResourceWait = { resource: string; holder: string }
+
+/**
+ * The first resource `wants` names that an attempt other than `label` holds, with that holder; undefined when
+ * none is held. A card is never held up by itself, and a card with no resources is never held up.
+ */
+export function resourceBlock(wants: readonly string[], holders: readonly Wanting[], label: string): ResourceWait | undefined {
+  for (const resource of wants) {
+    const holder = holders.find(h => h.label !== label && h.resources.includes(resource))
+    if (holder) return { resource, holder: holder.label }
+  }
+  return undefined
+}
+
+/** `waiting for resource blender-live (held by T-1)`: what a state row says it waits for. */
+export const waitsText = (w: ResourceWait): string => `waiting for resource ${w.resource} (held by ${w.holder})`
+
+/**
+ * The refusal for a briefed spawn whose resource a running attempt holds: the dispatch result and the spawn hook
+ * both give it, as they give the slot refusal. A task already in the queue keeps its place and says since when.
+ */
+export const resourceDeny = (task: string, resource: string, holder: string, existing?: { at: number; position: number }): string =>
+  `${QUEUED_PREFIX}${task}${RESOURCE_WAIT}${resource} (held by ${holder})${existing ? `; ${alreadyQueuedText(existing.at, existing.position)}` : ''}`
+
+/**
+ * Which queued rows the mod calls ready (head first, at most `free`) and which wait for a resource. A row waits when
+ * an attempt in `held` holds a resource it names, or when a row ahead of it in the queue names it (the queue is
+ * first come, first served per resource). A row that waits for a resource takes no slot, so a row behind it with no
+ * resources, or others, is ready in its place.
+ */
+export function planQueue(queue: readonly Wanting[], held: readonly Wanting[], free: number): { ready: string[]; waits: Map<string, ResourceWait> } {
+  const ready: string[] = []
+  const waits = new Map<string, ResourceWait>()
+  for (const [i, row] of queue.entries()) {
+    const block = resourceBlock(row.resources, [...held, ...queue.slice(0, i)], row.label)
+    if (block) waits.set(row.label, block)
+    else if (ready.length < free) ready.push(row.label)
+  }
+  return { ready, waits }
+}
