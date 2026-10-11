@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.8.3, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.0, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,16 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.8.3 to 0.9.0
+
+What the brain will see:
+
+- **The brain can delegate into another local git repo (MOD-44, public issue 95).** `card` and `dispatch` take `repo` as the absolute path of another git checkout, and the task's card, base, worktree, gate and verifier are that repo's. Run `setup` with that path first when the repo has no `.chassis-delegation.json`.
+- **`init` and `setup` take a path (MOD-45).** The brain can scaffold a sibling repo before delegating into it, without writing anything in the session's own root.
+- **The old verdict word `verified` is still read in this release, and will stop being read in the next.** Until then a record or row carrying it reads as `consistent`.
+
+What to do: nothing in an existing repo's config needs to change.
 
 ### From 0.8.2 to 0.8.3
 

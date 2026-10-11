@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-10-11
 
 - **`init` and `setup` take a path, so the brain can scaffold a sibling repo before delegating into it
   (MOD-45, public issue 95).** `/delegation init <path>`, `/delegation setup <path>` and the `init` and
