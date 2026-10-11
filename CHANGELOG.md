@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 — 2026-10-11
 
 - **The mod reads its templates once, at load, and says when the folder on disk is newer
   than the code running (MOD-28).** Every brief written after MOD-22 merged (MOD-23 to

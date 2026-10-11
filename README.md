@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.8.0, MIT.
+any other repo: no scripts, no harness, no network. Version 0.8.1, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,16 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.8.0 to 0.8.1
+
+What the brain will see:
+
+- **The debrief prompt carries only the facts inside its window, dated (MOD-26, public issue #55).** A breadcrumbs debrief names the window it covers and carries only the facts inside it, each dated; a boundary-only window spawns nothing, so no debrief is written for a window with nothing new in it.
+- **`files=` takes a folder glob, and the red claim quotes the line that failed (MOD-27, public issue #56).** A brief's `files=` may name a folder glob as well as a path, and a red claim quotes the line of the red file that failed.
+- **The mod reads its templates once, at load, and says when the folder is newer than the code (MOD-28).** A brief with a template marker left in it is refused before any worktree is made, and `/delegation` says when the folder on disk holds a newer version than the code running.
+- **The card dry run warns when a forbid collides with the card (MOD-29, public issue #63).** A `forbid` glob that matches the card's own scope or done-when is named in the dry run, and the card tool says that `*` crosses folders.
+- **After `/delegation update`, reload the window.** The new code runs only after the window is reloaded, and `/delegation` now says so itself when the folder is ahead of the code running.
 
 ### From 0.7.0 to 0.8.0
 
