@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A gate failure that only a forbidden file can fix gets a next step that works (MOD-55).** The brief template
+  tells a worker whose only fix lies in a forbid= path to leave it alone and hand back gate=fail with
+  `[[amend v=1 forbid-=<entry> scope+=<path> reason=<fix>]]`. `advise` (`hooks/lib/verify.ts`) now answers a refuted
+  gate or a confirmed gate=fail whose lines hold an `amend needs approval:` line carrying `forbid-=` with
+  `approve the amend (append it to <brief>), then resume agent=<id> to make the fix; or refuse it` (no agent left:
+  the same brief respawned at the same tier); the tier never escalates and an exhausted budget still stops.
+  `/dispatch` warns once per path-like word of `red_test` that is outside the scope or inside a forbid
+  (`redTestWarnings`); nothing is added to the scope.
+
 - **The brain is told once a session to start a fresh one (MOD-53).** When the brain's own turn ends with its
   context at or above the new `/config` option `freshSessionTokens` (default 400000; `0` turns it off), the mod
   appends one row: `brain context 512K (freshSessionTokens 400K): start a fresh session at the next phase

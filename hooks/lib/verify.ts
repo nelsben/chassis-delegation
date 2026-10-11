@@ -82,6 +82,9 @@ const outOfScopePath = (c: ClaimLine): string | undefined => /out-of-scope path:
 export const budgetDenyMessage = (label: string, attempts: number, briefPath?: string): string =>
   `budget exhausted for ${label} (${attempts} attempts); raise budget= in ${briefPath ?? "the task's brief"} to continue (the ladder resumes from attempt ${attempts}, the brief is re-read)`
 
+/** MOD-55: whether the verifier's lines hold an `amend needs approval:` line whose block carries forbid-=. */
+export const holdsForbidAmend = (lines: readonly string[]): boolean => lines.some(l => l.startsWith('amend needs approval:') && /\sforbid-=/.test(l))
+
 /**
  * Resume-first escalation (SPEC amendment 1 B): the first failing verdict of
  * a spawn lineage resumes the same worker; the next one respawns with the
@@ -109,6 +112,13 @@ export function advise(input: AdviseInput): Advice {
   const failed = input.verdict === 'refuted' ? firstFailedClaim(input.lines ?? []) : undefined
   const failedName = input.verdict === 'refuted' ? (input.firstFailed ?? failed?.name) : undefined
   const held = failedName !== undefined && !ESCALATING_CLAIMS.includes(failedName) ? failedName : undefined
+  // MOD-55: a gate failure only a forbidden file can fix: the worker asked for forbid-= in an amend; the brain approves it (or refuses), then the fix is made
+  if (holdsForbidAmend(input.lines ?? []) && (input.reportGate === 'fail' || failedName === 'gate')) {
+    const at = input.briefPath ?? 'the brief'
+    if (input.agentId) return { kind: 'resume', next: `approve the amend (append it to ${at}), then resume agent=${input.agentId} to make the fix; or refuse it` }
+    const brief = input.briefPath ? `same brief ${input.briefPath}` : 'same prompt'
+    return { kind: 'respawn', tier: input.tier, next: `approve the amend (append it to ${at}), then respawn at ${input.tier} — ${brief}, make the spawn block below (it names the model); or refuse it` }
+  }
   if (input.lineageResumes === 0 && input.agentId) {
     if (held === 'scope') {
       const path = failed && failed.name === 'scope' ? outOfScopePath(failed) : undefined

@@ -464,3 +464,18 @@ export function forbidCollisions(scope: readonly string[], forbid: readonly stri
   return out
 }
 
+
+/**
+ * MOD-55: the warnings for each path-like word of the red_test (the donePaths rule) the brief cannot let the worker
+ * write: `warning: red_test names <path>, which is outside scope`, or `… which is inside forbid <glob>`. Nothing is
+ * added to the scope; the card is still written.
+ */
+export function redTestWarnings(redTest: string, scope: readonly string[], forbid: readonly string[]): string[] {
+  const out: string[] = []
+  for (const p of new Set(donePaths(redTest))) {
+    const f = forbid.find(g => g !== '' && collides(p, g))
+    if (f !== undefined) out.push(`warning: red_test names ${p}, which is inside forbid ${f}`)
+    else if (!scope.some(s => s !== '' && namedBy(p, s))) out.push(`warning: red_test names ${p}, which is outside scope`)
+  }
+  return out
+}
