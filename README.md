@@ -497,8 +497,8 @@ headline, the spend over the session, the worktree table and spend by model.
 | Name | Who calls it | What it does |
 | --- | --- | --- |
 | `/delegation` | you type it | shows the delegation state and where the config came from |
-| `/delegation setup` | you type it | checks the repo and tools, names the fixes, then scaffolds and asks for your first task (see [Setup](#setup)) |
-| `/delegation init` | you type it | the bare scaffold, no checks (step 4 above) |
+| `/delegation setup [path]` | you type it | checks the repo and tools, names the fixes, then scaffolds and asks for your first task (see [Setup](#setup)) |
+| `/delegation init [path]` | you type it | the bare scaffold, no checks (step 4 above) |
 | `/delegation update` | you type it | brings the loaded copy of the mod to origin/main (fast-forward only), migrates this repo's config and says whether the session reloaded or needs a restart (see [Upgrading](#upgrading)) |
 | `/delegation debrief` | you type it | runs the background debrief now and ends with scrubbed findings about the mod, ready to post (see [The debrief now](#the-debrief-now)) |
 | `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
@@ -506,8 +506,8 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool; the model then makes the Agent call its result ends with |
 | `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test (and `repo`: `none` or `here` for research or extraction with outputs outside the repo, see [Research cards](#research-cards), or the absolute path of another local checkout, see [Delegating into another repo](#delegating-into-another-repo); `resources` for a live app only one worker may use, and `lanes` to write several research cards at once, see [Exclusive resources and fan-out](#exclusive-resources-and-fan-out)); it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
-| `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
-| `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (no input) |
+| `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool (optional `path`, as for `setup`) |
+| `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (optional `path`: another local checkout to set up instead, see [Delegating into another repo](#delegating-into-another-repo)) |
 
 A user skill or command named `delegation` or `dispatch` under
 `~/.claude/skills` or `~/.claude/commands` shadows the mod's commands; remove it.
@@ -1321,8 +1321,17 @@ touches a repo uses that path instead of the session root:
 
 Refused in one line, naming why: a path that is not absolute (`repo ../notes-app is not an absolute
 path`), the session's own repo (leave `repo` unset), a folder with no `.git`, and a path with characters
-a git argument should not carry. `worktree`, `here` and `none` are unchanged. Not in this card:
-`/delegation init` taking a path, and `--replay` for another repo.
+a git argument should not carry. `worktree`, `here` and `none` are unchanged. Not supported:
+`--replay` for another repo.
+
+**Setting the other repo up first (MOD-45).** `/delegation setup <path>` and `/delegation init <path>`, and
+the `setup` and `init` tools with `path`, run their checks and their scaffold against that checkout
+instead of the session root, and write nothing in the session root: the card folder README, its
+`.chassis-delegation.json` with the detected gate, and the `.delegation/` line in its `.gitignore`,
+through the mod's own write path (so `delegateOnly` is not involved). Never overwriting a file, as
+at the root. The path is absolute (`~` expanded) and holds a `.git`; anything else is refused in one
+line. Setup's handover for a path ends with `Next: call the card tool with repo set to <path>`, so
+the next card goes into that repo. With no path both commands are unchanged.
 
 An example, with the session rooted in `/Users/you/api-server` and a new sibling `/Users/you/notes-app`:
 

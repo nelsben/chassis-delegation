@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`init` and `setup` take a path, so the brain can scaffold a sibling repo before delegating into it
+  (MOD-45, public issue 95).** `/delegation init <path>`, `/delegation setup <path>` and the `init` and
+  `setup` tools (`path`) take the absolute path of a git checkout (`~` expanded). With one they run
+  their checks and their scaffold (the card folder README, `.chassis-delegation.json` with the detected
+  gate, the `.gitignore` line) against that repo, written by the mod itself, and write nothing in the
+  session root; setup's handover ends with `Next: call the card tool with repo set to <path>`. A path
+  that is relative, not a git checkout or not plain is refused in one line. With no path, unchanged.
+  README: Delegating into another repo.
 - **The brain can delegate into another local git repo (MOD-44, public issue 95).** `card` and
   `dispatch` (the tools and `/dispatch --repo <path>`) take `repo` as the absolute path of a git
   checkout (the folder holding `.git`; `~` expanded); a relative path, a folder with no `.git` and the
@@ -17,7 +25,7 @@
   `git -C <path> worktree add` for the task that names that path and no other, and the merged check
   asks that repo's `origin/main`. The scheduler, the dashboard and `/delegation` show the repo folder
   name beside the task (`T-1 [notes-app]`). README: Delegating into another repo. `/delegation init`
-  taking a path is a separate card.
+  taking a path is MOD-45.
 
 ## 0.8.3 — 2026-10-11
 
