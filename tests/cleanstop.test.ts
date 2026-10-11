@@ -228,3 +228,35 @@ describe('MOD-28: the built-in debrief prompt carries the template the mod loade
     expect(builtInDebriefPrompt('/mods/cd/hooks/templates/debrief.md', 'sess-1', '/w/app', [])).toContain('Run the debrief exactly as written in /mods/cd/hooks/templates/debrief.md.')
   })
 })
+
+describe('MOD-32: a refute re-judged consistent at the same sha is one fact, and both prompts call it a false refute', () => {
+  const ms = (iso: string): number => Date.parse(iso)
+  const refuted = { task: 'MOD-17', attempt: 1, verdict: 'refuted', sha: 'abc1234def56', line: 'chassis-delegation: MOD-17 attempt 1/2 refuted on gate (gate=pass claimed but the gate is RED) \u00b7 sonnet \u00b7 next=resume agent=agent-4', at: ms('2026-10-10T23:40:00Z') }
+  const rejudged = { task: 'MOD-17', attempt: 1, verdict: 'consistent', sha: 'abc1234', rejudge: true, line: 'chassis-delegation: MOD-17 attempt 1/2 consistent \u00b7 next=accept', at: ms('2026-10-10T23:57:53Z') }
+  const MERGED = 'verdict 2026-10-10T23:57:53Z: MOD-17 attempt 1/2 refuted on gate, then re-judged consistent at the same sha (a false refute)'
+
+  test('a refute and a later re-judge of the same attempt at the same sha read as one line naming both verdicts and the words false refute, and no second line', () => {
+    expect(verdictFacts([refuted, rejudged])).toEqual([MERGED])
+  })
+  test('the merge holds inside a window too, whichever of the two rows lies in it', () => {
+    const w = windowOf([JSON.stringify({ ts: '2026-10-10T23:50:00Z', kind: 'correction' }), JSON.stringify({ ts: '2026-10-11T00:10:00Z', kind: 'session_end' })].join('\n') + '\n', 0)!
+    expect(windowFacts([], [refuted, rejudged], w)).toEqual([MERGED])
+  })
+  test('an attempt refuted and resumed at a new sha is listed as two facts, as before', () => {
+    const resumed = { task: 'MOD-17', attempt: 2, verdict: 'consistent', sha: 'fff9999aaa', line: 'chassis-delegation: MOD-17 attempt 2/2 consistent \u00b7 next=accept', at: ms('2026-10-10T23:57:53Z') }
+    expect(verdictFacts([refuted, resumed])).toEqual([
+      'verdict 2026-10-10T23:40:00Z: ' + refuted.line,
+      'verdict 2026-10-10T23:57:53Z: ' + resumed.line,
+    ])
+  })
+  test('a re-judge at a different sha, or one that refuted again (the refute stood), is not merged', () => {
+    expect(verdictFacts([refuted, { ...rejudged, sha: 'eee8888' }])).toHaveLength(2)
+    expect(verdictFacts([refuted, { ...rejudged, verdict: 'refuted' }])).toHaveLength(2)
+  })
+  test('both prompts say a refute later re-judged consistent at the same sha is a false refute, a went_wrong, never a went_well', () => {
+    for (const p of [debriefPrompt('/Users/b/.claude/commands/debrief.md', 's-1', [MERGED]), builtInDebriefPrompt('/mods/cd/hooks/templates/debrief.md', 's-1', '/w/app', [MERGED])]) {
+      expect(p).toMatch(/false refute/)
+      expect(p).toMatch(/never a went_well/)
+    }
+  })
+})

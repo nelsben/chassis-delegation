@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **After a clean debrief check the mod tells the debrief agent to mark its watermark, and
+  a re-judged refute is one fact (MOD-32).** The check prints after the agent hands back, so
+  the agent never saw `debrief check: clean` and left `.done` unmarked. A clean check now
+  sends the agent `debrief check: clean. Mark your watermark now, as your instructions say,
+  and stop.` (your skill and the built-in template alike); a flagged or stripped check sends
+  nothing and says the watermark was left as is. The mod still never writes `.done`. A refute
+  that `--verify` re-judged consistent at the same sha is one verdict fact naming both
+  verdicts (`a false refute`), not a refute row with an unlinked consistent row after it, and
+  both prompts say a false refute is a went_wrong for the verifier or gate, never a went_well.
+
 - **After a debrief the mod asks whether to post its findings (MOD-31).** A new
   `/config` option, `postFindings` (`ask` | `auto` | `off`, default `ask`), declared in
   the manifest and never read from `.chassis-delegation.json`: posting runs `gh` as the

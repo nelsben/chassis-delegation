@@ -79,13 +79,19 @@ export const MOD_FINDINGS_ASK =
   `Also add one more top-level key to the JSON you write, mod_findings: an array of { kind: went_well | went_wrong, surface (one of: ${MOD_SURFACES.join(', ')}; a finding about the host's permission classifier or safety checks, the engine or the person's own hooks is set aside, never posted), fault_class: bug | design | docs | cost | performance, severity: P1 | P2 | P3, title, body, evidence: [strings] } about chassis-delegation itself, not the project, grounded in the facts above (verdict lines, refutes, by-hand accepts, denials, corrections); [] when there is nothing to say. Name no product, repo, customer, person or path in it.`
 
 /** MOD-26: said under the facts, so the time on a fact line is the `at` of the entry the agent takes from it. */
+/** MOD-32: a refute later re-judged consistent at the same sha is the verifier's or the gate's fault, not a win. */
+export const FALSE_REFUTE_ASK = 'A verdict fact that says a refute was then re-judged consistent at the same sha is a false refute: file it as a went_wrong for the verifier or the gate, never a went_well.'
+
+/** MOD-32: said when a clean check lets the debrief agent mark its watermark; the mod sends it, the way autoEscalate resumes a worker. */
+export const MARK_WATERMARK_MESSAGE = 'debrief check: clean. Mark your watermark now, as your instructions say, and stop.'
+
 export const FACTS_AT_ASK = 'A fact line that starts with a kind and an ISO time (`denial <ISO time>: …`) happened at that time: cite that time as `at` for the corrections, tool_denials or outcomes entry you take from it.'
 
 /** The skill-wrapping prompt: the person's own skill file, unedited, plus the mod_findings ask and the facts it rests on. */
 export const debriefPrompt = (skillPath: string, sessionId: string, facts: readonly string[] = [], window?: DebriefWindow): string =>
   [
     `Run the /debrief skill exactly as written in ${skillPath}. Session id ${sessionId}. Write only what the skill allows.`,
-    ...(facts.length > 0 ? ['What chassis-delegation saw since the last debrief:', ...facts.map(f => `- ${f}`), FACTS_AT_ASK] : []),
+    ...(facts.length > 0 ? ['What chassis-delegation saw since the last debrief:', ...facts.map(f => `- ${f}`), FACTS_AT_ASK, FALSE_REFUTE_ASK] : []),
     ...(window ? [windowAsk(window)] : []),
     MOD_FINDINGS_ASK,
   ].join('\n')
@@ -123,7 +129,7 @@ export const builtInDebriefPrompt = (templatePath: string, sessionId: string, ro
     `Session id ${sessionId}. Repo root ${root}.`,
     facts.length > 0 ? 'What chassis-delegation saw since the last debrief:' : 'chassis-delegation saw no friction events beyond the verdicts below.',
     ...facts.map(f => `- ${f}`),
-    ...(facts.length > 0 ? [FACTS_AT_ASK] : []),
+    ...(facts.length > 0 ? [FACTS_AT_ASK, FALSE_REFUTE_ASK] : []),
     ...(window ? [windowAsk(window)] : []),
     MOD_FINDINGS_ASK,
     'Write only what it allows.',
@@ -159,11 +165,43 @@ const factLine = (label: string, ms: number, text: string): string => `${label} 
 /** The facts line by line, as the built-in debrief's prompt carries them: `denial 2026-10-10T16:27:14Z: Bash: git push`. */
 export const frictionFacts = (events: readonly FrictionEvent[]): string[] => events.map(e => factLine(KIND_TEXT[e.kind], e.at, e.detail.replace(/\s+/g, ' ').slice(0, 200)))
 
-/** A verdict row the mod kept, with the time it was posted. */
-export type VerdictFact = { line: string; at: number }
+/**
+ * A verdict row the mod kept, with the time it was posted. MOD-32: `task`, `attempt`, `verdict`, `sha` and
+ * `rejudge` (the row came from `--verify` at the attempt's own sha) let a refute and its re-judge be told as one.
+ */
+export type VerdictFact = { line: string; at: number; task?: string; attempt?: number; verdict?: string; sha?: string; rejudge?: boolean; firstAt?: number }
+
+const sameCommit = (a: string, b: string): boolean => {
+  const x = a.trim().toLowerCase()
+  const y = b.trim().toLowerCase()
+  return x.length >= 7 && y.length >= 7 && (x.startsWith(y) || y.startsWith(x))
+}
+
+/**
+ * MOD-32: a refute that a later `--verify` re-judged in place (same task, same attempt, same sha) and found
+ * not refuted is one row, not two: `MOD-17 attempt 1/2 refuted on gate, then re-judged consistent at the same
+ * sha (a false refute)`, at the re-judge's time (`firstAt` keeps the refute's). A refute that stood, or one
+ * resumed at another sha, is left as the rows were.
+ */
+export function mergeRejudged(verdicts: readonly VerdictFact[]): VerdictFact[] {
+  const out: VerdictFact[] = []
+  for (const v of verdicts) {
+    const j = v.rejudge === true && v.verdict !== undefined && v.verdict !== 'refuted' && v.sha !== undefined ? out.findLastIndex(r => r.verdict === 'refuted' && r.task === v.task && r.attempt === v.attempt && r.sha !== undefined && sameCommit(r.sha, v.sha as string)) : -1
+    const prior = j >= 0 ? (out[j] as VerdictFact) : undefined
+    if (!prior) {
+      out.push(v)
+      continue
+    }
+    const head = /^(?:chassis-delegation: )?(\S+ attempt \d+\/\d+) (refuted(?: on [\w-]+)?)/.exec(currentLine(prior.line))
+    const said = head ? `${head[1]} ${head[2]}` : `${v.task ?? 'task'} attempt ${v.attempt ?? '?'} refuted`
+    out.splice(j, 1)
+    out.push({ line: `${said}, then re-judged ${v.verdict} at the same sha (a false refute)`, at: v.at, firstAt: prior.at, task: v.task as string, attempt: v.attempt as number, verdict: v.verdict as string })
+  }
+  return out
+}
 
 /** The verdict rows as fact lines: `verdict 2026-10-10T18:01:07Z: chassis-delegation: OPS-5 attempt 1/2 consistent …`. */
-export const verdictFacts = (verdicts: readonly VerdictFact[]): string[] => verdicts.map(v => factLine('verdict', v.at, currentLine(v.line)))
+export const verdictFacts = (verdicts: readonly VerdictFact[]): string[] => mergeRejudged(verdicts).map(v => factLine('verdict', v.at, currentLine(v.line)))
 
 /**
  * MOD-26: the facts a breadcrumbs debrief's prompt carries: the friction events and verdicts whose time lies
@@ -176,7 +214,7 @@ export function windowFacts(events: readonly FrictionEvent[], verdicts: readonly
   const to = Date.parse(window.lastTs)
   if (Number.isNaN(from) || Number.isNaN(to)) return []
   const inside = (at: number): boolean => at >= from && at <= to
-  return [...frictionFacts(events.filter(e => inside(e.at))), ...verdictFacts(verdicts.filter(v => inside(v.at)))]
+  return [...frictionFacts(events.filter(e => inside(e.at))), ...verdictFacts(mergeRejudged(verdicts).filter(v => inside(v.at) || (v.firstAt !== undefined && inside(v.firstAt))))]
 }
 
 /** The breadcrumb kinds that mark where a session starts, ends or compacts, not what happened in it. */

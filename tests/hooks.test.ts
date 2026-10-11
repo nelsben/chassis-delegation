@@ -2409,6 +2409,38 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
     expect(shown(w)).toContain('debrief check: clean')
   })
 
+  const SKILL = `${HOME}/.claude/commands/debrief.md`
+  const MARK = 'debrief check: clean. Mark your watermark now, as your instructions say, and stop.'
+
+  test('MOD-32: under the person\'s skill, a clean check sends the debrief agent the mark-your-watermark message, once', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: { ...files({ tool_denials: [{ text: 'Bash denied', at: 3 }] }), [SKILL]: '# debrief' } })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect(w.sent).toHaveLength(1)
+    expect(w.sent[0]?.to).toBe('agent-1')
+    expect(w.sent[0]?.text).toBe(MARK)
+  })
+
+  test('MOD-32: under the person\'s skill, a flagged check sends nothing and the printed result says the watermark was left', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const bad = { tool_denials: [{ text: 'Bash denied', at: '2026-10-08T09:00:00Z' }] }
+    const w = world(on, { listAgents: true, files: { ...files(bad), [SKILL]: '# debrief' } })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect(w.sent).toHaveLength(0)
+    expect(shown(w)).toContain('watermark was left as is')
+  })
+
+  test('MOD-32: the built-in template path sends the same message on a clean check', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: files({ tool_denials: [{ text: 'Bash denied', at: 3 }] }) })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect(w.sent).toHaveLength(1)
+    expect(w.sent[0]?.text).toBe(MARK)
+  })
+
   test('a finding about the host goes to host_findings in the file and is counted in the printed result', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
     const host = { ...finding, surface: 'permission classifier', title: 'The classifier denied a read' }
     const w = world(on, { listAgents: true, files: files({ mod_findings: [finding, host] }) })

@@ -1661,6 +1661,19 @@ automatic path logs the same, and the debrief record moves past the window (as
 starts after it. Without a breadcrumb file the selection is as it was, the events
 past the last debrief and the verdicts since it, now dated.
 
+**Watermark and false refutes (MOD-32).** The `debrief check:` line prints after the
+agent has handed back, so the agent never sees it. When the check prints clean, the mod
+sends the debrief agent one message, the way `autoEscalate` resumes a worker: `debrief
+check: clean. Mark your watermark now, as your instructions say, and stop.` It does so
+under your own skill and under the built-in template alike (the template says the same
+rule). A flagged or stripped check sends nothing and the printed result says the `.done`
+watermark was left as is. The mod still never writes `.done` itself. A verdict fact for
+a refute that `/dispatch --verify` later re-judged at the same sha and found consistent
+is one line, `verdict <time>: MOD-17 attempt 1/2 refuted on gate, then re-judged
+consistent at the same sha (a false refute)`, and the later row is not listed again; a
+refute that stood is listed as before. Both prompts tell the agent a false refute is a
+`went_wrong` for the verifier or the gate, never a `went_well`.
+
 Both prompts (your `~/.claude/commands/debrief.md`, which is never edited, and
 the built-in template) ask for one more top-level key in the debrief JSON,
 `mod_findings`: an array of `{ kind: went_well | went_wrong, surface,
