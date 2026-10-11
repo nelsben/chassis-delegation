@@ -44,6 +44,7 @@ import {
   readRecord,
   readVerdict,
   isRetiredVerdict,
+  supersededBy,
 } from './lib/attempts'
 import {
   amendNeedsApproval,
@@ -605,7 +606,7 @@ let inTurn = true
 /** MOD-42: a main-loop turn is known to be open (turn.start seen, its turn.complete not yet): a verdict's wake is held for its end. */
 let turnOpen = false
 /** MOD-42: wakes held while the brain's turn is open; a consistent verdict's carries its spawn, re-checked for merged just before delivery. */
-let heldWakes: { text: string; spawn?: SpawnRecord }[] = []
+let heldWakes: { text: string; ready: string; spawn?: SpawnRecord }[] = []
 let idleTimer: { cancel: () => void } | undefined
 let evalTimer: { cancel: () => void } | undefined
 let debriefBusy = false
@@ -1625,14 +1626,15 @@ async function appendRow($: Host, row: string) {
  * (typed over, the engine queues it until the person's prompt is done). The
  * brain's own `--verify` and a foreground Agent result never come here.
  */
-async function wakeBrain($: Host, text: string, spawn?: SpawnRecord): Promise<void> {
-  if (!cfg.wakeOnVerdict || text === '') return
+async function wakeBrain($: Host, text: string, spawn?: SpawnRecord, ready = ''): Promise<void> {
+  if (!cfg.wakeOnVerdict || (text === '' && ready === '')) return
   // MOD-42: while the brain's turn is open the engine would deliver this only after it, so hold it for the turn's end
+  // MOD-51: the held entry keeps the verdict row and its ready lines apart, so a dropped verdict leaves the ready lines
   if (turnOpen) {
-    heldWakes.push({ text, ...(spawn ? { spawn } : {}) })
+    heldWakes.push({ text, ready, ...(spawn ? { spawn } : {}) })
     return
   }
-  await submitWake($, text)
+  await submitWake($, [text, ready].filter(Boolean).join('\n'))
 }
 
 async function submitWake($: Host, text: string): Promise<void> {
@@ -1644,16 +1646,29 @@ async function submitWake($: Host, text: string): Promise<void> {
 }
 
 /**
- * MOD-42: the brain's turn ended: submit the held wakes as one message, dropping a consistent verdict's whose task
- * is merged (or accepted) by now. Refuted, over-spend, no-report and ready: wakes carry no spawn and are never dropped.
+ * MOD-42: the brain's turn ended: submit the held wakes as one message. MOD-51: a held verdict (any kind) is dropped when
+ * its task has a later attempt, or is merged or accepted by now; its `ready:` lines are still delivered.
  */
 async function flushWakes($: Host): Promise<void> {
   const held = heldWakes
   heldWakes = []
   const keep: string[] = []
   for (const h of held) {
-    if (h.spawn && (await alreadyMerged($, h.spawn, true))) debug($, `wake skipped: ${taskLabel(h.spawn.task, h.spawn.subtask)} merged before delivery`)
-    else keep.push(h.text)
+    const spawn = h.spawn
+    let drop = false
+    if (spawn && h.text !== '') {
+      const label = taskLabel(spawn.task, spawn.subtask)
+      const later = spawn.adhoc || spawn.review ? undefined : supersededBy(await loadAttempts($, spawn.task), spawn.subtask, spawn.attempt, laneOf(spawn))
+      if (later !== undefined) {
+        debug($, `wake skipped: ${label} attempt ${spawn.attempt} superseded by attempt ${later}`)
+        drop = true
+      } else if (await alreadyMerged($, spawn, true, true)) {
+        debug($, `wake skipped: ${label} merged before delivery`)
+        drop = true
+      }
+    }
+    if (!drop && h.text !== '') keep.push(h.text)
+    if (h.ready !== '') keep.push(h.ready)
   }
   if (keep.length > 0) await submitWake($, keep.join('\n'))
 }
@@ -1754,7 +1769,7 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
   await noteRecent($, { task: label, attempt: spawnIn.attempt, verdict: 'over-spend', line: row, at: t, owed: `${label}: ${next}` })
   await appendLedger($, { ...(judged ?? { task: spawnIn.task, subtask: spawnIn.subtask, attempt: spawnIn.attempt }), verdict: 'over-spend', usd: own, next, sessionId: await sessionIdOf($) })
   await appendRow($, row)
-  await wakeBrain($, row)
+  await wakeBrain($, row, spawnIn)
   // the worker's running turn, when the engine gave us its id (a subagent's turn.start carries none today)
   const turnId = spawnIn.agentId ? turnOf.get(spawnIn.agentId) : undefined
   if (turnId) {
@@ -1959,14 +1974,14 @@ async function acceptTask($: Host, rest: string): Promise<string> {
 
 /**
  * MOD-35: is this hand-back's task already on the default branch (or accepted)? MOD-4's retire check answers: the
- * attempt's sha an ancestor of origin/main, the card there reading merged, or an accept already recorded. Only a
- * consistent verdict of a real worker is asked about; a refuted, over-spend or reviewed one is always woken for.
+ * attempt's sha an ancestor of origin/main, the card there reading merged, or an accept already recorded. On arrival only a
+ * consistent verdict of a real worker is asked about; MOD-51's delivery-time check (`anyVerdict`) asks for any verdict.
  */
-async function alreadyMerged($: Host, spawn: SpawnRecord, force = false): Promise<boolean> {
+async function alreadyMerged($: Host, spawn: SpawnRecord, force = false, anyVerdict = false): Promise<boolean> {
   if (spawn.adhoc || spawn.review || spawn.replay) return false
   try {
     const rec = attemptsFor(await loadAttempts($, spawn.task), spawn.subtask).find(r => r.attempt === spawn.attempt)
-    if (rec?.verdict !== 'consistent') return false
+    if (!anyVerdict && rec?.verdict !== 'consistent') return false
     return (await retireCheck($, taskLabel(spawn.task, spawn.subtask), await now($), force)).retired
   } catch (err) {
     debug($, `${taskLabel(spawn.task, spawn.subtask)}: merged check failed: ${String(err)}`)
@@ -5402,8 +5417,9 @@ export const register: Register = (on, opts) => {
         // MOD-35: not for a task already on the default branch: its next=accept is stale; a `ready:` line still wakes
         if (row !== undefined && spawn && (await alreadyMerged($, spawn))) {
           debug($, `wake skipped: ${taskLabel(spawn.task, spawn.subtask)} already merged`)
-          await wakeBrain($, ready.join('\n'))
-        } else await wakeBrain($, text, row !== undefined ? spawn : undefined)
+          await wakeBrain($, '', undefined, ready.join('\n'))
+        } else if (row !== undefined) await wakeBrain($, row, spawn, ready.join('\n'))
+        else await wakeBrain($, '', undefined, ready.join('\n'))
       }
       // idle counts from the last turn of either loop
       if (!inTurn) armIdle($)
