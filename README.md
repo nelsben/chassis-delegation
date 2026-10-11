@@ -654,6 +654,19 @@ Glob rules for `scope` and `forbid`:
 - `?` is one character;
 - a trailing `/` means everything under the folder.
 
+The dry run (and `/dispatch`) checks each `forbid` glob against the card and prints
+one warning line per collision (MOD-29). The card is still written; nothing is refused:
+
+    warning: forbid artifacts/*.html matches scope artifacts/kit/**
+    warning: forbid artifacts/*.html matches artifacts/kit/index.html named in done-when
+
+A forbid collides with a scope entry it can name, or with a path-like word of a
+`Done when` line (a word with a slash and a dot, in backticks or bare). Each uses the
+verifier's rule for its entry: in a repo path `*` crosses folders, so `artifacts/*.html`
+covers `artifacts/kit/index.html`, and no repo glob stays in one folder (list the
+files); an absolute entry keeps `*` inside one folder. Fix the card (shrink the forbid
+or list the files) before you say go.
+
 An entry may also be an absolute path or glob (MOD-22), and a leading `~` is
 the home folder (expanded at dispatch, so the brief header holds the absolute
 path). It names a folder outside the repo; the first absolute scope entry is the

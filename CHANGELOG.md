@@ -46,6 +46,17 @@
     takes the loaded text as its last argument (`hooks/lib/cleanstop.ts`). No config key,
     no new tool.
 
+- **The dry run warns when a forbid glob collides with the card, and the card tool says that `*` crosses folders (MOD-29).**
+  Public issue #63: a card forbade `artifacts/*.html` to keep the worker off the existing
+  pages while its done-when required `artifacts/kit/index.html`; the forbid matched the
+  required file, attempt 1 was refuted on scope, and the work was merged by hand. The
+  card tool's dry run and `/dispatch` now print one warning per collision,
+  `warning: forbid <glob> matches scope <entry>` or `warning: forbid <glob> matches <path>
+  named in done-when`, and still write the card. Each collision uses the verifier's rule
+  for its entry: a repo glob's `*` crosses folders, an absolute glob's `*` stays in one
+  folder. The scope and forbid tool descriptions say that a repo path has no one-folder
+  wildcard, so list the files.
+
 - **`files=` takes a folder glob, and the red claim quotes the line that failed (MOD-27).**
   Public issue #56. A hand-back that listed a new folder as `docs/new/**` in `files=` was
   refuted on files, though the six paths under it were exactly the delta: `filesClaim`

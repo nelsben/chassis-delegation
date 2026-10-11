@@ -9,7 +9,9 @@
 import { RESOURCE_NAME, scopeOverlap } from './brief'
 import { dollars, spendCeiling } from './cost'
 import { scopeLooksProse } from './dispatch'
+import { matchGlob } from './norepo'
 import { tierOf, type Tier } from './tier'
+import { globMatches } from './verify-native'
 
 /** What the validation needs from the effective config and the card folder. */
 export type CardCtx = {
@@ -57,8 +59,8 @@ export const CARD_TOOL = {
       title: { type: 'string', description: 'One line that says what done looks like' },
       why: { type: 'string', description: 'Two or three sentences: why this task' },
       doneWhen: { type: 'array', items: { type: 'string' }, description: 'Checkable statements: what is true when it is done' },
-      scope: { type: 'array', items: { type: 'string' }, description: 'Globs or paths the worker may change, e.g. ["src/feature/**", "tests/test_feature.py"]; an absolute path or glob (a leading ~ is the home folder) names a folder outside the repo, and the first one is the output folder. Not prose. Required unless lanes carry their own; given with lanes, it is refused' },
-      forbid: { type: 'array', items: { type: 'string' }, description: 'Globs the worker must not touch (default none); absolute paths and globs too' },
+      scope: { type: 'array', items: { type: 'string' }, description: 'Globs or paths the worker may change, e.g. ["src/feature/**", "tests/test_feature.py"]; an absolute path or glob (a leading ~ is the home folder) names a folder outside the repo, and the first one is the output folder. Not prose. In a repo path * crosses folders (artifacts/*.html also matches artifacts/kit/index.html), and no repo glob stays in one folder, so list the files. Required unless lanes carry their own; given with lanes, it is refused' },
+      forbid: { type: 'array', items: { type: 'string' }, description: 'Globs the worker must not touch (default none); absolute paths and globs too. In a repo path * crosses folders (artifacts/*.html also matches artifacts/kit/index.html), and no repo glob stays in one folder, so list the files' },
       repo: { type: 'string', description: 'worktree (default): the worker gets its own worktree; here: it works in this checkout; none: no repo at all. For research or extraction with outputs outside the repo use none or here, with scope = the output folder' },
       redTest: { type: 'string', description: 'The command or test that fails now and passes after, or "none" for docs-only work' },
       tier: { type: 'string', description: 'economy, standard (default), frontier or premium' },
@@ -264,3 +266,151 @@ export const cardSummary = (c: Pick<NewCard, 'id' | 'tier' | 'scope' | 'gate' | 
 
 /** The closing line of the dry-run answer; MOD-23: with lanes, every id. */
 export const sayGo = (ids: string | readonly string[]): string => `Say go and Claude dispatches ${typeof ids === 'string' ? ids : ids.join(', ')}.`
+
+// ---- MOD-29: the forbid collisions the dry run warns about -----------------------------
+// A forbid glob that can match a path the card's scope or done-when names is refused by the
+// verifier on that path, so the dry run says so before a worker spends an attempt on it. The
+// rule is the verifier's own: a repo glob (globMatches) lets * cross folders, an absolute one
+// (matchGlob) keeps * inside one folder. A literal path is matched by that matcher; a glob
+// against a glob is an intersection test over the same token rules. Pure.
+
+/** One token of a glob: a literal character, a run of characters (`*`), or one character passing a test (`?`, a class). */
+type GlobTok = { kind: 'lit'; c: string } | { kind: 'star'; slash: boolean } | { kind: 'one'; test: (c: string) => boolean }
+
+/** A leading `/` or `~` names a folder outside the repo: the absolute rule. */
+const isAbsoluteGlob = (g: string): boolean => g.startsWith('/') || g.startsWith('~')
+
+/** The glob characters the verifier reads for this rule (an absolute glob reads `{` and not `[`). */
+const hasWild = (g: string, abs: boolean): boolean => (abs ? /[*?{]/ : /[*?[]/).test(g)
+
+/** The verifier's repo rule as tokens: `*` crosses folders, `?` is one character, `[…]` a class, a trailing `/` means everything under it. */
+function repoToks(glob: string): GlobTok[] {
+  const g = glob.endsWith('/') ? `${glob}*` : glob
+  const out: GlobTok[] = []
+  for (let i = 0; i < g.length; i += 1) {
+    const c = g[i] as string
+    if (c === '*') out.push({ kind: 'star', slash: true })
+    else if (c === '?') out.push({ kind: 'one', test: () => true })
+    else if (c === '[' && g.indexOf(']', i + 2) >= 0) {
+      const close = g.indexOf(']', i + 2)
+      const body = g.slice(i + 1, close).replace(/^!/, '^')
+      let re: RegExp | undefined
+      try {
+        re = new RegExp(`^[${body}]$`, 's')
+      } catch {
+        re = undefined
+      }
+      if (re) out.push({ kind: 'one', test: ch => (re as RegExp).test(ch) })
+      else for (const ch of g.slice(i, close + 1)) out.push({ kind: 'lit', c: ch })
+      i = close
+    } else out.push({ kind: 'lit', c })
+  }
+  return out
+}
+
+/** The absolute rule (globToRegExp) as alternative token lists: `*` stays in one folder, `**` crosses, `?` is one non-`/` character, `{a,b}` either, and a double star then a slash zero or more folders. */
+function absAlts(g: string, i: number): GlobTok[][] {
+  if (i >= g.length) return [[]]
+  const c = g[i] as string
+  if (c === '*' && g[i + 1] === '*') {
+    if (g[i + 2] === '/') {
+      const tails = absAlts(g, i + 3)
+      return [...tails, ...tails.map(t => [{ kind: 'star', slash: true } as GlobTok, { kind: 'lit', c: '/' } as GlobTok, ...t])]
+    }
+    return absAlts(g, i + 2).map(t => [{ kind: 'star', slash: true } as GlobTok, ...t])
+  }
+  if (c === '*') return absAlts(g, i + 1).map(t => [{ kind: 'star', slash: false } as GlobTok, ...t])
+  if (c === '?') return absAlts(g, i + 1).map(t => [{ kind: 'one', test: ch => ch !== '/' } as GlobTok, ...t])
+  if (c === '{') {
+    const close = g.indexOf('}', i)
+    if (close >= 0) {
+      const tails = absAlts(g, close + 1)
+      return g.slice(i + 1, close).split(',').flatMap(alt => tails.map(t => [...alt.split('').map(ch => ({ kind: 'lit', c: ch }) as GlobTok), ...t]))
+    }
+  }
+  return absAlts(g, i + 1).map(t => [{ kind: 'lit', c } as GlobTok, ...t])
+}
+
+const globAlts = (glob: string, abs: boolean): GlobTok[][] => (abs ? absAlts(glob, 0) : [repoToks(glob)])
+
+/** Whether one character can be both tokens' character (a class against a class or a wildcard is taken as possible). */
+const accepts = (t: GlobTok, c: string): boolean => (t.kind === 'lit' ? t.c === c : t.kind === 'one' ? t.test(c) : t.slash || c !== '/')
+const meets = (x: GlobTok, y: GlobTok): boolean => (x.kind === 'lit' ? accepts(y, x.c) : y.kind === 'lit' ? accepts(x, y.c) : true)
+
+/** Whether some path matches both token lists: a product walk over the two patterns, a star skipping or taking a character. */
+function globsCollide(a: readonly GlobTok[], b: readonly GlobTok[]): boolean {
+  const width = b.length + 1
+  const seen = new Set<number>()
+  const todo: [number, number][] = [[0, 0]]
+  while (todo.length > 0) {
+    const [i, j] = todo.pop() as [number, number]
+    if (seen.has(i * width + j)) continue
+    seen.add(i * width + j)
+    if (i === a.length && j === b.length) return true
+    const x = a[i]
+    const y = b[j]
+    if (x?.kind === 'star') todo.push([i + 1, j])
+    if (y?.kind === 'star') todo.push([i, j + 1])
+    if (x === undefined || y === undefined || (x.kind === 'star' && y.kind === 'star')) continue
+    if (!meets(x, y)) continue
+    if (x.kind === 'star') todo.push([i, j + 1])
+    else if (y.kind === 'star') todo.push([i + 1, j])
+    else todo.push([i + 1, j + 1])
+  }
+  return false
+}
+
+/** Whether a scope entry, a done-when path or a forbid glob can name the same path (the verifier's rule for each). */
+function collides(entry: string, forbid: string): boolean {
+  const abs = isAbsoluteGlob(forbid)
+  if (isAbsoluteGlob(entry) !== abs) return false
+  // a literal entry is matched exactly as the verifier matches it
+  if (!hasWild(entry, abs)) return abs ? matchGlob(entry, forbid) : globMatches(entry, forbid)
+  const mine = globAlts(entry, abs)
+  const theirs = globAlts(forbid, abs)
+  return mine.some(x => theirs.some(y => globsCollide(x, y)))
+}
+
+/** The path-like words of one done-when statement: a word with a slash and a dot, in backticks or bare. */
+export function donePaths(statement: string): string[] {
+  const ticked = [...statement.matchAll(/`([^`]+)`/g)].map(m => m[1] as string)
+  const bare = statement.replace(/`[^`]*`/g, ' ').split(/\s+/).map(w => w.replace(/^["'(]+|["'),;:!?.]+$/g, ''))
+  return [...ticked, ...bare].filter(w => w.includes('/') && w.includes('.') && !/\s/.test(w))
+}
+
+/** The lines of a card body's `## Done when` section, up to the next `## ` heading (the Why is not read). */
+export function doneWhenOf(body: string): string[] {
+  const out: string[] = []
+  let on = false
+  for (const line of body.split('\n')) {
+    if (/^##\s/.test(line)) {
+      on = /^##\s+Done when\s*$/i.test(line.trim())
+      continue
+    }
+    if (on) out.push(line)
+  }
+  return out
+}
+
+/**
+ * The warnings for each forbid glob that collides with the card: `warning: forbid <glob> matches scope <entry>`
+ * for a scope entry (literal or glob) the forbid can name, and `warning: forbid <glob> matches <path> named in
+ * done-when` for a path-like word of a done-when statement. Nothing is refused; the card is still written.
+ */
+export function forbidCollisions(scope: readonly string[], forbid: readonly string[], doneWhen: readonly string[]): string[] {
+  const out: string[] = []
+  const paths = [...new Set(doneWhen.flatMap(donePaths))]
+  for (const f of forbid) {
+    if (f === '') continue
+    for (const s of scope) {
+      const line = s === '' ? undefined : `warning: forbid ${f} matches scope ${s}`
+      if (line !== undefined && collides(s, f) && !out.includes(line)) out.push(line)
+    }
+    for (const p of paths) {
+      const line = `warning: forbid ${f} matches ${p} named in done-when`
+      if (collides(p, f) && !out.includes(line)) out.push(line)
+    }
+  }
+  return out
+}
+

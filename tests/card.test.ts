@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { CARD_TOOL, cardFromFields, cardSummary, type CardCtx } from '../hooks/lib/card'
+import { CARD_TOOL, cardFromFields, cardSummary, forbidCollisions, type CardCtx } from '../hooks/lib/card'
 import { parseCard } from '../hooks/lib/dispatch'
 
 const ctx = (over: Partial<CardCtx> = {}): CardCtx => ({
@@ -154,5 +154,43 @@ describe('GH-111: cardFromFields', () => {
     // MOD-23: scope is each lane's own on a call with lanes, so the schema no longer requires a shared one (the card still refuses a single card without it)
     expect(CARD_TOOL.inputSchema.required).toEqual(['title', 'why', 'doneWhen', 'redTest'])
     expect(CARD_TOOL.description).toContain('Never ask the person to edit a card file.')
+  })
+})
+
+describe('MOD-29: the dry run warns when a forbid glob collides with the card', () => {
+  test('a forbid glob that matches a path named in done-when warns, naming both', () => {
+    expect(forbidCollisions([], ['artifacts/*.html'], ['`artifacts/kit/index.html` exists'])).toEqual([
+      'warning: forbid artifacts/*.html matches artifacts/kit/index.html named in done-when',
+    ])
+    // a bare path (no backticks), a trailing full stop, and a path under the forbid's folder all count
+    expect(forbidCollisions([], ['docs/**'], ['docs/notes.md is written.'])).toEqual(['warning: forbid docs/** matches docs/notes.md named in done-when'])
+  })
+
+  test('a forbid glob that matches a scope glob warns, naming the entry', () => {
+    expect(forbidCollisions(['artifacts/kit/**'], ['artifacts/*.html'], [])).toEqual(['warning: forbid artifacts/*.html matches scope artifacts/kit/**'])
+    expect(forbidCollisions(['docs/a.md'], ['docs/**'], [])).toEqual(['warning: forbid docs/** matches scope docs/a.md'])
+  })
+
+  test('a forbid that touches neither the scope nor a done-when path warns nothing', () => {
+    expect(forbidCollisions(['src/**'], ['docs/**'], ['all the tests pass'])).toEqual([])
+    expect(forbidCollisions(['src/**'], ['docs/**'], ['`src/x.ts` exists'])).toEqual([])
+  })
+
+  test('a class does not stop the * after it from crossing folders, so artifacts/[^/]*.html still collides', () => {
+    expect(forbidCollisions(['artifacts/kit/**'], ['artifacts/[^/]*.html'], [])).toEqual(['warning: forbid artifacts/[^/]*.html matches scope artifacts/kit/**'])
+  })
+
+  test('a repo glob crosses folders: out/*.png matches out/sub/a.png under scope out/sub/**', () => {
+    expect(forbidCollisions(['out/sub/**'], ['out/*.png'], [])).toEqual(['warning: forbid out/*.png matches scope out/sub/**'])
+  })
+
+  test('an absolute forbid stays in one folder: /out/*.png does not match /out/sub/a.png', () => {
+    expect(forbidCollisions([], ['/out/*.png'], ['`/out/sub/a.png` exists'])).toEqual([])
+    expect(forbidCollisions(['/out/sub/**'], ['/out/*.png'], [])).toEqual([])
+    expect(forbidCollisions([], ['/out/*.png'], ['`/out/a.png` exists'])).toEqual(['warning: forbid /out/*.png matches /out/a.png named in done-when'])
+  })
+
+  test('only the Done when statements are read: a path in the why or the title is not a collision', () => {
+    expect(forbidCollisions([], ['artifacts/*.html'], ['the page builds'])).toEqual([])
   })
 })
