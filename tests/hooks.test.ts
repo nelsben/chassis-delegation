@@ -5072,7 +5072,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(w.submitted[0]?.text).toContain('next=accept')
   })
 
-  test('MOD-42: a refuted wake is submitted at the turn\'s end even when the sha reads as merged', { options: { ...GM } }, async ($, on) => {
+  test('MOD-42/MOD-51: a refuted wake is dropped at the turn\'s end when the sha reads as merged', { options: { ...GM } }, async ($, on) => {
     const base = nativeRun()
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 0, stdout: '' } : base(argv)), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
@@ -5080,8 +5080,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
     expect(w.submitted).toEqual([])
     await $.turn.complete(mainEnd())
-    expect(w.submitted).toHaveLength(1)
-    expect(w.submitted[0]?.text).toContain('refuted')
+    expect(w.submitted).toEqual([])
   })
 
   test('/delegation accept appends one accept row with how accepted, and a second accept appends none', { options: { ...GM } }, async ($, on) => {

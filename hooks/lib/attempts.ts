@@ -126,6 +126,12 @@ export const attemptsFor = (records: readonly AttemptRecord[], subtask: string, 
 export const reviewsFor = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): AttemptRecord[] =>
   records.filter(r => r.kind === 'review' && r.subtask === subtask && inLane(r, lane))
 
+/** MOD-51: the highest attempt of a subtask's lane numbered above `attempt`, whatever its verdict; undefined when none. */
+export const supersededBy = (records: readonly AttemptRecord[], subtask: string, attempt: number, lane?: Lane): number | undefined => {
+  const later = attemptsFor(records, subtask, lane).filter(r => r.attempt > attempt)
+  return later.length === 0 ? undefined : Math.max(...later.map(r => r.attempt))
+}
+
 export const nextAttempt = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): number =>
   attemptsFor(records, subtask, lane).reduce((n, r) => Math.max(n, r.attempt), 0) + 1
 

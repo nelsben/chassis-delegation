@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **A held verdict wake is dropped at delivery when its task has moved on (MOD-51).** MOD-42 holds a wake while
+  the brain's turn is open; at the turn's end it dropped only a consistent wake whose task was merged, so a refuted,
+  no-report, unverified or over-spend wake for attempt 1 reached the brain after attempt 2 had passed. Now
+  `flushWakes` drops a held verdict of any kind when the task's attempt records (same subtask and lane) hold a
+  higher attempt than the wake's, with the debug line `wake skipped: <task> attempt N superseded by attempt M`, or
+  when the task is merged or accepted by then (MOD-35's retire check). A `ready:` line held with a dropped verdict
+  is still delivered, alone. A wake raised with no turn open, and a held wake still current, are unchanged.
+
 ## 0.9.1 — 2026-10-11
 
 - **The legacy verdict reader is removed (MOD-49).** `hooks/lib/legacy.ts` is gone; the old verdict word
