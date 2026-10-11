@@ -5059,3 +5059,227 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(0)
   })
 })
+
+describe('MOD-44: the brain delegates into another local repo (repo set to an absolute path)', () => {
+  const CARD_TOOL = 'mcp__chassis-delegation__card'
+  const DISPATCH = 'mcp__chassis-delegation__dispatch'
+  const OTHER = '/other'
+  const WT = `${OTHER}-T-1`
+  const CARDS = `${ROOT}/.delegation/cards/other`
+  const CARD_NAME = 'T-1-the-first-version.md'
+  const CARD = [
+    '---',
+    'id: T-1',
+    'title: The first version',
+    'domain: ops',
+    'tier: standard',
+    'status: queued',
+    `repo: ${OTHER}`,
+    'scope: [src/**, tests/**]',
+    'forbid: []',
+    'red_test: none',
+    'gate: test',
+    'budget: 2-attempts',
+    '---',
+    '## Why',
+    '',
+    'A new sibling repo with its own gates.',
+    '',
+  ].join('\n')
+  const BRIEFS = { briefDir: `${SCRATCH}/briefs` }
+  const BRIEF = `${SCRATCH}/briefs/T-1.brief.md`
+  const HEAD = 'abcdef1' + '2'.repeat(33)
+  const BRANCH = 'agent/ops/T-1'
+  // /other: a checkout (a .git folder), a package.json with a test script, no .chassis-delegation.json
+  const otherFiles = (): Record<string, string> => ({ [`${OTHER}/package.json`]: '{"scripts":{"test":"node --test"}}' })
+  const otherDirs = (): Record<string, string[]> => ({ [OTHER]: ['package.json'], [`${OTHER}/.git`]: [], [`${ROOT}/agents/tasks`]: ['README.md'], [CARDS]: [] })
+  const given = {
+    title: 'The first version',
+    why: 'A new sibling repo that needs its first version.',
+    doneWhen: ['npm test passes'],
+    scope: ['src/**', 'tests/**'],
+    redTest: 'npm test',
+    repo: OTHER,
+  }
+  const asked = (w: { files: Map<string, string> }, prefix: string) => [...w.files.keys()].filter(k => k.startsWith(prefix))
+  // the worker's repo answered from memory: a branch of /other, a delta of src/a.ts, the gate green
+  const otherRun = (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npm') return { exitCode: 0, stdout: 'ok\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'fetch' || sub[0] === 'worktree') return { exitCode: 0, stdout: '' }
+    if (sub[0] === 'rev-parse' && sub[1] === '--abbrev-ref') return { exitCode: 0, stdout: `${BRANCH}\n` }
+    if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'rev-parse' && last === 'origin/main') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'rev-parse') return { exitCode: 0, stdout: `${HEAD}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: sub.includes('--name-status') ? 'A\tsrc/a.ts\n' : 'src/a.ts\n' }
+    if (sub[0] === 'status') return { exitCode: 0, stdout: '' }
+    return undefined
+  }
+
+  test('the card tool with repo /other writes the card under the session .delegation/cards/other/, and its dry run names the detected gate', { options: BRIEFS }, async ($, on) => {
+    const w = world(on, { files: otherFiles(), dirs: otherDirs(), store: { 'delegation.agentTypes': ['general-purpose'] } })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: CARD_TOOL, ...given } as never))
+    const path = `${CARDS}/OPS-1-the-first-version.md`
+    expect(w.files.get(path)).toContain('id: OPS-1\n')
+    expect(w.files.get(path)).toContain(`repo: ${OTHER}\n`)
+    expect(out).toContain(`wrote ${path}`)
+    expect(out).toContain('repo: /other (config: none, gate: npm test)')
+    expect(out).toContain(` gate=test repo=${OTHER} `)
+    // the session's own board stays clean; the dry run runs no git and spawns nothing
+    expect(asked(w, `${ROOT}/agents/tasks/`)).toEqual([])
+    expect(w.files.get(`${SCRATCH}/briefs/OPS-1.brief.md`) ?? '').toContain(`repo=${OTHER}`)
+    expect(argvs(w).filter(a => a[0] === 'git' && a[3] !== 'rev-parse')).toEqual([])
+    expect(w.spawns).toHaveLength(0)
+    // a second card takes the next id: ids do not collide with the session's own board
+    const again = resultText(await $.tool.call({ tool: CARD_TOOL, ...given, title: 'Another thing' } as never))
+    expect(again).toContain(`wrote ${CARDS}/OPS-2-another-thing.md`)
+  })
+
+  test('a repo with its own .chassis-delegation.json supplies the gate map and the card folder: the card goes there', { options: BRIEFS }, async ($, on) => {
+    const w = world(on, {
+      files: { ...otherFiles(), [`${OTHER}/.chassis-delegation.json`]: JSON.stringify({ gateMap: { build: 'npm run build', test: 'npm test' }, cardDir: 'docs/cards', domains: ['web'] }) },
+      dirs: { ...otherDirs(), [`${OTHER}/docs/cards`]: ['README.md'] },
+      store: { 'delegation.agentTypes': ['general-purpose'] },
+    })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: CARD_TOOL, ...given, gate: 'build' } as never))
+    expect(out).toContain('repo: /other (config: its own, gate: npm run build)')
+    expect(asked(w, `${OTHER}/docs/cards/WEB-1`)).toHaveLength(1)
+    expect(asked(w, CARDS)).toEqual([])
+    expect(out).toContain(' gate=build repo=/other ')
+    // its domains name the branch it may be cut on
+    expect(resultText(await $.tool.call({ tool: CARD_TOOL, ...given, domain: 'ops' } as never))).toContain('domain ops is not one of web')
+  })
+
+  test('repo as a relative path, the session root, a folder that is no checkout: refused in one line, nothing written', { options: BRIEFS }, async ($, on) => {
+    const w = world(on, { files: { ...otherFiles(), [`${CARDS}/${CARD_NAME}`]: CARD }, dirs: { ...otherDirs(), [CARDS]: [CARD_NAME], [ROOT]: [], [`${ROOT}/.git`]: [], '/plain': [] } })
+    await $.session.start(sessionStart)
+    const before = w.files.size
+    const rel = resultText(await $.tool.call({ tool: CARD_TOOL, ...given, repo: '../other' } as never))
+    expect(rel).toBe('card refused: repo ../other is not an absolute path; give the folder of a git checkout, e.g. /Users/you/other (or worktree, here, none)')
+    expect(resultText(await $.tool.call({ tool: CARD_TOOL, ...given, repo: 'other' } as never))).toContain('is not an absolute path')
+    const same = resultText(await $.tool.call({ tool: CARD_TOOL, ...given, repo: ROOT } as never))
+    expect(same).toBe(`card refused: repo ${ROOT} is the session's own repo; leave repo unset to delegate here`)
+    expect(resultText(await $.tool.call({ tool: CARD_TOOL, ...given, repo: `${ROOT}/` } as never))).toContain("is the session's own repo")
+    const plain = resultText(await $.tool.call({ tool: CARD_TOOL, ...given, repo: '/plain' } as never))
+    expect(plain).toBe('card refused: repo /plain is not a git checkout (no .git in it)')
+    expect(resultText(await $.tool.call({ tool: CARD_TOOL, ...given, repo: '/nowhere' } as never))).toContain('is not a git checkout')
+    expect(w.files.size).toBe(before)
+    // dispatch says the same, and runs nothing
+    for (const [repo, why] of [['../other', 'is not an absolute path'], [ROOT, "is the session's own repo"], ['/plain', 'is not a git checkout']] as const) {
+      const text = resultText(await $.tool.call({ tool: DISPATCH, task: 'T-1', repo } as never))
+      expect(text).toContain(`refused repo ${repo}`)
+      expect(text).toContain(why)
+    }
+    const viaCommand = await $.command.run(commandInput('T-1 --repo ../other'))
+    expect(String(viaCommand.text)).toContain('refused repo ../other')
+    expect(argvs(w).filter(a => a[0] === 'git' && a[3] !== 'rev-parse')).toEqual([])
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('dispatch with repo /other fetches in /other, cuts /other-T-1 from its origin/main, and the spawn block names the brief', { options: BRIEFS }, async ($, on) => {
+    const w = world(on, { files: { ...otherFiles(), [`${CARDS}/${CARD_NAME}`]: CARD }, dirs: { ...otherDirs(), [CARDS]: [CARD_NAME] }, run: otherRun, store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    await $.session.start(sessionStart)
+    const text = resultText(await $.tool.call({ tool: DISPATCH, task: 'T-1', repo: OTHER } as never))
+    expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
+      ['git', '-C', OTHER, 'fetch', '-q', 'origin', 'main'],
+      ['git', '-C', OTHER, 'worktree', 'add', '-q', '-b', BRANCH, WT, 'origin/main'],
+    ])
+    expect(w.runs.every(r => r.cwd === undefined || r.cwd === OTHER || r.cwd === ROOT)).toBe(true)
+    const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
+    expect(header).toContain(` gate=test repo=${OTHER} `)
+    expect(w.files.get(BRIEF)).toContain(`Work in ${WT} on ${BRANCH}; card ${CARDS}/${CARD_NAME}.`)
+    expect(text).toContain(`3. worktree ${WT} on ${BRANCH} from origin/main`)
+    expect(spawnCallOf(text)).toMatchObject({ prompt: `Your brief is the file ${BRIEF}. Read it whole, then follow it exactly.` })
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('the card the card tool wrote dispatches by its id alone (dispatch: true, then the dispatch tool with no repo)', { options: BRIEFS }, async ($, on) => {
+    const w = world(on, { files: otherFiles(), dirs: otherDirs(), run: otherRun, store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: CARD_TOOL, ...given, dispatch: true } as never))
+    expect(argvs(w).filter(a => a[0] === 'git' && a[3] !== 'rev-parse').map(a => a.slice(0, 5))).toEqual([
+      ['git', '-C', OTHER, 'fetch', '-q'],
+      ['git', '-C', OTHER, 'worktree', 'add'],
+    ])
+    expect(spawnCallOf(out)).toMatchObject({ description: 'OPS-1 standard sonnet' })
+    // the same task again, named by id only: the card is found where the tool wrote it, in /other's worktree
+    const again = resultText(await $.tool.call({ tool: DISPATCH, task: 'OPS-1', dryRun: true } as never))
+    expect(again).toContain(` gate=test repo=${OTHER} `)
+  })
+
+  test('a hand-back from that worker is verified in /other-T-1 against /other origin/main and its gate; the records stay the session\'s', { options: { ...BRIEFS, verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { files: { ...otherFiles(), [`${CARDS}/${CARD_NAME}`]: CARD }, dirs: { ...otherDirs(), [CARDS]: [CARD_NAME], [WT]: [] }, run: otherRun, agentId: 'agent-4', listAgents: true, store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: DISPATCH, task: 'T-1', repo: OTHER } as never))
+    await brainSpawn($, out)
+    expect(w.spawns[0]).toMatchObject({ cwd: WT })
+    // the mod's running list names the repo beside the task
+    const section = (await $.prompt.compose(composeInput(['Agent']))).sections.at(-1)?.text ?? ''
+    expect(section).toContain('running: T-1 [other]')
+    const before = w.runs.length
+    const REPORT = `[[report v=1 task=T-1 subtask=main branch=${BRANCH} pr=none sha=${HEAD} gate=pass red=none files=src/a.ts]]`
+    await $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
+    const verifying = w.runs.slice(before).map(r => r.argv)
+    // every git read of the verify is in the worktree; the merged check asks /other's origin/main; none is in the session root
+    expect(verifying.filter(a => a[0] === 'git').filter(a => a[2] !== WT && a[2] !== OTHER)).toEqual([])
+    expect(verifying.filter(a => a[0] === 'git' && a[2] === OTHER).map(a => a.slice(3, 5))).toEqual([['merge-base', '--is-ancestor']])
+    expect(verifying.some(a => a[0] === 'git' && a.includes('origin/main'))).toBe(true)
+    // the gate is /other's own detected gate, run in /other-T-1
+    const gate = w.runs.slice(before).find(r => r.argv[0] === 'npm')
+    expect(gate?.argv).toEqual(['npm', 'test'])
+    expect(gate?.cwd).toBe(WT)
+    const row = delivered(w)
+    expect(row).toContain('chassis-delegation: verdict=consistent task=T-1 attempt=1/2')
+    expect(row).toContain('claim files: held — files= matches the sha delta exactly')
+    // the attempt record's root is that repo; the ledger row goes to the session
+    expect(records(w, 'T-1')[0]).toMatchObject({ task: 'T-1', attempt: 1, verdict: 'consistent', root: OTHER })
+    expect(w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').toContain('"task":"T-1"')
+    expect(w.files.has(`${OTHER}/.delegation/ledger.jsonl`)).toBe(false)
+  })
+
+  test('the id alone finds a card on one of the session\'s boards for another repo when nothing remembered it, and the card\'s own repo: is the one used', { options: BRIEFS }, async ($, on) => {
+    const w = world(on, { files: { ...otherFiles(), [`${CARDS}/${CARD_NAME}`]: CARD }, dirs: { ...otherDirs(), [CARDS]: [CARD_NAME], [`${ROOT}/.delegation/cards`]: ['other'], '/third': [], '/third/.git': [] }, run: otherRun, store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('T-1'))).text)
+    expect(out).toContain(`1. card ${CARDS}/${CARD_NAME} (status queued, domain ops)`)
+    expect(out).toContain('repo: /other (config: none, gate: npm test)')
+    expect(argvs(w).filter(a => a[0] === 'git').map(a => a.slice(0, 5))).toEqual([
+      ['git', '-C', OTHER, 'fetch', '-q'],
+      ['git', '-C', OTHER, 'worktree', 'add'],
+    ])
+    // a dispatch that names another folder looks for the card on that folder's board, and says where
+    expect(resultText(await $.tool.call({ tool: DISPATCH, task: 'T-1', repo: '/third', dryRun: true } as never))).toContain(`no card folder at ${ROOT}/.delegation/cards/third`)
+  })
+
+  test('--verify on a task for another repo judges /other-T-1 at the sha, with /other\'s gate, and spawns nothing', { options: { ...BRIEFS, verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on, { files: { ...otherFiles(), [`${CARDS}/${CARD_NAME}`]: CARD }, dirs: { ...otherDirs(), [CARDS]: [CARD_NAME], [WT]: [] }, run: otherRun, store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    await $.session.start(sessionStart)
+    await $.tool.call({ tool: DISPATCH, task: 'T-1', repo: OTHER } as never)
+    const before = w.runs.length
+    const out = String((await $.command.run(commandInput(`T-1 --verify ${HEAD}`))).text)
+    expect(out).toContain(`/dispatch T-1 --verify ${HEAD}: no spawn — the verifier ran on worktree ${WT} at ${HEAD.slice(0, 7)} (base origin/main)`)
+    expect(out).toContain('chassis-delegation: verdict=consistent task=T-1 attempt=1/2')
+    const after = w.runs.slice(before).map(r => r.argv)
+    expect(after.filter(a => a[0] === 'git').filter(a => a[2] === ROOT)).toEqual([])
+    expect(w.runs.slice(before).find(r => r.argv[0] === 'npm')?.cwd).toBe(WT)
+    expect(w.spawns).toHaveLength(0)
+    expect(records(w, 'T-1').map(x => [x.attempt, x.kind, x.verdict, x.root])).toEqual([[1, 'verify', 'consistent', OTHER]])
+  })
+
+  test('the git guard refuses a commit or a push on /other main exactly as on the session root', async ($, on) => {
+    const branchOf = (argv: string[]) => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: argv[2] === OTHER ? 'main\n' : 'agent/ops/T-1\n' } : undefined)
+    const w = world(on, { run: branchOf })
+    const passed = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+    on('tool.call', { tool: 'Bash' }, passed)
+    expect((await $.tool.call({ tool: 'Bash', command: `git -C ${OTHER} commit -m x` } as never)).deny).toBe('chassis-delegation: no commit on main; branch first (git checkout -b agent/<domain>/<id>)')
+    expect((await $.tool.call({ tool: 'Bash', command: `cd ${OTHER} && git push` } as never)).deny).toContain('no push on main')
+    expect((await $.tool.call({ tool: 'Bash', command: `git -C ${WT} commit -m x` } as never)).deny).toBeUndefined()
+    expect((await $.tool.call({ tool: 'Bash', command: `git -C ${OTHER} push origin main` } as never)).deny).toContain('no push on main')
+    expect(w.runs.length).toBeGreaterThan(0)
+  })
+})

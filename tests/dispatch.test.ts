@@ -182,7 +182,7 @@ describe('command arguments', () => {
   })
   test('refusals', () => {
     expect(parseDispatchArgs('BE-101 --base HEAD~3').error).toBe('refused --base HEAD~3: use origin/main or a 7-40 character hex sha')
-    expect(parseDispatchArgs('').error).toBe('usage: /dispatch <TASK-ID> [--dry-run] [--base <origin/main|sha>] [--replay --base <sha>] [--scope <globs>] [--forbid <globs>] [--here] [--force-overlap] | /dispatch <TASK-ID> --verify <sha>')
+    expect(parseDispatchArgs('').error).toBe('usage: /dispatch <TASK-ID> [--dry-run] [--base <origin/main|sha>] [--replay --base <sha>] [--scope <globs>] [--forbid <globs>] [--here] [--repo <abs path>] [--force-overlap] | /dispatch <TASK-ID> --verify <sha>')
     expect(parseDispatchArgs('../etc').error).toBe('refused task id ../etc')
     expect(parseDispatchArgs('BE-101 --force').error).toBe('unknown option --force')
   })
@@ -439,5 +439,36 @@ describe('MOD-28: the leftover-marker scan', () => {
     expect([...TEMPLATE_FILES].sort()).toEqual(['brief.md', 'debrief.md', 'review.md'])
     expect(templatePath('/mods/cd/', 'brief.md')).toBe('/mods/cd/hooks/templates/brief.md')
     expect(templatePath('/mods/cd', 'review.md')).toBe('/mods/cd/hooks/templates/review.md')
+  })
+})
+
+describe('MOD-44: repo as a path on /dispatch and the tool', () => {
+  test('--repo <path> and --repo=<path> are carried as written; the tool\'s repo too', () => {
+    expect(parseDispatchArgs('T-1 --repo /Users/b/notes-app')).toMatchObject({ id: 'T-1', repo: '/Users/b/notes-app' })
+    expect(parseDispatchArgs('T-1 --dry-run --repo=~/notes-app')).toMatchObject({ id: 'T-1', dryRun: true, repo: '~/notes-app' })
+    expect('repo' in parseDispatchArgs('T-1')).toBe(false)
+    expect(dispatchLib.parseDispatchTool({ task: 'T-1', repo: '/Users/b/notes-app' })).toMatchObject({ id: 'T-1', repo: '/Users/b/notes-app' })
+  })
+  test('a repo with no value, with --here, with --replay or with --verify is refused', () => {
+    expect(parseDispatchArgs('T-1 --repo').error).toBe('--repo needs the absolute path of a git checkout')
+    expect(parseDispatchArgs('T-1 --repo --dry-run').error).toBe('--repo needs the absolute path of a git checkout')
+    expect(parseDispatchArgs('T-1 --repo /x --here').error).toBe(dispatchLib.REPO_NO_HERE)
+    expect(parseDispatchArgs('T-1 --repo /x --replay --base abcdef1').error).toBe(dispatchLib.REPO_NO_REPLAY)
+    expect(parseDispatchArgs('T-1 --repo /x --verify abcdef1').error).toBe(dispatchLib.VERIFY_ALONE)
+    expect(dispatchLib.parseDispatchTool({ task: 'T-1', repo: '/x', here: true }).error).toBe(dispatchLib.REPO_NO_HERE)
+    expect(dispatchLib.parseDispatchTool({ task: 'T-1', repo: '/x', verify: 'abcdef1' }).error).toBe(dispatchLib.VERIFY_ALONE)
+    expect(dispatchLib.parseDispatchTool({ task: 'T-1', repo: 3 }).error).toBe('dispatch: repo must be a string')
+    // the words keep their meaning: worktree is the default, here is --here, none is the card's mode
+    expect(parseDispatchArgs('T-1 --repo worktree')).toMatchObject({ id: 'T-1' })
+    expect('repo' in parseDispatchArgs('T-1 --repo worktree')).toBe(false)
+    expect(parseDispatchArgs('T-1 --repo here')).toMatchObject({ id: 'T-1', here: true })
+    expect(dispatchLib.parseDispatchTool({ task: 'T-1', repo: 'here' })).toMatchObject({ id: 'T-1', here: true })
+    expect(parseDispatchArgs('T-1 --repo none').error).toBe(dispatchLib.REPO_NONE)
+    expect(dispatchLib.parseDispatchTool({ task: 'T-1', repo: 'none' }).error).toBe(dispatchLib.REPO_NONE)
+  })
+  test('the header of a task for another repo carries repo=<path> after the gate, before spend and budget', () => {
+    const card = parseCard(FIXTURE_CARD) as dispatchLib.Card
+    const header = renderHeader({ card, tier: 'standard', alias: 'sonnet', budget: 2, spend: 6, repo: '/Users/b/notes-app' })
+    expect(header).toContain(' gate=G2,G8p repo=/Users/b/notes-app spend=6 budget=2-attempts')
   })
 })

@@ -237,3 +237,42 @@ describe('MOD-7: the two issue forms, for the configured issueRepo only', () => 
     no(['gh', 'pr', 'create', '--repo', 'owner/mod', '--title', 'T', '--body-file', BODY], A)
   })
 })
+
+describe('MOD-44: git -C <another repo> worktree add, for a task that names that repo only', () => {
+  const X = '/Users/b/acme-app'
+  const OTHER = '/Users/b/other'
+  const add = (dir: string, id: string, branchDomain = 'ops', path = `${dir}-${id}`) => ['git', '-C', dir, 'worktree', 'add', '-q', '-b', `agent/${branchDomain}/${id}`, path, 'origin/main']
+  const A: AllowConfig = { ...ALLOW, root: X, taskRepos: { 'T-1': { path: OTHER } } }
+  test('the task that names /other may cut its worktree from /other, beside it', () => {
+    ok(add(OTHER, 'T-1'), A)
+    ok(add(`${OTHER}/`, 'T-1', 'ops', `${OTHER}-T-1`), A)
+    ok(['git', '-C', OTHER, 'worktree', 'add', '-q', '-b', 'agent/ops/T-1', `${OTHER}-T-1`, 'a1b2c3d4'], A)
+  })
+  test('another task, another folder, another path or branch shape is refused', () => {
+    no(add(OTHER, 'T-2'), A)
+    no(add('/Users/b/elsewhere', 'T-1'), A)
+    no(add(OTHER, 'T-1', 'ops', '/Users/b/elsewhere-T-1'), A)
+    no(add(OTHER, 'T-1', 'ops', `${OTHER}-T-1/inner`), A)
+    no(add(OTHER, 'T-1', 'nodomain'), A)
+    no(add(OTHER, 'T-1'), { ...ALLOW, root: X })
+  })
+  test('the session own repo still takes its tasks, and the folder it names is the only other one', () => {
+    ok(add(X, 'T-2'), A)
+    ok(add(X, 'T-1'), { ...ALLOW, root: X })
+    no(add(X, 'T-1', 'ops', `${OTHER}-T-1`), A)
+  })
+  test('the repo own domains, from its config, name the branch', () => {
+    const B: AllowConfig = { ...ALLOW, root: X, taskRepos: { 'T-1': { path: OTHER, domains: ['web'] } } }
+    ok(add(OTHER, 'T-1', 'web'), B)
+    no(add(OTHER, 'T-1', 'ops'), B)
+  })
+  test('the reads and the fetch stay as they were for any folder', () => {
+    ok(['git', '-C', OTHER, 'fetch', '-q', 'origin', 'main'], A)
+    ok(['git', '-C', `${OTHER}-T-1`, 'diff', '--name-status', '-M', 'abc', 'def'], A)
+    ok(['git', '-C', `${OTHER}-T-1`, 'merge-base', 'origin/main', 'abc'], A)
+    ok(['git', '-C', `${OTHER}-T-1`, 'status', '--porcelain'], A)
+    ok(['git', '-C', OTHER, 'log', '-1', '--format=%H'], A)
+    no(['git', '-C', OTHER, 'push', 'origin', 'main'], A)
+    no(['git', '-C', OTHER, 'commit', '-m', 'x'], A)
+  })
+})

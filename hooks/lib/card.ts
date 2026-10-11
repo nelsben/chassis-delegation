@@ -9,6 +9,7 @@
 import { RESOURCE_NAME, scopeOverlap } from './brief'
 import { dollars, spendCeiling } from './cost'
 import { scopeLooksProse, yamlScalar } from './dispatch'
+import { gateCommandTemplates } from './gates'
 import { matchGlob } from './norepo'
 import { tierOf, type Tier } from './tier'
 import { globMatches } from './verify-native'
@@ -23,6 +24,8 @@ export type CardCtx = {
   spendByTier: Readonly<Record<string, number>>
   /** repo=here: the repo has no origin/main, so the worker shares the checkout (the card says `repo: here`). */
   here?: boolean
+  /** MOD-44: the checked absolute path of the other local repo this card is for; `domains`, `gateIds` and `spendByTier` are then that repo's. */
+  repoPath?: string
 }
 
 /** MOD-22: where the worker runs: in its own worktree (the default), in the session's checkout, or with no repo at all. */
@@ -43,8 +46,8 @@ export type NewCard = {
   redTest: string
   budget: number
   spend: number
-  /** MOD-22: the mode the card was written for. */
-  repo: CardRepo
+  /** MOD-22: the mode the card was written for; MOD-44: or the absolute path of another local repo. */
+  repo: CardRepo | string
   /** MOD-23: the exclusive resources the card holds while it runs. */
   resources: string[]
 }
@@ -61,11 +64,11 @@ export const CARD_TOOL = {
       doneWhen: { type: 'array', items: { type: 'string' }, description: 'Checkable statements: what is true when it is done' },
       scope: { type: 'array', items: { type: 'string' }, description: 'Globs or paths the worker may change, e.g. ["src/feature/**", "tests/test_feature.py"]; an absolute path or glob (a leading ~ is the home folder) names a folder outside the repo, and the first one is the output folder. Not prose. In a repo path * crosses folders (artifacts/*.html also matches artifacts/kit/index.html), and no repo glob stays in one folder, so list the files. Required unless lanes carry their own; given with lanes, it is refused' },
       forbid: { type: 'array', items: { type: 'string' }, description: 'Globs the worker must not touch (default none); absolute paths and globs too. In a repo path * crosses folders (artifacts/*.html also matches artifacts/kit/index.html), and no repo glob stays in one folder, so list the files' },
-      repo: { type: 'string', description: 'worktree (default): the worker gets its own worktree; here: it works in this checkout; none: no repo at all. For research or extraction with outputs outside the repo use none or here, with scope = the output folder' },
+      repo: { type: 'string', description: "worktree (default): the worker gets its own worktree; here: it works in this checkout; none: no repo at all. For research or extraction with outputs outside the repo use none or here, with scope = the output folder. An absolute path (the folder holding .git of another local repo, ~ allowed) delegates into that repo: the card goes in its card folder (or, with no .chassis-delegation.json there, under this session's .delegation/cards/<its folder name>/), the worktree is cut from its origin/main beside it, and the gate map, domains and spend are its own (with no config, its detected test command; gate may then be a one-off command such as \"npm run build\")" },
       redTest: { type: 'string', description: 'The command or test that fails now and passes after, or "none" for docs-only work' },
       tier: { type: 'string', description: 'economy, standard (default), frontier or premium' },
       domain: { type: 'string', description: 'One of the repo domains (default: ops when the repo has it, else the first)' },
-      gate: { type: 'string', description: 'Gate id(s) from gateMap, comma-separated (default: the first)' },
+      gate: { type: 'string', description: 'Gate id(s) from gateMap, comma-separated (default: the first); for a repo given as a path also one command (words only, no comma), e.g. "npm run build"' },
       budget: { type: 'number', description: 'Attempts before the task is handed back (default 2)' },
       spend: { type: 'number', description: "Dollars one attempt may spend; 0 = no ceiling (default: the tier's)" },
       resources: { type: 'array', items: { type: 'string' }, description: 'Exclusive resources the worker holds while it runs, e.g. ["blender-live"] (one live app with one open file): one plain word each. A card that names a resource a running worker holds waits in the queue until that worker hands back' },
@@ -161,9 +164,12 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   if ('error' in resources) return resources
 
   // MOD-22: no repo given keeps the old rule (a repo with no origin/main works in the checkout)
+  // MOD-44: a path was resolved by the caller (ctx.repoPath); one that was not is refused here
   const repoIn = input.repo === undefined ? undefined : typeof input.repo === 'string' ? text(input.repo) : String(input.repo)
-  if (repoIn !== undefined && !(CARD_REPOS as readonly string[]).includes(repoIn)) return { error: `repo must be worktree, here or none (got "${repoIn}")` }
-  const repo: CardRepo = (repoIn as CardRepo | undefined) ?? (ctx.here ? 'here' : 'worktree')
+  if (repoIn !== undefined && ctx.repoPath === undefined && !(CARD_REPOS as readonly string[]).includes(repoIn)) {
+    return { error: `repo must be worktree, here, none or the absolute path of a git checkout (got "${repoIn}")` }
+  }
+  const repo: CardRepo | string = ctx.repoPath ?? (repoIn as CardRepo | undefined) ?? (ctx.here ? 'here' : 'worktree')
 
   const redTest = text(input.redTest)
   if (redTest === '') return { error: 'redTest is required: the command or test that fails now and passes after, or "none" for docs-only work' }
@@ -175,10 +181,23 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   const domain = input.domain === undefined ? (ctx.domains.includes('ops') ? 'ops' : (ctx.domains[0] ?? 'ops')) : text(input.domain)
   if (!ctx.domains.includes(domain)) return { error: `domain ${domain} is not one of ${ctx.domains.join(', ')}` }
 
-  if (ctx.gateIds.length === 0) return { error: 'gateMap has no gate; run /delegation setup, or add a gateMap entry in .chassis-delegation.json' }
-  const gate = input.gate === undefined ? [ctx.gateIds[0] as string] : text(input.gate).split(/\s*,\s*/).filter(Boolean)
-  if (gate.length === 0) return { error: `gate is empty; the ids are ${ctx.gateIds.join(', ')}` }
-  for (const g of gate) if (!ctx.gateIds.includes(g)) return { error: `gate ${g} is not in gateMap; the ids are ${ctx.gateIds.join(', ')}` }
+  // MOD-44: for another repo, one command (words, no comma) is a gate of its own, as the person would type it
+  const oneOff = ctx.repoPath !== undefined && typeof input.gate === 'string' && text(input.gate) !== '' && !/^[A-Za-z0-9_.-]+(\s*,\s*[A-Za-z0-9_.-]+)*$/.test(text(input.gate))
+  if (ctx.gateIds.length === 0 && !oneOff) {
+    return { error: ctx.repoPath !== undefined ? `${ctx.repoPath} has no gate: no gateMap in its .chassis-delegation.json and no test command found (package.json scripts.test, pytest, cargo or go); name one in gate, e.g. "npm run build"` : 'gateMap has no gate; run /delegation setup, or add a gateMap entry in .chassis-delegation.json' }
+  }
+  let gate: string[]
+  if (oneOff) {
+    const cmd = text(input.gate)
+    if (cmd.includes(',')) return { error: 'a one-off gate command cannot hold a comma; name one command, or gate ids from gateMap' }
+    const t = gateCommandTemplates(cmd)
+    if ('reason' in t) return { error: `gate command refused: ${t.reason}` }
+    gate = [cmd]
+  } else {
+    gate = input.gate === undefined ? [ctx.gateIds[0] as string] : text(input.gate).split(/\s*,\s*/).filter(Boolean)
+    if (gate.length === 0) return { error: `gate is empty; the ids are ${ctx.gateIds.join(', ')}` }
+    for (const g of gate) if (!ctx.gateIds.includes(g)) return { error: `gate ${g} is not in gateMap; the ids are ${ctx.gateIds.join(', ')}` }
+  }
 
   const budget = input.budget === undefined ? 2 : Number(input.budget)
   if (!Number.isInteger(budget) || budget < 1) return { error: 'budget must be a whole number of attempts, 1 or more' }
@@ -261,7 +280,7 @@ export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): N
 }
 
 /** `OPS-1 · standard → sonnet · scope a, b · gate test · red: cmd · 2 attempts · $6 ceiling`; a card that is not a worktree card names its repo after the scope (`… · repo none · gate test …`). */
-export const cardSummary = (c: Pick<NewCard, 'id' | 'tier' | 'scope' | 'gate' | 'redTest' | 'budget' | 'spend'> & { repo?: CardRepo; resources?: readonly string[] }, alias: string): string =>
+export const cardSummary = (c: Pick<NewCard, 'id' | 'tier' | 'scope' | 'gate' | 'redTest' | 'budget' | 'spend'> & { repo?: CardRepo | string; resources?: readonly string[] }, alias: string): string =>
   [c.id, `${c.tier} → ${alias}`, `scope ${c.scope.join(', ')}`, ...(c.repo && c.repo !== 'worktree' ? [`repo ${c.repo}`] : []), ...(c.resources && c.resources.length > 0 ? [`resources ${c.resources.join(', ')}`] : []), `gate ${c.gate.join(', ')}`, `red: ${c.redTest}`, `${c.budget} attempts`, c.spend > 0 ? `${dollars(c.spend)} ceiling` : 'no ceiling'].join(' · ')
 
 /** The closing line of the dry-run answer; MOD-23: with lanes, every id. */

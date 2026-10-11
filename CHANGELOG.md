@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **The brain can delegate into another local git repo (MOD-44, public issue 95).** `card` and
+  `dispatch` (the tools and `/dispatch --repo <path>`) take `repo` as the absolute path of a git
+  checkout (the folder holding `.git`; `~` expanded); a relative path, a folder with no `.git` and the
+  session's own repo are refused in one line naming why, and `worktree`, `here` and `none` are
+  unchanged. For such a task the card is written to that repo's card folder when it has a
+  `.chassis-delegation.json`, else under the session's `.delegation/cards/<repo folder name>/`; the
+  brief header carries `repo=<abs path>`; the base is that repo's `origin/main` (fetched there) and the
+  worktree is `<repo>-<ID>` beside it; the verifier, the scope delta, the red file and the gate run in
+  it; the attempt record's `root` is that repo; the ledger and verdict rows stay with the session. That
+  repo's config supplies the gate map, domains, `cardDir` and spend; with none, the gate is its
+  detected test command (setup's `detectGate`) and the card may name a one-off gate command. The dry
+  run prints `repo: <path> (config: its own | none, gate: <cmd>)`. The allowlist accepts
+  `git -C <path> worktree add` for the task that names that path and no other, and the merged check
+  asks that repo's `origin/main`. The scheduler, the dashboard and `/delegation` show the repo folder
+  name beside the task (`T-1 [notes-app]`). README: Delegating into another repo. `/delegation init`
+  taking a path is a separate card.
+
 ## 0.8.3 — 2026-10-11
 
 - **A verdict wake re-checks whether the task is merged when it is about to be delivered, not

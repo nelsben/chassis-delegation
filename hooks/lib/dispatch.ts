@@ -26,7 +26,7 @@ export type Card = {
   budget?: string
   /** GH-106: the card's `spend:` ceiling in dollars, as written. */
   spend?: string
-  /** GH-16: `repo: here` dispatches into the session's own checkout (no worktree). MOD-22: `repo: none` has no repo at all. */
+  /** GH-16: `repo: here` dispatches into the session's own checkout (no worktree). MOD-22: `repo: none` has no repo at all. MOD-44: an absolute path is another local checkout. */
   repo?: string
   /** MOD-22: the card's output folder, when it names one; else the first absolute scope entry's folder. */
   outdir?: string
@@ -39,9 +39,14 @@ export type Card = {
   fields: Record<string, FieldValue>
 }
 
-export const USAGE = 'usage: /dispatch <TASK-ID> [--dry-run] [--base <origin/main|sha>] [--replay --base <sha>] [--scope <globs>] [--forbid <globs>] [--here] [--force-overlap] | /dispatch <TASK-ID> --verify <sha>'
+export const USAGE = 'usage: /dispatch <TASK-ID> [--dry-run] [--base <origin/main|sha>] [--replay --base <sha>] [--scope <globs>] [--forbid <globs>] [--here] [--repo <abs path>] [--force-overlap] | /dispatch <TASK-ID> --verify <sha>'
 export const REPLAY_NEEDS_BASE = 'refused --replay without --base <sha>: a replay reads the card at the commit where it was still queued'
 export const HERE_NO_REPLAY = 'refused --here with --replay: a replay works in its own worktree at the base commit'
+/** MOD-44: another repo's task has no replay (a replay reads the card at a commit of the session's own repo). */
+export const REPO_NO_REPLAY = 'refused --repo with --replay: a replay reads the card at a commit of the session repo'
+export const REPO_NO_HERE = 'refused --repo with --here: a task for another repo works in its own worktree there'
+/** MOD-44: `--repo none` is a card's mode, not a dispatch option. */
+export const REPO_NONE = 'refused --repo none: repo none is a card\'s mode (write repo: none on the card); --repo takes the absolute path of a git checkout'
 /** GH-104: `--verify <sha>` judges the work already in the task's tree; it takes no other option. */
 export const VERIFY_ALONE = 'refused --verify with another option: /dispatch <TASK-ID> --verify <sha> takes the task id and the sha alone'
 export const verifyShaRefusal = (sha: string): string => `refused --verify ${sha || '(empty)'}: name the branch head as a 7-40 character hex sha`
@@ -423,7 +428,7 @@ export const TEMPLATE_FILES = ['brief.md', 'review.md', 'debrief.md'] as const
 export const templatePath = (pluginRoot: string, name: string): string => `${pluginRoot.replace(/\/+$/, '')}/hooks/templates/${name}`
 
 export type DispatchArgs =
-  | { id: string; dryRun: boolean; base: string; replay?: true; scope?: string[]; forbid?: string[]; here?: true; forceOverlap?: true; verify?: string; error?: undefined }
+  | { id: string; dryRun: boolean; base: string; replay?: true; scope?: string[]; forbid?: string[]; here?: true; /** MOD-44: the absolute path of another local checkout this task is for, as written (the caller checks it). */ repo?: string; forceOverlap?: true; verify?: string; error?: undefined }
   | { error: string; id?: undefined }
 
 /** `a/**,b.ts,` → ['a/**', 'b.ts']; an empty list, a quote or `]]` (which would break the header) is refused. */
@@ -448,6 +453,7 @@ export function parseDispatchArgs(args: string): DispatchArgs {
   let here = false
   let forceOverlap = false
   let verify: string | undefined
+  let repo: string | undefined
   let others = 0
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i] as string
@@ -462,6 +468,14 @@ export function parseDispatchArgs(args: string): DispatchArgs {
     else if (t === '--replay') replay = true
     else if (t === '--here') here = true
     else if (t === '--force-overlap') forceOverlap = true
+    else if (t === '--repo' || t.startsWith('--repo=')) {
+      const value = t === '--repo' ? tokens[++i] ?? '' : t.slice('--repo='.length)
+      if (value === '' || value.startsWith('--')) return { error: '--repo needs the absolute path of a git checkout' }
+      // the words keep their meaning: worktree is the default, here is --here
+      if (value === 'none') return { error: REPO_NONE }
+      if (value === 'here') here = true
+      else if (value !== 'worktree') repo = value
+    }
     else if (t === '--scope' || t.startsWith('--scope=') || t === '--forbid' || t.startsWith('--forbid=')) {
       const flag = t.startsWith('--scope') ? '--scope' : '--forbid'
       const raw = t === flag ? tokens[++i] : t.slice(flag.length + 1)
@@ -482,6 +496,8 @@ export function parseDispatchArgs(args: string): DispatchArgs {
   if (verify !== undefined) return others > 0 ? { error: VERIFY_ALONE } : { id, dryRun: false, base: 'origin/main', verify }
   if (replay && !isSha(base)) return { error: REPLAY_NEEDS_BASE }
   if (replay && here) return { error: HERE_NO_REPLAY }
+  if (repo !== undefined && replay) return { error: REPO_NO_REPLAY }
+  if (repo !== undefined && here) return { error: REPO_NO_HERE }
   return {
     id,
     dryRun,
@@ -490,6 +506,7 @@ export function parseDispatchArgs(args: string): DispatchArgs {
     ...(scope ? { scope } : {}),
     ...(forbid ? { forbid } : {}),
     ...(here ? { here: true as const } : {}),
+    ...(repo !== undefined ? { repo } : {}),
     ...(forceOverlap ? { forceOverlap: true as const } : {}),
   }
 }
@@ -582,7 +599,7 @@ export const spawnBlock = (call: SpawnCall): string => ['spawn: Agent', '```json
 export const DISPATCH_TOOL = {
   name: 'dispatch',
   description:
-    "Prepare a chassis task card for a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout) and picks the tier, then returns the Agent call to make (a spawn block of JSON): the worker starts when you make it, and the mod records and verifies it. When every worker slot is taken it says queued, and tells you when a slot frees. Pass scope/forbid globs when the card's are prose. With verify (a sha), spawns nothing: runs the verifier on the work already in the task's worktree.",
+    "Prepare a chassis task card for a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout) and picks the tier, then returns the Agent call to make (a spawn block of JSON): the worker starts when you make it, and the mod records and verifies it. When every worker slot is taken it says queued, and tells you when a slot frees. Pass scope/forbid globs when the card's are prose. Pass repo, the absolute path of another local git checkout, for a task that works in that repo (a card written by the card tool with repo set to a path is found by its id alone). With verify (a sha), spawns nothing: runs the verifier on the work already in the task's worktree.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -593,6 +610,7 @@ export const DISPATCH_TOOL = {
       base: { type: 'string', description: 'origin/main (default) or a 7-40 hex sha to cut the worktree from' },
       dryRun: { type: 'boolean', description: 'Write the brief and print its header; no worktree, no spawn block' },
       here: { type: 'boolean', description: "repo=here: no worktree and no fetch; the worker shares the session's own checkout" },
+      repo: { type: 'string', description: "The absolute path of another local git checkout this task is for (the folder holding .git): the worktree is cut from that repo's origin/main beside it, and the verifier, the gate and the config are that repo's. Leave it out for a task of this repo; a card written with repo set to a path remembers it" },
       forceOverlap: { type: 'boolean', description: "repo=here: dispatch even when the card's scope overlaps an in-flight card's" },
       verify: { type: 'string', description: "A 7-40 hex sha, the branch head: run the verifier on the work in the task's worktree with a synthetic report naming the delta; no spawn. Takes no other option" },
     },
@@ -615,7 +633,7 @@ export function parseDispatchTool(input: Record<string, unknown>): DispatchArgs 
   for (const k of ['dryRun', 'replay', 'here', 'forceOverlap'] as const) {
     if (input[k] !== undefined && typeof input[k] !== 'boolean') return { error: `dispatch: ${k} must be a boolean` }
   }
-  for (const k of ['scope', 'forbid', 'base', 'verify'] as const) {
+  for (const k of ['scope', 'forbid', 'base', 'verify', 'repo'] as const) {
     if (input[k] !== undefined && typeof input[k] !== 'string') return { error: `dispatch: ${k} must be a string` }
   }
   const id = task.trim()
@@ -623,7 +641,7 @@ export function parseDispatchTool(input: Record<string, unknown>): DispatchArgs 
   if (input.verify !== undefined) {
     const sha = (input.verify as string).trim()
     if (!isSha(sha)) return { error: verifyShaRefusal(sha) }
-    const others = (['dryRun', 'replay', 'here', 'forceOverlap', 'scope', 'forbid', 'base'] as const).some(k => input[k] !== undefined && input[k] !== false)
+    const others = (['dryRun', 'replay', 'here', 'forceOverlap', 'scope', 'forbid', 'base', 'repo'] as const).some(k => input[k] !== undefined && input[k] !== false)
     return others ? { error: VERIFY_ALONE } : { id, dryRun: false, base: 'origin/main', verify: sha }
   }
   let base = 'origin/main'
@@ -642,9 +660,15 @@ export function parseDispatchTool(input: Record<string, unknown>): DispatchArgs 
     else forbid = list
   }
   const replay = input.replay === true
-  const here = input.here === true
+  const repoIn = typeof input.repo === 'string' && input.repo.trim() !== '' ? input.repo.trim() : undefined
+  if (repoIn === 'none') return { error: REPO_NONE }
+  // MOD-44: the words keep their meaning (worktree is the default, here is `here`); anything else is a path, checked by the caller
+  const here = input.here === true || repoIn === 'here'
+  const repo = repoIn === 'here' || repoIn === 'worktree' ? undefined : repoIn
   if (replay && !isSha(base)) return { error: REPLAY_NEEDS_BASE }
   if (replay && here) return { error: HERE_NO_REPLAY }
+  if (repo !== undefined && replay) return { error: REPO_NO_REPLAY }
+  if (repo !== undefined && here) return { error: REPO_NO_HERE }
   return {
     id,
     dryRun: input.dryRun === true,
@@ -653,6 +677,7 @@ export function parseDispatchTool(input: Record<string, unknown>): DispatchArgs 
     ...(scope ? { scope } : {}),
     ...(forbid ? { forbid } : {}),
     ...(here ? { here: true as const } : {}),
+    ...(repo !== undefined ? { repo } : {}),
     ...(input.forceOverlap === true ? { forceOverlap: true as const } : {}),
   }
 }

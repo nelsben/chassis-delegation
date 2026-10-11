@@ -8,7 +8,7 @@ import { taskLabel } from './attempts'
 import { base64, elapsed } from './dashboard'
 import { currentVerdict, isConsistent, LEGACY_VERDICT } from './legacy'
 import { brainSummary, brainTileText, type AdHoc, type BrainRecord, type BrainSummary } from './brain'
-import { worktreePath } from './paths'
+import { withRepoName, worktreePath } from './paths'
 
 // ---- the spend series -------------------------------------------------------------
 
@@ -178,7 +178,7 @@ export type WorktreeInput = {
   /** This session's attempt records, all tasks. */
   records: readonly AttemptRecord[]
   /** Queued spawns, front first. */
-  queue: readonly { task: string; subtask?: string }[]
+  queue: readonly { task: string; subtask?: string; /** MOD-44: the other local repo the queued task is for. */ repo?: string }[]
   /** Task label to the ms since the epoch its live worker started or resumed. */
   liveAt: Readonly<Record<string, number>>
   now: number
@@ -221,6 +221,7 @@ export function worktreeRows(input: WorktreeInput): WorktreeRow[] {
     byLabel.set(label, [...(byLabel.get(label) ?? []), r])
   }
   const queued = input.queue.map(q => taskLabel(q.task, q.subtask ?? 'main'))
+  const queuedRepo = new Map(input.queue.filter(q => q.repo !== undefined).map(q => [taskLabel(q.task, q.subtask ?? 'main'), q.repo as string]))
   const rows: WorktreeRow[] = []
   const seen = new Set<string>()
   const labels = [...byLabel.keys(), ...queued.filter(l => !byLabel.has(l))]
@@ -256,7 +257,8 @@ export function worktreeRows(input: WorktreeInput): WorktreeRow[] {
     const waiting = kind === 'queued' ? input.waits?.[label] : undefined
     const resource = held.length > 0 ? held.join(', ') : waiting ? `waits ${waiting.resource}` : undefined
     rows.push({
-      task: label,
+      // MOD-44: a task for another local repo shows that repo's folder name beside it
+      task: withRepoName(label, latest?.root ?? queuedRepo.get(label), input.root),
       family: latest ? recordFamily(latest) : 'other',
       model: latest ? (resolved ?? latest.alias) : '–',
       state,

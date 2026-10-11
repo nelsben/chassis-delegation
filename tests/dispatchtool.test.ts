@@ -6,7 +6,7 @@ describe('the dispatch tool (2A)', () => {
     expect(DISPATCH_TOOL.name).toBe('dispatch')
     expect(DISPATCH_TOOL_NAME).toBe('mcp__chassis-delegation__dispatch')
     expect(DISPATCH_TOOL.description).toBe(
-      "Prepare a chassis task card for a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout) and picks the tier, then returns the Agent call to make (a spawn block of JSON): the worker starts when you make it, and the mod records and verifies it. When every worker slot is taken it says queued, and tells you when a slot frees. Pass scope/forbid globs when the card's are prose. With verify (a sha), spawns nothing: runs the verifier on the work already in the task's worktree.",
+      "Prepare a chassis task card for a worker: writes the brief from the card, cuts the worktree (or, with here, shares the session's own checkout) and picks the tier, then returns the Agent call to make (a spawn block of JSON): the worker starts when you make it, and the mod records and verifies it. When every worker slot is taken it says queued, and tells you when a slot frees. Pass scope/forbid globs when the card's are prose. Pass repo, the absolute path of another local git checkout, for a task that works in that repo (a card written by the card tool with repo set to a path is found by its id alone). With verify (a sha), spawns nothing: runs the verifier on the work already in the task's worktree.",
     )
     expect(DISPATCH_TOOL.inputSchema).toEqual({
       type: 'object',
@@ -18,6 +18,7 @@ describe('the dispatch tool (2A)', () => {
         base: { type: 'string', description: 'origin/main (default) or a 7-40 hex sha to cut the worktree from' },
         dryRun: { type: 'boolean', description: 'Write the brief and print its header; no worktree, no spawn block' },
         here: { type: 'boolean', description: "repo=here: no worktree and no fetch; the worker shares the session's own checkout" },
+        repo: { type: 'string', description: "The absolute path of another local git checkout this task is for (the folder holding .git): the worktree is cut from that repo's origin/main beside it, and the verifier, the gate and the config are that repo's. Leave it out for a task of this repo; a card written with repo set to a path remembers it" },
         forceOverlap: { type: 'boolean', description: "repo=here: dispatch even when the card's scope overlaps an in-flight card's" },
         verify: { type: 'string', description: "A 7-40 hex sha, the branch head: run the verifier on the work in the task's worktree with a synthetic report naming the delta; no spawn. Takes no other option" },
       },

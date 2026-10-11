@@ -502,10 +502,10 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/delegation update` | you type it | brings the loaded copy of the mod to origin/main (fast-forward only), migrates this repo's config and says whether the session reloaded or needs a restart (see [Upgrading](#upgrading)) |
 | `/delegation debrief` | you type it | runs the background debrief now and ends with scrubbed findings about the mod, ready to post (see [The debrief now](#the-debrief-now)) |
 | `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
-| `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
+| `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--repo <abs path>\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool; the model then makes the Agent call its result ends with |
-| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test (and `repo`: `none` or `here` for research or extraction with outputs outside the repo, see [Research cards](#research-cards); `resources` for a live app only one worker may use, and `lanes` to write several research cards at once, see [Exclusive resources and fan-out](#exclusive-resources-and-fan-out)); it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
+| `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test (and `repo`: `none` or `here` for research or extraction with outputs outside the repo, see [Research cards](#research-cards), or the absolute path of another local checkout, see [Delegating into another repo](#delegating-into-another-repo); `resources` for a live app only one worker may use, and `lanes` to write several research cards at once, see [Exclusive resources and fan-out](#exclusive-resources-and-fan-out)); it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool |
 | `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (no input) |
 
@@ -673,7 +673,7 @@ fix when a field is wrong, writing nothing. You can still write one by hand. `<I
     gate: test                  # ids in gateMap, comma-separated
     budget: 2-attempts          # spawns + resumes before it comes back to you
     spend: 4                    # optional: dollars one attempt may spend (else spendByTier; 0 = no ceiling)
-    repo: here                  # optional: here = no worktree, the worker shares this checkout (see repo=here); none = no repo at all (see Research cards)
+    repo: here                  # optional: here = no worktree, the worker shares this checkout (see repo=here); none = no repo at all (see Research cards); an absolute path = another local repo (see Delegating into another repo)
     outdir: /out/hair           # optional: the output folder outside the repo; default the folder of the first absolute scope entry
     scratch: /tmp/hair-scratch  # optional: where the worker puts helper files; default <system temp>/chassis-delegation/<ID>
     resources: [blender-live]   # optional: exclusive resources the worker holds while it runs; a card naming one a running worker holds waits in the queue (see Exclusive resources)
@@ -795,7 +795,7 @@ refused: the verifier marks the scope claim `unchecked` (add `scope_globs=` to
 check it), checks every other claim, and the verdict is `unverified` at worst.
 Only a brief with no `scope=` at all is refused. Other header fields are optional too:
 
-- `repo=none` marks a task with no git repo, and `repo=<dir>` names the folder to verify; a `repo: none` card dispatches with no worktree, no fetch and no git (see [Research cards](#research-cards));
+- `repo=none` marks a task with no git repo; `repo=<abs path>` (MOD-44) names the other local git checkout the task is for, and its worktree is the sibling `<path>-<ID>` (see [Delegating into another repo](#delegating-into-another-repo)); an older `repo=<dir>` with no `<dir>-<ID>` beside it still names the tree to verify. A `repo: none` card dispatches with no worktree, no fetch and no git (see [Research cards](#research-cards));
 - `outdir=<abs>` is the card's output folder, outside the repo: the card's `outdir:`, else the folder of its first absolute scope entry. A gate command may name it as `{outdir}`, and a relative `artefacts=` path is read against it. `scratch=<abs>` is where the worker puts helper files (the card's `scratch:`, else `<system temp>/chassis-delegation/<ID>`), never in the repo; the brief template says so. `scratch=` is written whenever there is an `outdir=`, the card is `repo: none` or `repo: here`, or it names a scratch folder, and neither is written for a plain worktree card, so its header is the one it always was;
 - `resources=<a,b>` (MOD-23) names the exclusive resources the task holds while its worker runs: free-form words such as `blender-live` (letters, digits, `.` `_` `:` `-`). A spawn of a brief that names a resource another running worker holds is queued, not started (see [Exclusive resources and fan-out](#exclusive-resources-and-fan-out)). Absent, the brief holds nothing and is held up by nothing;
 - `repo=here` marks a task worked in the session's own checkout, no worktree (see [repo=here](#repohere-the-main-checkout));
@@ -1286,6 +1286,53 @@ words, not text, so a heredoc body that mentions `git commit` never triggers
 it. It sees every worker as well as the brain: a worker is the brain's own Agent
 call (MOD-12), so the engine runs the mod's `tool.call` hook for the worker's
 Bash calls, and a repo=here worker on `main` cannot commit there.
+
+### Delegating into another repo
+
+A brain rooted in one repo is sometimes asked to build something in a sibling: the first version of a
+new project, with its own `origin/main`, its own gates (`npm run build`, `npm test`) and no
+`.chassis-delegation.json`. Give `repo` as the absolute path of that git checkout (the folder holding
+`.git`; `~` is expanded) on the `card` tool, on the `dispatch` tool (`repo`) or on `/dispatch`
+(`--repo <path>`), or write `repo: /path/to/checkout` in a card. For that task every place the mod
+touches a repo uses that path instead of the session root:
+
+- **The card** is written to that repo's card folder when it has a `.chassis-delegation.json` (its
+  `cardDir`), else under this session's own `.delegation/cards/<repo folder name>/`, so another
+  project's work never lands on this project's board. Ids stay unique across both boards. The tool
+  remembers the repo for the id, so `dispatch` with the id alone finds the card.
+- **The base and the worktree.** `git -C <path> fetch -q origin main`, then the worktree is cut from
+  that repo's `origin/main` beside it: `<path>-<ID>` on `agent/<domain>/<ID>`. The brief header carries
+  `repo=<path>`; the brief itself, the ledger row and the verdict row stay with the session.
+- **The verifier, the scope delta, the red file and the gate** run in that worktree, against that
+  repo's `origin/main`. The attempt record's `root` (MOD-37) is that repo. The merged check that retires
+  an owed row asks that repo's `origin/main`.
+- **Its config.** The repo's own `.chassis-delegation.json` supplies the gate map, domains, `cardDir`
+  and spend when it exists. When it does not, the gate is the repo's own detected gate, the one
+  `/delegation setup` would write (`package.json` `scripts.test`, else pytest, cargo or go test), as the
+  gate id `test`; the card tool's `gate` may also be one command written out (`"npm run build"`: words
+  only, no comma, under the gate rules). The dry run prints
+  `repo: <path> (config: its own | none, gate: <cmd>)`, and the worker's brief names the command.
+- **The allowlist** accepts the same git forms with `-C` equal to the task's repo path, for a task that
+  names it and for no other (`worktree add` only for that task id, that path, that repo's domains). The
+  git guard refuses a worker's commit or push on that repo's `main` or `master` exactly as for the
+  session root.
+- **The scheduler, the dashboard and `/delegation`** show the repo folder name beside such a task:
+  `T-1 [notes-app]`.
+
+Refused in one line, naming why: a path that is not absolute (`repo ../notes-app is not an absolute
+path`), the session's own repo (leave `repo` unset), a folder with no `.git`, and a path with characters
+a git argument should not carry. `worktree`, `here` and `none` are unchanged. Not in this card:
+`/delegation init` taking a path, and `--replay` for another repo.
+
+An example, with the session rooted in `/Users/you/api-server` and a new sibling `/Users/you/notes-app`:
+
+    You: build the first version of notes-app next door: an add and a list command.
+    Claude calls card { repo: "/Users/you/notes-app", title: "notes add and notes list work",
+                        scope: ["src/**", "tests/**"], redTest: "npm test", ... }
+      wrote /Users/you/api-server/.delegation/cards/notes-app/OPS-1-notes-add-and-notes-list.md
+      repo: /Users/you/notes-app (config: none, gate: npm test)
+    You: go.   Claude calls dispatch { task: "OPS-1" }
+      3. worktree /Users/you/notes-app-OPS-1 on agent/ops/OPS-1 from origin/main
 
 ### Research cards
 
@@ -1937,6 +1984,9 @@ says `chassis-delegation: refused argv [...] (<reason>)`. The list, verbatim:
                                          <worktree>: <root>-<id>[-replay], or
                                          <worktreeRoot>/<repo name>-<id>[-replay];
                                          the literal -replay suffix on both or neither)
+    git -C <task repo> worktree add -q -b agent/<domain>/<id> <task repo>-<id> <origin/main|7-40 hex sha>
+                                        (MOD-44: <task repo> is the absolute path task <id> names as its repo;
+                                         <domain>: that repo's own domains; with the session root known, no other -C passes)
     git -C <root> ls-tree --name-only <sha> agents/tasks/    (exact; /dispatch --replay)
     git -C <root> show <sha>:agents/tasks/<id>-<name>.md     (exact; /dispatch --replay)
     gh pr list|view …                                        (no --web)
