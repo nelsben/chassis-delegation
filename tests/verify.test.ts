@@ -93,6 +93,28 @@ describe('verdict, advice and budgets', () => {
     const gate = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines: ['claim gate: failed — x'] })
     expect(gate.tier).toBe('frontier')
   })
+  test('MOD-55: a gate failure with a held forbid-= amend advises approve then resume; never escalates; an exhausted budget still stops', () => {
+    const block = '[[amend v=1 forbid-=tests/old.test.ts scope+=tests/old.test.ts reason=the old test pins the value]]'
+    const lines = ['claim gate: failed — x', amendApprovalLine({ block }, '/s/briefs/FE-1.brief.md')]
+    const want = 'approve the amend (append it to /s/briefs/FE-1.brief.md), then resume agent=agent-7 to make the fix; or refuse it'
+    // a confirmed gate=fail
+    const confirmed = advise({ ...base, verdict: 'consistent', reportGate: 'fail', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', lines })
+    expect(confirmed).toEqual({ kind: 'resume', next: want })
+    // a gate refute, later in the lineage: still the approve step, same tier
+    const refuted = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines })
+    expect(refuted).toEqual({ kind: 'resume', next: want })
+    // no agent left: the same brief respawned at the same tier
+    const gone = advise({ ...base, agentId: undefined, verdict: 'consistent', reportGate: 'fail', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines })
+    expect(gone.kind).toBe('respawn')
+    expect(gone.tier).toBe('standard')
+    expect(gone.next.startsWith('approve the amend (append it to /s/briefs/FE-1.brief.md), then respawn at standard — same brief /s/briefs/FE-1.brief.md')).toBe(true)
+    expect(gone.next.endsWith('; or refuse it')).toBe(true)
+    // a scope+= approval line without forbid-= is not this branch
+    const plain = advise({ ...base, verdict: 'consistent', reportGate: 'fail', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', lines: ['amend needs approval: [[amend v=1 scope-=a.ts reason=x]] — append it'] })
+    expect(plain.next).toBe('resume agent=agent-7 — SendMessage it the verifier lines below')
+    // an exhausted budget still stops
+    expect(advise({ ...base, verdict: 'consistent', reportGate: 'fail', attempts: 3, budget: 3, lineageResumes: 1, tier: 'standard', lines }).kind).toBe('exhausted')
+  })
   test('attempts at budget: exhausted, with the deny wording', () => {
     const a = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 2, lineageResumes: 1, tier: 'standard' })
     expect(a.kind).toBe('exhausted')

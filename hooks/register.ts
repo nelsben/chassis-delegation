@@ -192,7 +192,7 @@ import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOf
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
-import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, sayGo, type NewCard } from './lib/card'
+import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
@@ -4066,6 +4066,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   for (const line of forbidCollisions((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, doneWhenOf(card.body))) {
     out.push(`   ${line}`)
   }
+  // MOD-55: a path the red_test names that the scope leaves out, or a forbid covers, is said once (nothing is added to the scope)
+  for (const line of redTestWarnings(card.redTest, (shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid)) out.push(`   ${line}`)
   // MOD-54: a wide scope warns, and a small standard card is told economy would do (nothing is refused or changed)
   const sizeScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
   const sizeWarn = scopeSizeWarning(sizeScope)

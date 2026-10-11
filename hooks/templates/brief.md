@@ -30,7 +30,7 @@ You were started by the brain's own Agent call: the mod that dispatched you reco
 {{#none}}
 - Test: {{redTest}}. A repo=none brief has no red evidence file to save: the mod checks your scope, the files you name and your artefacts, then runs the gate.
 {{/none}}
-- Stay inside the brief's scope= and never touch a forbid= path. If you must change a file outside scope, say so in your hand-back with an amend block on its own line, `[[amend v=1 scope+=<path> reason=<one line>]]`; it is appended to this brief before your report is checked.
+- Stay inside the brief's scope= and never touch a forbid= path. If you must change a file outside scope, say so in your hand-back with an amend block on its own line, `[[amend v=1 scope+=<path> reason=<one line>]]`; it is appended to this brief before your report is checked. When the only fix lies in a forbid= path, do not touch it: hand back gate=fail with `[[amend v=1 forbid-=<the forbid entry that covers it> scope+=<path> reason=<the one-line fix>]]`, which the brain approves or refuses.
 {{#outdir}}
 - Output folder: {{outdir}} (outdir= in the header). Deliverables go there. The mod lists it, and every other folder outside the repo that your scope or forbid names, before your run and again after it: a path you change outside scope, or inside a forbid, refutes you. Name what you delivered in the report line: artefacts= (paths relative to the output folder, or absolute; each must exist and not be empty) and, for numbers worth recording, metrics="k=v,k=v" (recorded, never judged). Say only what you ran: the verifier re-runs the gate and checks every file you name.
 {{/outdir}}

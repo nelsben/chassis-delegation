@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { CARD_TOOL, cardFromFields, cardSummary, donePaths, forbidCollisions, type CardCtx } from '../hooks/lib/card'
+import { CARD_TOOL, cardFromFields, cardSummary, donePaths, forbidCollisions, redTestWarnings, type CardCtx } from '../hooks/lib/card'
 import { parseCard } from '../hooks/lib/dispatch'
 
 const ctx = (over: Partial<CardCtx> = {}): CardCtx => ({
@@ -315,5 +315,17 @@ describe('MOD-44: a card for another local repo', () => {
     expect(cardFromFields(input({ gate: 'lint' }), other())).toEqual({ error: 'gate lint is not in gateMap; the ids are test' })
     // the session's own repo takes no one-off command
     expect(cardFromFields(input({ gate: 'npm run build' }), ctx())).toEqual({ error: 'gate npm run build is not in gateMap; the ids are test, lint' })
+  })
+})
+
+describe('MOD-55: the dry run warns when the red_test names a path the worker cannot write', () => {
+  test('a path outside scope, and a path inside a forbid, each warn once', () => {
+    expect(redTestWarnings('a pure test in tests/verify.test.ts: it fails', ['hooks/lib/verify.ts'], [])).toEqual(['warning: red_test names tests/verify.test.ts, which is outside scope'])
+    expect(redTestWarnings('`tests/old.test.ts` asserts it; tests/old.test.ts again', ['tests/**'], ['tests/old.*'])).toEqual(['warning: red_test names tests/old.test.ts, which is inside forbid tests/old.*'])
+  })
+  test('a path the scope names, a red_test with no path, and none warn nothing', () => {
+    expect(redTestWarnings('a pure test in tests/verify.test.ts', ['tests/**'], ['docs/**'])).toEqual([])
+    expect(redTestWarnings('a pure test of the advice', [], [])).toEqual([])
+    expect(redTestWarnings('none', [], [])).toEqual([])
   })
 })
