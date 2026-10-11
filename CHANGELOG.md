@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.2 — 2026-10-11
 
 - **A merged task is not woken for, an accept is on the ledger, each verdict row is written
   once (MOD-35, issue #84).** Before submitting a verdict wake the mod runs MOD-4's merged
