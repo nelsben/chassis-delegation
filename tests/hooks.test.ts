@@ -3383,3 +3383,139 @@ describe('MOD-19: the verdict says what it checked (verified became consistent; 
     expect(lines[2]).toMatchObject({ task: 'T-4', verdict: 'consistent', next: 'accept' })
   })
 })
+
+describe('MOD-20: a gate that ran beside another worker does not false-refute', () => {
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=engine budget=3-attempts report=chassis.report.v1]]'
+  const REPORT = '[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
+  const GM = { gateMap: '{"engine":"claude plugin test {worktree}"}' }
+  const LOCK = 'delegation.engineGate'
+  const TIMED_OUT = ['dashboard.test.ts', 'dispatchtool.test.ts'].map(f => `tests/${f}:\n(fail) a test in ${f} [5003.1ms]\n  Error: timed out after 5000 ms\n`).join('')
+  const SUMMARY = '\n 764 pass\n 2 fail\nRan 766 tests across 34 files. [70.1s]\n'
+  const engineRuns = (w: { runs: { argv: string[] }[] }) => w.runs.filter(x => x.argv[0] === 'claude')
+
+  test('red on two timeouts in tests the delta never touched, green on the rerun: consistent, the claim says so', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const base = nativeRun()
+    let n = 0
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      agentId: 'agent-4',
+      run: argv => (argv[0] === 'claude' ? (++n === 1 ? { exitCode: 1, stdout: TIMED_OUT + SUMMARY } : { exitCode: 0, stdout: ' 766 pass\n 0 fail\n' }) : base(argv)),
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(delivered(w)).toContain('chassis-delegation: verdict=consistent task=T-4')
+    expect(delivered(w)).toContain('claim gate: held — gate green on rerun (first run: 2 timeouts in untouched tests) at 1234abcd (gate=pass confirmed)')
+    expect(engineRuns(w)).toHaveLength(2)
+    expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'consistent' })
+  })
+
+  test('red on timeouts again: refuted as before, after one rerun and no more', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const base = nativeRun()
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      agentId: 'agent-4',
+      run: argv => (argv[0] === 'claude' ? { exitCode: 1, stdout: TIMED_OUT + SUMMARY } : base(argv)),
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4')
+    expect(delivered(w)).toContain('claim gate: failed — gate=pass claimed but the gate is RED at 1234abcd (exit 1)')
+    expect(engineRuns(w)).toHaveLength(2)
+  })
+
+  test('an assertion failure is not re-run', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const base = nativeRun()
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      agentId: 'agent-4',
+      run: argv => (argv[0] === 'claude' ? { exitCode: 1, stdout: 'tests/a.test.ts:\n(fail) a > b [1ms]\n  AssertionError: expected 1\n' + SUMMARY.replace(' 2 fail', ' 1 fail') } : base(argv)),
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(delivered(w)).toContain('verdict=refuted')
+    expect(engineRuns(w)).toHaveLength(1)
+  })
+
+  test('the engine gate holds the lock while it runs and clears it after; no other holder, no wait line', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const base = nativeRun({ gate: 0 })
+    let held: unknown
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      agentId: 'agent-4',
+      run: argv => {
+        if (argv[0] === 'claude') held = w.store.get(LOCK)
+        return base(argv)
+      },
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(held).toMatchObject({ holder: 'T-4', since: NOW, until: NOW + 9 * 60 * 1000 })
+    expect(w.store.has(LOCK)).toBe(false)
+    expect(delivered(w)).not.toContain('waited')
+    expect(delivered(w)).toContain('verdict=consistent')
+  })
+
+  test("another worker's engine gate is waited for: nothing runs until it is done, and the verdict says how long", { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      agentId: 'agent-4',
+      run: nativeRun({ gate: 0 }),
+      store: { [LOCK]: { holder: 'MOD-9', token: 'MOD-9#1', since: NOW - 5000, until: NOW + 40_000 } },
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    const done = $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    await w.clock.advance(20_000)
+    expect(engineRuns(w)).toHaveLength(0)
+    await w.clock.advance(30_000)
+    await done
+    expect(engineRuns(w)).toHaveLength(1)
+    expect(delivered(w)).toContain("waited 40 s for MOD-9's engine gate")
+    expect(delivered(w)).toContain('verdict=consistent')
+    expect(w.store.has(LOCK)).toBe(false)
+  })
+
+  test('two verifiers finishing together run their engine gates one after the other, the second saying it waited', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const base = nativeRun({ gate: 0 })
+    const BRIEF5 = `${SCRATCH}/briefs/T-5.brief.md`
+    let live = 0
+    let most = 0
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody', [BRIEF5]: HEADER.replace('task=T-4', 'task=T-5') + '\nbody' },
+      run: async argv => {
+        if (argv[0] !== 'claude') return base(argv)
+        live += 1
+        most = Math.max(most, live)
+        await w.clock.sleep(30_000) // an engine suite takes a while
+        live -= 1
+        return { exitCode: 0, stdout: '' }
+      },
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_01AAAAAAAA' }))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF5}.`, tool_use_id: 'toolu_01BBBBBBBB' }))
+    const first = $.turn.complete(turnInput('agent-1', 'Done.\n' + REPORT))
+    const second = $.turn.complete(turnInput('agent-2', 'Done.\n' + REPORT.replace(/T-4/g, 'T-5')))
+    await w.clock.advance(10_000)
+    expect(engineRuns(w)).toHaveLength(1) // one is running, the other waits its turn
+    await w.clock.advance(100_000)
+    await Promise.all([first, second])
+    expect(engineRuns(w)).toHaveLength(2)
+    expect(most).toBe(1)
+    expect(delivered(w)).toMatch(/waited \d+ s for T-[45]'s engine gate/)
+    expect(delivered(w).match(/verdict=consistent/g)).toHaveLength(2)
+    expect(w.store.has(LOCK)).toBe(false)
+  })
+
+  test('a lock past its expiry is a crashed holder: taken at once, no wait', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody' },
+      agentId: 'agent-4',
+      run: nativeRun({ gate: 0 }),
+      store: { [LOCK]: { holder: 'MOD-9', token: 'MOD-9#1', since: NOW - 600_000, until: NOW - 60_000 } },
+    })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    expect(engineRuns(w)).toHaveLength(1)
+    expect(delivered(w)).not.toContain('waited')
+  })
+})

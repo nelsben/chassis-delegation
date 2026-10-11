@@ -229,3 +229,35 @@ describe('MOD-9: bashWrites follows cd, git -C and BSD sed -i', () => {
     expect(bashWrites("sed -i '' -e 's/a/b/' src/a.ts", '/repo').paths).toEqual(['/repo/src/a.ts'])
   })
 })
+
+describe('MOD-20: text inside quotes inside a command substitution is quoted', () => {
+  const w = (c: string) => bashWrites(c, '/repo', '/home/u')
+  test('the gh issue close comment carrying <task>-a<n> counts no write, however its quotes nest', () => {
+    // the id placeholder holds a `>`; read as a redirect it named /repo/-a and /repo/)
+    expect(w(`gh issue close 2 --comment "$(printf 'id <task>-a<n>')"`)).toEqual({ paths: [], commit: false })
+    expect(w(`gh issue close 2 --comment "$(printf "id <task>-a<n>")"`)).toEqual({ paths: [], commit: false })
+    expect(w(`gh issue close 2 --comment "merged $(printf '%s' "<task>-a<n>") ok"`)).toEqual({ paths: [], commit: false })
+    expect(w(`gh issue close 2 --comment "$(printf "%s" "$(echo "id <task>-a<n>")")"`)).toEqual({ paths: [], commit: false })
+    expect(w('gh issue close 2 --comment "`printf "id <task>-a<n>"`"')).toEqual({ paths: [], commit: false })
+    expect(w(`echo $(printf "id <task>-a<n>")`)).toEqual({ paths: [], commit: false })
+  })
+  test('a real redirect inside a substitution still counts, quoted or not', () => {
+    expect(w('echo $(echo x > hooks/a.ts)').paths).toEqual(['/repo/hooks/a.ts'])
+    expect(w('echo "$(echo x > hooks/a.ts)"').paths).toEqual(['/repo/hooks/a.ts'])
+    expect(w('echo "done: $(echo "x" > hooks/a.ts)"').paths).toEqual(['/repo/hooks/a.ts'])
+    expect(w('echo "`echo x > hooks/a.ts`"').paths).toEqual(['/repo/hooks/a.ts'])
+    expect(w('gh issue close 2 --comment "$(printf "id <task>-a<n>" > hooks/a.ts)"').paths).toEqual(['/repo/hooks/a.ts'])
+  })
+  test('a commit message built with a heredoc inside $( ) is read to its end: the commit counts, its text writes nothing', () => {
+    const c = `git commit -m "$(cat <<'EOF'\nfix: a > b, "quoted" and <x>\nEOF\n)"`
+    expect(w(c)).toEqual({ paths: [], commit: true })
+    expect(w(`${c} && echo y > hooks/y.ts`)).toEqual({ paths: ['/repo/hooks/y.ts'], commit: true })
+  })
+  test('what the quotes held still resolves as before: a substitution target is unknown, a cd into one is unknown', () => {
+    expect(w('echo x > "$(pwd)/a.ts"').paths).toEqual([])
+    expect(w('echo x > "dir/$(basename $f).ts"').paths).toEqual([])
+    expect(w('cd "$(mktemp -d)" && echo x > hooks/x.ts').paths).toEqual([])
+    expect(w('D="src"; echo x > "$D/a.ts"').paths).toEqual(['/repo/src/a.ts'])
+    expect(w('echo "a > b" "$(date)" > hooks/a.ts').paths).toEqual(['/repo/hooks/a.ts'])
+  })
+})
