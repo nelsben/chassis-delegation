@@ -1601,6 +1601,21 @@ prompt. It prints the agent id, the mode (`breadcrumbs` or `events`) and the
 folder the file will land in. The automatic path and the `last debrief:` line
 of `/delegation` are unchanged.
 
+**What the prompt carries (MOD-26).** The facts the mod saw go in the prompt one
+to a line, each with the kind and its ISO time, `denial 2026-10-10T16:27:14Z:
+Bash: git push` (or `correction`, `refuted`, `verdict`), and the prompt tells the
+agent to cite that time as `at`. In breadcrumbs mode the prompt carries only the
+friction events and verdict rows whose time lies between the first and last
+timestamps of the window's breadcrumb lines, inclusive; nothing from before the
+window gets in, so a short window cannot be flagged for evidence from hours
+earlier. A window whose lines are only `session_start`, `session_end` and
+compaction breadcrumbs, with no fact inside it, spawns nothing: `/delegation
+debrief` prints `nothing to debrief in lines a-b (session boundaries only)`, the
+automatic path logs the same, and the debrief record moves past the window (as
+`skippedTo`; the mod still never writes the `.done` mark) so the next debrief
+starts after it. Without a breadcrumb file the selection is as it was, the events
+past the last debrief and the verdicts since it, now dated.
+
 Both prompts (your `~/.claude/commands/debrief.md`, which is never edited, and
 the built-in template) ask for one more top-level key in the debrief JSON,
 `mod_findings`: an array of `{ kind: went_well | went_wrong, surface,

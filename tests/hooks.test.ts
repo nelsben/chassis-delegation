@@ -2396,6 +2396,101 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
   })
 })
 
+describe('MOD-26: a breadcrumbs debrief carries only the facts inside its window, and a window of session boundaries alone spawns nothing', () => {
+  const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const CRUMBS = `${HOME}/.claude/harness/breadcrumbs/sess-1.jsonl`
+  const DONE = CRUMBS.replace(/\.jsonl$/, '.done')
+  const crumb = (ts: string, kind: string) => JSON.stringify({ ts, kind, detail: {} })
+  const lines = (...rows: [string, string][]) => rows.map(([ts, kind]) => crumb(ts, kind)).join('\n') + '\n'
+  const ms = (iso: string): number => Date.parse(iso)
+  // what the mod saw hours before the window: a refute at 15:43, a denial at 16:27, a verdict at 18:01
+  const EARLIER = {
+    'delegation.friction.sess-1': {
+      total: 2,
+      events: [
+        { kind: 'refuted', detail: 'OPS-4 attempt 1 refuted on scope', at: ms('2026-10-10T15:43:09Z') },
+        { kind: 'denial', detail: 'Bash: rm -rf build', at: ms('2026-10-10T16:27:14Z') },
+      ],
+    },
+    'delegation.recent.sess-1': [{ task: 'OPS-5', attempt: 1, verdict: 'consistent', line: 'chassis-delegation: OPS-5 attempt 1/2 consistent', at: ms('2026-10-10T18:01:07Z') }],
+  }
+  const PRIOR = { lastAt: ms('2026-10-10T09:30:00Z'), watermark: 0, lines: 1, sessionId: 'sess-1', mode: 'breadcrumbs', finishedAt: ms('2026-10-10T09:31:00Z') }
+  // public issue #55: line 1 was debriefed (the .done mark), lines 2-3 are a session_end and a session_start nine seconds apart
+  const BOUNDARY = lines(['2026-10-10T10:00:00Z', 'session_start'], ['2026-10-10T19:20:41Z', 'session_end'], ['2026-10-10T19:20:50Z', 'session_start'])
+  const NO_AUTO = { options: { autoEval: false, autoDebrief: false } }
+  const factLines = (prompt: unknown) => String(prompt).split('\n').filter(l => l.startsWith('- '))
+
+  test('a window of only session_end and session_start lines spawns nothing and says so, and the record moves past it', NO_AUTO, async ($, on) => {
+    const w = world(on, { listAgents: true, store: { 'delegation.debrief.sess-1': PRIOR, ...EARLIER }, files: { [CRUMBS]: BOUNDARY, [DONE]: '1\n' } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief'))).text)
+    expect(w.spawns).toHaveLength(0)
+    expect(out).toBe('nothing to debrief in lines 2-3 (session boundaries only)')
+    const rec = w.store.get('delegation.debrief.sess-1') as { lastAt: number; watermark: number; lines: number; skippedTo?: number; agentId?: string; finishedAt?: number; window?: unknown }
+    expect(rec).toMatchObject({ mode: 'breadcrumbs', watermark: 1, lines: 3, skippedTo: 3 })
+    expect(rec.lastAt).not.toBe(PRIOR.lastAt)
+    expect(rec.finishedAt).toBeDefined()
+    expect(rec.agentId).toBeUndefined()
+    expect(rec.window).toBeUndefined()
+    // the mod never writes the .done mark; the record is what moved
+    expect(w.files.get(DONE)).toBe('1\n')
+  })
+
+  test('the next debrief starts after the skipped window: two more lines, and the window is lines 4 to 5', NO_AUTO, async ($, on) => {
+    const w = world(on, { listAgents: true, store: { 'delegation.debrief.sess-1': PRIOR, ...EARLIER }, files: { [CRUMBS]: BOUNDARY, [DONE]: '1\n' } })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    w.files.set(CRUMBS, BOUNDARY + lines(['2026-10-10T19:30:00Z', 'correction'], ['2026-10-10T19:31:00Z', 'session_end']))
+    const out = String((await $.command.run(delegation('debrief'))).text)
+    expect(w.spawns).toHaveLength(1)
+    expect(out).toContain('lines 4 to 5')
+    const prompt = String(w.spawns[0]?.prompt)
+    expect(prompt).toContain('covers breadcrumb lines 4 to 5 (watermark 3, end 5)')
+    expect(factLines(prompt)).toEqual([])
+  })
+
+  test('a window holding one denial puts exactly that line, dated, in the prompt; the earlier refute, denial and verdict are not there', NO_AUTO, async ($, on) => {
+    const stored = { ...EARLIER, 'delegation.friction.sess-1': { total: 3, events: [...EARLIER['delegation.friction.sess-1'].events, { kind: 'denial', detail: 'Bash: git push', at: ms('2026-10-10T19:20:45Z') }] } }
+    const crumbs = lines(['2026-10-10T10:00:00Z', 'session_start'], ['2026-10-10T19:20:41Z', 'session_end'], ['2026-10-10T19:20:45Z', 'permission_denied'], ['2026-10-10T19:20:50Z', 'session_start'])
+    const w = world(on, { listAgents: true, store: { 'delegation.debrief.sess-1': PRIOR, ...stored }, files: { [CRUMBS]: crumbs, [DONE]: '1\n' } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief'))).text)
+    expect(out).toContain('debrief started')
+    expect(w.spawns).toHaveLength(1)
+    const prompt = String(w.spawns[0]?.prompt)
+    expect(factLines(prompt)).toEqual(['- denial 2026-10-10T19:20:45Z: Bash: git push'])
+    for (const stale of ['15:43', '16:27', '18:01', 'OPS-4', 'OPS-5', 'rm -rf']) expect(prompt).not.toContain(stale)
+    expect(prompt).toMatch(/cite (?:that|its) time as `at`/)
+  })
+
+  test('a boundary-only window with a verdict inside its span is not skipped: the verdict goes in, dated', NO_AUTO, async ($, on) => {
+    // a session_end at 15:00 and a session_start at 19:20: the 18:01 verdict falls between them
+    const crumbs = lines(['2026-10-10T10:00:00Z', 'session_start'], ['2026-10-10T15:00:00Z', 'session_end'], ['2026-10-10T19:20:50Z', 'session_start'])
+    const w = world(on, { listAgents: true, store: { 'delegation.debrief.sess-1': PRIOR, ...EARLIER }, files: { [CRUMBS]: crumbs, [DONE]: '1\n' } })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('debrief'))).text)
+    expect(out).not.toContain('nothing to debrief')
+    expect(w.spawns).toHaveLength(1)
+    // the refute at 15:43 and the denial at 16:27 fall in that span too; all three are dated
+    expect(factLines(w.spawns[0]?.prompt)).toEqual([
+      '- refuted 2026-10-10T15:43:09Z: OPS-4 attempt 1 refuted on scope',
+      '- denial 2026-10-10T16:27:14Z: Bash: rm -rf build',
+      '- verdict 2026-10-10T18:01:07Z: chassis-delegation: OPS-5 attempt 1/2 consistent',
+    ])
+  })
+
+  test('without breadcrumbs the selection is today\'s, and each line is dated', NO_AUTO, async ($, on) => {
+    const w = world(on, { listAgents: true, store: { ...EARLIER } })
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    expect(factLines(w.spawns[0]?.prompt)).toEqual([
+      '- refuted 2026-10-10T15:43:09Z: OPS-4 attempt 1 refuted on scope',
+      '- denial 2026-10-10T16:27:14Z: Bash: rm -rf build',
+      '- verdict 2026-10-10T18:01:07Z: chassis-delegation: OPS-5 attempt 1/2 consistent',
+    ])
+  })
+})
+
 describe('MOD-7: /delegation debrief post', () => {
   const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
   const FOLDER = `${ROOT}/.delegation/debriefs`

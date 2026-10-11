@@ -18,7 +18,11 @@ import {
   isCorrection,
   proposalsLines,
   type FrictionEvent,
+  boundaryOnly,
+  windowFacts,
+  verdictFacts,
 } from '../hooks/lib/cleanstop'
+import { windowOf } from '../hooks/lib/debriefcheck'
 
 const H = 60 * 60 * 1000
 const base: CleanStopInput = { inTurn: false, running: 0, pending: 0, queued: 0, lines: 40, watermark: 10, minNewLines: 25, now: 100 * H, cooldownMs: 6 * H }
@@ -112,7 +116,7 @@ describe('5E: the debrief without the harness', () => {
     for (let i = 0; i < 120; i += 1) list = addFriction(list, { kind: 'denial', detail: `Bash ${i}`, at: i })
     expect(list).toHaveLength(100)
     expect(list[0]?.detail).toBe('Bash 20')
-    expect(frictionFacts([{ kind: 'correction', detail: 'no, x', at: 1 }, { kind: 'denial', detail: 'Bash: git push', at: 2 }])).toEqual(['correction: no, x', 'tool denied: Bash: git push'])
+    expect(frictionFacts([{ kind: 'correction', detail: 'no, x', at: 1 }, { kind: 'denial', detail: 'Bash: git push', at: 2 }])).toEqual(['correction 1970-01-01T00:00:00.001Z: no, x', 'denial 1970-01-01T00:00:00.002Z: Bash: git push'])
     expect(DEFAULT_DEBRIEF_MIN_EVENTS).toBe(5)
   })
   test('the debrief file the agent names, in either place', () => {
@@ -146,5 +150,67 @@ describe("MOD-18: the agent's own proposals, shown to you and never posted", () 
     expect(proposalsLines(JSON.stringify({ proposed_harness_changes: [null, 3, 'x', {}] }))).toEqual([])
     expect(proposalsLines('not json')).toEqual([])
     expect(proposalsLines('[1]')).toEqual([])
+  })
+})
+
+describe('MOD-26: a breadcrumbs debrief carries only the facts inside its window, each dated', () => {
+  const ms = (iso: string): number => Date.parse(iso)
+  // the window of public issue #55: a session_end and a session_start, nine seconds apart
+  const window = windowOf(
+    [
+      JSON.stringify({ ts: '2026-10-10T10:00:00Z', kind: 'correction' }),
+      JSON.stringify({ ts: '2026-10-10T19:20:41Z', kind: 'session_end' }),
+      JSON.stringify({ ts: '2026-10-10T19:20:50Z', kind: 'session_start' }),
+    ].join('\n') + '\n',
+    1,
+  )
+  const denial = (iso: string, detail = 'Bash: git push'): FrictionEvent => ({ kind: 'denial', detail, at: ms(iso) })
+  const verdict = (iso: string, line: string) => ({ line, at: ms(iso) })
+
+  test('a denial at 16:27, a refute at 15:43 and a verdict at 18:01 are left out; a denial at 19:20:45 is kept with its time in the line', () => {
+    expect(window).toBeDefined()
+    const events: FrictionEvent[] = [
+      { kind: 'refuted', detail: 'OPS-4 attempt 1 refuted on scope', at: ms('2026-10-10T15:43:09Z') },
+      denial('2026-10-10T16:27:14Z', 'Bash: rm -rf'),
+      denial('2026-10-10T19:20:45Z'),
+    ]
+    const verdicts = [verdict('2026-10-10T18:01:07Z', 'chassis-delegation: OPS-5 attempt 1/2 consistent')]
+    const lines = windowFacts(events, verdicts, window!)
+    expect(lines).toEqual(['denial 2026-10-10T19:20:45Z: Bash: git push'])
+  })
+  test('the window is inclusive at both ends, and a verdict inside is dated like a denial', () => {
+    const events = [denial('2026-10-10T19:20:41Z', 'first'), denial('2026-10-10T19:20:50Z', 'last'), denial('2026-10-10T19:20:50.001Z', 'after'), denial('2026-10-10T19:20:40.999Z', 'before')]
+    const verdicts = [verdict('2026-10-10T19:20:44Z', 'chassis-delegation: OPS-6 attempt 1/2 refuted on scope')]
+    expect(windowFacts(events, verdicts, window!)).toEqual([
+      'denial 2026-10-10T19:20:41Z: first',
+      'denial 2026-10-10T19:20:50Z: last',
+      'verdict 2026-10-10T19:20:44Z: chassis-delegation: OPS-6 attempt 1/2 refuted on scope',
+    ])
+  })
+  test('a time with milliseconds keeps them, so the agent can cite it exactly', () => {
+    expect(verdictFacts([verdict('2026-10-10T19:20:44.250Z', 'v')])).toEqual(['verdict 2026-10-10T19:20:44.250Z: v'])
+  })
+  test('a window with no usable timestamps carries no facts, whatever the events say', () => {
+    const noTime = windowOf('{"kind":"session_start"}\n{"kind":"session_end"}\n', 0)
+    expect(noTime).toBeDefined()
+    expect(windowFacts([denial('2026-10-10T19:20:45Z')], [verdict('2026-10-10T19:20:45Z', 'v')], noTime!)).toEqual([])
+  })
+  test('a window of only session_end and session_start lines is boundary-only; so is one with compaction lines', () => {
+    expect(boundaryOnly(window!)).toBe(true)
+    const withCompaction = windowOf(['session_end', 'compaction', 'pre_compact', 'post_compact', 'session_start'].map(kind => JSON.stringify({ ts: '2026-10-10T19:20:41Z', kind })).join('\n') + '\n', 0)
+    expect(boundaryOnly(withCompaction!)).toBe(true)
+  })
+  test('a window with any other kind, or with no kind at all, is not boundary-only', () => {
+    expect(boundaryOnly({ ...window!, kinds: ['session_end', 'permission_denied', 'session_start'] })).toBe(false)
+    expect(boundaryOnly({ ...window!, kinds: ['correction'] })).toBe(false)
+    expect(boundaryOnly({ ...window!, kinds: [] })).toBe(false)
+  })
+  test('both prompts tell the agent to cite a fact line\'s time as at', () => {
+    const facts = ['denial 2026-10-10T19:20:45Z: Bash: git push']
+    for (const p of [debriefPrompt('/Users/b/.claude/commands/debrief.md', 's-1', facts), builtInDebriefPrompt('/mods/cd/hooks/templates/debrief.md', 's-1', '/w/app', facts)]) {
+      expect(p).toContain('- denial 2026-10-10T19:20:45Z: Bash: git push')
+      expect(p).toMatch(/cite (?:that|its) time as `at`/)
+    }
+    expect(debriefPrompt('/Users/b/.claude/commands/debrief.md', 's-1', [])).not.toMatch(/as `at`/)
   })
 })
