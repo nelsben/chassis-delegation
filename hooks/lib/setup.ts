@@ -144,7 +144,7 @@ export function setupChecks(p: SetupProbe): SetupLine[] {
 
   if (p.dirty && p.hasOriginMain) adv('uncommitted changes: in worktree mode they are not in a worker\'s worktree', 'commit them first')
 
-  if (p.autoDebrief) adv('background debrief is on: it spends an agent at a quiet stop', 'turn it off in /config (autoDebrief)')
+  if (p.autoDebrief) adv('background debrief is on: it spends an agent at a quiet stop', 'turn it off: /delegation config autoDebrief false')
   return out
 }
 

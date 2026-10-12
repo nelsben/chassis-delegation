@@ -133,7 +133,7 @@ describe('GH-109: setupChecks over a table of probes', () => {
     const t = text(p)
     expect(t).toContain("· gh is not on PATH: a report's pr= claim can be checked only with it")
     expect(t).toContain("· uncommitted changes: in worktree mode they are not in a worker's worktree\n    commit them first")
-    expect(t).toContain('· background debrief is on: it spends an agent at a quiet stop\n    turn it off in /config (autoDebrief)')
+    expect(t).toContain('· background debrief is on: it spends an agent at a quiet stop\n    turn it off: /delegation config autoDebrief false')
     expect(text(green({ dirty: true, hasOriginMain: false }))).not.toContain('uncommitted')
   })
 })

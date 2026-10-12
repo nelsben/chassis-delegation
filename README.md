@@ -158,7 +158,7 @@ What the brain will see:
 
 - **Wakes are off by default, and the brain waits for its verdict with the verdict tool (MOD-64).** A verdict no longer submits "The chassis-delegation plugin sent a message" as a turn of its own. The verdict row is still appended; in the hand-back turn the brain calls the verdict tool with the task id, which returns the verdict once it lands. The dispatch text and the Delegation state section say so.
 
-What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. To keep the old wakes, set `wakeOnVerdict` to `true` in `/config`. Nothing in an existing repo's config needs to change.
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. To keep the old wakes, run `/delegation config wakeOnVerdict true` (or the `/config` menu in a terminal). Nothing in an existing repo's config needs to change.
 
 ### From 0.9.3 to 0.9.4
 
@@ -188,7 +188,7 @@ What the brain will see:
 - **A gate failure that only a forbidden file can fix comes back with an amend (MOD-55).** The brain gets a `forbid-=` amend to approve, then resumes the worker.
 - **A worker stopped by a usage limit is recorded as rate limited (MOD-56).** It reads `no-report (rate limited)`, and the queue says `held:` instead of `ready:` until the brain spawns again.
 
-What to do: nothing in an existing repo's config needs to change; set `freshSessionTokens` to `0` in `/config` to turn the fresh-session row off.
+What to do: nothing in an existing repo's config needs to change; run `/delegation config freshSessionTokens 0` (or the `/config` menu in a terminal) to turn the fresh-session row off.
 
 ### From 0.9.0 to 0.9.1
 
@@ -198,7 +198,7 @@ What the brain will see:
 - **The brain sees what driving costs it (MOD-48).** `/delegation` and the dashboard show a brain calls row and a warn row, on by default, with the options `driveWarn` and `driveWarnTokens`.
 - **The legacy verdict word `verified` is no longer read by a reader of its own (MOD-49).** A stored record or row that still carries it is read as `consistent` by one normaliser, with no further deadline.
 
-What to do: nothing in an existing repo's config needs to change; set `driveWarn` to `false` in `/config` to silence the warn row.
+What to do: nothing in an existing repo's config needs to change; run `/delegation config driveWarn false` (or the `/config` menu in a terminal) to silence the warn row.
 
 ### From 0.8.3 to 0.9.0
 
@@ -231,7 +231,7 @@ What the brain will see:
 - **After a clean debrief check the mod tells the agent to mark its watermark, and a false refute is one fact (MOD-32).** A refute that a re-judge found consistent at the same sha is shown once, as a false refute.
 - **The mod asks whether to post a debrief's findings (MOD-31).** A new `postFindings` option, `ask` | `auto` | `off` (default `ask`), decides whether the findings are posted to the issue repo.
 
-What to do: set `redact` in `/config` before any session posts, and set `postFindings` to `auto` only after that.
+What to do: run `/delegation config redact <words>` (or the `/config` menu in a terminal) before any session posts, and set `postFindings` to `auto` only after that.
 
 ### From 0.8.0 to 0.8.1
 
@@ -316,8 +316,8 @@ What the brain will see:
   one line each, which are never written to the findings and never posted.
   `issueRepo` now defaults to the mod's own repository, so mod findings can be
   filed from any repo the mod runs in. `/delegation debrief post <n|all>` files
-  nothing while the `redact` option in `/config` is empty, and says to set it
-  first. See [Posting the findings](#posting-the-findings).
+  nothing while the `redact` option is empty, and says to set it with
+  `/delegation config redact <words>` first. See [Posting the findings](#posting-the-findings).
 - **A gate red only on timeouts is run once more (MOD-20).** When a gate fails
   with nothing but the engine's `timed out after N ms` in tests the delta did not
   touch, the verifier runs it again; the claim reads
@@ -334,7 +334,7 @@ What to do:
   off or has a default. You may want to set three things. To have a reviewer read
   each consistent verdict, set `"review": "on"` in the repo file (`/config`
   wins); leave it out and nothing reviews. Before you post any debrief finding,
-  set `redact` in `/config` to the product, customer, employer and repo names
+  run `/delegation config redact <words>` with the product, customer, employer and repo names
   this session must never publish, or `post` refuses. Set `issueRepo` only to
   send findings somewhere other than the mod's own tracker. A repo file written
   by an earlier init that already carries `"issueRepo": ""` keeps posting off
@@ -508,7 +508,7 @@ A live view of what delegation is doing and spending, in two places:
   minutes of spend, and a `[ details ]` button that opens the pane. The whole
   band is a hover scope: hover it and a card opens beneath the row with the
   first three blocks below. Turn the band off with the `dashboardBand`
-  setting in `/config` (default on); `/delegation dashboard` still opens the pane.
+  setting (`/delegation config dashboardBand false`; default on); `/delegation dashboard` still opens the pane.
 - **The pane**, opened by `/delegation dashboard` or the band's `[ details ]`
   and never on its own. It draws all four blocks, then "Across sessions" (the
   six cross-session sparklines over the last 14 sessions) and the open items.
@@ -557,6 +557,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/delegation init [path]` | you type it | the bare scaffold, no checks (step 4 above) |
 | `/delegation update` | you type it | brings the loaded copy of the mod to origin/main (fast-forward only), migrates this repo's config and says whether the session reloaded or needs a restart (see [Upgrading](#upgrading)) |
 | `/delegation debrief` | you type it | runs the background debrief now and ends with scrubbed findings about the mod, ready to post (see [The debrief now](#the-debrief-now)) |
+| `/delegation config [<field> [<value>]]` | you type it | lists this mod's own options (`<field> = <value>`, marked `(default)` or `(locked)`), shows one, or sets one: `/delegation config wakeOnVerdict true`. Works where `/config` is taken or missing (the VS Code extension); the `/config` menu in a terminal changes the same options. A boolean takes true/false/on/off/yes/no, a number a finite number, a choice one of its options, text the rest of the line (`""` is empty) |
 | `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--repo <abs path>\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
@@ -1697,7 +1698,7 @@ the two adopters who first built it by hand.
 | `on` | every consistent verdict |
 | `on-frontier` | a consistent verdict of a frontier or premium attempt only |
 
-Set it in the repo file (`"review": "on"`) or in `/config`; `/config` wins,
+Set it in the repo file (`"review": "on"`) or with `/delegation config review on` (or the `/config` menu in a terminal); the setting wins,
 and `off` there means "not set here", so the repo file speaks.
 
 **What it checks.** A fresh agent reads the brief, the worker's report and
@@ -1838,7 +1839,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `review` | `off` \| `on` \| `on-frontier` | string (`off` = unset) | `off` | a fresh read-only reviewer reads each consistent hand-back against the diff before `next=accept` (MOD-21; see [Review](#review)). `on-frontier` reviews frontier and premium cards only; `off` changes nothing anywhere |
 | `reviewTier` | `economy` \| `standard` \| `frontier` \| `premium` | string | `""` (one tier below the worker's) | the tier the reviewer runs at; empty = one below the worker's, never below economy (see [Review](#review)) |
 
-Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `settings.json`):
+Settings only (`/delegation config <field> <value>`, the `/config` menu in a terminal, or `pluginConfigs["chassis-delegation"].options` in `settings.json`):
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -2054,8 +2055,8 @@ Posting is two steps on purpose:
 **The redact list must be set first.** The automatic scrub only knows the repo's
 folder name, its origin and the git identity; a product name that differs from
 the folder name would pass straight into a public issue. So while the `redact`
-option in `/config` is empty, `/delegation debrief post <n|all>` files nothing
-and says: `set redact in /config to the product, customer, employer and repo
+option is empty, `/delegation debrief post <n|all>` files nothing
+and says: `run /delegation config redact <words>, the product, customer, employer and repo
 names this session must never publish, then post again`. The read-only
 `/delegation debrief post` still shows the drafts, with the same warning on its
 first line.

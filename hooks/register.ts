@@ -266,6 +266,7 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
+import { configPlan, manifestDefaults, setAnswer, type CfgRow } from './lib/configcmd'
 import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
 import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
@@ -3887,7 +3888,7 @@ async function writeBrief($: Host, root: string, fileName: string, text: string)
         return { error: `the brief could not be written to ${primary} (${String(err)}) nor ${fallback} (${String(err2)})` }
       }
     }
-    return { error: `the brief could not be written to ${primary}: ${String(err)}; set briefDir in /config (${PLUGIN})` }
+    return { error: `the brief could not be written to ${primary}: ${String(err)}; run /delegation config briefDir <folder> (${PLUGIN})` }
   }
 }
 
@@ -4634,7 +4635,7 @@ async function statusReport($: Host): Promise<string> {
     ...(await codeSkewLines($)),
     ...(await updateStatusLines($)),
     ...(cfg.issueRepo ? [`issues: ${cfg.issueRepo}${cfg.issueRepoOwn ? " (the mod's own tracker)" : ''}`, postModeLine(cfg.postFindings, cfg.issueRepo)] : []),
-    `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + /config)` : `${root}/${REPO_CONFIG_FILE} + /config`}`,
+    `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + the mod's options: /delegation config)` : `${root}/${REPO_CONFIG_FILE} + the mod's options (/delegation config)`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
     `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${cfg.maxWorkers} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
@@ -4690,6 +4691,25 @@ async function updateStatusLines($: Host): Promise<string[]> {
   } catch (err) {
     debug($, `update check failed: ${String(err)}`)
     return []
+  }
+}
+
+/** MOD-66: `/delegation config [<field> [<value>]]`: this mod's own options, over the rows `$.config.list()` gives. */
+async function runConfig($: Host, rest: string): Promise<string> {
+  let rows: CfgRow[]
+  try {
+    rows = (await $.config.list()) as unknown as CfgRow[]
+  } catch (err) {
+    return `the options could not be read: ${String(err)}`
+  }
+  const defaults = manifestDefaults(await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`))
+  const plan = configPlan(rows, defaults, rest)
+  if (!('set' in plan)) return plan.text
+  try {
+    const out = await $.config.set({ key: plan.set.key, value: plan.set.value })
+    return setAnswer(plan.set.field, out.value, out.deny)
+  } catch (err) {
+    return `${plan.set.field} was not set: ${String(err)}`
   }
 }
 
@@ -5647,7 +5667,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|accept <id> [note]]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|config [<field> [<value>]]|accept <id> [note]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -5727,6 +5747,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'debrief apply' || arg.startsWith('debrief apply ')) return { text: await runDebriefApply($, arg.slice('debrief apply'.length)) }
     if (arg === 'debrief post' || arg.startsWith('debrief post ')) return { text: await runDebriefPost($, arg.slice('debrief post'.length)) }
     if (arg === 'lesson' || arg.startsWith('lesson ')) return { text: await runLesson($, arg.slice('lesson'.length)) }
+    if (arg === 'config' || arg.startsWith('config ')) return { text: await runConfig($, arg.slice('config'.length)) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'dashboard') {
       let placed = false
@@ -5749,7 +5770,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|accept <id> [note]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => ({ result: await runVerdict($, e as unknown as Record<string, unknown>) }))
