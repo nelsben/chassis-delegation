@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.8 — 2026-10-12
 
 - **`/delegation config` lists the options in named groups, each with a short plain-English line (MOD-70).** The list
   was 48 bare `field = value` lines. It now prints seven groups in order (Workers and models; Checking the work;
