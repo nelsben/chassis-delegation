@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **Wakes are off by default, and the brain waits for its verdict with a new `verdict` tool (MOD-64).** The "The
+  chassis-delegation plugin sent a message" turn that `wakeBrain` submitted (MOD-15) mostly repeated something the
+  brain had already handled (a verdict it read in the hand-back turn, a task it had merged, a question it had
+  relayed) and each one started a turn in the person's place. `wakeOnVerdict` now defaults to false, in the manifest
+  and in `hooks/register.ts`, which treats it as on only when it is set to true; with it on the behaviour is
+  unchanged. With wakes off nothing calls `$.prompt.submit`; verdict rows, `ready:` lines and the debrief's post
+  question are still appended as rows. The one reason for the wake was a hand-back that starts the brain's turn
+  before the verifier finishes, so the new `verdict` tool (`task`, optional `subtask`, `waitSeconds` default 600,
+  at most 900) keeps the waiting inside that turn: it returns the verdict row as posted, with any `ready:` lines,
+  at once when the latest attempt is judged, else waits in 5 second clock waits on the mod's own records and
+  returns when the verdict lands, or `<task>: still verifying after <n>s; call verdict again`. The brain is told: the
+  dispatch text under the spawn block and one "Delegation state" posture line say to call it in the hand-back turn,
+  and the dashboard's open item names it instead of "the verdict lands on its own".
+
 ## 0.9.4 — 2026-10-11
 
 - **A wake held during the brain's open turn is dropped when a later step of that turn already read its row (MOD-62).**

@@ -3,6 +3,7 @@
 // "Delegation state" section. Pure: no `$`.
 
 import { askPosture } from './findings'
+import { VERDICT_POSTURE } from './verdicttool'
 
 export type StateSnapshot = {
   /** Briefed workers `$.agent.list()` says are running. */
@@ -153,11 +154,14 @@ export function compactBlock(s: StateSnapshot, scratchpad?: string): string {
  * and, with `posture` (GH-113: a premium brain under delegateOnly), always, with
  * the posture lines right under the header; the 40-line cap holds either way.
  * MOD-15: while a row is ready or a respawn block is pending, one more posture
- * line (ACT_POSTURE) says to make the call without asking.
+ * line (ACT_POSTURE) says to make the call without asking. MOD-64: `verdictTool` (wakes off) adds the
+ * verdict-tool posture line while a worker runs or awaits its verdict.
  */
-export function composeSection(s: StateSnapshot, posture: readonly string[] = []): { id: string; text: string; scope: 'session' } | undefined {
+export function composeSection(s: StateSnapshot, posture: readonly string[] = [], verdictTool = false): { id: string; text: string; scope: 'session' } | undefined {
   // MOD-15: one more posture line while a row is ready or a respawn block is pending
-  const acting = actPending(s) ? [...posture, ACT_POSTURE] : posture
+  const acting0 = actPending(s) ? [...posture, ACT_POSTURE] : posture
+  // MOD-64: wakes off and a worker running or awaiting its verdict: the brain waits for the verdict itself, in the hand-back turn
+  const acting = verdictTool && (s.running.length > 0 || s.pending.length > 0) ? [...acting0, VERDICT_POSTURE] : acting0
   // MOD-31: while a post-findings question waits, one more posture line
   const lines = s.postAsk ? [...acting, askPosture(s.postAsk.count, s.postAsk.repo)] : acting
   const quiet = isEmptyState(s) && (s.proposalsOpen ?? 0) === 0

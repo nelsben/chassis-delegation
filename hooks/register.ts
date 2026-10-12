@@ -195,6 +195,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
+import { noSuchAttempt, parseVerdictTool, POLL_MS, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
@@ -306,6 +307,8 @@ const K = {
   effort: (task: string) => `delegation.effort.${task}`,
   /** Set once an attempt's verdict row is posted to the conversation. */
   posted: (attemptKey: string) => `delegation.posted.${attemptKey}`,
+  /** MOD-64: the text appended for an attempt's verdict (the row and any ready: lines), which the verdict tool returns. */
+  postedRow: (attemptKey: string) => `delegation.postedRow.${attemptKey}`,
   /** This session's verdict lines, for the compaction block and the system prompt section (2E). */
   recent: (sessionId: string) => `delegation.recent.${sessionId}`,
   /** MOD-53: set once the fresh-session row is posted in a session. */
@@ -493,7 +496,7 @@ type Config = {
   issueRepo: string
   /** MOD-18: issueRepo is the mod's own repository, from the manifest (the repo file left it unset). */
   issueRepoOwn: boolean
-  /** MOD-15: a verdict row is followed by a `$.prompt.submit`, a turn of the brain's own. */
+  /** MOD-15: a verdict row is followed by a `$.prompt.submit`, a turn of the brain's own. MOD-64: off unless the option is true. */
   wakeOnVerdict: boolean
   /** MOD-31: ask | auto | off; /config only, never the (public, shared) repo file. */
   postFindings: PostMode
@@ -568,7 +571,7 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
       delegateOnly: eff.delegateOnly,
       issueRepo: issues.repo,
       issueRepoOwn: issues.own,
-      wakeOnVerdict: o.wakeOnVerdict !== false,
+      wakeOnVerdict: o.wakeOnVerdict === true,
       postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
       driveWarn: o.driveWarn !== false,
@@ -3650,6 +3653,45 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   return { full: long, line }
 }
 
+/**
+ * MOD-64: the verdict tool. The task's latest attempt, from the attempt record and the spawn record (the mod's own
+ * records, never a shell): judged and its row posted, still verifying, or none. Waits in 5 second clock sleeps.
+ */
+async function verdictNow($: Host, task: string, subtask: string): Promise<{ kind: 'none' } | { kind: 'wait' } | { kind: 'judged'; text: string }> {
+  const label = taskLabel(task, subtask)
+  const latest = attemptsFor(await loadAttempts($, task), subtask).at(-1)
+  if (!latest) return { kind: 'none' }
+  if (latest.verdict === 'pending') return { kind: 'wait' }
+  const spawn = (await spawnByAgent($, latest.agentId)) ?? (latest.toolUseId ? await storeGet<SpawnRecord>($, K.spawn(latest.toolUseId)) : undefined)
+  if (!spawn || spawn.attempt !== latest.attempt || spawn.task !== task || spawn.subtask !== subtask) return { kind: 'judged', text: `${PLUGIN}: ${label} attempt ${latest.attempt} ${latest.verdict}` }
+  // the verdict is patched into the attempt record before its row is stored
+  if (spawn.verdictAttempt !== spawn.attempt || !spawn.verdictBlock) return { kind: 'wait' }
+  const key = attemptKey(spawn)
+  const sent = await storeGet<string>($, K.postedRow(key))
+  if (sent !== undefined && sent !== '') return { kind: 'judged', text: sent }
+  // claimed and not yet appended: the row is about to be stored
+  if (sent === undefined && (await storeGet<boolean>($, K.posted(key))) === true) return { kind: 'wait' }
+  const rendered = renderedOf(spawn)
+  return { kind: 'judged', text: deliveryFor(cfg.verbosity, rendered).row ?? rendered.line }
+}
+
+async function runVerdict($: Host, input: Record<string, unknown>): Promise<string> {
+  const parsed = parseVerdictTool(input)
+  if ('error' in parsed) return parsed.error
+  const label = taskLabel(parsed.task, parsed.subtask)
+  const limit = parsed.waitSeconds * 1000
+  let waited = 0
+  for (;;) {
+    const found = await verdictNow($, parsed.task, parsed.subtask)
+    if (found.kind === 'none') return noSuchAttempt(label)
+    if (found.kind === 'judged') return found.text
+    if (waited >= limit) return stillVerifying(label, parsed.waitSeconds)
+    const step = Math.min(POLL_MS, limit - waited)
+    await $.clock.sleep(step)
+    waited += step
+  }
+}
+
 /** Hands a verdict to the brain per verdictVerbosity: the row it returns, plus the log and toast (2B). */
 function sideEffects($: Host, r: Rendered, adhoc: boolean): string | undefined {
   const d = deliveryFor(cfg.verbosity, r)
@@ -4173,6 +4215,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   out.push(`4. spawn prepared: ${subagentType} on ${prepared.alias} · tier=${prepared.tier} (${prepared.source}) · attempt ${prepared.attempt}/${prepared.budget} — nothing runs until the Agent call below is made`)
   out.push(`brief ${briefPath} · ${place} · branch ${branch} · tier=${prepared.tier} → ${prepared.alias}`)
   out.push('', spawnBlock(prepared.call))
+  // MOD-64: with wakes off nothing starts the brain's turn at the verdict, so it waits for it in the hand-back turn
+  if (!cfg.wakeOnVerdict) out.push(verdictRule(id))
   return out.join('\n')
 }
 
@@ -5464,6 +5508,7 @@ export const register: Register = (on, opts) => {
       // when it has no header and no brief and hands back a report (GH-1
       // item 2: cardless); a foreground one gets its line from the tool.call hook.
       let row: string | undefined
+      let claimed = false
       // a foreground worker's Agent result carries its verdict and any ready line (the tool.call hook)
       const foreground = spawn !== undefined && waiting.has(spawn.key)
       if (!warned && spawn && spawn.verdictAttempt !== spawn.attempt && (!spawn.adhoc || isCardless(spawn))) {
@@ -5475,13 +5520,18 @@ export const register: Register = (on, opts) => {
           const tokens = e.usage ? e.usage.input_tokens + e.usage.output_tokens : undefined
           const rendered = await finalize($, spawn, text, { tokens })
           handbacks.delete(e.agentId)
-          if (!foreground && (await claimPost($, spawn))) row = sideEffects($, rendered, false)
+          if (!foreground && (await claimPost($, spawn))) {
+            claimed = true
+            row = sideEffects($, rendered, false)
+          }
         }
       }
       // a debrief agent or an eval runner the mod started (2C, 2D)
       await onRunnerComplete($, agentId, saidOnce)
       // MOD-12: a worker's slot may be free now (2F): the row says which queued task is ready; the brain spawns it
       const ready = foreground ? [] : await readyRows($, agentId)
+      // MOD-64: what is appended is what the verdict tool returns; an empty text (silent) is still recorded, so the tool does not wait on it
+      if (claimed && spawn) await storeSet($, K.postedRow(attemptKey(spawn)), [...(row !== undefined ? [row] : []), ...ready].join('\n'))
       if (row !== undefined || ready.length > 0) {
         const text = [...(row !== undefined ? [row] : []), ...ready].join('\n')
         await appendRow($, text)
@@ -5607,6 +5657,11 @@ export const register: Register = (on, opts) => {
       debug($, `the dispatch tool was not registered: ${String(err)}`)
     }
     try {
+      await $.tool.register({ name: VERDICT_TOOL.name, description: VERDICT_TOOL.description, inputSchema: VERDICT_TOOL.inputSchema })
+    } catch (err) {
+      debug($, `the verdict tool was not registered: ${String(err)}`)
+    }
+    try {
       await $.tool.register({ name: CARD_TOOL.name, description: CARD_TOOL.description, inputSchema: CARD_TOOL.inputSchema })
     } catch (err) {
       debug($, `the card tool was not registered: ${String(err)}`)
@@ -5697,6 +5752,7 @@ export const register: Register = (on, opts) => {
     return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|accept <id> [note]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => ({ result: await runVerdict($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async ($, e) => ({ result: await runInit($, pathOfCall(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async ($, e) => ({ result: await runSetup($, true, pathOfCall(e)) }))
 
@@ -5729,7 +5785,7 @@ export const register: Register = (on, opts) => {
       ]
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
       const blocks = blocksFor({ current: metricsFromRecords(mine, since), history: [metricsFromRecords(mine, since)], driveLines: driveLines(await readDrive($)) })
-      return paneTree(p, { blocks, open: openItemLines(items, view.now), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e) }, () => void $.ui.close({ id: DASH_PANE })) as never
+      return paneTree(p, { blocks, open: openItemLines(items, view.now, !cfg.wakeOnVerdict), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e) }, () => void $.ui.close({ id: DASH_PANE })) as never
     } catch (err) {
       debug($, `pane not drawn: ${String(err)}`)
       return next(e)
@@ -5757,7 +5813,7 @@ export const register: Register = (on, opts) => {
     let section: ReturnType<typeof composeSection>
     try {
       const posture = cfg.delegateOnly !== 'off' && (await brainSeat($, e.model)) === 'fable' ? PREMIUM_POSTURE : []
-      section = composeSection(await snapshot($), posture)
+      section = composeSection(await snapshot($), posture, !cfg.wakeOnVerdict)
     } catch (err) {
       debug($, `delegation state section not built: ${String(err)}`)
       return out

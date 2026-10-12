@@ -246,17 +246,18 @@ What the brain will see:
   claim of the report that the mod can check matches git (branch, sha, files,
   scope, gate, red evidence). Consistent is not a review: nothing in the check
   reads the diff, so read it before you accept. The old word `verified` stopped being read in this release (MOD-49); a script that parses an old row should accept both words.
-- **A verdict wakes you, and the posture line says to act (MOD-15).** After the
-  mod posts the row for a background worker's hand-back it submits that row with
-  its next action as a turn of your own: the model reads "The
-  chassis-delegation plugin sent a message", and you act on it without waiting
-  for the person to type. The "Delegation state" section carries one posture line
+- **A verdict is read in the hand-back turn, and the posture line says to act (MOD-15, MOD-64).** The mod
+  posts the row for a background worker's hand-back; with `wakeOnVerdict` on it
+  also submits that row with its next action as a turn of your own (the model
+  reads "The chassis-delegation plugin sent a message"). Wakes are off by default
+  (MOD-64): in the hand-back turn call the `verdict` tool with the task id, before
+  ending the turn, and act on the row it returns. The "Delegation state" section carries one posture line
   while a `ready:` row, a respawn block or a pending review block is out: make
   that call without asking; ask only when a verdict is refuted on a claim you
   cannot amend, a worker is over its spend, or an amend needs approval. A
   `ready:` worktree row you leave unclaimed for 10 minutes is started by the mod
   itself, outside its hooks; `repo=here` and `repo=none` rows always wait for
-  you. `wakeOnVerdict` and `readyFallbackMinutes` turn these off.
+  you. `readyFallbackMinutes` turns the fallback off.
 - **An optional reviewer stage, off by default (MOD-21, public issue #1).** With
   `review` set to `on` (or `on-frontier`), a consistent verdict says
   `next=review` and ends with a spawn block for a fresh read-only reviewer, one
@@ -552,6 +553,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--repo <abs path>\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool; the model then makes the Agent call its result ends with |
+| `mcp__chassis-delegation__verdict` | the model, on its own | waits for a worker's verdict: with `task` (and optional `subtask`, `waitSeconds` up to 900) it returns the verdict row and any `ready:` lines once the verifier has judged the latest attempt, at once if it already has; call it in the hand-back turn, before ending it (see **Waking the brain** under [The contracts](#the-contracts)) |
 | `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test (and `repo`: `none` or `here` for research or extraction with outputs outside the repo, see [Research cards](#research-cards), or the absolute path of another local checkout, see [Delegating into another repo](#delegating-into-another-repo); `resources` for a live app only one worker may use, and `lanes` to write several research cards at once, see [Exclusive resources and fan-out](#exclusive-resources-and-fan-out)); it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool (optional `path`, as for `setup`) |
 | `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (optional `path`: another local checkout to set up instead, see [Delegating into another repo](#delegating-into-another-repo)) |
@@ -965,20 +967,49 @@ ready for 10 min and the brain had not spawned it; the mod started it itself …
 A row the brain spawns first, or one still waiting behind a full house, is never
 started.
 
-**Waking the brain.** A verdict row used to reach the brain only inside the
-person's next message. Now, after the mod posts the row for a background worker's
+**Waking the brain.** Wakes are off by default (`wakeOnVerdict`, default `false`,
+MOD-64). A wake is the `$.prompt.submit` the mod used to make after it posted a
+verdict row (MOD-15): a turn of the brain's own, which the model reads as "The
+chassis-delegation plugin sent a message". They were turned off because they
+mostly repeated a row the brain had already read in the hand-back turn, a task it
+had already merged or a question it had already relayed, and each one started a
+turn in the person's place. With wakes off nothing calls `$.prompt.submit`: verdict
+rows, `ready:` lines and the debrief's post question are still appended as rows,
+the ledger and the state section hold every verdict, and the person is not
+interrupted.
+
+The wake existed for one reason. A worker's hand-back starts the brain's turn
+before the verifier has finished, so a brain that ended that turn early would sit
+idle on an unread verdict. With wakes off the brain keeps the waiting inside the
+hand-back turn: **the hand-back-turn rule is to call the `verdict` tool with
+`task=<id>` in that turn, before ending it.** The dispatch tool's text under the
+spawn block says so, and the "Delegation state" section carries one posture line
+saying so while a background worker is running or being verified (the dashboard's
+open item for a worker being verified says `call the verdict tool with
+task=<id>` instead of `the verdict lands on its own`).
+
+The `verdict` tool (`mcp__chassis-delegation__verdict`) takes `task`, an optional
+`subtask` (default `main`) and an optional `waitSeconds` (default 600, at most
+900). When the task's latest attempt has been judged it returns at once, with the
+verdict row exactly as the mod posted it and any `ready:` lines posted beside it.
+While the verifier is still running it waits in clock waits of about 5 seconds,
+reading only the mod's own attempt and spawn records (never a shell command), and
+returns as soon as the verdict lands. At the timeout it returns
+`<task>: still verifying after <n>s; call verdict again`; for a task with no
+attempt it says so.
+
+With `wakeOnVerdict` set to `true` the behaviour is as it was before MOD-64, and
+what follows describes it. After the mod posts the row for a background worker's
 hand-back, it calls `$.prompt.submit` once with that row and its next action
 (`next=accept`, `next=resume agent=…`, the `ready:` line the hand-back freed, or
-the respawn spawn block): a turn of the brain's own once the session is idle,
-which the model reads as "The chassis-delegation plugin sent a message". It is
-never submitted as the person's words (no `asUser`), and while the person is
-mid-prompt the engine holds it until idle. One submit per verdict: a verdict the
-brain produced itself with `/dispatch <id> --verify` in its own turn, and a
-foreground worker's verdict, which rides its Agent result, wake nothing; an
-over-spend verdict does wake, so the brain can tell you. `wakeOnVerdict` (default
-`true`) turns it off, and the row is posted all the same.
+the respawn spawn block). It is never submitted as the person's words (no
+`asUser`), and while the person is mid-prompt the engine holds it until idle. One
+submit per verdict: a verdict the brain produced itself with
+`/dispatch <id> --verify` in its own turn, and a foreground worker's verdict,
+which rides its Agent result, wake nothing; an over-spend verdict does wake, so
+the brain can tell you.
 
-A verdict whose task is already merged does not wake (MOD-35). Before it submits,
+With wakes on, a verdict whose task is already merged does not wake (MOD-35). Before it submits,
 the mod asks MOD-4's retire check about a consistent hand-back: the attempt's sha an
 ancestor of `origin/main`, the card there reading `status: merged`, or an accept
 already recorded. When the answer is yes the row is still posted, no wake is sent,
@@ -1563,7 +1594,7 @@ the header it always did and is held up by nothing.
   place (`…; already queued since 14:02 (position 1)`).
 - **The hand-back that frees the resource carries the `ready:` line for it**
   (`ready: OPS-9 — run its spawn block (/dispatch OPS-9 prints it again)`), in the
-  same wake as the verdict row. Of several queued cards that name one resource only
+  same row as the verdict (and the same wake, with wakes on). Of several queued cards that name one resource only
   the first is ready; the others wait for it in turn, and a card with no resources
   or others is ready in its place. A row that waits for a resource takes no worker
   slot, and the "Delegation state" section names what it waits for.
@@ -1804,7 +1835,7 @@ Settings only (`/config`, or `pluginConfigs["chassis-delegation"].options` in `s
 | Key | Default | What it does |
 | --- | --- | --- |
 | `autoEscalate` | `false` | perform the resume instead of advising it; a respawn is always advice (its verdict carries the spawn block) |
-| `wakeOnVerdict` | `true` | after a verdict row, submit it with its next action as a turn of the brain's own, never as your words (MOD-15; see **Waking the brain** under the contracts) |
+| `wakeOnVerdict` | `false` | off: a verdict row is posted and nothing starts a turn of the brain's own; the brain calls the `verdict` tool in the hand-back turn (MOD-64). On: after a verdict row, also submit it with its next action as a turn of the brain's own, never as your words (MOD-15; see **Waking the brain** under the contracts) |
 | `postFindings` | `ask` | `ask` asks once after a debrief whether to post its new mod findings (nothing without a yes); `auto` posts them at once, scrubbed, at most 5 a debrief, and only with `redact` set; `off` neither asks nor posts. `/config` only, never the repo file (MOD-31; see [Posting the findings](#posting-the-findings)) |
 | `readyFallbackMinutes` | `10` | minutes a `ready:` worktree row may wait for the brain before the mod starts it itself, recorded with `source: fallback` and running outside the mod's hooks; `repo=here` and `repo=none` rows always wait; `0` = off (MOD-15; see **The queue**) |
 | `applyAmends` | `true` | append `scope+=` / `forbid+=` blocks to the brief before verifying |
@@ -2033,7 +2064,7 @@ line.
   findings to <issueRepo>? say yes to post them all, scrubbed, or name some
   (/delegation debrief post 1,3); nothing is posted without a yes`. The
   delegation-state section tells the brain to ask you that once and never to
-  post without an explicit yes in your own words; with `wakeOnVerdict` on the
+  post without an explicit yes in your own words; with `wakeOnVerdict` on (it is off by default) the
   question also reaches the brain as the plugin's message. Host findings and the
   agent's proposals are never in the question. The answer is no until you say
   yes.
