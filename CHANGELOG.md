@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **`/delegation config` lists the mod's options from its manifest, even when the host gives no rows for it (MOD-68).**
+  In the VS Code extension the command printed only its how-to line: no row of `$.config.list()` had a key starting
+  with `chassis-delegation.`. The list is now every `userConfig` field of the manifest, one line each; the value is
+  the host row's when there is one, else the option the mod was activated with, else the manifest default. A host
+  row is this mod's when its `provider.plugin` is the plugin's name or its key starts with `<name>.`, and its own key
+  is what `$.config.set` gets (else `<name>.<field>`). When the host gives no row for the mod, the list ends with a
+  line saying so, with the number of rows the host did list, and that a set may be refused on that screen while the
+  `/config` menu in a terminal sets the same options. `/delegation config <field>` and `<field> <value>` work for
+  any manifest field, reading kind and choices from the manifest when there is no row; a denied or thrown set
+  answers `<field> was not set: <reason>`, the host's reason as given.
+
 ## 0.9.6 — 2026-10-12
 
 - **`/delegation config` lists, shows and sets the mod's own options (MOD-66).** The mod told the person to set its

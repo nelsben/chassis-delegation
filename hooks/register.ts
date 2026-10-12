@@ -266,7 +266,7 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
-import { configPlan, manifestDefaults, setAnswer, type CfgRow } from './lib/configcmd'
+import { configPlan, manifestDefaults, manifestFields, setAnswer, type CfgRow } from './lib/configcmd'
 import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
 import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
@@ -4700,16 +4700,19 @@ async function runConfig($: Host, rest: string): Promise<string> {
   try {
     rows = (await $.config.list()) as unknown as CfgRow[]
   } catch (err) {
-    return `the options could not be read: ${String(err)}`
+    debug($, `config.list failed: ${String(err)}`)
+    rows = []
   }
-  const defaults = manifestDefaults(await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`))
-  const plan = configPlan(rows, defaults, rest)
+  if (!Array.isArray(rows)) rows = []
+  const manifest = await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`)
+  const defaults = manifestDefaults(manifest)
+  const plan = configPlan(rows, defaults, rest, { plugin: ($.plugin as { name?: string }).name ?? PLUGIN, fields: manifestFields(manifest), live: options as Record<string, unknown> })
   if (!('set' in plan)) return plan.text
   try {
     const out = await $.config.set({ key: plan.set.key, value: plan.set.value })
     return setAnswer(plan.set.field, out.value, out.deny)
   } catch (err) {
-    return `${plan.set.field} was not set: ${String(err)}`
+    return `${plan.set.field} was not set: ${err instanceof Error ? err.message : String(err)}`
   }
 }
 

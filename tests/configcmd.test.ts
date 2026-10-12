@@ -21,21 +21,22 @@ const MANIFEST = JSON.stringify({
     wakeOnVerdict: { type: 'boolean', default: false },
     maxWorkers: { type: 'number', default: 3 },
     redact: { type: 'string', default: '' },
-    verdictVerbosity: { type: 'string', default: 'line' },
+    verdictVerbosity: { type: 'string', options: ['line', 'full', 'silent'], default: 'line' },
     briefDir: { type: 'string', default: '' },
     autoEscalate: { type: 'boolean', default: false },
+    driveWarn: { type: 'boolean', default: true },
   },
 })
 const cmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
 
 /** An inline plugin: `$.config.list()` answers the rows as they stand, `config.set` records and applies each set (or denies it). */
-function setup(on: unknown, deny?: string) {
+function setup(on: unknown, deny?: string, from: Record<string, unknown>[] = ROWS, throws?: string) {
   const w = world(on as never, { manifest: MANIFEST })
-  const rows = ROWS.map(r => ({ ...r }))
+  const rows = from.map(r => ({ ...r })) as Row[]
   const sets: { key: string; value: unknown }[] = []
   const hook = on as unknown as (n: string, h: unknown) => void
   hook('config.list', () => ({ value: rows.map(r => ({ ...r })) }))
-  hook('config.set', (_$: unknown, e: { key: string; value: unknown }) => {
+  if (!throws) hook('config.set', (_$: unknown, e: { key: string; value: unknown }) => {
     if (deny) return { deny }
     sets.push({ key: e.key, value: e.value })
     const r = rows.find(x => x.key === e.key)
@@ -140,5 +141,61 @@ describe('MOD-66: the pure half', () => {
   test('the manifest default reads as nothing when the manifest does not parse', () => {
     expect(manifestDefaults('not json')).toEqual({})
     expect(manifestDefaults(undefined)).toEqual({})
+  })
+})
+
+// MOD-68: the list does not depend on the host's rows.
+const ENGINE_ONLY = [{ key: 'theme', label: 'theme', kind: 'choice', value: 'dark', options: ['dark', 'light'], isLocked: false, provider: { plugin: 'engine' } }]
+describe('MOD-68: /delegation config without host rows', () => {
+  test('a host that lists no rows for the mod still gives every manifest field, then the no-rows line', async ($, on) => {
+    setup(on, undefined, ENGINE_ONLY)
+    await $.session.start(sessionStart)
+    const lines = String((await $.command.run(cmd('config'))).text).split('\n')
+    expect(lines).toContain('wakeOnVerdict = false (default)')
+    expect(lines).toContain('driveWarn = true (default)')
+    expect(lines).toContain('redact = "" (default)')
+    expect(lines.join('\n')).not.toContain('theme')
+    const last = lines[lines.length - 1] ?? ''
+    expect(last).toContain('lists no rows for chassis-delegation')
+    expect(last).toContain('1 row listed')
+    expect(last).toContain('may be refused')
+    expect(last).toContain('/config menu in a terminal')
+  })
+
+  test('a row keyed differently but with provider.plugin = chassis-delegation is used, and its key is passed to set', async ($, on) => {
+    const row = { key: 'plugins.cd.wakeOnVerdict', label: 'wakeOnVerdict', kind: 'boolean', value: true, isLocked: false, provider: { plugin: 'chassis-delegation' } }
+    const { sets } = setup(on, undefined, [row, ...ENGINE_ONLY])
+    await $.session.start(sessionStart)
+    const t = String((await $.command.run(cmd('config'))).text)
+    expect(t).toContain('wakeOnVerdict = true')
+    expect(t).toContain('redact = "" (default)')
+    await $.command.run(cmd('config wakeOnVerdict off'))
+    expect(sets).toEqual([{ key: 'plugins.cd.wakeOnVerdict', value: false }])
+  })
+
+  test('with no row, set uses chassis-delegation.<field> and the manifest kind', async ($, on) => {
+    const { sets } = setup(on, undefined, ENGINE_ONLY)
+    await $.session.start(sessionStart)
+    expect((await $.command.run(cmd('config maxWorkers 5'))).text).toBe('maxWorkers set to 5; the mod reloads with it')
+    expect(String((await $.command.run(cmd('config maxWorkers many'))).text)).toContain('takes a number')
+    expect(String((await $.command.run(cmd('config verdictVerbosity loud'))).text)).toContain('line, full, silent')
+    const show = String((await $.command.run(cmd('config verdictVerbosity'))).text)
+    expect(show).toContain('kind: choice')
+    expect(show).toContain('choices: line, full, silent')
+    expect(sets).toEqual([{ key: 'chassis-delegation.maxWorkers', value: 5 }])
+  })
+
+  test('a set the host cannot do answers "<field> was not set: <reason>", and a deny gives its reason verbatim', async ($, on) => {
+    setup(on, undefined, ENGINE_ONLY, 'no handler')
+    await $.session.start(sessionStart)
+    const t = String((await $.command.run(cmd('config wakeOnVerdict true'))).text)
+    expect(t.startsWith('wakeOnVerdict was not set: ')).toBe(true)
+    expect(t.length).toBeGreaterThan('wakeOnVerdict was not set: '.length)
+  })
+
+  test('a denied set answers "<field> was not set: <the host reason>"', async ($, on) => {
+    setup(on, 'managed by policy', ENGINE_ONLY)
+    await $.session.start(sessionStart)
+    expect((await $.command.run(cmd('config wakeOnVerdict true'))).text).toBe('wakeOnVerdict was not set: managed by policy')
   })
 })
