@@ -199,3 +199,46 @@ describe('MOD-68: /delegation config without host rows', () => {
     expect((await $.command.run(cmd('config wakeOnVerdict true'))).text).toBe('wakeOnVerdict was not set: managed by policy')
   })
 })
+
+// MOD-70: named groups, a summary under each option, Other for a field the table lacks.
+describe('MOD-70: /delegation config in groups', () => {
+  test('group headings come in order, a field line is followed by its indented summary, a blank line separates groups', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    const text = String((await $.command.run(cmd('config'))).text)
+    const lines = text.split('\n')
+    const heads = ['Workers and models', 'Checking the work', 'Where things go', 'Guards and nudges for the brain']
+    const at = heads.map(h => lines.indexOf(h))
+    expect(at.every(i => i >= 0)).toBe(true)
+    expect([...at].sort((a, b) => a - b)).toEqual(at)
+    const i = lines.indexOf('maxWorkers = 3 (default)')
+    expect(i).toBeGreaterThan(at[0] as number)
+    expect(lines[i + 1]?.startsWith('  ')).toBe(true)
+    expect((lines[i + 1] ?? '').trim().length).toBeGreaterThan(0)
+    expect(lines[(at[1] as number) - 1]).toBe('')
+    expect(lines[lines.length - 1]).toBe('/delegation config <field> shows one; /delegation config <field> <value> sets it')
+    expect(text).not.toContain('\nOther\n')
+  })
+
+  test('a manifest field the table lacks lists under Other, last, with no summary', async ($, on) => {
+    const manifest = JSON.stringify({ userConfig: { maxWorkers: { type: 'number', default: 3 }, brandNewThing: { type: 'boolean', default: true } } })
+    on('config.list', () => ({ value: [] }))
+    const w = world(on as never, { manifest })
+    expect(w).toBeDefined()
+    await $.session.start(sessionStart)
+    const lines = String((await $.command.run(cmd('config'))).text).split('\n')
+    const o = lines.indexOf('Other')
+    expect(o).toBeGreaterThan(lines.indexOf('Workers and models'))
+    expect(lines[o + 1]).toBe('brandNewThing = true (default)')
+    expect(lines[o + 2]).toBe('')
+  })
+
+  test('showing one option puts its summary under the value line, before the kind', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    const lines = String((await $.command.run(cmd('config verdictVerbosity'))).text).split('\n')
+    expect(lines[0]).toBe('verdictVerbosity = line (default)')
+    expect(lines[1]?.startsWith('  ')).toBe(true)
+    expect(lines[2]).toBe('kind: choice')
+  })
+})

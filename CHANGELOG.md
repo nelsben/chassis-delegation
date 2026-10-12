@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **`/delegation config` lists the options in named groups, each with a short plain-English line (MOD-70).** The list
+  was 48 bare `field = value` lines. It now prints seven groups in order (Workers and models; Checking the work;
+  Where things go; Debriefs; Evals; Guards and nudges for the brain; Display), each a heading line, then every option
+  as `field = value` with its `(default)` / `(locked)` marks and a summary of at most 90 characters on the next
+  line, indented two spaces; a blank line separates groups, and the how-to and no-rows lines stay last. The table of
+  groups and summaries is in `hooks/lib/configcmd.ts`; a manifest field it lacks still lists, under a last group
+  named Other with no summary. `/delegation config <field>` shows the summary under the value line. A node test fails
+  when a manifest option has no entry, the table names a field the manifest lacks, or a summary is over 90 characters.
+
 ## 0.9.7 — 2026-10-12
 
 - **`/delegation config` lists the mod's options from its manifest, even when the host gives no rows for it (MOD-68).**
