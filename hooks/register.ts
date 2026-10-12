@@ -615,7 +615,8 @@ let inTurn = true
 /** MOD-42: a main-loop turn is known to be open (turn.start seen, its turn.complete not yet): a verdict's wake is held for its end. */
 let turnOpen = false
 /** MOD-42: wakes held while the brain's turn is open; a consistent verdict's carries its spawn, re-checked for merged just before delivery. */
-let heldWakes: { text: string; ready: string; spawn?: SpawnRecord; seq: number }[] = []
+/** MOD-62: `read` is set once a main-loop model step began after the entry was held: that step carried its row. */
+let heldWakes: { text: string; ready: string; spawn?: SpawnRecord; seq: number; read?: boolean }[] = []
 /** MOD-57: a counter ordering held wakes against delivered messages (the clock can tie); the last delivered message per agent id. */
 let wakeSeq = 0
 let messaged = new Map<string, { seq: number; at: number }>()
@@ -1698,6 +1699,11 @@ async function flushWakes($: Host): Promise<void> {
   const keep: string[] = []
   for (const h of held) {
     const spawn = h.spawn
+    if (h.read) {
+      // MOD-62: a later main-loop step of this turn carried the row (and its ready lines): the brain has read it
+      debug($, `wake skipped: ${spawn ? taskLabel(spawn.task, spawn.subtask) : 'row'} read in the turn`)
+      continue
+    }
     let drop = false
     if (spawn && h.text !== '') {
       const label = taskLabel(spawn.task, spawn.subtask)
@@ -5516,6 +5522,8 @@ export const register: Register = (on, opts) => {
 
   // ---- turn.step: a worker steps at the effort its tier (or its card) names (MOD-13) ----
   on('turn.step', async function* ($, e, next) {
+    // MOD-62: a main-loop step (no agentId) carries every row appended before it; a subagent's step never counts
+    if (!e.agentId && turnOpen) for (const h of heldWakes) h.read = true
     const effort = e.agentId ? await stepEffort($, e.agentId) : undefined
     return yield* next(effort !== undefined ? { ...e, effort } : e)
   })

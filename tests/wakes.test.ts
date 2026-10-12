@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, ROOT, SCRATCH, type RunAnswer } from './harness'
+import { world, spawnInput, turnInput, stepInput, ROOT, SCRATCH, type RunAnswer } from './harness'
 
 // MOD-51: a wake held while the brain's turn is open is dropped at delivery when its task has moved on.
 const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
@@ -137,6 +137,72 @@ describe('MOD-57: a held wake is dropped when the brain already messaged its wor
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
     await $.turn.complete(mainEnd())
     expect(w.submitted).toHaveLength(1)
+  })
+})
+describe('MOD-62: a held wake is dropped when a later main-loop step of the turn already read its row', () => {
+  const step = async ($: any, agentId?: string) => {
+    for await (const chunk of $.turn.step(stepInput(agentId))) void chunk
+  }
+  const setup = async ($: any, on: any, extra: Record<string, unknown> = {}) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }), agentId: 'agent-4', ...extra })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    return w
+  }
+  const verdict = ($: any, sha: string) => $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT(sha)))
+
+  test('(1) held, then a main-loop step, then the turn ends: nothing is submitted, the skip is logged, the row was appended', { options: { ...GM } }, async ($, on) => {
+    const w = await setup($, on)
+    await verdict($, '1234abcd')
+    await step($)
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toEqual([])
+    expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 read in the turn'))).toBe(true)
+    expect(w.appended.some(a => a.text.includes('T-4'))).toBe(true)
+  })
+
+  test('(2) held and the turn ends with no step after it: it is submitted', { options: { ...GM } }, async ($, on) => {
+    const w = await setup($, on)
+    await step($) // a step before the row does not count
+    await verdict($, '1234abcd')
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('T-4')
+  })
+
+  test('(3) held and only a subagent step follows: it is submitted', { options: { ...GM } }, async ($, on) => {
+    const w = await setup($, on)
+    await verdict($, '1234abcd')
+    await step($, 'agent-9')
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toHaveLength(1)
+  })
+
+  test('(4) two verdicts, one held before a main-loop step and one after the last step: only the second is submitted', { options: { ...GM } }, async ($, on) => {
+    const w = await setup($, on)
+    await verdict($, '1234abcd')
+    await step($)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_02ABCDEFG' }))
+    await $.turn.complete(turnInput('agent-2', 'Done.\n' + REPORT('5678abcd')))
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]?.text).toContain('attempt 2')
+    expect(w.submitted[0]?.text).not.toContain('attempt 1')
+  })
+
+  test('(5) a ready line held with its verdict, then a main-loop step: neither is submitted', { options: { ...GM, briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const queued = '[[brief v=1 task=T-9 subtask=main purpose=build tier=standard]]\nDo it.'
+    const w = world(on, { listAgents: true, files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }) })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-5 subtask=main purpose=build tier=standard]]\nDo it.', tool_use_id: 'toolu_B0000002' }))
+    const q = await $.agent.spawn(spawnInput({ prompt: queued, tool_use_id: 'toolu_C0000009' }))
+    expect(q.deny).toContain('queued: T-9')
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-1', 'Done.\n' + REPORT('1234abcd')))
+    expect(w.appended.some(a => a.text.includes('ready: T-9'))).toBe(true)
+    await step($)
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toEqual([])
   })
 })
 void ROOT
