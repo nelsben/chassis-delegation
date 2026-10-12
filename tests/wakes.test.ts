@@ -6,6 +6,7 @@ const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
 const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
 const REPORT = (sha: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass files=a/x.ts]]`
 const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+const GMW = { ...GM, wakeOnVerdict: true } // these tests are about the wake itself: it is on
 const MB = 'b'.repeat(40)
 const fullSha = (sha: string) => sha.padEnd(40, '0')
 const mainEnd = () => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' }) as never
@@ -32,7 +33,7 @@ const repo = (o: { gate: () => number; ancestor: () => number }) => {
 }
 
 describe('MOD-51: a held verdict wake is dropped at delivery when its task has moved on', () => {
-  test('(1) attempt 1 refuted while the turn is open, attempt 2 consistent in the same turn: only attempt 2 is submitted', { options: { ...GM } }, async ($, on) => {
+  test('(1) attempt 1 refuted while the turn is open, attempt 2 consistent in the same turn: only attempt 2 is submitted', { options: { ...GMW } }, async ($, on) => {
     let gate = 1
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => gate, ancestor: () => 1 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
@@ -49,7 +50,7 @@ describe('MOD-51: a held verdict wake is dropped at delivery when its task has m
     expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 attempt 1 superseded by attempt 2'))).toBe(true)
   })
 
-  test('(2) a consistent wake whose task is merged before the turn ends is not submitted', { options: { ...GM } }, async ($, on) => {
+  test('(2) a consistent wake whose task is merged before the turn ends is not submitted', { options: { ...GMW } }, async ($, on) => {
     let ancestor = 1
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => ancestor }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
@@ -62,7 +63,7 @@ describe('MOD-51: a held verdict wake is dropped at delivery when its task has m
     expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 merged before delivery'))).toBe(true)
   })
 
-  test('(2b) MOD-60: a refuted wake whose sha is only an ancestor of origin/main is still delivered at the turn\'s end', { options: { ...GM } }, async ($, on) => {
+  test('(2b) MOD-60: a refuted wake whose sha is only an ancestor of origin/main is still delivered at the turn\'s end', { options: { ...GMW } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 1, ancestor: () => 0 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.start({ text: '', turnId: 'turn-main' } as never)
@@ -73,7 +74,7 @@ describe('MOD-51: a held verdict wake is dropped at delivery when its task has m
     expect(w.submitted[0]?.text).toContain('refuted')
   })
 
-  test('(3) a ready line is submitted alone when its verdict is dropped', { options: { ...GM, briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+  test('(3) a ready line is submitted alone when its verdict is dropped', { options: { ...GMW, briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     let ancestor = 1
     const other = '[[brief v=1 task=T-5 subtask=main purpose=build tier=standard]]\nDo it.'
     const queued = '[[brief v=1 task=T-9 subtask=main purpose=build tier=standard]]\nDo it.'
@@ -92,7 +93,7 @@ describe('MOD-51: a held verdict wake is dropped at delivery when its task has m
     expect(w.submitted[0]?.text).not.toContain('refuted')
   })
 
-  test('(4) a lone refuted wake still wakes the brain', { options: { ...GM } }, async ($, on) => {
+  test('(4) a lone refuted wake still wakes the brain', { options: { ...GMW } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 1, ancestor: () => 1 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.start({ text: '', turnId: 'turn-main' } as never)
@@ -106,7 +107,7 @@ describe('MOD-51: a held verdict wake is dropped at delivery when its task has m
 describe('MOD-57: a held wake is dropped when the brain already messaged its worker', () => {
   const send = ($: any, to: string) => $.session.send({ to, text: 'carry on', origin: { kind: 'model' } } as never)
 
-  test('(1) attempt 1 consistent while the turn is open, the brain resumes the worker in the same turn: no wake is submitted', { options: { ...GM } }, async ($, on) => {
+  test('(1) attempt 1 consistent while the turn is open, the brain resumes the worker in the same turn: no wake is submitted', { options: { ...GMW } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.start({ text: '', turnId: 'turn-main' } as never)
@@ -118,7 +119,7 @@ describe('MOD-57: a held wake is dropped when the brain already messaged its wor
     expect(w.debugLogs.some(l => l.includes('wake skipped: T-4 attempt 1: the brain already messaged its worker'))).toBe(true)
   })
 
-  test('(2) control: the message went to a different agent: the wake is submitted', { options: { ...GM } }, async ($, on) => {
+  test('(2) control: the message went to a different agent: the wake is submitted', { options: { ...GMW } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.start({ text: '', turnId: 'turn-main' } as never)
@@ -129,7 +130,7 @@ describe('MOD-57: a held wake is dropped when the brain already messaged its wor
     expect(w.submitted[0]?.text).toContain('attempt 1')
   })
 
-  test('(3) a message sent before the wake was held does not drop it', { options: { ...GM } }, async ($, on) => {
+  test('(3) a message sent before the wake was held does not drop it', { options: { ...GMW } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.start({ text: '', turnId: 'turn-main' } as never)
@@ -151,7 +152,7 @@ describe('MOD-62: a held wake is dropped when a later main-loop step of the turn
   }
   const verdict = ($: any, sha: string) => $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT(sha)))
 
-  test('(1) held, then a main-loop step, then the turn ends: nothing is submitted, the skip is logged, the row was appended', { options: { ...GM } }, async ($, on) => {
+  test('(1) held, then a main-loop step, then the turn ends: nothing is submitted, the skip is logged, the row was appended', { options: { ...GMW } }, async ($, on) => {
     const w = await setup($, on)
     await verdict($, '1234abcd')
     await step($)
@@ -161,7 +162,7 @@ describe('MOD-62: a held wake is dropped when a later main-loop step of the turn
     expect(w.appended.some(a => a.text.includes('T-4'))).toBe(true)
   })
 
-  test('(2) held and the turn ends with no step after it: it is submitted', { options: { ...GM } }, async ($, on) => {
+  test('(2) held and the turn ends with no step after it: it is submitted', { options: { ...GMW } }, async ($, on) => {
     const w = await setup($, on)
     await step($) // a step before the row does not count
     await verdict($, '1234abcd')
@@ -170,7 +171,7 @@ describe('MOD-62: a held wake is dropped when a later main-loop step of the turn
     expect(w.submitted[0]?.text).toContain('T-4')
   })
 
-  test('(3) held and only a subagent step follows: it is submitted', { options: { ...GM } }, async ($, on) => {
+  test('(3) held and only a subagent step follows: it is submitted', { options: { ...GMW } }, async ($, on) => {
     const w = await setup($, on)
     await verdict($, '1234abcd')
     await step($, 'agent-9')
@@ -178,7 +179,7 @@ describe('MOD-62: a held wake is dropped when a later main-loop step of the turn
     expect(w.submitted).toHaveLength(1)
   })
 
-  test('(4) two verdicts of different tasks, one held before a main-loop step and one after the last step: only the second is submitted', { options: { ...GM } }, async ($, on) => {
+  test('(4) two verdicts of different tasks, one held before a main-loop step and one after the last step: only the second is submitted', { options: { ...GMW } }, async ($, on) => {
     const BRIEF5 = `${SCRATCH}/briefs/T-5.brief.md`
     const REPORT5 = '[[report v=1 task=T-5 subtask=main branch=agent/frontend/T-5 pr=none sha=5678abcd gate=pass files=a/x.ts]]'
     const w = world(on, { listAgents: true, files: { [BRIEF]: HEADER + '\nbody', [BRIEF5]: HEADER.replace('task=T-4', 'task=T-5') + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }) })
@@ -194,7 +195,7 @@ describe('MOD-62: a held wake is dropped when a later main-loop step of the turn
     expect(w.submitted[0]?.text).not.toContain('T-4')
   })
 
-  test('(5) a ready line held with its verdict, then a main-loop step: neither is submitted', { options: { ...GM, briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+  test('(5) a ready line held with its verdict, then a main-loop step: neither is submitted', { options: { ...GMW, briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const queued = '[[brief v=1 task=T-9 subtask=main purpose=build tier=standard]]\nDo it.'
     const w = world(on, { listAgents: true, files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }) })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_A0000001' }))
@@ -207,6 +208,15 @@ describe('MOD-62: a held wake is dropped when a later main-loop step of the turn
     await step($)
     await $.turn.complete(mainEnd())
     expect(w.submitted).toEqual([])
+  })
+})
+describe('MOD-64: wakes are off by default', () => {
+  test('a background worker\'s hand-back with default options submits no wake, and its row is appended', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }), agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
+    expect(w.submitted).toEqual([])
+    expect(w.appended.some(a => a.text.includes('T-4 attempt 1/3 consistent'))).toBe(true)
   })
 })
 void ROOT

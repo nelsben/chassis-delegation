@@ -273,8 +273,8 @@
     "wakeOnVerdict": {
       "type": "boolean",
       "title": "Wake the brain on a verdict",
-      "description": "After the mod posts a verdict row for a worker's hand-back it submits that row with its next action (accept, resume, the ready: line, the respawn spawn block) as a turn of the brain's own, so the brain acts without waiting for you to type; never as your words, and the engine queues it while you are mid-prompt. Off posts the row only",
-      "default": true
+      "description": "Off by default: a verdict row is posted and nothing starts a turn of the brain's own; in the hand-back turn the brain calls the verdict tool, which returns the verdict once it lands. On: after the mod posts a verdict row for a worker's hand-back it also submits that row with its next action (accept, resume, the ready: line, the respawn spawn block) as a turn of the brain's own, so the brain acts without waiting for you to type; never as your words, and the engine queues it while you are mid-prompt",
+      "default": false
     },
     "review": {
       "type": "string",

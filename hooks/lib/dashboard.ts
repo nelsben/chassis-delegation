@@ -4,6 +4,7 @@
 import type { BandItem, DashboardBlock } from '../types'
 import { usdText } from './cost'
 import { SERIES, type Metrics } from './metrics'
+import { verifyingTail } from './verdicttool'
 
 export type { BandItem } from '../types'
 
@@ -89,12 +90,12 @@ export function bandLines(items: readonly BandItem[], now: number, columns: numb
 }
 
 /** The pane's "Open items": every band item with the exact next action. */
-export function openItemLines(items: readonly BandItem[], now: number): string[] {
+export function openItemLines(items: readonly BandItem[], now: number, verdictTool = false): string[] {
   return items.map(item => {
     switch (item.kind) {
       case 'running':
         return item.phase === 'verifying'
-          ? `${item.task}: verifying ${item.tier}/${item.alias} ${elapsed(now - item.at)} — the verdict lands on its own`
+          ? `${item.task}: verifying ${item.tier}/${item.alias} ${elapsed(now - item.at)} — ${verifyingTail(item.task, verdictTool)}`
           : `${item.task}: running ${item.tier}/${item.alias} ${elapsed(now - item.at)} — wait for the hand-back`
       case 'decision':
         return `${item.task}: ${item.next}`

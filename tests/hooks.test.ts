@@ -3125,7 +3125,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
   const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
   const delegationCmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
 
-  test('the dispatch tool writes the brief, cuts the worktree and picks the tier, then spawns nothing: its result ends with the spawn block', { options: BRIEFS }, async ($, on) => {
+  test('the dispatch tool writes the brief, cuts the worktree and picks the tier, then spawns nothing: its result ends with the spawn block', { options: { ...BRIEFS, wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, store: offered })
     await $.session.start(sessionStart)
     const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
@@ -3515,7 +3515,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(queueOf(w).map(q => q.task)).toEqual([queued])
   }
 
-  test('a consistent hand-back wakes the brain once: one prompt.submit holding the verdict row and next=accept, never asUser', { options: { ...GM } }, async ($, on) => {
+  test('a consistent hand-back wakes the brain once: one prompt.submit holding the verdict row and next=accept, never asUser', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     expect(w.submitted).toEqual([])
@@ -3539,7 +3539,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(w.submitted).toEqual([])
   })
 
-  test('a refuted hand-back wakes the brain with its next action (resume), and a respawn verdict with the spawn block', { options: { autoEscalate: true, verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+  test('a refuted hand-back wakes the brain with its next action (resume), and a respawn verdict with the spawn block', { options: { autoEscalate: true, verdictVerbosity: 'full', ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
@@ -3552,7 +3552,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(spawnCallOf(String(w.submitted[1]?.text))).toMatchObject({ model: 'opus', description: 'T-4 frontier opus' })
   })
 
-  test('a hand-back that frees a slot submits the ready: line, in the same one submit as its verdict row', async ($, on) => {
+  test('a hand-back that frees a slot submits the ready: line, in the same one submit as its verdict row', { options: { wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { listAgents: true })
     await fullHouse($, w, 'T-9')
     expect(w.submitted).toEqual([])
@@ -3566,7 +3566,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(w.submitted[1]?.text).not.toContain('ready: T-9')
   })
 
-  test('the brain’s own --verify, in its own turn, wakes nothing', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+  test('the brain’s own --verify, in its own turn, wakes nothing', { options: { verdictVerbosity: 'full', ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const VBRIEF = `${ROOT}/.delegation/briefs/T-4.brief.md`
     const CARD_NAME = 'T-4-the-thing.md'
     const CARD = '---\nid: T-4\ntitle: The thing\ndomain: frontend\ntier: standard\nstatus: queued\nscope: [a/**]\nforbid: [b/**]\nred_test: none\ngate: prettier\nbudget: 3-attempts\n---\n## Why\nA card.\n'
@@ -3664,7 +3664,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(w.spawns).toHaveLength(3)
   })
 
-  test('the fallback spawn is the whole decision: tier, budget and slot are taken, and the worker is judged at its hand-back as before', { options: { readyFallbackMinutes: 1, verdictVerbosity: 'full' } }, async ($, on) => {
+  test('the fallback spawn is the whole decision: tier, budget and slot are taken, and the worker is judged at its hand-back as before', { options: { readyFallbackMinutes: 1, verdictVerbosity: 'full', wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { listAgents: true })
     await fullHouse($, w, 'T-9')
     await $.turn.complete(turnInput('agent-1', report('T-1')))
@@ -3755,7 +3755,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(toasts()).toBe(2)
   })
 
-  test('an over-spend verdict wakes the brain once; the spend warning before it is not a verdict', { options: { ...GM } }, async ($, on) => {
+  test('an over-spend verdict wakes the brain once; the spend warning before it is not a verdict', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const SONNET = 'claude-sonnet-5-5' // $2 in, $10 out per million
     const w = world(on, { files: { [BRIEF]: HEADER.replace(' budget=', ' spend=2 budget=') + '\nbody' }, run: nativeRun(), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
@@ -3767,7 +3767,7 @@ describe('MOD-15: work keeps moving without the person', () => {
     expect(w.submitted[0]?.text).toContain('chassis-delegation: T-4 attempt 1/3 over-spend')
   })
 
-  test('a submit the engine refuses costs nothing: the row is posted, the verdict kept, and the debug log says the brain was not woken', { options: { ...GM } }, async ($, on) => {
+  test('a submit the engine refuses costs nothing: the row is posted, the verdict kept, and the debug log says the brain was not woken', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4', skip: ['prompt.submit'] })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
@@ -3796,7 +3796,7 @@ describe('MOD-19: the verdict says what it checked (verified became consistent; 
     expect(ledgerOf(w).at(-1)).toMatchObject({ task: 'T-4', attempt: 1, verdict: 'consistent', next: 'accept' })
   })
 
-  test('the one-line row reads consistent and still says next=accept; the brain is woken with it', { options: { ...GM } }, async ($, on) => {
+  test('the one-line row reads consistent and still says next=accept; the brain is woken with it', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
@@ -4004,7 +4004,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
   const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=2-attempts report=chassis.report.v1]]'
   const REPORT = (sha: string) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=${sha} gate=pass files=a/x.ts]]`
   const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
-  const FULL = { verdictVerbosity: 'full', ...GM }
+  const FULL = { verdictVerbosity: 'full', wakeOnVerdict: true, ...GM }
   const ON = { options: { review: 'on', ...FULL } }
   const ledgerOf = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
   const kinds = (w: { store: Map<string, unknown> }, kind: string) => records(w, 'T-4').filter(r => r.kind === kind)
@@ -4540,7 +4540,7 @@ describe('MOD-23: exclusive resources and fan-out', () => {
       store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
     })
 
-  test('dispatching a second card that needs a held resource prints the waiting line and spawns nothing; the first card’s hand-back carries ready: for it', { options: OPTIONS }, async ($, on) => {
+  test('dispatching a second card that needs a held resource prints the waiting line and spawns nothing; the first card’s hand-back carries ready: for it', { options: { ...OPTIONS, wakeOnVerdict: true } }, async ($, on) => {
     const w = setup(on)
     await $.session.start(sessionStart)
     const first = String((await $.command.run(commandInput('OPS-8'))).text)
@@ -4950,7 +4950,7 @@ describe('MOD-31: after a debrief, the mod asks whether to post its findings', (
   const files = (findings: unknown[], extra: Record<string, unknown> = {}) => ({ [DEBRIEF]: JSON.stringify({ summary: 'x', mod_findings: findings, ...extra }), [REPO_FILE]: '{"issueRepo":"owner/mod"}' })
   const QUESTION = 'post 2 findings to owner/mod? say yes to post them all, scrubbed, or name some (/delegation debrief post 1,3); nothing is posted without a yes'
 
-  test('unset (ask): the hand-back ends with the question naming 2, runs no gh issue create, and the state section carries the ask-once line', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+  test('unset (ask): the hand-back ends with the question naming 2, runs no gh issue create, and the state section carries the ask-once line', { options: { autoEval: false, redact: 'globex', wakeOnVerdict: true } }, async ($, on) => {
     nextIssue = 40
     const w = world(on, { listAgents: true, files: files(two), run: ghRun })
     await handBack($, w)
@@ -4963,7 +4963,7 @@ describe('MOD-31: after a debrief, the mod asks whether to post its findings', (
     expect(w.submitted.map(s => s.text)).toContain(QUESTION)
   })
 
-  test('MOD-62: the question lands in an open turn and a main-loop step follows: no wake is submitted', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+  test('MOD-62: the question lands in an open turn and a main-loop step follows: no wake is submitted', { options: { autoEval: false, redact: 'globex', wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { listAgents: true, files: files(two), run: ghRun })
     const mainEnd = () => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' }) as never
     await $.session.start(sessionStart)
@@ -4977,7 +4977,7 @@ describe('MOD-31: after a debrief, the mod asks whether to post its findings', (
     expect(w.debugLogs.some(l => l.includes('wake skipped: row read in the turn'))).toBe(true)
   })
 
-  test('MOD-62: the same question with no later main-loop step is submitted at the turn\'s end', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+  test('MOD-62: the same question with no later main-loop step is submitted at the turn\'s end', { options: { autoEval: false, redact: 'globex', wakeOnVerdict: true } }, async ($, on) => {
     const w2 = world(on, { listAgents: true, files: files(two), run: ghRun })
     const mainEnd = () => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' }) as never
     await $.session.start(sessionStart)
@@ -5080,7 +5080,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(ledgerOf(w).find(r => r.kind === 'accept')).toMatchObject({ task: 'T-4', attempt: 1, how: 'merged' })
   })
 
-  test('a consistent hand-back not yet merged submits its wake as today', { options: { ...GM } }, async ($, on) => {
+  test('a consistent hand-back not yet merged submits its wake as today', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
@@ -5089,7 +5089,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(0)
   })
 
-  test('MOD-60: a refuted hand-back whose sha is only an ancestor of origin/main (no work committed) is still woken for, and writes no accept row', { options: { ...GM } }, async ($, on) => {
+  test('MOD-60: a refuted hand-back whose sha is only an ancestor of origin/main (no work committed) is still woken for, and writes no accept row', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const base = nativeRun() // gate red: the claim gate=pass is refuted
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 0, stdout: '' } : base(argv)), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
@@ -5115,7 +5115,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(ledgerOf(w).some(r => r.verdict === 'refuted')).toBe(true)
   })
 
-  test('MOD-60: a refuted hand-back not merged submits its wake', { options: { ...GM } }, async ($, on) => {
+  test('MOD-60: a refuted hand-back not merged submits its wake', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const base = nativeRun()
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 1, stdout: '' } : base(argv)), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
@@ -5124,7 +5124,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(w.submitted[0]?.text).toContain('refuted')
   })
 
-  test('MOD-60: a non-consistent hand-back for a task accepted by hand submits no wake', { options: { ...GM } }, async ($, on) => {
+  test('MOD-60: a non-consistent hand-back for a task accepted by hand submits no wake', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const base = nativeRun() // gate red: refuted
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 1, stdout: '' } : base(argv)), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
@@ -5139,7 +5139,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
 
   const mainEnd = () => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' }) as never
 
-  test('MOD-42: a consistent wake held while the brain\'s turn is open is dropped when the task is merged by the turn\'s end', { options: { ...GM } }, async ($, on) => {
+  test('MOD-42: a consistent wake held while the brain\'s turn is open is dropped when the task is merged by the turn\'s end', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     let ancestor = 1
     const base = nativeRun({ gate: 0 })
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? (argv.at(-1) === 'origin/main' ? { exitCode: ancestor, stdout: '' } : { exitCode: 0, stdout: '' }) : base(argv)), agentId: 'agent-4' })
@@ -5154,7 +5154,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(1)
   })
 
-  test('MOD-42: a consistent wake still unmerged at the turn\'s end is submitted then; a refuted one is never dropped', { options: { ...GM } }, async ($, on) => {
+  test('MOD-42: a consistent wake still unmerged at the turn\'s end is submitted then; a refuted one is never dropped', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: runWith(1), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.start({ text: '', turnId: 'turn-main' } as never)
@@ -5165,7 +5165,7 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     expect(w.submitted[0]?.text).toContain('next=accept')
   })
 
-  test('MOD-42/MOD-60: a refuted wake is still delivered at the turn\'s end when only the sha reads as merged', { options: { ...GM } }, async ($, on) => {
+  test('MOD-42/MOD-60: a refuted wake is still delivered at the turn\'s end when only the sha reads as merged', { options: { ...GM, wakeOnVerdict: true } }, async ($, on) => {
     const base = nativeRun()
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: argv => (argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 0, stdout: '' } : base(argv)), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
