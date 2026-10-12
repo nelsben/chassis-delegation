@@ -986,10 +986,11 @@ after re-running the merged check for each consistent verdict; one whose task is
 merged or accepted by then is dropped with the debug line
 `wake skipped: <id> merged before delivery`. Refuted, over-spend, no-report and
 `ready:` wakes are never dropped. A wake raised while the session is idle is submitted
-at once. A held wake is not sent when a later step of the brain's turn already read its
-row (MOD-62): the debug line is `wake skipped: <id> read in the turn` (`row` when the wake has
-no task), and the row stays in the conversation and the ledger. A row that landed during the
-turn's last step, with no step after it, still wakes the brain. If the session ends before the turn does, nothing is lost: the ledger and the
+at once. A held wake is not sent when a later step of the brain's turn already read
+its row (MOD-62): the debug line is `wake skipped: <id> read in the turn` (`row` when
+the wake has no task), and the row stays in the conversation and the ledger. A row
+that landed during the turn's last step, with no step after it, still wakes the
+brain. If the session ends before the turn does, nothing is lost: the ledger and the
 state section hold every verdict.
 
 **Report.** The worker's hand-back ends with the report line. The mod reads

@@ -178,16 +178,20 @@ describe('MOD-62: a held wake is dropped when a later main-loop step of the turn
     expect(w.submitted).toHaveLength(1)
   })
 
-  test('(4) two verdicts, one held before a main-loop step and one after the last step: only the second is submitted', { options: { ...GM } }, async ($, on) => {
-    const w = await setup($, on)
-    await verdict($, '1234abcd')
+  test('(4) two verdicts of different tasks, one held before a main-loop step and one after the last step: only the second is submitted', { options: { ...GM } }, async ($, on) => {
+    const BRIEF5 = `${SCRATCH}/briefs/T-5.brief.md`
+    const REPORT5 = '[[report v=1 task=T-5 subtask=main branch=agent/frontend/T-5 pr=none sha=5678abcd gate=pass files=a/x.ts]]'
+    const w = world(on, { listAgents: true, files: { [BRIEF]: HEADER + '\nbody', [BRIEF5]: HEADER.replace('task=T-4', 'task=T-5') + '\nbody' }, run: repo({ gate: () => 0, ancestor: () => 1 }) })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF5}.`, tool_use_id: 'toolu_B0000002' }))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-1', 'Done.\n' + REPORT('1234abcd')))
     await step($)
-    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_02ABCDEFG' }))
-    await $.turn.complete(turnInput('agent-2', 'Done.\n' + REPORT('5678abcd')))
+    await $.turn.complete(turnInput('agent-2', 'Done.\n' + REPORT5))
     await $.turn.complete(mainEnd())
     expect(w.submitted).toHaveLength(1)
-    expect(w.submitted[0]?.text).toContain('attempt 2')
-    expect(w.submitted[0]?.text).not.toContain('attempt 1')
+    expect(w.submitted[0]?.text).toContain('T-5')
+    expect(w.submitted[0]?.text).not.toContain('T-4')
   })
 
   test('(5) a ready line held with its verdict, then a main-loop step: neither is submitted', { options: { ...GM, briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
