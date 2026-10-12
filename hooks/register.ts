@@ -195,7 +195,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
-import { noSuchAttempt, parseVerdictTool, POLL_MS, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
+import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
@@ -3669,8 +3669,8 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<{ kin
   const key = attemptKey(spawn)
   const sent = await storeGet<string>($, K.postedRow(key))
   if (sent !== undefined && sent !== '') return { kind: 'judged', text: sent }
-  // claimed and not yet appended: the row is about to be stored
-  if (sent === undefined && (await storeGet<boolean>($, K.posted(key))) === true) return { kind: 'wait' }
+  // claimed and not yet appended: the row is about to be stored (a row posted before postedRow was kept is never waited on)
+  if (sent === undefined && rowRaceOpen(latest.verdictAt, await now($)) && (await storeGet<boolean>($, K.posted(key))) === true) return { kind: 'wait' }
   const rendered = renderedOf(spawn)
   return { kind: 'judged', text: deliveryFor(cfg.verbosity, rendered).row ?? rendered.line }
 }

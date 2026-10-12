@@ -52,3 +52,9 @@ export const VERDICT_POSTURE =
 
 /** The dashboard's open-item wording for a worker awaiting its verdict: the tool when wakes are off, else the old words. */
 export const verifyingTail = (task: string, verdictTool: boolean): string => (verdictTool ? `call the verdict tool with task=${task}` : 'the verdict lands on its own')
+
+/** How long after a verdict a missing posted row is still the brief race between the claim and the store write in one hook. */
+export const ROW_RACE_MS = 30_000
+
+/** True while a claimed attempt's row may still be about to be stored; an older or undated verdict was posted before the row was kept. */
+export const rowRaceOpen = (verdictAt: number | undefined, now: number): boolean => verdictAt !== undefined && now - verdictAt < ROW_RACE_MS
