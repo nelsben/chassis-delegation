@@ -90,7 +90,7 @@ describe('5B: the scaffolded files are usable as written', () => {
     expect(e.maxWorkers).toBe(2)
     expect(e.autoEval).toBe(false)
     expect(e.domains).toEqual(['frontend', 'backend', 'ops', 'dispatcher', 'cross', 'shared'])
-    expect(JSON.parse(CONFIG_TEMPLATE)._comment).toContain('defaults < this file < /config')
+    expect(JSON.parse(CONFIG_TEMPLATE)._comment).toContain('defaults < this file < the mod options (/delegation config <field> <value>')
   })
   test("MOD-18: a fresh config leaves issueRepo unset, so the mod's own tracker is the default; the comment says how to turn posting off", () => {
     const o = JSON.parse(CONFIG_TEMPLATE) as Record<string, unknown>

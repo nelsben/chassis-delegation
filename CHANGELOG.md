@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **`/delegation config` lists, shows and sets the mod's own options (MOD-66).** The mod told the person to set its
+  options "in /config", which the VS Code extension gives to another extension or does not have, so wakeOnVerdict,
+  redact and the rest could not be changed there. `/delegation config` lists every option of this mod, one line
+  `<field> = <value>` each, marked `(default)` when it equals the manifest default and `(locked)` when managed
+  settings own it; `/delegation config <field>` shows its value, kind, choices and description;
+  `/delegation config <field> <value>` sets it through `$.config.set` and answers
+  `<field> set to <value>; the mod reloads with it`, or the deny reason. The value is parsed by the option's kind
+  (boolean: true/false/on/off/yes/no; number: finite; choice: one of its options; text: the rest of the line, `""`
+  empty); a bad value or an unknown field says why and sets nothing. The usage line and the command hint name
+  `config [<field> [<value>]]`, and the texts that said "in /config" (the empty `redact` refusal, the autoDebrief
+  advice, the briefDir error, the status `config:` line, the scaffolded repo config's comments, the README) now name
+  `/delegation config <field> <value>`. The `/config` menu in a terminal still works.
+
 ## 0.9.5 — 2026-10-11
 
 - **Wakes are off by default, and the brain waits for its verdict with a new `verdict` tool (MOD-64).** The "The

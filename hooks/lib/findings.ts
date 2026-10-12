@@ -60,7 +60,7 @@ export const issueNumberOf = (stdout: string): number | undefined => {
 }
 
 /** MOD-18: what a post says while the person's own redact list is empty: the automatic scrub cannot know a product name that differs from the folder name. */
-export const REDACT_EMPTY = 'set redact in /config to the product, customer, employer and repo names this session must never publish, then post again'
+export const REDACT_EMPTY = 'run /delegation config redact <words>, the product, customer, employer and repo names this session must never publish, then post again'
 
 // ---- MOD-31: the mod asks whether to post, or posts ------------------------------------
 

@@ -2844,7 +2844,7 @@ describe('MOD-7: /delegation debrief post', () => {
     expect(body).toContain('<redacted> broke it')
   })
 
-  const REDACT_WARNING = 'set redact in /config to the product, customer, employer and repo names this session must never publish, then post again'
+  const REDACT_WARNING = 'run /delegation config redact <words>, the product, customer, employer and repo names this session must never publish, then post again'
   const MANIFEST = JSON.stringify({ name: 'chassis-delegation', version: '0.7.0', repository: 'https://github.com/acme/mod' })
   /** Puts the mod's manifest where the loaded copy keeps it; the plugin folder is the one /delegation says it loaded from. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -5029,7 +5029,7 @@ describe('MOD-31: after a debrief, the mod asks whether to post its findings', (
     const w = world(on, { listAgents: true, files: files(two), run: ghRun })
     await handBack($, w)
     expect(w.runs.filter(r => isCreate(r.argv))).toHaveLength(0)
-    expect(shown(w)).toContain('set redact in /config')
+    expect(shown(w)).toContain('/delegation config redact')
     expect(shown(w)).toContain(QUESTION)
   })
 

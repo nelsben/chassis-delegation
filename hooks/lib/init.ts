@@ -107,7 +107,7 @@ export const configTemplate = (cardDir: string = DEFAULT_CARD_DIR): string => {
 export const CONFIG_TEMPLATE = `${JSON.stringify(
   {
     _comment:
-      'chassis-delegation per-repo config. Every key is optional. Precedence: built-in defaults < this file < /config settings (maps merge per key). Keys starting with _ are comments and are ignored.',
+      'chassis-delegation per-repo config. Every key is optional. Precedence: built-in defaults < this file < the mod options (/delegation config <field> <value>; maps merge per key). Keys starting with _ are comments and are ignored.',
     _gateMap:
       "Brief gate= id -> the command the verifier re-runs in the worker's own worktree, by argv (no shell). {files} is the changed-files list (one path a line); chain with ' && '. Example: {\"test\": \"npm test\", \"lint\": \"npx eslint --max-warnings 0 {files}\"}. An id the map lacks is reported 'gate not re-run' (unverified), never run raw.",
     gateMap: {},
@@ -127,7 +127,7 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
     briefTemplate: '',
     _briefExtra: 'Repo-specific lines added to every brief (setup steps, conventions, things never to do).',
     briefExtra: '',
-    _evalCommand: 'What a background eval runner runs once per new origin/main sha when the session is idle; empty = no eval. Needs autoEval true here or in /config.',
+    _evalCommand: 'What a background eval runner runs once per new origin/main sha when the session is idle; empty = no eval. Needs autoEval true here or set with /delegation config autoEval true.',
     evalCommand: '',
     evalLiveCommand: '',
     autoEval: false,

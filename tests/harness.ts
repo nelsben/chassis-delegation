@@ -115,6 +115,8 @@ export type WorldOptions = {
   noDebriefTemplate?: true
   /** MOD-28: and so does hooks/templates/brief.md. */
   noBriefTemplate?: true
+  /** MOD-66: the text reading <plugin root>/.claude-plugin/plugin.json answers (the manifest's option defaults). */
+  manifest?: string
 }
 
 const RESOLVED: Record<string, string> = {
@@ -207,6 +209,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     w.reads.push(e.path)
     const text =
       w.files.get(e.path) ??
+      (e.path.endsWith('/.claude-plugin/plugin.json') ? options.manifest : undefined) ??
       (e.path.endsWith('/templates/brief.md') && !options.noBriefTemplate
         ? TEMPLATE
         : e.path.endsWith('/templates/review.md') && !options.noReviewTemplate
