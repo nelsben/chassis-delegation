@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.7 — 2026-10-12
 
 - **`/delegation config` lists the mod's options from its manifest, even when the host gives no rows for it (MOD-68).**
   In the VS Code extension the command printed only its how-to line: no row of `$.config.list()` had a key starting
