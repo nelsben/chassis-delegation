@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.9.6, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.7, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,14 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.9.6 to 0.9.7
+
+What the brain will see:
+
+- **`/delegation config` lists the mod's options on every screen (MOD-68).** The list comes from the mod's manifest with the values it runs with, so it is never empty. When the screen's settings give no rows for the mod, a last line says so and names the `/config` menu in a terminal. A set that is refused says `<field> was not set: <reason>`.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change.
 
 ### From 0.9.5 to 0.9.6
 
