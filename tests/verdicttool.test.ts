@@ -101,6 +101,18 @@ describe('MOD-64: the verdict tool', () => {
     expect(resultText(await call($, { task: 'T-77' }))).toContain('T-77: no attempt recorded')
   })
 
+  test('a verdict posted before the upgrade (posted set, no postedRow, judged long ago) comes back at once, with no clock advance', { options: { ...GM } }, async ($, on) => {
+    const w = setup(on)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    for (const k of [...w.store.keys()]) if (k.startsWith('delegation.postedRow.')) w.store.delete(k)
+    expect([...w.store.keys()].some(k => k.startsWith('delegation.posted.'))).toBe(true)
+    const recs = w.store.get('delegation.tasks.T-4') as Record<string, unknown>[]
+    w.store.set('delegation.tasks.T-4', recs.map(r => ({ ...r, verdictAt: 1 })))
+    const text = resultText(await call($, { task: 'T-4' }))
+    expect(text).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
+  })
+
   test('with wakes off the ready: line posted beside the verdict comes back with it', { options: { ...GM, briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const other = '[[brief v=1 task=T-5 subtask=main purpose=build tier=standard]]\nDo it.'
     const queued = '[[brief v=1 task=T-9 subtask=main purpose=build tier=standard]]\nDo it.'
