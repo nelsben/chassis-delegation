@@ -15,6 +15,66 @@ export type CfgRow = {
   isLocked: boolean
 }
 
+/** The groups of `/delegation config`, in the order they print; fields the table lacks print last under {@link OTHER_GROUP}. */
+export const CONFIG_GROUPS = ['Workers and models', 'Checking the work', 'Where things go', 'Debriefs', 'Evals', 'Guards and nudges for the brain', 'Display'] as const
+export const OTHER_GROUP = 'Other'
+
+/** MOD-70: every manifest userConfig field, its group and a one-line plain-English summary (at most 90 characters; a test holds both ways). */
+const ROWS_: readonly (readonly [string, (typeof CONFIG_GROUPS)[number], string])[] = [
+  ['tierMap', 'Workers and models', 'Which model each level of worker runs on: economy, standard or frontier'],
+  ['spendByTier', 'Workers and models', 'The most dollars one worker attempt may spend, for each level'],
+  ['effortByTier', 'Workers and models', 'How hard a worker thinks at each level, from low to max'],
+  ['defaultBudget', 'Workers and models', 'How many tries a task gets when its instructions do not say'],
+  ['maxWorkers', 'Workers and models', 'How many workers may run at the same time; more wait in line'],
+  ['agentTypes', 'Workers and models', 'Which kind of helper agent handles each kind of task'],
+  ['domains', 'Workers and models', 'The kinds of task you can hand to a worker'],
+  ['autoEscalate', 'Workers and models', 'After a failed try, send the worker back in once without asking you'],
+  ['probeModels', 'Workers and models', 'Once a day, check whether new models you listed are available'],
+  ['candidateIds', 'Workers and models', 'The model ids to check for, separated by commas'],
+  ['gateMap', 'Checking the work', 'The commands that re-run the checks a task names, so results can be trusted'],
+  ['applyAmends', 'Checking the work', 'Let a worker widen the files it may touch on its own; narrowing still asks you'],
+  ['review', 'Checking the work', 'Have a second, read-only agent check what a worker says it did'],
+  ['reviewTier', 'Checking the work', 'How capable the second checker is; empty means one level below the worker'],
+  ['verdictVerbosity', 'Checking the work', 'How much detail shows when a worker\'s result is judged'],
+  ['ledgerFile', 'Checking the work', 'Keep a log of every judged attempt inside the repo'],
+  ['baseRef', 'Checking the work', 'The branch or commit that a worker\'s changes are compared against'],
+  ['ignore', 'Checking the work', 'Files and folders left out when counting what a worker changed'],
+  ['briefDir', 'Where things go', 'The folder where worker instructions are saved'],
+  ['briefTemplate', 'Where things go', 'A file to use as the layout for worker instructions'],
+  ['briefExtra', 'Where things go', 'Extra lines added to every worker\'s instructions, such as a test command'],
+  ['worktreeRoot', 'Where things go', 'The folder where each worker\'s separate copy of the repo is made'],
+  ['cardDir', 'Where things go', 'The folder, inside the repo, that holds your task cards'],
+  ['autoDebrief', 'Debriefs', 'When you stop for a while, write a short write-up of what went wrong or right'],
+  ['debriefIdleMinutes', 'Debriefs', 'Minutes of quiet before the mod checks whether a write-up is due'],
+  ['debriefMinNewLines', 'Debriefs', 'How much new session activity must pile up before a write-up is worth it'],
+  ['debriefMinEvents', 'Debriefs', 'How many corrections, refusals or failures must pile up before a write-up'],
+  ['debriefCooldownHours', 'Debriefs', 'The least number of hours between two automatic write-ups'],
+  ['debriefAgent', 'Debriefs', 'The kind of helper agent that writes the write-up'],
+  ['redact', 'Debriefs', 'Words, such as company or product names, hidden in anything posted publicly'],
+  ['postFindings', 'Debriefs', 'Whether findings are posted to the issue tracker: ask first, or post on their own'],
+  ['autoEval', 'Evals', 'When new work lands on main and you are idle, run your test command once'],
+  ['evalIdleMinutes', 'Evals', 'Minutes of quiet before the mod looks for new work on main'],
+  ['evalCommand', 'Evals', 'The command a helper agent runs to test new work on main'],
+  ['evalLive', 'Evals', 'After a clean first check, also run the costlier real-world test once a session'],
+  ['evalLiveCommand', 'Evals', 'The command a helper agent runs for the real-world test'],
+  ['evalLiveMaxUsd', 'Evals', 'The most dollars one real-world test run may spend'],
+  ['sessionUsdCap', 'Evals', 'No real-world test starts if it would push the session past this many dollars'],
+  ['evalAgent', 'Evals', 'The kind of helper agent that runs the tests'],
+  ['gitGuard', 'Guards and nudges for the brain', 'Block commits and pushes on protected branches, so you branch first'],
+  ['guardBranches', 'Guards and nudges for the brain', 'The protected branches, separated by commas'],
+  ['delegateOnly', 'Guards and nudges for the brain', 'Stop the main assistant doing a worker\'s job: off, warn, or refuse'],
+  ['driveWarn', 'Guards and nudges for the brain', 'Warn when the main assistant repeats or polls the same thing in a big session'],
+  ['driveWarnTokens', 'Guards and nudges for the brain', 'How big the session must be, in tokens, before that warning shows'],
+  ['freshSessionTokens', 'Guards and nudges for the brain', 'Suggest a fresh session once this many tokens are in use; 0 turns it off'],
+  ['wakeOnVerdict', 'Guards and nudges for the brain', 'Start a new turn on its own when a worker\'s result has been judged'],
+  ['readyFallbackMinutes', 'Guards and nudges for the brain', 'Minutes before a waiting task is started for you if you have not started it'],
+  ['classifierSecondOpinion', 'Guards and nudges for the brain', 'In a dry run, also ask a classifier how hard a task is and show both answers'],
+  ['dashboardBand', 'Display', 'Show a status strip above the prompt while workers are busy or waiting'],
+]
+
+/** Field to its group and summary. */
+export const CONFIG_TABLE: Readonly<Record<string, { group: (typeof CONFIG_GROUPS)[number]; summary: string }>> = Object.fromEntries(ROWS_.map(([f, group, summary]) => [f, { group, summary }]))
+
 /** Field to its manifest default. */
 export type CfgDefaults = Readonly<Record<string, unknown>>
 
@@ -103,11 +163,13 @@ const HOW = '/delegation config <field> shows one; /delegation config <field> <v
 const POINT = 'see /delegation config'
 const line = (k: Known): string => `${k.field} = ${shown(k.value)}${k.isDefault ? ' (default)' : ''}${k.locked ? ' (locked)' : ''}`
 
-/** `/delegation config`: one line per option of this mod, then how to show or set one; and, when the host gave no row for this mod, a line that says so. */
+/** `/delegation config`: the options of this mod in named groups (a heading, then each `field = value` with its summary on the next line, indented two spaces), then how to show or set one; and, when the host gave no row for this mod, a line that says so. */
 export function configList(rows: readonly CfgRow[], defaults: CfgDefaults, ctx: CfgCtx = {}): string {
-  const lines = Object.keys(fieldsOf(rows, defaults, ctx)).map(f => line(known(rows, defaults, ctx, f) as Known))
+  const fields = Object.keys(fieldsOf(rows, defaults, ctx))
+  const block = (name: string, of: readonly string[]): string[] => (of.length === 0 ? [] : [[name, ...of.flatMap(f => [line(known(rows, defaults, ctx, f) as Known), ...(CONFIG_TABLE[f] ? [`  ${CONFIG_TABLE[f].summary}`] : [])])].join('\n')])
+  const groups = [...CONFIG_GROUPS.flatMap(g => block(g, ROWS_.filter(r => r[1] === g && fields.includes(r[0])).map(r => r[0]))), ...block(OTHER_GROUP, fields.filter(f => !CONFIG_TABLE[f]))]
   const none = mine(rows, ctx).length === 0
-  return [...lines, HOW, ...(none ? [`the host lists no rows for ${pluginOf(ctx)} (${rows.length} row${rows.length === 1 ? '' : 's'} listed, none its own), so these are the mod's own values; a set may be refused on this screen, and the /config menu in a terminal sets the same options`] : [])].join('\n')
+  return [...groups, [HOW, ...(none ? [`the host lists no rows for ${pluginOf(ctx)} (${rows.length} row${rows.length === 1 ? '' : 's'} listed, none its own), so these are the mod's own values; a set may be refused on this screen, and the /config menu in a terminal sets the same options`] : [])].join('\n')].join('\n\n')
 }
 
 const unknownField = (field: string, ctx: CfgCtx): string => `no option "${field}" in ${pluginOf(ctx)}; ${POINT}`
@@ -119,6 +181,7 @@ export function configShow(rows: readonly CfgRow[], defaults: CfgDefaults, field
   const description = k.row?.description ?? k.spec.description
   return [
     line(k),
+    ...(CONFIG_TABLE[field] ? [`  ${CONFIG_TABLE[field].summary}`] : []),
     `kind: ${k.kind}`,
     ...(k.kind === 'choice' && k.options ? [`choices: ${k.options.join(', ')}`] : []),
     ...(description ? [description] : []),
