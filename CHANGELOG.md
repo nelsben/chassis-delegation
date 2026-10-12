@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.4 — 2026-10-11
 
 - **A wake held during the brain's open turn is dropped when a later step of that turn already read its row (MOD-62).**
   The row is appended at once and the wake is held to the turn's end (MOD-42); if the turn made another main-loop
