@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.9.4, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.5, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,14 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.9.4 to 0.9.5
+
+What the brain will see:
+
+- **Wakes are off by default, and the brain waits for its verdict with the verdict tool (MOD-64).** A verdict no longer submits "The chassis-delegation plugin sent a message" as a turn of its own. The verdict row is still appended; in the hand-back turn the brain calls the verdict tool with the task id, which returns the verdict once it lands. The dispatch text and the Delegation state section say so.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. To keep the old wakes, set `wakeOnVerdict` to `true` in `/config`. Nothing in an existing repo's config needs to change.
 
 ### From 0.9.3 to 0.9.4
 
