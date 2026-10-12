@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.5 — 2026-10-11
 
 - **Wakes are off by default, and the brain waits for its verdict with a new `verdict` tool (MOD-64).** The "The
   chassis-delegation plugin sent a message" turn that `wakeBrain` submitted (MOD-15) mostly repeated something the
