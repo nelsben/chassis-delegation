@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.6 — 2026-10-12
 
 - **`/delegation config` lists, shows and sets the mod's own options (MOD-66).** The mod told the person to set its
   options "in /config", which the VS Code extension gives to another extension or does not have, so wakeOnVerdict,
