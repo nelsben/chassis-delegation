@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **A wake held during the brain's open turn is dropped when a later step of that turn already read its row (MOD-62).**
+  The row is appended at once and the wake is held to the turn's end (MOD-42); if the turn made another main-loop
+  model step after that, the brain had already read the row and often acted on it, and the held wake then started a
+  second turn that repeated it (a debrief's post question was relayed, then asked again four seconds after the turn).
+  Each held wake now notes whether a main-loop `turn.step` (no agent id; a subagent's step never counts) began after
+  it was held, and the turn's end drops every such entry, its verdict, its `ready:` lines and a wake with no task,
+  with `wake skipped: <task or row> read in the turn`. The row stays in the conversation and the ledger. A row that
+  landed in the turn's last step, with no step after it, is submitted as before, after the MOD-51, MOD-57 and MOD-60
+  checks, and a wake raised while no turn is open is unchanged.
+
 ## 0.9.3 — 2026-10-11
 
 - **A state check's red file gets a marker line; a red file with no marker is checked by hand (MOD-59).** A red test

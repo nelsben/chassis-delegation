@@ -4963,6 +4963,31 @@ describe('MOD-31: after a debrief, the mod asks whether to post its findings', (
     expect(w.submitted.map(s => s.text)).toContain(QUESTION)
   })
 
+  test('MOD-62: the question lands in an open turn and a main-loop step follows: no wake is submitted', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: files(two), run: ghRun })
+    const mainEnd = () => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' }) as never
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    expect(w.appended.map(a => a.text).join('\n')).toContain(QUESTION)
+    for await (const chunk of $.turn.step(stepInput(undefined))) void chunk
+    await $.turn.complete(mainEnd())
+    expect(w.submitted).toEqual([])
+    expect(w.debugLogs.some(l => l.includes('wake skipped: row read in the turn'))).toBe(true)
+  })
+
+  test('MOD-62: the same question with no later main-loop step is submitted at the turn\'s end', { options: { autoEval: false, redact: 'globex' } }, async ($, on) => {
+    const w2 = world(on, { listAgents: true, files: files(two), run: ghRun })
+    const mainEnd = () => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' }) as never
+    await $.session.start(sessionStart)
+    await $.command.run(delegation('debrief'))
+    await $.turn.start({ text: '', turnId: 'turn-main' } as never)
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    await $.turn.complete(mainEnd())
+    expect(w2.submitted.map(s => s.text)).toContain(QUESTION)
+  })
+
   test('ask with wakeOnVerdict off: the question is printed and nothing is submitted', { options: { autoEval: false, redact: 'globex', wakeOnVerdict: false } }, async ($, on) => {
     const w = world(on, { listAgents: true, files: files(two), run: ghRun })
     await handBack($, w)
