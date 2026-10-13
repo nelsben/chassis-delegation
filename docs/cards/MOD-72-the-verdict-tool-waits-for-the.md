@@ -25,5 +25,9 @@ Live, every call of mcp__chassis-delegation__verdict fails with "registered the 
 
 ## Review
 
-Attempt 1 (sonnet, $0.51) accepted as handed back; no fixes. Rebased over 0.9.9 with one CHANGELOG conflict (its
-`## Unreleased` entry now sits above `## 0.9.9`). Live check owed: the verdict tool answering after a real wait.
+Attempt 1 (sonnet, $0.51) was consistent but bypassed `run()`: `pauseOffBudget` called `$.process.run` directly, so
+the sleep never met the allowlist. The brief was amended (`forbid-=hooks/lib/allow.ts`) and the worker resumed: the
+allowlist gains one rule, `sleep <1..600 whole seconds>` and nothing else; the wait goes through `run()`; a node test
+holds that `hooks/register.ts` calls `$.process.run(` exactly once. Attempt 2 ($0.69) was refuted on scope only
+because the brain had committed this card into the worktree before the resume; the worker's own commits touch no
+forbidden path, so it is accepted by hand. Lesson: commit the merged card only at merge time, after the last verdict.
