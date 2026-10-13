@@ -157,7 +157,7 @@ cases of tests/eval/classifier-cases.jsonl`.
 What the brain will see:
 
 - **`/delegation config` shows the options the mod runs with, each with its source, and sets any of them on every screen (MOD-73).** The default view lists only the options that are set, with a count line; `all` or a group name lists more, and one option shows its scope and an `in effect:` line. Values read as a person reads them (on/off, `20 min`, `$10`, `200K`), and names match in any case. A set with no host row lands in `~/.claude/chassis-delegation/options.json` (`(yours)`); `repo <field> <value>` writes the repo file, and `default` resets.
-- **Every worker's model is visible all the time (MOD-74).** A started worker posts a `<task> started · <alias> (<tier>) · attempt n/b` row, and a handed-back worker a `<task> handed back · <alias> · <m> min · $<usd> · verifying` row. `/delegation` opens with a `running:` section that names `brain: <model>` first.
+- **Every worker's model is visible all the time (MOD-74).** A started worker posts a `<task> started · <alias> (<tier>) · attempt n/b` row, and a handed-back worker a `<task> handed back · <alias> · <m> min · $<usd> · verifying` row. `/delegation` opens with a `running:` section, one line per worker, ending with `brain: <model>`.
 
 What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change. An option set by hand in the repo file still works; to set a personal option on the VS Code extension, use `/delegation config <field> <value>`.
 
