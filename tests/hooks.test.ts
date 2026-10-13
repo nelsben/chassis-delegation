@@ -1610,7 +1610,8 @@ describe('GH-104: spend guards', () => {
   // The rows that reached the conversation (the kit logs a plugin's refused append), never the debug log.
   const posted = (w: { logs: string[]; debugLogs: string[]; appended: { type: string; text: string }[] }) => {
     const debug = new Set(w.debugLogs)
-    return [...w.appended.filter(a => a.type === 'user').map(a => a.text), ...w.logs.filter(l => !debug.has(l) && l.startsWith('chassis-delegation: '))]
+    // MOD-74: the started and handed-back rows are not verdict rows
+    return [...w.appended.filter(a => a.type === 'user').map(a => a.text), ...w.logs.filter(l => !debug.has(l) && l.startsWith('chassis-delegation: '))].filter(t => !/^chassis-delegation: \S+ (started|resumed|started from queue|handed back) · /.test(t))
   }
   const files = () => ({ [BRIEF]: HEADER + '\nbody', [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD })
   const dirs = { [WT]: [], [`${ROOT}/agents/tasks`]: [CARD_NAME] }
