@@ -276,3 +276,16 @@ describe('MOD-44: git -C <another repo> worktree add, for a task that names that
     no(['git', '-C', OTHER, 'commit', '-m', 'x'], A)
   })
 })
+
+describe('MOD-72: the verdict tool\'s wait', () => {
+  test('sleep takes exactly one whole number of seconds, 1 to 600', () => {
+    ok(['sleep', '5'])
+    ok(['sleep', '600'])
+    no(['sleep', '5', 'x'])
+    no(['sleep', '-1'])
+    no(['sleep', '1.5'])
+    no(['sleep'])
+    no(['sleep', '0'])
+    no(['sleep', '601'])
+  })
+})

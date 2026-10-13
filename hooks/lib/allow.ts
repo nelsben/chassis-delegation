@@ -71,6 +71,8 @@ export function checkArgv(argv: readonly string[], allow: AllowConfig = {}): Che
   if (cmd === 'git') return checkGit(rest, allow)
   if (cmd === 'gh') return checkGh(rest, allow)
   if (cmd === 'claude') return checkClaude(rest)
+  // MOD-72: the verdict tool's wait is a `sleep` process (a $.clock wait would spend the hook's budget); only `sleep <whole seconds, 1 to 600>`
+  if (cmd === 'sleep') return rest.length === 1 && /^[0-9]{1,3}$/.test(rest[0]!) && Number(rest[0]) >= 1 && Number(rest[0]) <= 600 ? ok : refuse('sleep takes one whole number of seconds, 1 to 600')
   if (matchesAnyTemplate(argv, allow.gateTemplates ?? [])) return ok
   return refuse(`${cmd} is not on the list (not git, gh, claude plugin, nor a gate-map command word for word)`)
 }

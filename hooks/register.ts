@@ -3733,12 +3733,8 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<{ kin
  * process cannot start or exits non-zero; the caller then gives up waiting rather than spin (never a clock wait over 1 s).
  */
 async function pauseOffBudget($: Host, ms: number): Promise<boolean> {
-  try {
-    const r = await $.process.run(['sleep', String(ms / 1000)], { timeoutMs: ms + 5000 })
-    return r.exitCode === 0
-  } catch {
-    return false
-  }
+  const r = await run($, ['sleep', String(Math.ceil(ms / 1000))], { timeoutMs: ms + 5000 })
+  return r.ok && r.exitCode === 0
 }
 
 async function runVerdict($: Host, input: Record<string, unknown>): Promise<string> {
