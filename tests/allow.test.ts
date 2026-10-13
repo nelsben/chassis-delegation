@@ -289,3 +289,62 @@ describe('MOD-72: the verdict tool\'s wait', () => {
     no(['sleep', '601'])
   })
 })
+
+describe('MOD-75: the merge shapes, on only while /delegation merge runs', () => {
+  const WT = `${R}-MOD-1`
+  const BRANCH = 'agent/mod/MOD-1'
+  const CARD = 'docs/cards/MOD-1-a-thing.md'
+  const MERGE: AllowConfig = { ...ALLOW, cardDir: 'docs/cards', root: R, merge: { root: R, worktree: WT, branch: BRANCH, baseRef: 'origin/main', cardRel: CARD, id: 'MOD-1' } }
+  const SHAPES = [
+    ['git', '-C', WT, 'fetch', 'origin'],
+    ['git', '-C', WT, 'rebase', 'origin/main'],
+    ['git', '-C', WT, 'rebase', '--abort'],
+    ['git', '-C', WT, 'add', '--', CARD],
+    ['git', '-C', WT, 'commit', '-q', '-m', 'cards: MOD-1 merged'],
+    ['git', '-C', WT, 'commit', '-q', '-m', 'cards: MOD-1 merged', '-m', 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'],
+    ['git', '-C', R, 'fetch', 'origin'],
+    ['git', '-C', R, 'remote', 'get-url', 'origin'],
+    ['git', '-C', R, 'clean', '-q', '-f', '--', CARD],
+    ['git', '-C', R, 'pull', '--ff-only'],
+    ['git', '-C', R, 'worktree', 'remove', WT],
+    ['git', '-C', R, 'branch', '-D', BRANCH],
+  ]
+  test('with the merge context, the exact local shapes pass, bound to the one task', () => {
+    for (const argv of SHAPES) ok(argv, MERGE)
+  })
+  test('without it, every one of those shapes is refused (the narrow case: the allowlist outside a merge is unchanged)', () => {
+    for (const argv of SHAPES) no(argv)
+    for (const argv of SHAPES) no(argv, { ...MERGE, merge: undefined })
+  })
+  test('with the merge context, a push, gh, curl, sf, wget, another worktree, branch, file or message, add -A, reset --hard and worktree remove --force are refused', () => {
+    for (const argv of [
+      ['git', '-C', WT, 'push', '-u', 'origin', BRANCH],
+      ['git', '-C', R, 'push', 'origin', '--delete', BRANCH],
+      ['gh', 'pr', 'create', '--repo', 'acme/acme-app'],
+      ['gh', 'pr', 'merge', BRANCH, '--rebase'],
+      ['gh', 'pr', 'list'],
+      ['curl', 'https://example.com'],
+      ['sf', 'project', 'deploy'],
+      ['wget', 'https://example.com'],
+      ['git', '-C', `${R}-MOD-2`, 'rebase', 'origin/main'],
+      ['git', '-C', R, 'branch', '-D', 'agent/mod/MOD-2'],
+      ['git', '-C', R, 'clean', '-q', '-f', '--', 'README.md'],
+      ['git', '-C', R, 'clean', '-fdx'],
+      ['git', '-C', WT, 'add', '-A'],
+      ['git', '-C', WT, 'commit', '-q', '-m', 'anything else'],
+      ['git', '-C', WT, 'commit', '-q', '-m', 'cards: MOD-2 merged'],
+      ['git', '-C', WT, 'reset', '--hard', 'origin/main'],
+      ['git', '-C', R, 'worktree', 'remove', '--force', WT],
+      ['git', '-C', WT, 'rebase', 'origin/other'],
+    ])
+      no(argv, MERGE)
+  })
+  test('the remote refusal comes first while merging: gh pr list, fine outside a merge, is refused inside one', () => {
+    ok(['gh', 'pr', 'list'])
+    expect(checkArgv(['gh', 'pr', 'list'], MERGE)).toEqual({ ok: false, reason: 'the merge command never pushes, nor runs gh, curl, sf or wget' })
+  })
+  test('the rest of the allowlist still answers while merging', () => {
+    ok(['git', '-C', R, 'status', '--porcelain'], MERGE)
+    ok(['git', '-C', R, 'worktree', 'list', '--porcelain'], MERGE)
+  })
+})

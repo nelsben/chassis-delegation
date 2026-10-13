@@ -4,14 +4,16 @@
 // brain runs verbatim; `--finish` cleans up once the PR has landed. Pure: no `$`.
 //
 // HARD RULE (part 5A, kept): the mod never pushes, never calls gh and never runs curl
-// or sf. The local git writes this command needs are not on ./allow.ts (it is not
-// touched); they pass `checkMergeArgv` below instead, each an exact shape bound to the
-// one task's worktree, branch and card, and nothing else.
+// or sf. The local git writes this command needs are exact shapes in ./allow.ts, bound
+// to the one task's worktree, branch and card, and on only while the command runs
+// (`AllowConfig.merge`).
 
 import { readVerdict } from './attempts'
 import { doneWhenOf } from './card'
 import { modelName } from './watch'
-import type { Check } from './allow'
+import { mergedSubject } from './allow'
+
+export { mergedSubject }
 
 export const MERGE_USAGE = 'usage: /delegation merge <ID> [--review <text> | --review-file <abs path>] | /delegation merge <ID> --finish'
 
@@ -196,7 +198,6 @@ export function readsMerged(card: string): boolean {
   return lines.slice(1, end > 0 ? end : undefined).some(l => /^status\s*:\s*merged\s*$/.test(l.trim()))
 }
 
-export const mergedSubject = (id: string): string => `cards: ${id} merged`
 
 /** `Co-Authored-By: Claude <model name> <noreply@anthropic.com>` from the host's model id; undefined when the id cannot be named. */
 export function coAuthorTrailer(modelId: string | undefined): string | undefined {
@@ -348,53 +349,4 @@ export function mergedLines(list: readonly MergedEntry[]): string[] {
 export const labelIsMerged = (label: string, merged: readonly MergedEntry[]): boolean => {
   const task = label.split(/[/\s]/)[0] ?? label
   return merged.some(m => m.task === task)
-}
-
-// ---- the merge door: the local git writes, each an exact shape ---------------------------
-
-export type MergeCtx = { root: string; worktree: string; branch: string; baseRef: string; cardRel?: string; id: string }
-
-/** The argv the merge command may never run, whatever door it tried: a push, gh, curl, sf. */
-export const isRemoteArgv = (argv: readonly string[]): boolean => {
-  const [cmd = '', ...rest] = argv
-  const base = cmd.split('/').pop() ?? cmd
-  if (base === 'gh' || base === 'curl' || base === 'sf' || base === 'wget') return true
-  return base === 'git' && rest.includes('push')
-}
-
-/**
- * The git writes `/delegation merge` runs beyond the allowlist (./allow.ts), exactly:
- *   git -C <worktree> fetch origin            git -C <root> fetch origin
- *   git -C <worktree> rebase <baseRef>        git -C <worktree> rebase --abort
- *   git -C <worktree> add -- <card>           git -C <worktree> commit -q -m 'cards: <ID> merged' [-m <Co-Authored-By trailer>]
- *   git -C <root> remote get-url origin       git -C <root> clean -q -f -- <card>
- *   git -C <root> pull --ff-only              git -C <root> worktree remove <worktree>
- *   git -C <root> branch -D <branch>
- * <worktree>, <branch> and <card> are the one task's; nothing else passes.
- */
-export function checkMergeArgv(argv: readonly string[], c: MergeCtx): Check {
-  const no = (reason: string): Check => ({ ok: false, reason })
-  if (isRemoteArgv(argv)) return no('the merge command never pushes, nor runs gh, curl or sf')
-  if (argv[0] !== 'git' || argv[1] !== '-C' || argv.length < 4) return no('not a git -C <dir> command')
-  const dir = (argv[2] as string).replace(/\/+$/, '')
-  const root = c.root.replace(/\/+$/, '')
-  const wt = c.worktree.replace(/\/+$/, '')
-  const tail = argv.slice(3).join('\u0000')
-  const is = (...words: string[]) => tail === words.join('\u0000')
-  if (dir === wt) {
-    if (is('fetch', 'origin') || is('rebase', c.baseRef) || is('rebase', '--abort')) return { ok: true }
-    if (c.cardRel && is('add', '--', c.cardRel)) return { ok: true }
-    const [sub, q, m1, subj, m2, trailer, ...more] = argv.slice(3)
-    if (sub === 'commit' && q === '-q' && m1 === '-m' && subj === mergedSubject(c.id) && more.length === 0) {
-      if (m2 === undefined && trailer === undefined) return { ok: true }
-      if (m2 === '-m' && /^Co-Authored-By: Claude [A-Za-z]+ [0-9.]+ <noreply@anthropic\.com>$/.test(trailer ?? '')) return { ok: true }
-    }
-    return no(`git -C <worktree> ${argv.slice(3).join(' ')} is not a merge shape`)
-  }
-  if (dir === root) {
-    if (is('fetch', 'origin') || is('remote', 'get-url', 'origin') || is('pull', '--ff-only') || is('worktree', 'remove', wt) || is('branch', '-D', c.branch)) return { ok: true }
-    if (c.cardRel && is('clean', '-q', '-f', '--', c.cardRel)) return { ok: true }
-    return no(`git -C <root> ${argv.slice(3).join(' ')} is not a merge shape`)
-  }
-  return no(`git -C ${dir} is neither the session root nor the task's worktree`)
 }

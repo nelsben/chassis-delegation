@@ -19,7 +19,7 @@ import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine,
 import { paneTree, type PaneTable } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
-import { checkArgv, isSha, refusedLine, type AllowConfig } from './lib/allow'
+import { checkArgv, isSha, refusedLine, type AllowConfig, type MergeCtx } from './lib/allow'
 import {
   attemptsFor,
   escalationSource,
@@ -269,14 +269,12 @@ import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, p
 import { MOD_VERSION } from './lib/version'
 import {
   cardDiff,
-  checkMergeArgv,
   coAuthorTrailer,
   commitArgv,
   conflictLine,
   defaultBranchOf,
   dirtyWorktreeLine,
   finishLines,
-  isRemoteArgv,
   labelIsMerged,
   lastLines,
   latestVerdictRow,
@@ -302,7 +300,6 @@ import {
   worktreeOf,
   type GateResult,
   type MergeArgs,
-  type MergeCtx,
   type MergedEntry,
   type VerdictRow,
 } from './lib/mergecmd'
@@ -724,7 +721,9 @@ let loadedRoot = ''
 let sessionRoot = ''
 /** MOD-44: the tasks that work in another local repo, by id: the checkout, its own domains and the gate commands its tasks may run. Filled when a task is dispatched or judged. */
 const taskRepos = new Map<string, { path: string; domains: string[]; gateTemplates: string[][] }>()
-const allowCfg = (): AllowConfig => ({ gateTemplates: taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates, ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}) })
+/** MOD-75: the task `/delegation merge` is working on, set only while that command runs (cleared in its finally); the allowlist's merge shapes pass for it alone. */
+let mergeCtx: MergeCtx | undefined
+const allowCfg = (): AllowConfig => ({ gateTemplates: taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates, ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}), ...(mergeCtx ? { merge: mergeCtx } : {}) })
 
 // ---- small host helpers (fail-open) ---------------------------------------
 function debug($: Host, text: string) {
@@ -2180,30 +2179,6 @@ async function noteMergeCommand($: Host, command: string): Promise<void> {
 /** What a merge prepared: the head the push block names, and the version it releases when version.ts moved. */
 type MergePrep = { head: string; version?: string; at: number }
 
-/**
- * The merge command's own door. An argv the allowlist takes runs through `run`; the local git writes a
- * merge needs (./lib/mergecmd.ts `checkMergeArgv`: exact shapes bound to this task's worktree, branch and
- * card) run here; a push, gh, curl or sf never runs, whichever door it knocks on.
- */
-async function mergeExec($: Host, argv: string[], ctx: MergeCtx, init?: { cwd?: string; timeoutMs?: number }): Promise<RunOut> {
-  if (!isRemoteArgv(argv) && checkArgv(argv, allowCfg()).ok) return run($, argv, init)
-  const check = checkMergeArgv(argv, ctx)
-  if (!check.ok) {
-    try {
-      $.ui.log(refusedLine(argv, check.reason))
-    } catch {
-      // the refusal stands either way
-    }
-    return { ok: false, why: `refused: ${check.reason}` }
-  }
-  try {
-    const r = await $.process.run(argv, init)
-    return { ok: true, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr }
-  } catch (err) {
-    return { ok: false, why: String(err) }
-  }
-}
-
 const okOut = (r: RunOut): string | undefined => (r.ok && r.exitCode === 0 ? r.stdout : undefined)
 const whyOf = (r: RunOut): string => (r.ok ? (r.stderr.trim() || r.stdout.trim() || `exit ${r.exitCode}`).split('\n').slice(0, 4).join(' / ') : r.why)
 
@@ -2219,6 +2194,14 @@ async function cardNameIn($: Host, dir: string, id: string): Promise<string | un
 /** `/delegation merge <ID> [--finish]` and the merge tool: one function, two doors. */
 async function runMerge($: Host, parsed: MergeArgs | { error: string }): Promise<string> {
   if ('error' in parsed) return parsed.error
+  try {
+    return await mergeCommand($, parsed)
+  } finally {
+    mergeCtx = undefined
+  }
+}
+
+async function mergeCommand($: Host, parsed: MergeArgs): Promise<string> {
   await loadRepoConfig($)
   const root = (await $.session.root()).replace(/\/+$/, '')
   const id = parsed.id
@@ -2266,8 +2249,8 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   const name = (await cardNameIn($, `${root}/${cardDir}`, id)) ?? (await cardNameIn($, `${wt.path}/${cardDir}`, id))
   if (!name) return `${id}: no card ${cardDir}/${id}-*.md in ${root}; nothing to merge`
   const cardRel = `${cardDir}/${name}`
-  const ctx: MergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef, cardRel, id }
-  const origin = okOut(await mergeExec($, ['git', '-C', root, 'remote', 'get-url', 'origin'], ctx, { cwd: root, timeoutMs: 15000 }))
+  mergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef, cardRel, id }
+  const origin = okOut(await run($, ['git', '-C', root, 'remote', 'get-url', 'origin'], { cwd: root, timeoutMs: 15000 }))
   const ownerRepo = ownerRepoOf(origin ?? '')
   if (!ownerRepo) return `${id}: origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); the PR block needs owner/repo`
   const rootCard = await readText($, `${root}/${cardRel}`)
@@ -2283,20 +2266,20 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
     if (review === undefined) return `${id}: --review-file ${parsed.reviewFile} could not be read`
   }
   // the rebase onto the base, in the worktree, by argv
-  const fetched = await mergeExec($, ['git', '-C', wt.path, 'fetch', 'origin'], ctx, { cwd: wt.path, timeoutMs: 120000 })
+  const fetched = await run($, ['git', '-C', wt.path, 'fetch', 'origin'], { cwd: wt.path, timeoutMs: 120000 })
   if (!fetched.ok || fetched.exitCode !== 0) return `${id}: git fetch origin failed in the worktree: ${whyOf(fetched)}`
-  const rebased = await mergeExec($, ['git', '-C', wt.path, 'rebase', baseRef], ctx, { cwd: wt.path, timeoutMs: 120000 })
+  const rebased = await run($, ['git', '-C', wt.path, 'rebase', baseRef], { cwd: wt.path, timeoutMs: 120000 })
   if (!rebased.ok) return `${id}: git rebase ${baseRef} did not run: ${rebased.why}`
   if (rebased.exitCode !== 0) {
     const unmerged = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', '--diff-filter=U'], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
-    await mergeExec($, ['git', '-C', wt.path, 'rebase', '--abort'], ctx, { cwd: wt.path, timeoutMs: 60000 })
+    await run($, ['git', '-C', wt.path, 'rebase', '--abort'], { cwd: wt.path, timeoutMs: 60000 })
     return conflictLine(id, baseRef, unmerged.split('\n').map(l => l.trim()).filter(Boolean))
   }
   // the merged card, committed once
   let committed = false
   if (!(wtCard !== undefined && readsMerged(wtCard))) {
     await $.fs.write(wtCardPath, markMerged(rootCard ?? (wtCard as string), review))
-    const added = await mergeExec($, ['git', '-C', wt.path, 'add', '--', cardRel], ctx, { cwd: wt.path, timeoutMs: 15000 })
+    const added = await run($, ['git', '-C', wt.path, 'add', '--', cardRel], { cwd: wt.path, timeoutMs: 15000 })
     if (!added.ok || added.exitCode !== 0) return `${id}: git add ${cardRel} failed in the worktree: ${whyOf(added)}`
     let modelId: string | undefined
     try {
@@ -2304,7 +2287,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
     } catch {
       modelId = undefined
     }
-    const made = await mergeExec($, commitArgv(wt.path, id, coAuthorTrailer(modelId)), ctx, { cwd: wt.path, timeoutMs: 30000 })
+    const made = await run($, commitArgv(wt.path, id, coAuthorTrailer(modelId)), { cwd: wt.path, timeoutMs: 30000 })
     if (!made.ok || made.exitCode !== 0) return `${id}: the merged-card commit failed in the worktree: ${whyOf(made)}`
     committed = true
   }
@@ -2383,8 +2366,8 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   if (!wt) return noWorktreeLine(id)
   const name = await cardNameIn($, `${root}/${cardDir}`, id)
   const cardRel = name ? `${cardDir}/${name}` : undefined
-  const ctx: MergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef: `origin/${def}`, id, ...(cardRel ? { cardRel } : {}) }
-  const fetched = await mergeExec($, ['git', '-C', root, 'fetch', 'origin'], ctx, { cwd: root, timeoutMs: 120000 })
+  mergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef: `origin/${def}`, id, ...(cardRel ? { cardRel } : {}) }
+  const fetched = await run($, ['git', '-C', root, 'fetch', 'origin'], { cwd: root, timeoutMs: 120000 })
   if (!fetched.ok || fetched.exitCode !== 0) return `${id}: git fetch origin failed in the main checkout: ${whyOf(fetched)}`
   const head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
   if (!isSha(head)) return `${id}: could not read the worktree's head in ${wt.path}`
@@ -2407,7 +2390,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
     const rootCard = (await readText($, `${root}/${cardRel}`)) ?? ''
     const diff = cardDiff(merged, rootCard)
     if (diff.length > 0) return [`${id}: the merged card on origin/${def} differs from ${cardRel} (status aside); the root card is left and nothing else was done:`, ...diff.slice(0, 20), ...(diff.length > 20 ? [`… ${diff.length - 20} more`] : [])].join('\n')
-    const cleaned = await mergeExec($, ['git', '-C', root, 'clean', '-q', '-f', '--', cardRel], ctx, { cwd: root, timeoutMs: 15000 })
+    const cleaned = await run($, ['git', '-C', root, 'clean', '-q', '-f', '--', cardRel], { cwd: root, timeoutMs: 15000 })
     if (!cleaned.ok || cleaned.exitCode !== 0) return `${id}: the root card ${cardRel} was not removed: ${whyOf(cleaned)}`
   }
   // the version this merge releases: what the prepare saw, else the branch against origin
@@ -2417,12 +2400,12 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
     const names = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', `origin/${def}...HEAD`], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
     version = touchesVersion(names) ? versionOf(await readText($, `${wt.path}/${VERSION_FILE}`)) : undefined
   }
-  const pulled = await mergeExec($, ['git', '-C', root, 'pull', '--ff-only'], ctx, { cwd: root, timeoutMs: 120000 })
+  const pulled = await run($, ['git', '-C', root, 'pull', '--ff-only'], { cwd: root, timeoutMs: 120000 })
   if (!pulled.ok || pulled.exitCode !== 0) return `${id}: git pull --ff-only failed in the main checkout: ${whyOf(pulled)}; the worktree and branch are left`
   const notes: string[] = []
-  const removed = await mergeExec($, ['git', '-C', root, 'worktree', 'remove', wt.path], ctx, { cwd: root, timeoutMs: 60000 })
+  const removed = await run($, ['git', '-C', root, 'worktree', 'remove', wt.path], { cwd: root, timeoutMs: 60000 })
   if (!removed.ok || removed.exitCode !== 0) notes.push(`note: the worktree ${wt.path} was not removed: ${whyOf(removed)}`)
-  const dropped = await mergeExec($, ['git', '-C', root, 'branch', '-D', wt.branch], ctx, { cwd: root, timeoutMs: 15000 })
+  const dropped = await run($, ['git', '-C', root, 'branch', '-D', wt.branch], { cwd: root, timeoutMs: 15000 })
   if (!dropped.ok || dropped.exitCode !== 0) notes.push(`note: the branch ${wt.branch} was not deleted: ${whyOf(dropped)}`)
   // the record, the ledger row, this session's merged list
   const t = await now($)
