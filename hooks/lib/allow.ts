@@ -41,7 +41,7 @@ export type Check = { ok: true } | { ok: false; reason: string }
 /** MOD-44: a task that works in another local repo: the checkout's path, and that repo's own domains when it has them. */
 export type TaskRepo = { path: string; domains?: readonly string[] }
 
-export type AllowConfig = { /** MOD-44: the task ids that name another local repo as theirs, and that repo; `git -C <path> worktree add` passes for those tasks only. */ taskRepos?: Readonly<Record<string, TaskRepo>>; gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string; /** MOD-7: the one repo `gh issue` may name (owner/name); empty or absent = no issue form passes. */ issueRepo?: string; /** MOD-7: the session root, whose .delegation/debriefs/ holds the only body files. */ root?: string }
+export type AllowConfig = { /** MOD-44: the task ids that name another local repo as theirs, and that repo; `git -C <path> worktree add` passes for those tasks only. */ taskRepos?: Readonly<Record<string, TaskRepo>>; gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string; /** MOD-7: the one repo `gh issue` may name (owner/name); empty or absent = no issue form passes. */ issueRepo?: string; /** MOD-7: the session root, whose .delegation/debriefs/ holds the only body files. */ root?: string; /** MOD-75: set only while `/delegation merge` runs: its local git writes pass, exact shapes bound to this one task; a push, gh, curl, sf or wget never does. */ merge?: MergeCtx }
 
 const GIT_READ = ['diff', 'merge-base', 'rev-parse', 'status', 'log']
 const GIT_WRITEY_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|-O)/
@@ -68,6 +68,11 @@ export const isBaseRef = (s: string): boolean => s === 'origin/main' || SHA.test
 export function checkArgv(argv: readonly string[], allow: AllowConfig = {}): Check {
   const [cmd, ...rest] = argv
   if (cmd === undefined) return refuse('empty argv')
+  if (allow.merge) {
+    // MOD-75: while the merge command runs, the remote refusal comes ahead of everything, then its exact shapes
+    if (isRemoteArgv(argv)) return refuse('the merge command never pushes, nor runs gh, curl, sf or wget')
+    if (isMergeShape(argv, allow.merge)) return ok
+  }
   if (cmd === 'git') return checkGit(rest, allow)
   if (cmd === 'gh') return checkGh(rest, allow)
   if (cmd === 'claude') return checkClaude(rest)
@@ -236,4 +241,54 @@ export function checkGateEntry(cmd: string): Check {
     if (!c.ok) return refuse(`${c.reason.includes('not an absolute folder') ? `${c.reason}; write {worktree}` : c.reason}`)
   }
   return ok
+}
+
+// ---- MOD-75: the merge command's local git writes -----------------------------------------
+
+/** The one task `/delegation merge` works on: the session root, its worktree and branch, the base ref, the card's repo-relative path. */
+export type MergeCtx = { root: string; worktree: string; branch: string; baseRef: string; cardRel?: string; id: string }
+
+/** The subject of the merged-card commit, the only commit message that passes. */
+export const mergedSubject = (id: string): string => `cards: ${id} merged`
+
+/** An argv the merge command may never run: a push, gh, curl, sf or wget. */
+export const isRemoteArgv = (argv: readonly string[]): boolean => {
+  const [cmd = '', ...rest] = argv
+  const base = cmd.split('/').pop() ?? cmd
+  if (base === 'gh' || base === 'curl' || base === 'sf' || base === 'wget') return true
+  return base === 'git' && rest.includes('push')
+}
+
+/**
+ * The git writes `/delegation merge` runs, exactly, and only with `allow.merge` set:
+ *   git -C <worktree> fetch origin            git -C <root> fetch origin
+ *   git -C <worktree> rebase <baseRef>        git -C <worktree> rebase --abort
+ *   git -C <worktree> add -- <card>           git -C <worktree> commit -q -m 'cards: <ID> merged' [-m <Co-Authored-By trailer>]
+ *   git -C <root> remote get-url origin       git -C <root> clean -q -f -- <card>
+ *   git -C <root> pull --ff-only              git -C <root> worktree remove <worktree>
+ *   git -C <root> branch -D <branch>
+ * <worktree>, <branch> and <card> are the one task's; nothing else passes here.
+ */
+function isMergeShape(argv: readonly string[], c: MergeCtx): boolean {
+  if (argv[0] !== 'git' || argv[1] !== '-C' || argv.length < 4) return false
+  const dir = (argv[2] as string).replace(/\/+$/, '')
+  const root = c.root.replace(/\/+$/, '')
+  const wt = c.worktree.replace(/\/+$/, '')
+  const tail = argv.slice(3).join('\u0000')
+  const is = (...words: string[]) => tail === words.join('\u0000')
+  if (dir === wt) {
+    if (is('fetch', 'origin') || is('rebase', c.baseRef) || is('rebase', '--abort')) return true
+    if (c.cardRel && is('add', '--', c.cardRel)) return true
+    const [sub, q, m1, subj, m2, trailer, ...more] = argv.slice(3)
+    if (sub === 'commit' && q === '-q' && m1 === '-m' && subj === mergedSubject(c.id) && more.length === 0) {
+      if (m2 === undefined && trailer === undefined) return true
+      if (m2 === '-m' && /^Co-Authored-By: Claude [A-Za-z]+ [0-9.]+ <noreply@anthropic\.com>$/.test(trailer ?? '')) return true
+    }
+    return false
+  }
+  if (dir === root) {
+    if (is('fetch', 'origin') || is('remote', 'get-url', 'origin') || is('pull', '--ff-only') || is('worktree', 'remove', wt) || is('branch', '-D', c.branch)) return true
+    if (c.cardRel && is('clean', '-q', '-f', '--', c.cardRel)) return true
+  }
+  return false
 }

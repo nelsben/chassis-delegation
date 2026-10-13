@@ -1903,17 +1903,19 @@ The answer ends with `<ID> merged at <sha>`. When the version moved, a last line
 `release v<version>: run the block above, then reload the window`.
 
 **The allowlist rule.** The merge never pushes, never calls `gh` and never touches the network.
-Every remote step is in the two blocks, and the brain runs them. `hooks/lib/allow.ts` is
-unchanged. The local writes the merge needs pass a second, narrower check, `checkMergeArgv` in
-`hooks/lib/mergecmd.ts`. It takes only these exact shapes, bound to the one task's worktree,
-branch and card path:
+Every remote step is in the two blocks, and the brain runs them. Every argv the merge runs goes
+through the one path to the host, `run()`, and the one allowlist, `hooks/lib/allow.ts`. The
+local writes the merge needs are exact shapes in that allowlist. They are on only while the
+merge command runs: the command sets `AllowConfig.merge` to the one task's root, worktree, branch,
+base ref, card path and id, and clears it when it ends. The shapes are:
 
 - in the worktree: `fetch origin`, `rebase <baseRef>`, `rebase --abort`, `add -- <card>` and
-  `commit -q -m 'cards: <ID> merged'`;
+  `commit -q -m 'cards: <ID> merged'`, with an optional `Co-Authored-By` trailer;
 - in the main checkout: `fetch origin`, `remote get-url origin`, `pull --ff-only`,
   `clean -q -f -- <card>`, `worktree remove <worktree>` and `branch -D <branch>`.
 
-A push, `gh`, `curl`, `sf` or `wget` is refused before either check.
+Outside a merge, every one of these is refused as before. While the merge runs, a push, `gh`,
+`curl`, `sf` or `wget` is refused ahead of every other rule.
 
 ## Configuration
 
@@ -2304,8 +2306,9 @@ verify time (say `claude plugin validate .`, which is not an absolute folder)
 is dropped from the map then, and named in the toast and log with its reason,
 so it is not found a gate run later.
 
-`/delegation merge` adds its own narrower door for the local merge writes, exact shapes bound to
-one task; see [Merging a card](#merging-a-card). It still never pushes or calls `gh`.
+While `/delegation merge` runs, and only then, the list also takes that command's local git writes:
+exact shapes bound to the one task, with every push, `gh`, `curl`, `sf` and `wget` refused first.
+See [Merging a card](#merging-a-card).
 
 The mod never runs your eval, your tests or a deploy itself. The eval runner
 and the debrief are ordinary subagents, under the session's own permissions.

@@ -23,8 +23,10 @@
     the merged one (else names the lines that differ), pulls, removes the worktree and branch, marks the record and
     the ledger `merged`, and prints the branch delete and, when `hooks/lib/version.ts` moved, the tag, its push and
     the loaded clone's pull. `/delegation` lists it under `merged:`.
-  - The `merge` tool does the same for the model. The mod still never pushes or calls `gh`: `allow.ts` is untouched,
-    and the local merge writes pass a narrower exact-shape check bound to the one task.
+  - The `merge` tool does the same for the model. The mod still never pushes or calls `gh`. Every argv still goes
+    through `run()` and the one allowlist. The local merge writes are exact shapes in `allow.ts`, bound to the one
+    task and on only while the merge command runs (`AllowConfig.merge`). While it runs, a push, gh, curl, sf or
+    wget is refused before any other rule.
 
 - **`/delegation config` shows the options the mod really runs with, each with its source, short by default; sets
   any of them on every screen; and every option is measured (MOD-73).** The list showed the manifest layer, not the

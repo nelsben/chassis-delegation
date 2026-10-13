@@ -3,7 +3,8 @@
 // cleans up after the PR lands. Every git call here is answered by the harness; nothing real runs.
 import { test, expect, describe } from 'claude-code/testing'
 import { world, sessionStart, ROOT, NOW, type RunAnswer } from './harness'
-import { cardDiff, checkMergeArgv, isRemoteArgv, labelIsMerged, markMerged, parseMergeArgs, prBody, readsMerged } from '../hooks/lib/mergecmd'
+import { isRemoteArgv } from '../hooks/lib/allow'
+import { cardDiff, labelIsMerged, markMerged, parseMergeArgs, prBody, readsMerged } from '../hooks/lib/mergecmd'
 
 const ID = 'MOD-1'
 const WT = `${ROOT}-${ID}`
@@ -304,44 +305,7 @@ describe('MOD-75: /delegation merge <id>', () => {
   })
 })
 
-describe('MOD-75: the merge door and its pure parts', () => {
-  const ctx = { root: ROOT, worktree: WT, branch: BRANCH, baseRef: 'origin/main', cardRel: `docs/cards/${CARD_NAME}`, id: ID }
-  test('the merge door takes the exact local shapes, bound to the one task', () => {
-    for (const argv of [
-      ['git', '-C', WT, 'fetch', 'origin'],
-      ['git', '-C', WT, 'rebase', 'origin/main'],
-      ['git', '-C', WT, 'rebase', '--abort'],
-      ['git', '-C', WT, 'add', '--', `docs/cards/${CARD_NAME}`],
-      ['git', '-C', WT, 'commit', '-q', '-m', `cards: ${ID} merged`],
-      ['git', '-C', WT, 'commit', '-q', '-m', `cards: ${ID} merged`, '-m', 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'],
-      ['git', '-C', ROOT, 'fetch', 'origin'],
-      ['git', '-C', ROOT, 'remote', 'get-url', 'origin'],
-      ['git', '-C', ROOT, 'clean', '-q', '-f', '--', `docs/cards/${CARD_NAME}`],
-      ['git', '-C', ROOT, 'pull', '--ff-only'],
-      ['git', '-C', ROOT, 'worktree', 'remove', WT],
-      ['git', '-C', ROOT, 'branch', '-D', BRANCH],
-    ])
-      expect(checkMergeArgv(argv, ctx)).toEqual({ ok: true })
-  })
-  test('the merge door refuses a push, gh, curl, sf, another worktree, another branch, another file, another message', () => {
-    for (const argv of [
-      ['git', '-C', WT, 'push', '-u', 'origin', BRANCH],
-      ['git', '-C', ROOT, 'push', 'origin', '--delete', BRANCH],
-      ['gh', 'pr', 'create', '--repo', 'acme/acme-app'],
-      ['gh', 'pr', 'merge', BRANCH, '--rebase'],
-      ['curl', 'https://example.com'],
-      ['sf', 'project', 'deploy'],
-      ['git', '-C', `${ROOT}-MOD-2`, 'rebase', 'origin/main'],
-      ['git', '-C', ROOT, 'branch', '-D', 'agent/mod/MOD-2'],
-      ['git', '-C', ROOT, 'clean', '-q', '-f', '--', 'README.md'],
-      ['git', '-C', ROOT, 'clean', '-fdx'],
-      ['git', '-C', WT, 'add', '-A'],
-      ['git', '-C', WT, 'commit', '-q', '-m', 'anything else'],
-      ['git', '-C', WT, 'reset', '--hard', 'origin/main'],
-      ['git', '-C', ROOT, 'worktree', 'remove', '--force', WT],
-    ])
-      expect(checkMergeArgv(argv, ctx).ok).toBe(false)
-  })
+describe('MOD-75: the merge command\'s pure parts (the allowlist shapes are in tests/allow.test.ts)', () => {
   test('arguments: an id, --finish, --review text or --review-file, and nothing else', () => {
     expect(parseMergeArgs(' MOD-1')).toEqual({ id: 'MOD-1', finish: false })
     expect(parseMergeArgs('MOD-1 --finish')).toEqual({ id: 'MOD-1', finish: true })
