@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.9 — 2026-10-13
 
 - **`/delegation config` shows the options the mod really runs with, each with its source, short by default; sets
   any of them on every screen; and every option is measured (MOD-73).** The list showed the manifest layer, not the
