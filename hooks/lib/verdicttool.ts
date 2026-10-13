@@ -24,7 +24,7 @@ export const VERDICT_TOOL_NAME = 'mcp__chassis-delegation__verdict'
 
 export const DEFAULT_WAIT_SECONDS = 600
 export const MAX_WAIT_SECONDS = 900
-/** One clock wait: well inside the hook's own 10-second budget. */
+/** One wait step, a `sleep` process (MOD-72): a `$.clock.sleep` would count against the hook's 10-second budget (HookBudget.ms); a process wait does not. */
 export const POLL_MS = 5000
 
 export type VerdictInput = { task: string; subtask: string; waitSeconds: number } | { error: string }

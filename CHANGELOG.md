@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **The verdict tool waits for the verdict for real (MOD-72).** Live, every call failed with "registered the tool
+  verdict but no tool.call hook answered this call": `runVerdict` waited in `$.clock.sleep(5000)` steps and the host
+  counts a clock wait against the hook's 10-second budget (HookBudget), so the hook was dropped after two steps. The
+  waits are now `$.process.run(['sleep', '5'], { timeoutMs })` steps (`$` calls other than the clock stop the budget
+  clock), still stopping at `waitSeconds`; a sleep that cannot start answers the still-verifying line at once. The
+  engine-gate lock wait was the only other long clock wait in a dispatch and is a process wait too (a clock wait of 1 s
+  at most when the sleep cannot start). Engine tests cover both.
+
 ## 0.9.9 — 2026-10-13
 
 - **`/delegation config` shows the options the mod really runs with, each with its source, short by default; sets

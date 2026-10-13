@@ -3112,7 +3112,8 @@ async function takeEngineTurn($: Host, label: string): Promise<{ line?: string; 
       })
       if (d.take) break
       holder = d.holder
-      await $.clock.sleep(d.waitMs)
+      // MOD-72: a process wait, so a long lock wait does not spend the hook's budget (HookBudget); a clock wait of 1 s at most when it cannot start
+      if (!(await pauseOffBudget($, d.waitMs))) await $.clock.sleep(Math.min(d.waitMs, 1000))
     }
   } catch (err) {
     debug($, `${label}: engine gate turn not taken (${String(err)}); the gate runs without it`)
@@ -3705,7 +3706,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
 
 /**
  * MOD-64: the verdict tool. The task's latest attempt, from the attempt record and the spawn record (the mod's own
- * records, never a shell): judged and its row posted, still verifying, or none. Waits in 5 second clock sleeps.
+ * records, never a shell): judged and its row posted, still verifying, or none. Waits in 5 second `sleep` processes (MOD-72), not clock sleeps.
  */
 async function verdictNow($: Host, task: string, subtask: string): Promise<{ kind: 'none' } | { kind: 'wait' } | { kind: 'judged'; text: string }> {
   const label = taskLabel(task, subtask)
@@ -3725,6 +3726,21 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<{ kin
   return { kind: 'judged', text: deliveryFor(cfg.verbosity, rendered).row ?? rendered.line }
 }
 
+/**
+ * MOD-72: a wait that does not spend the hook's budget. The host counts a `$.clock.sleep` against the hook's own
+ * 10-second budget (HookBudget.ms), so a verdict wait of minutes in clock sleeps is dropped after two steps; any other
+ * `$` call stops the budget clock, `$.process.run` included, so the wait is a `sleep` process. Returns false when the
+ * process cannot start or exits non-zero; the caller then gives up waiting rather than spin (never a clock wait over 1 s).
+ */
+async function pauseOffBudget($: Host, ms: number): Promise<boolean> {
+  try {
+    const r = await $.process.run(['sleep', String(ms / 1000)], { timeoutMs: ms + 5000 })
+    return r.exitCode === 0
+  } catch {
+    return false
+  }
+}
+
 async function runVerdict($: Host, input: Record<string, unknown>): Promise<string> {
   const parsed = parseVerdictTool(input)
   if ('error' in parsed) return parsed.error
@@ -3737,7 +3753,7 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
     if (found.kind === 'judged') return found.text
     if (waited >= limit) return stillVerifying(label, parsed.waitSeconds)
     const step = Math.min(POLL_MS, limit - waited)
-    await $.clock.sleep(step)
+    if (!(await pauseOffBudget($, step))) return stillVerifying(label, parsed.waitSeconds)
     waited += step
   }
 }
