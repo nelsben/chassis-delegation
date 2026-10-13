@@ -124,8 +124,8 @@ export type Effective = {
   review: ReviewMode
   /** '' = one tier below the worker's. */
   reviewTier: Tier | ''
-  /** Which layer each key came from. */
-  sources: Record<RepoKey, 'default' | 'repo' | 'settings'>
+  /** Which layer each key came from (settings: the host's /config rows; yours: the user options file). */
+  sources: Record<RepoKey, 'default' | 'repo' | 'yours' | 'settings'>
 }
 
 const TIER_NAMES = ['economy', 'standard', 'frontier', 'premium'] as const
@@ -372,15 +372,18 @@ export function settingsLayer(options: Readonly<Record<string, unknown>>): Parse
   return { config: layer.config, errors: [...errors, ...layer.errors] }
 }
 
-/** defaults < repo < settings: maps merge per key, the rest is replaced whole. */
-export function mergeConfig(repo: RepoConfig, settings: RepoConfig): Effective {
-  const sources = Object.fromEntries(REPO_KEYS.map(k => [k, settings[k] !== undefined ? 'settings' : repo[k] !== undefined ? 'repo' : 'default'])) as Effective['sources']
+/**
+ * defaults < repo < user < settings: maps merge per key, the rest is replaced whole. MOD-73:
+ * `user` is the user options file's layer (yours), between the repo file and the host's rows.
+ */
+export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoConfig = {}): Effective {
+  const sources = Object.fromEntries(REPO_KEYS.map(k => [k, settings[k] !== undefined ? 'settings' : user[k] !== undefined ? 'yours' : repo[k] !== undefined ? 'repo' : 'default'])) as Effective['sources']
   const pick = <K extends RepoKey>(k: K, fallback: NonNullable<RepoConfig[K]>): NonNullable<RepoConfig[K]> =>
-    (settings[k] ?? repo[k] ?? fallback) as NonNullable<RepoConfig[K]>
+    (settings[k] ?? user[k] ?? repo[k] ?? fallback) as NonNullable<RepoConfig[K]>
   return {
-    gateMap: { ...repo.gateMap, ...settings.gateMap },
-    agentTypes: { ...DEFAULT_AGENT_TYPES, ...repo.agentTypes, ...settings.agentTypes },
-    tierMap: { ...DEFAULT_TIER_MAP, ...repo.tierMap, ...settings.tierMap },
+    gateMap: { ...repo.gateMap, ...user.gateMap, ...settings.gateMap },
+    agentTypes: { ...DEFAULT_AGENT_TYPES, ...repo.agentTypes, ...user.agentTypes, ...settings.agentTypes },
+    tierMap: { ...DEFAULT_TIER_MAP, ...repo.tierMap, ...user.tierMap, ...settings.tierMap },
     evalCommand: pick('evalCommand', ''),
     evalLiveCommand: pick('evalLiveCommand', ''),
     briefTemplate: pick('briefTemplate', ''),
@@ -389,15 +392,15 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig): Effective {
     domains: [...pick('domains', [...DEFAULT_DOMAINS])],
     worktreeRoot: pick('worktreeRoot', ''),
     cardDir: pick('cardDir', DEFAULT_CARD_DIR),
-    autoEval: settings.autoEval === true || repo.autoEval === true,
+    autoEval: settings.autoEval === true || (user.autoEval ?? repo.autoEval) === true,
     baseRef: pick('baseRef', ''),
     ignore: [...pick('ignore', [...DEFAULT_IGNORE])],
-    spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...settings.spendByTier },
-    effortByTier: { ...DEFAULT_EFFORT_BY_TIER, ...repo.effortByTier, ...settings.effortByTier },
+    spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...user.spendByTier, ...settings.spendByTier },
+    effortByTier: { ...DEFAULT_EFFORT_BY_TIER, ...repo.effortByTier, ...user.effortByTier, ...settings.effortByTier },
     delegateOnly: pick('delegateOnly', 'off'),
     issueRepo: pick('issueRepo', ''),
     review: pick('review', 'off'),
-    reviewTier: settings.reviewTier ?? repo.reviewTier ?? '',
+    reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
     sources,
   }
 }
