@@ -1,0 +1,400 @@
+// MOD-75: `/delegation merge <ID>` and the merge tool. The mod does the local half of
+// the merge pipeline the brain typed by hand (rebase the worktree, commit the merged
+// card, run the gates) and prints the remote half (push, PR, merge) as one block the
+// brain runs verbatim; `--finish` cleans up once the PR has landed. Pure: no `$`.
+//
+// HARD RULE (part 5A, kept): the mod never pushes, never calls gh and never runs curl
+// or sf. The local git writes this command needs are not on ./allow.ts (it is not
+// touched); they pass `checkMergeArgv` below instead, each an exact shape bound to the
+// one task's worktree, branch and card, and nothing else.
+
+import { readVerdict } from './attempts'
+import { doneWhenOf } from './card'
+import { modelName } from './watch'
+import type { Check } from './allow'
+
+export const MERGE_USAGE = 'usage: /delegation merge <ID> [--review <text> | --review-file <abs path>] | /delegation merge <ID> --finish'
+
+export type MergeArgs = { id: string; finish: boolean; review?: string; reviewFile?: string }
+
+const TASK_ID = /^[A-Z][A-Z0-9]*-\d+[a-z]?$/
+
+/** `merge <ID> [--finish] [--review <text…>] [--review-file <path>]` (the words after `merge`). */
+export function parseMergeArgs(rest: string): MergeArgs | { error: string } {
+  const words = rest.trim().split(/\s+/).filter(Boolean)
+  const [id = '', ...more] = words
+  if (id === '') return { error: MERGE_USAGE }
+  if (!TASK_ID.test(id)) return { error: `refused task id ${id}` }
+  let finish = false
+  let review: string | undefined
+  let reviewFile: string | undefined
+  for (let i = 0; i < more.length; i++) {
+    const w = more[i] as string
+    if (w === '--finish') finish = true
+    else if (w === '--review-file') {
+      reviewFile = more[i + 1]
+      i++
+      if (!reviewFile) return { error: MERGE_USAGE }
+    } else if (w === '--review') {
+      // the review text runs to the next option, or to the end
+      const stop = more.findIndex((x, j) => j > i && (x === '--finish' || x === '--review-file'))
+      const end = stop === -1 ? more.length : stop
+      review = more.slice(i + 1, end).join(' ')
+      if (review === '') return { error: MERGE_USAGE }
+      i = end - 1
+    } else return { error: `${MERGE_USAGE} (unknown option ${w})` }
+  }
+  if (finish && (review !== undefined || reviewFile !== undefined)) return { error: 'refused --finish with --review: the review goes in when the card is merged, before the push' }
+  if (review !== undefined && reviewFile !== undefined) return { error: 'refused --review with --review-file: name one' }
+  if (reviewFile !== undefined && !reviewFile.startsWith('/')) return { error: `refused --review-file ${reviewFile}: name an absolute path` }
+  return { id, finish, ...(review !== undefined ? { review } : {}), ...(reviewFile !== undefined ? { reviewFile } : {}) }
+}
+
+/** The merge tool's input, as the command's words. */
+export function parseMergeTool(input: Record<string, unknown>): MergeArgs | { error: string } {
+  const id = typeof input.task === 'string' ? input.task.trim() : ''
+  if (id === '') return { error: 'the merge tool needs task=<ID>' }
+  if (!TASK_ID.test(id)) return { error: `refused task id ${id}` }
+  const finish = input.finish === true
+  const review = typeof input.review === 'string' && input.review.trim() !== '' ? input.review.trim() : undefined
+  const reviewFile = typeof input.reviewFile === 'string' && input.reviewFile.trim() !== '' ? input.reviewFile.trim() : undefined
+  const words = [id, ...(finish ? ['--finish'] : []), ...(reviewFile ? ['--review-file', reviewFile] : [])]
+  const parsed = parseMergeArgs(words.join(' '))
+  if ('error' in parsed) return parsed
+  if (review !== undefined && (finish || reviewFile !== undefined)) return { error: finish ? 'refused --finish with --review: the review goes in when the card is merged, before the push' : 'refused --review with --review-file: name one' }
+  return { ...parsed, ...(review !== undefined ? { review } : {}) }
+}
+
+export const MERGE_TOOL = {
+  name: 'merge',
+  description:
+    'After a consistent verdict with next=accept: rebases the task worktree onto the base, commits the card as merged, runs the card gates there, and returns the push/PR block to run verbatim. With finish: true, after the PR has landed: removes the root card, pulls, removes the worktree and branch, records the merge, and returns the remote cleanup (and release) lines. Never pushes and never calls gh itself.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      task: { type: 'string', description: 'The task id, e.g. MOD-75.' },
+      finish: { type: 'boolean', description: 'true after the PR has merged: clean up and name the release steps.' },
+      review: { type: 'string', description: 'Optional: text appended to the merged card as a ## Review section.' },
+      reviewFile: { type: 'string', description: 'Optional: the absolute path of a file whose text is the ## Review section.' },
+    },
+    required: ['task'],
+    additionalProperties: false,
+  },
+} as const
+
+// ---- the verdict a merge needs ------------------------------------------------------------
+
+export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha?: string; kind?: string }
+
+/**
+ * The task's latest verdict row in the ledger text (main subtask). A reviewer's row that says
+ * next=accept stands aside for the worker's row it reviewed; one that says anything else is the answer.
+ */
+export function latestVerdictRow(ledger: string, task: string): VerdictRow | undefined {
+  const rows: VerdictRow[] = []
+  for (const line of ledger.split('\n')) {
+    if (line.trim() === '') continue
+    let r: Record<string, unknown>
+    try {
+      r = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (!r || r.task !== task || typeof r.verdict !== 'string') continue
+    if (r.subtask !== undefined && r.subtask !== 'main') continue
+    rows.push({ verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}), ...(typeof r.attempt === 'number' ? { attempt: r.attempt } : {}), ...(typeof r.sha === 'string' ? { sha: r.sha } : {}), ...(typeof r.kind === 'string' ? { kind: r.kind } : {}) })
+  }
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i] as VerdictRow
+    if (r.kind === 'review' && isAccept(r.next)) continue
+    return r
+  }
+  return undefined
+}
+
+const isAccept = (next: string | undefined): boolean => next !== undefined && /^accept\b/.test(next.trim())
+
+/** The one-line refusal when the latest verdict is not consistent with next=accept; undefined when it is. */
+export function verdictRefusal(id: string, row: VerdictRow | undefined): string | undefined {
+  if (!row) return `${id}: no verdict recorded; merge needs consistent/accept`
+  const verdict = readVerdict(row.verdict)
+  if (verdict === 'consistent' && isAccept(row.next)) return undefined
+  return `${id}: last verdict is ${verdict} · next=${row.next ?? '(none)'}; merge needs consistent/accept`
+}
+
+// ---- the worktree and the main checkout --------------------------------------------------
+
+/** The worktree `git worktree list --porcelain` shows on `agent/<domain>/<ID>` (never a -replay branch). */
+export function worktreeOf(porcelain: string, id: string): { path: string; branch: string } | undefined {
+  const want = new RegExp(`^refs/heads/(agent/[A-Za-z0-9_-]+/${id.replace(/[-]/g, '\\-')})$`)
+  for (const block of porcelain.split(/\n\s*\n/)) {
+    let path: string | undefined
+    let branch: string | undefined
+    for (const line of block.split('\n')) {
+      if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
+      const m = line.startsWith('branch ') ? want.exec(line.slice('branch '.length).trim()) : null
+      if (m) branch = m[1]
+    }
+    if (path && branch) return { path, branch }
+  }
+  return undefined
+}
+
+/** The paths `git status --porcelain` lists; `trackedOnly` leaves out untracked (`??`) ones. */
+export function statusPaths(porcelain: string, trackedOnly = false): string[] {
+  return porcelain
+    .split('\n')
+    .filter(l => l.trim() !== '')
+    .filter(l => !(trackedOnly && l.startsWith('??')))
+    .map(l => l.slice(3).trim())
+}
+
+const listed = (paths: readonly string[]): string => (paths.length <= 3 ? paths.join(', ') : `${paths.slice(0, 3).join(', ')} and ${paths.length - 3} more`)
+
+export const dirtyWorktreeLine = (id: string, worktree: string, paths: readonly string[]): string => `${id}: the worktree ${worktree} is not clean: ${listed(paths)}; commit or remove ${paths.length === 1 ? 'it' : 'them'} first`
+export const mainBranchLine = (id: string, root: string, branch: string, want: string): string => `${id}: the main checkout ${root} is on ${branch || '(no branch)'}, not ${want}; switch it to ${want} first`
+export const mainDirtyLine = (id: string, root: string, paths: readonly string[]): string => `${id}: the main checkout ${root} has tracked changes: ${listed(paths)}; commit or stash them first (untracked files are fine)`
+export const noWorktreeLine = (id: string): string => `${id}: no worktree on agent/<domain>/${id}; nothing to merge`
+export const conflictLine = (id: string, baseRef: string, files: readonly string[]): string => `${id}: rebase onto ${baseRef} conflicts in ${files.length > 0 ? files.join(', ') : '(git named no file)'}; resolve by hand`
+
+/** The default branch the base names: `origin/main` → `main`. */
+export const defaultBranchOf = (baseRef: string): string => {
+  const b = baseRef.trim() || 'origin/main'
+  return b.startsWith('origin/') ? b.slice('origin/'.length) : b
+}
+
+/** `owner/repo` from origin's url (GitHub ssh or https); undefined for anything else. */
+export function ownerRepoOf(url: string): string | undefined {
+  const u = url.trim()
+  const m = /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(u)
+  return m ? `${m[1]}/${m[2]}` : undefined
+}
+
+// ---- the merged card ---------------------------------------------------------------------
+
+/** The card with `status: merged` in its front matter, and a `## Review` section appended when one is given. */
+export function markMerged(card: string, review?: string): string {
+  const lines = card.split('\n')
+  if (lines[0]?.trim() === '---') {
+    const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---')
+    if (end > 0) {
+      const at = lines.findIndex((l, i) => i > 0 && i < end && /^status\s*:/.test(l))
+      if (at > 0) lines[at] = 'status: merged'
+      else lines.splice(end, 0, 'status: merged')
+    }
+  }
+  let out = lines.join('\n')
+  if (review !== undefined && review.trim() !== '') out = `${out.replace(/\s*$/, '')}\n\n## Review\n\n${review.trim()}\n`
+  return out
+}
+
+/** Does this card text read `status: merged` in its front matter? */
+export function readsMerged(card: string): boolean {
+  const lines = card.split('\n')
+  if (lines[0]?.trim() !== '---') return false
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---')
+  return lines.slice(1, end > 0 ? end : undefined).some(l => /^status\s*:\s*merged\s*$/.test(l.trim()))
+}
+
+export const mergedSubject = (id: string): string => `cards: ${id} merged`
+
+/** `Co-Authored-By: Claude <model name> <noreply@anthropic.com>` from the host's model id; undefined when the id cannot be named. */
+export function coAuthorTrailer(modelId: string | undefined): string | undefined {
+  if (!modelId) return undefined
+  const name = modelName(modelId)
+  if (name === modelId) return undefined
+  return `Co-Authored-By: Claude ${name} <noreply@anthropic.com>`
+}
+
+/** The commit argv for the merged card. */
+export function commitArgv(worktree: string, id: string, trailer: string | undefined): string[] {
+  return ['git', '-C', worktree, 'commit', '-q', '-m', mergedSubject(id), ...(trailer ? ['-m', trailer] : [])]
+}
+
+/**
+ * The root card and the merged card on origin, compared with the `status:` line aside and the merged
+ * card's trailing `## Review` section allowed as extra: empty when they match, else the lines that differ.
+ */
+export function cardDiff(origin: string, root: string): string[] {
+  const norm = (t: string, dropReview: boolean): string[] => {
+    let lines = t.replace(/\r\n/g, '\n').split('\n').filter(l => !/^status\s*:/.test(l))
+    if (dropReview) {
+      const at = lines.findIndex(l => /^##\s+Review\s*$/.test(l.trim()))
+      if (at >= 0) lines = lines.slice(0, at)
+    }
+    while (lines.length > 0 && (lines[lines.length - 1] as string).trim() === '') lines.pop()
+    return lines
+  }
+  const rootHasReview = /^##\s+Review\s*$/m.test(root)
+  const a = norm(origin, !rootHasReview)
+  const b = norm(root, false)
+  const out: string[] = []
+  const n = Math.max(a.length, b.length)
+  for (let i = 0; i < n; i++) {
+    if (a[i] === b[i]) continue
+    if (b[i] !== undefined) out.push(`- ${b[i]}`)
+    if (a[i] !== undefined) out.push(`+ ${a[i]}`)
+  }
+  return out
+}
+
+// ---- the version a merge releases --------------------------------------------------------
+
+export const VERSION_FILE = 'hooks/lib/version.ts'
+
+/** MOD_VERSION from hooks/lib/version.ts's text. */
+export function versionOf(text: string | undefined): string | undefined {
+  const m = /MOD_VERSION\s*=\s*['"]([0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.-]*)['"]/.exec(text ?? '')
+  return m ? m[1] : undefined
+}
+
+/** Did the diff `--name-only` list change the version file? */
+export const touchesVersion = (names: string): boolean => names.split('\n').some(l => l.trim() === VERSION_FILE)
+
+// ---- the PR body and the two blocks ------------------------------------------------------
+
+export const GENERATED = '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
+
+export type GateResult = { id: string; label: string; ok: boolean }
+
+/** Absolute paths out: each named folder becomes relative (or `.`), and any home folder left becomes `~`. */
+export function scrubPaths(text: string, folders: readonly string[]): string {
+  let out = text
+  for (const f of [...folders].filter(Boolean).sort((x, y) => y.length - x.length)) {
+    const d = f.replace(/\/+$/, '')
+    out = out.split(`${d}/`).join('').split(d).join('.')
+  }
+  return out.replace(/\/(?:Users|home)\/[^/\s`'")]+/g, '~')
+}
+
+/** The Done-when statements as a checklist: list items become `- [x] …`, their continuation lines kept. */
+export function doneChecklist(body: string): string[] {
+  const lines = doneWhenOf(body)
+  while (lines.length > 0 && (lines[0] as string).trim() === '') lines.shift()
+  while (lines.length > 0 && (lines[lines.length - 1] as string).trim() === '') lines.pop()
+  return lines.map(l => l.replace(/^(\s*)(?:[-*+]|\d+[.)])\s+(?!\[[ xX]\])/, '$1- [x] '))
+}
+
+/** pr.md: the Done-when checklist, the verdict line, the gate results, the trailing generated line. No absolute path survives. */
+export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[] }): string {
+  const done = doneChecklist(o.body)
+  const text = [
+    '## Done when',
+    '',
+    ...(done.length > 0 ? done : ['- [x] (the card has no Done when section)']),
+    '',
+    '## Verdict',
+    '',
+    o.verdictLine,
+    '',
+    '## Gates',
+    '',
+    ...(o.gates.length > 0 ? o.gates.map(g => `- ${g.id} (\`${g.label}\`): ${g.ok ? 'pass' : 'fail'}`) : ['- (the card names no gate)']),
+    '',
+    GENERATED,
+    '',
+  ].join('\n')
+  return scrubPaths(text, o.folders)
+}
+
+/** A word for a shell line: as it is when plain, else single-quoted. */
+export const shellWord = (s: string): string => (/^[A-Za-z0-9_./:@%+=,-]+$/.test(s) ? s : `'${s.split("'").join("'\\''")}'`)
+
+/** The fenced block of lines for the brain to run verbatim, as the dispatch tool prints its spawn block. */
+export const remoteBlock = (lead: string, lines: readonly string[]): string => [lead, '```sh', ...lines, '```'].join('\n')
+
+export function pushLines(o: { worktree: string; branch: string; ownerRepo: string; defaultBranch: string; title: string; prFile: string; id: string }): string[] {
+  return [
+    `git -C ${o.worktree} push -u origin ${o.branch}`,
+    `gh pr create --repo ${o.ownerRepo} --base ${o.defaultBranch} --head ${o.branch} --title ${shellWord(o.title)} --body-file ${o.prFile}`,
+    `gh pr merge --repo ${o.ownerRepo} ${o.branch} --rebase`,
+    `/delegation merge ${o.id} --finish`,
+  ]
+}
+
+export function finishLines(o: { branch: string; version?: string; loadedClone?: string }): string[] {
+  return [
+    `git push origin --delete ${o.branch}`,
+    ...(o.version ? [`git tag -a v${o.version} -m v${o.version}`, `git push origin v${o.version}`, ...(o.loadedClone ? [`git -C ${o.loadedClone} pull --ff-only`] : [])] : []),
+  ]
+}
+
+/** The last `n` lines of a command's output. */
+export function lastLines(stdout: string, stderr: string, n = 20): string[] {
+  const lines = `${stdout}\n${stderr}`.split('\n').map(l => l.replace(/\s+$/, ''))
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  return lines.filter((l, i) => !(l === '' && i === 0)).slice(-n)
+}
+
+/** The rebased twin of a commit on the default branch: same tree, same subject. `log` is `%H\t%T\t%s` lines. */
+export function twinIn(log: string, tree: string, subject: string): string | undefined {
+  for (const line of log.split('\n')) {
+    const [sha, t, ...s] = line.split('\t')
+    if (sha && t === tree && s.join('\t') === subject) return sha
+  }
+  return undefined
+}
+
+// ---- STATUS: what this session merged ----------------------------------------------------
+
+export type MergedEntry = { task: string; sha: string; version?: string; at: number }
+
+export function mergedLines(list: readonly MergedEntry[]): string[] {
+  if (list.length === 0) return []
+  return ['merged:', ...list.map(m => `- ${m.task} at ${m.sha.slice(0, 10)}${m.version ? ` (v${m.version})` : ''}`)]
+}
+
+/** Does a running/pending label (`MOD-1`, `MOD-1/sub`, `MOD-1 (repo)`) name a merged task? */
+export const labelIsMerged = (label: string, merged: readonly MergedEntry[]): boolean => {
+  const task = label.split(/[/\s]/)[0] ?? label
+  return merged.some(m => m.task === task)
+}
+
+// ---- the merge door: the local git writes, each an exact shape ---------------------------
+
+export type MergeCtx = { root: string; worktree: string; branch: string; baseRef: string; cardRel?: string; id: string }
+
+/** The argv the merge command may never run, whatever door it tried: a push, gh, curl, sf. */
+export const isRemoteArgv = (argv: readonly string[]): boolean => {
+  const [cmd = '', ...rest] = argv
+  const base = cmd.split('/').pop() ?? cmd
+  if (base === 'gh' || base === 'curl' || base === 'sf' || base === 'wget') return true
+  return base === 'git' && rest.includes('push')
+}
+
+/**
+ * The git writes `/delegation merge` runs beyond the allowlist (./allow.ts), exactly:
+ *   git -C <worktree> fetch origin            git -C <root> fetch origin
+ *   git -C <worktree> rebase <baseRef>        git -C <worktree> rebase --abort
+ *   git -C <worktree> add -- <card>           git -C <worktree> commit -q -m 'cards: <ID> merged' [-m <Co-Authored-By trailer>]
+ *   git -C <root> remote get-url origin       git -C <root> clean -q -f -- <card>
+ *   git -C <root> pull --ff-only              git -C <root> worktree remove <worktree>
+ *   git -C <root> branch -D <branch>
+ * <worktree>, <branch> and <card> are the one task's; nothing else passes.
+ */
+export function checkMergeArgv(argv: readonly string[], c: MergeCtx): Check {
+  const no = (reason: string): Check => ({ ok: false, reason })
+  if (isRemoteArgv(argv)) return no('the merge command never pushes, nor runs gh, curl or sf')
+  if (argv[0] !== 'git' || argv[1] !== '-C' || argv.length < 4) return no('not a git -C <dir> command')
+  const dir = (argv[2] as string).replace(/\/+$/, '')
+  const root = c.root.replace(/\/+$/, '')
+  const wt = c.worktree.replace(/\/+$/, '')
+  const tail = argv.slice(3).join('\u0000')
+  const is = (...words: string[]) => tail === words.join('\u0000')
+  if (dir === wt) {
+    if (is('fetch', 'origin') || is('rebase', c.baseRef) || is('rebase', '--abort')) return { ok: true }
+    if (c.cardRel && is('add', '--', c.cardRel)) return { ok: true }
+    const [sub, q, m1, subj, m2, trailer, ...more] = argv.slice(3)
+    if (sub === 'commit' && q === '-q' && m1 === '-m' && subj === mergedSubject(c.id) && more.length === 0) {
+      if (m2 === undefined && trailer === undefined) return { ok: true }
+      if (m2 === '-m' && /^Co-Authored-By: Claude [A-Za-z]+ [0-9.]+ <noreply@anthropic\.com>$/.test(trailer ?? '')) return { ok: true }
+    }
+    return no(`git -C <worktree> ${argv.slice(3).join(' ')} is not a merge shape`)
+  }
+  if (dir === root) {
+    if (is('fetch', 'origin') || is('remote', 'get-url', 'origin') || is('pull', '--ff-only') || is('worktree', 'remove', wt) || is('branch', '-D', c.branch)) return { ok: true }
+    if (c.cardRel && is('clean', '-q', '-f', '--', c.cardRel)) return { ok: true }
+    return no(`git -C <root> ${argv.slice(3).join(' ')} is not a merge shape`)
+  }
+  return no(`git -C ${dir} is neither the session root nor the task's worktree`)
+}
