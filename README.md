@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.9.9, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.10, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,15 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.9.9 to 0.9.10
+
+What the brain will see:
+
+- **The verdict tool answers after a real wait (MOD-72).** A call made before the verifier has judged now waits up to `waitSeconds` in `sleep` steps and returns the verdict row, where before it failed with 'no tool.call hook answered this call'. The allowlist gains exactly one rule, `sleep <1..600 whole seconds>`.
+- **`/delegation merge <ID>` does the local merge pipeline (MOD-75).** After a consistent verdict it rebases the worktree, commits the merged card, runs the card's gates and prints one block (push, `gh pr create`, `gh pr merge`, `/delegation merge <ID> --finish`) for the brain to run verbatim. `--finish` cleans up and prints the release block when the version bumped. The mod itself still never pushes nor runs `gh`; see the README section "Merging a card".
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change. From now on, merge a consistent card with `/delegation merge <ID>` rather than by hand.
 
 ### From 0.9.8 to 0.9.9
 
