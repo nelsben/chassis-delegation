@@ -267,6 +267,45 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
+import {
+  cardDiff,
+  checkMergeArgv,
+  coAuthorTrailer,
+  commitArgv,
+  conflictLine,
+  defaultBranchOf,
+  dirtyWorktreeLine,
+  finishLines,
+  isRemoteArgv,
+  labelIsMerged,
+  lastLines,
+  latestVerdictRow,
+  mainBranchLine,
+  mainDirtyLine,
+  markMerged,
+  MERGE_TOOL,
+  mergedLines,
+  noWorktreeLine,
+  ownerRepoOf,
+  parseMergeArgs,
+  parseMergeTool,
+  prBody,
+  pushLines,
+  readsMerged,
+  remoteBlock,
+  statusPaths,
+  touchesVersion,
+  twinIn,
+  VERSION_FILE,
+  versionOf,
+  verdictRefusal,
+  worktreeOf,
+  type GateResult,
+  type MergeArgs,
+  type MergeCtx,
+  type MergedEntry,
+  type VerdictRow,
+} from './lib/mergecmd'
 import { configPlan, fieldAnswer, manifestFields, rowsByField, viewFields, type CfgRow, type CfgView, type Source } from './lib/configcmd'
 import { CONFIG_TABLE } from './lib/configtable'
 import { parseUserOptions, repoFileWith, resolveOptions, userFileWith, userOptionsPath, type Resolved } from './lib/configeff'
@@ -337,6 +376,10 @@ const K = {
   outside: (task: string) => `delegation.outside.${task}`,
   /** MOD-44: the other local repo a task is for (its absolute path), so the id alone finds its card, brief and tree. */
   taskRepo: (task: string) => `delegation.taskRepo.${task}`,
+  /** MOD-75: the tasks `/delegation merge --finish` merged in a session (task, sha, version), for the `merged:` lines. */
+  merged: (sessionId: string) => `delegation.merged.${sessionId}`,
+  /** MOD-75: what `/delegation merge <ID>` prepared (the head it pushed, the version it bumps), read again by --finish. */
+  mergePrep: (task: string) => `delegation.mergePrep.${task}`,
 }
 
 const PROBE_EVERY_MS = 24 * 60 * 60 * 1000
@@ -2131,6 +2174,289 @@ async function noteMergeCommand($: Host, command: string): Promise<void> {
       debug($, `${id}: merge not recorded: ${String(err)}`)
     }
   }
+}
+
+// ---- MOD-75: /delegation merge <ID> and the merge tool ----------------------------------------
+/** What a merge prepared: the head the push block names, and the version it releases when version.ts moved. */
+type MergePrep = { head: string; version?: string; at: number }
+
+/**
+ * The merge command's own door. An argv the allowlist takes runs through `run`; the local git writes a
+ * merge needs (./lib/mergecmd.ts `checkMergeArgv`: exact shapes bound to this task's worktree, branch and
+ * card) run here; a push, gh, curl or sf never runs, whichever door it knocks on.
+ */
+async function mergeExec($: Host, argv: string[], ctx: MergeCtx, init?: { cwd?: string; timeoutMs?: number }): Promise<RunOut> {
+  if (!isRemoteArgv(argv) && checkArgv(argv, allowCfg()).ok) return run($, argv, init)
+  const check = checkMergeArgv(argv, ctx)
+  if (!check.ok) {
+    try {
+      $.ui.log(refusedLine(argv, check.reason))
+    } catch {
+      // the refusal stands either way
+    }
+    return { ok: false, why: `refused: ${check.reason}` }
+  }
+  try {
+    const r = await $.process.run(argv, init)
+    return { ok: true, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr }
+  } catch (err) {
+    return { ok: false, why: String(err) }
+  }
+}
+
+const okOut = (r: RunOut): string | undefined => (r.ok && r.exitCode === 0 ? r.stdout : undefined)
+const whyOf = (r: RunOut): string => (r.ok ? (r.stderr.trim() || r.stdout.trim() || `exit ${r.exitCode}`).split('\n').slice(0, 4).join(' / ') : r.why)
+
+/** The one task card in a folder (`<ID>-*.md`), by name. */
+async function cardNameIn($: Host, dir: string, id: string): Promise<string | undefined> {
+  try {
+    return cardMatches((await $.fs.list(dir)).map(e => e.name), id).sort()[0]
+  } catch {
+    return undefined
+  }
+}
+
+/** `/delegation merge <ID> [--finish]` and the merge tool: one function, two doors. */
+async function runMerge($: Host, parsed: MergeArgs | { error: string }): Promise<string> {
+  if ('error' in parsed) return parsed.error
+  await loadRepoConfig($)
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const id = parsed.id
+  const baseRef = cfg.baseRef && cfg.baseRef.startsWith('origin/') ? cfg.baseRef : 'origin/main'
+  const def = defaultBranchOf(baseRef)
+  const cardDir = (cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')
+  if (!parsed.finish) {
+    // PREPARE 1: the latest verdict must be consistent with next=accept (the ledger; the task record when the ledger has no row)
+    const ledger = cfg.ledgerFile ? ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '') : ''
+    let row: VerdictRow | undefined = latestVerdictRow(ledger, id)
+    if (!row) {
+      const last = attemptsFor(await loadAttempts($, id), 'main').at(-1)
+      if (last && last.verdict !== 'pending') row = { verdict: last.verdict, ...(last.verdict === 'consistent' ? { next: 'accept' } : {}), attempt: last.attempt, ...(last.sha ? { sha: last.sha } : {}) }
+    }
+    const refused = verdictRefusal(id, row)
+    if (refused) return refused
+    return mergePrepare($, parsed, { root, id, baseRef, def, cardDir, row: row as VerdictRow })
+  }
+  return mergeFinish($, { root, id, def, cardDir })
+}
+
+/** The task's worktree on its branch, from `git worktree list` in the session root. */
+async function mergeWorktree($: Host, root: string, id: string): Promise<{ path: string; branch: string } | undefined> {
+  const listed = okOut(await run($, ['git', '-C', root, 'worktree', 'list', '--porcelain'], { cwd: root, timeoutMs: 15000 }))
+  return listed === undefined ? undefined : worktreeOf(listed, id)
+}
+
+async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: string; baseRef: string; def: string; cardDir: string; row: VerdictRow }): Promise<string> {
+  const { root, id, baseRef, def, cardDir, row } = o
+  // PREPARE 2: the worktree exists on its branch, with a clean tree
+  const wt = await mergeWorktree($, root, id)
+  if (!wt) return noWorktreeLine(id)
+  const wtStatus = okOut(await run($, ['git', '-C', wt.path, 'status', '--porcelain'], { cwd: wt.path, timeoutMs: 15000 }))
+  if (wtStatus === undefined) return `${id}: git status failed in the worktree ${wt.path}`
+  const dirty = statusPaths(wtStatus)
+  if (dirty.length > 0) return dirtyWorktreeLine(id, wt.path, dirty)
+  // PREPARE 3: the main checkout is on the default branch with no tracked changes (untracked files, the root card among them, are fine)
+  const onBranch = (okOut(await run($, ['git', '-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, timeoutMs: 15000 })) ?? '').trim()
+  if (onBranch !== def) return mainBranchLine(id, root, onBranch, def)
+  const mainStatus = okOut(await run($, ['git', '-C', root, 'status', '--porcelain'], { cwd: root, timeoutMs: 15000 }))
+  if (mainStatus === undefined) return `${id}: git status failed in the main checkout ${root}`
+  const tracked = statusPaths(mainStatus, true)
+  if (tracked.length > 0) return mainDirtyLine(id, root, tracked)
+  // the card: the root card (or the worktree's, when the root one is gone)
+  const name = (await cardNameIn($, `${root}/${cardDir}`, id)) ?? (await cardNameIn($, `${wt.path}/${cardDir}`, id))
+  if (!name) return `${id}: no card ${cardDir}/${id}-*.md in ${root}; nothing to merge`
+  const cardRel = `${cardDir}/${name}`
+  const ctx: MergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef, cardRel, id }
+  const origin = okOut(await mergeExec($, ['git', '-C', root, 'remote', 'get-url', 'origin'], ctx, { cwd: root, timeoutMs: 15000 }))
+  const ownerRepo = ownerRepoOf(origin ?? '')
+  if (!ownerRepo) return `${id}: origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); the PR block needs owner/repo`
+  const rootCard = await readText($, `${root}/${cardRel}`)
+  const wtCardPath = `${wt.path}/${cardRel}`
+  const wtCard = await readText($, wtCardPath)
+  const cardText = rootCard ?? wtCard
+  if (cardText === undefined) return `${id}: ${cardRel} could not be read`
+  const card = parseCard(cardText)
+  if ('error' in card) return `${id}: ${cardRel}: ${card.error}`
+  let review: string | undefined = parsed.review
+  if (parsed.reviewFile) {
+    review = await readText($, parsed.reviewFile)
+    if (review === undefined) return `${id}: --review-file ${parsed.reviewFile} could not be read`
+  }
+  // the rebase onto the base, in the worktree, by argv
+  const fetched = await mergeExec($, ['git', '-C', wt.path, 'fetch', 'origin'], ctx, { cwd: wt.path, timeoutMs: 120000 })
+  if (!fetched.ok || fetched.exitCode !== 0) return `${id}: git fetch origin failed in the worktree: ${whyOf(fetched)}`
+  const rebased = await mergeExec($, ['git', '-C', wt.path, 'rebase', baseRef], ctx, { cwd: wt.path, timeoutMs: 120000 })
+  if (!rebased.ok) return `${id}: git rebase ${baseRef} did not run: ${rebased.why}`
+  if (rebased.exitCode !== 0) {
+    const unmerged = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', '--diff-filter=U'], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
+    await mergeExec($, ['git', '-C', wt.path, 'rebase', '--abort'], ctx, { cwd: wt.path, timeoutMs: 60000 })
+    return conflictLine(id, baseRef, unmerged.split('\n').map(l => l.trim()).filter(Boolean))
+  }
+  // the merged card, committed once
+  let committed = false
+  if (!(wtCard !== undefined && readsMerged(wtCard))) {
+    await $.fs.write(wtCardPath, markMerged(rootCard ?? (wtCard as string), review))
+    const added = await mergeExec($, ['git', '-C', wt.path, 'add', '--', cardRel], ctx, { cwd: wt.path, timeoutMs: 15000 })
+    if (!added.ok || added.exitCode !== 0) return `${id}: git add ${cardRel} failed in the worktree: ${whyOf(added)}`
+    let modelId: string | undefined
+    try {
+      modelId = await $.session.model()
+    } catch {
+      modelId = undefined
+    }
+    const made = await mergeExec($, commitArgv(wt.path, id, coAuthorTrailer(modelId)), ctx, { cwd: wt.path, timeoutMs: 30000 })
+    if (!made.ok || made.exitCode !== 0) return `${id}: the merged-card commit failed in the worktree: ${whyOf(made)}`
+    committed = true
+  }
+  const head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
+  const short = head.slice(0, 10) || '(unknown)'
+  // what the branch changes against the base: the {files} list, and whether the version moved
+  const names = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', `${baseRef}...HEAD`], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
+  const version = touchesVersion(names) ? versionOf(await readText($, `${wt.path}/${VERSION_FILE}`)) : undefined
+  await storeSet($, K.mergePrep(id), { head, ...(version ? { version } : {}), at: await now($) } satisfies MergePrep)
+  // GATES: the card's gates, by the verifier's runner, in the worktree at the new head
+  const outDir = `${root}/.delegation/${id}`
+  const filesPath = `${outDir}/merge-files.txt`
+  try {
+    await $.fs.write(filesPath, names.trim() === '' ? '' : `${names.trim()}\n`)
+  } catch (err) {
+    debug($, `${id}: ${filesPath} not written: ${String(err)}`)
+  }
+  const allowed = (argv: readonly string[]) => checkArgv(argv, allowCfg()).ok
+  const log: string[] = []
+  const results: GateResult[] = []
+  const writeLog = async () => {
+    try {
+      await $.fs.write(`${outDir}/merge-gates.txt`, `${log.join('\n')}\n`)
+    } catch (err) {
+      debug($, `${id}: merge-gates.txt not written: ${String(err)}`)
+    }
+  }
+  for (const gid of card.gate) {
+    const res = resolveGateRuns(gid, cfg.gateMap, allowed, filesPath, wt.path)
+    const skipped = res.notRerun[0]
+    if (skipped) {
+      log.push(`## ${gid}: not run (${skipped.why})`)
+      await writeLog()
+      return `${id}: gate ${gid} not run at ${short} (${skipped.why}); not pushed`
+    }
+    for (const g of res.runs) {
+      const turn = isEngineGate(g.argv) ? await takeEngineTurn($, `${id} merge`) : undefined
+      let r: RunOut
+      try {
+        r = await run($, g.argv, { cwd: wt.path, timeoutMs: GATE_TIMEOUT_MS })
+      } finally {
+        await turn?.release()
+      }
+      log.push(`## ${gid}: ${g.argv.join(' ')}`, ...(r.ok ? [r.stdout, r.stderr, `exit ${r.exitCode}`] : [`did not run: ${r.why}`]))
+      if (!r.ok || r.exitCode !== 0) {
+        await writeLog()
+        const tail = r.ok ? lastLines(r.stdout, r.stderr, 20) : [r.why]
+        return [`${id}: gate ${gid} failed at ${short}; not pushed`, ...tail].join('\n')
+      }
+    }
+    results.push({ id: gid, label: res.runs.map(g => g.label).join(' && ') || gid, ok: true })
+  }
+  await writeLog()
+  // THE REMOTE BLOCK: pr.md, then the lines the brain runs verbatim
+  const prFile = `${outDir}/pr.md`
+  let home = ''
+  try {
+    home = await homeDir($)
+  } catch {
+    home = ''
+  }
+  const verdictLine = `${id} attempt ${row.attempt ?? '?'}: consistent${row.sha ? ` at ${row.sha}` : ''} · next=accept`
+  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home] }))
+  const title = card.title || `${id} merged`
+  const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id })
+  return [
+    `${id}: rebased onto ${baseRef}; ${committed ? `card committed as merged (${cardRel})` : 'the worktree already carries the merged card; nothing committed again'}; gates green at ${short}${results.length > 0 ? ` (${results.map(r => r.id).join(', ')})` : ' (the card names no gate)'}`,
+    `pr body: ${prFile} · gate output: ${outDir}/merge-gates.txt${version ? ` · releases v${version}` : ''}`,
+    remoteBlock('remote: run these lines verbatim, in order (the mod never pushes nor calls gh):', lines),
+  ].join('\n')
+}
+
+async function mergeFinish($: Host, o: { root: string; id: string; def: string; cardDir: string }): Promise<string> {
+  const { root, id, def, cardDir } = o
+  const wt = await mergeWorktree($, root, id)
+  if (!wt) return noWorktreeLine(id)
+  const name = await cardNameIn($, `${root}/${cardDir}`, id)
+  const cardRel = name ? `${cardDir}/${name}` : undefined
+  const ctx: MergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef: `origin/${def}`, id, ...(cardRel ? { cardRel } : {}) }
+  const fetched = await mergeExec($, ['git', '-C', root, 'fetch', 'origin'], ctx, { cwd: root, timeoutMs: 120000 })
+  if (!fetched.ok || fetched.exitCode !== 0) return `${id}: git fetch origin failed in the main checkout: ${whyOf(fetched)}`
+  const head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
+  if (!isSha(head)) return `${id}: could not read the worktree's head in ${wt.path}`
+  // the head itself on origin/<default>, or its rebased twin (same tree, same subject)
+  let sha: string | undefined
+  const anc = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', head, `origin/${def}`], { cwd: root, timeoutMs: 15000 })
+  if (anc.ok && anc.exitCode === 0) sha = head
+  else {
+    const mine = (okOut(await run($, ['git', '-C', wt.path, 'log', '-1', '--format=%T%x09%s', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
+    const [tree = '', ...subject] = mine.split('\t')
+    const theirs = okOut(await run($, ['git', '-C', root, 'log', '--format=%H%x09%T%x09%s', '-n', '200', `origin/${def}`], { cwd: root, timeoutMs: 15000 })) ?? ''
+    if (tree !== '') sha = twinIn(theirs, tree, subject.join('\t'))
+  }
+  if (!sha) return `${id}: ${wt.branch} is not in origin/${def} yet`
+  const short = sha.slice(0, 10)
+  // the root card goes only when the merged card on origin says the same (status aside; a Review section may be extra)
+  if (cardRel) {
+    const merged = okOut(await run($, ['git', '-C', root, 'show', `${sha}:${cardRel}`], { cwd: root, timeoutMs: 15000 }))
+    if (merged === undefined) return `${id}: ${cardRel} is not in origin/${def} at ${short}; the root card is left and nothing else was done`
+    const rootCard = (await readText($, `${root}/${cardRel}`)) ?? ''
+    const diff = cardDiff(merged, rootCard)
+    if (diff.length > 0) return [`${id}: the merged card on origin/${def} differs from ${cardRel} (status aside); the root card is left and nothing else was done:`, ...diff.slice(0, 20), ...(diff.length > 20 ? [`… ${diff.length - 20} more`] : [])].join('\n')
+    const cleaned = await mergeExec($, ['git', '-C', root, 'clean', '-q', '-f', '--', cardRel], ctx, { cwd: root, timeoutMs: 15000 })
+    if (!cleaned.ok || cleaned.exitCode !== 0) return `${id}: the root card ${cardRel} was not removed: ${whyOf(cleaned)}`
+  }
+  // the version this merge releases: what the prepare saw, else the branch against origin
+  const prep = await storeGet<MergePrep>($, K.mergePrep(id))
+  let version = prep && prep.head === head ? prep.version : undefined
+  if (!prep || prep.head !== head) {
+    const names = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', `origin/${def}...HEAD`], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
+    version = touchesVersion(names) ? versionOf(await readText($, `${wt.path}/${VERSION_FILE}`)) : undefined
+  }
+  const pulled = await mergeExec($, ['git', '-C', root, 'pull', '--ff-only'], ctx, { cwd: root, timeoutMs: 120000 })
+  if (!pulled.ok || pulled.exitCode !== 0) return `${id}: git pull --ff-only failed in the main checkout: ${whyOf(pulled)}; the worktree and branch are left`
+  const notes: string[] = []
+  const removed = await mergeExec($, ['git', '-C', root, 'worktree', 'remove', wt.path], ctx, { cwd: root, timeoutMs: 60000 })
+  if (!removed.ok || removed.exitCode !== 0) notes.push(`note: the worktree ${wt.path} was not removed: ${whyOf(removed)}`)
+  const dropped = await mergeExec($, ['git', '-C', root, 'branch', '-D', wt.branch], ctx, { cwd: root, timeoutMs: 15000 })
+  if (!dropped.ok || dropped.exitCode !== 0) notes.push(`note: the branch ${wt.branch} was not deleted: ${whyOf(dropped)}`)
+  // the record, the ledger row, this session's merged list
+  const t = await now($)
+  const sid = await sessionIdOf($)
+  const recent = sid ? readRecent($, (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []) : []
+  const prRef = [...recent].reverse().find(r => splitLabel(r.task).task === id && r.pr)?.pr
+  const pr = prRef ? /(\d+)\s*$/.exec(prRef)?.[1] : undefined
+  try {
+    const records = await loadAttempts($, id)
+    const last = attemptsFor(records, 'main').at(-1)
+    if (last) await storeSet($, K.tasks(id), patchRecord(await loadAttemptsRaw($, id), 'main', last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t, mergedSha: sha } as Partial<AttemptRecord>))
+  } catch (err) {
+    debug($, `${id}: merge not recorded on the task: ${String(err)}`)
+  }
+  await appendLedger($, { kind: 'merged', task: id, sha, ...(pr ? { pr: Number(pr) } : {}), at: t, ...(sid ? { sessionId: sid } : {}) })
+  if (sid) {
+    const list = ((await storeGet<MergedEntry[]>($, K.merged(sid))) ?? []).filter(m => m.task !== id)
+    await storeSet($, K.merged(sid), [...list, { task: id, sha, ...(version ? { version } : {}), at: t }])
+  }
+  try {
+    await $.store.delete(K.mergePrep(id))
+  } catch {
+    // it expires with nothing reading it
+  }
+  // the loaded clone pulls too, when it is a git checkout other than this one
+  const loaded = $.plugin.root.replace(/\/+$/, '')
+  const loadedClone = version && loaded !== root && (await exists($, `${loaded}/.git`)) ? loaded : undefined
+  return [
+    `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
+    ...notes,
+    remoteBlock('remote: run these lines verbatim (the mod never pushes):', finishLines({ branch: wt.branch, ...(version ? { version } : {}), ...(loadedClone ? { loadedClone } : {}) })),
+    `${id} merged at ${sha}`,
+    ...(version ? [`release v${version}: run the block above, then reload the window`] : []),
+  ].join('\n')
 }
 
 async function recipeDir($: Host): Promise<string | undefined> {
@@ -4741,7 +5067,12 @@ async function statusReport($: Host): Promise<string> {
   const brainModel = await $.session.model().catch(() => undefined)
   const running = runningSection(await runningWorkers($), brainModel ? aliasOf(brainModel) ?? brainModel : undefined)
   const s = await snapshot($)
-  const state = isEmptyState(s) && s.recent.length === 0 ? ['Delegation state (chassis-delegation): nothing running, queued or owed.'] : renderState(s)
+  // MOD-75: a task merged this session is listed under merged:, and no longer as running or pending
+  const sid = await sessionIdOf($)
+  const merged = sid ? ((await storeGet<MergedEntry[]>($, K.merged(sid))) ?? []) : []
+  s.running = s.running.filter(r => !labelIsMerged(r.task, merged))
+  s.pending = s.pending.filter(p => !labelIsMerged(p.task, merged))
+  const state = [...(isEmptyState(s) && s.recent.length === 0 ? ['Delegation state (chassis-delegation): nothing running, queued or owed.'] : renderState(s)), ...mergedLines(merged)]
   const root = await $.session.root()
   const split = await brainView($)
   return [
@@ -5904,7 +6235,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|config [<field> [<value>]]|accept <id> [note]]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -5932,6 +6263,11 @@ export const register: Register = (on, opts) => {
       await $.tool.register({ name: SETUP_TOOL.name, description: SETUP_TOOL.description, inputSchema: SETUP_TOOL.inputSchema })
     } catch (err) {
       debug($, `the setup tool was not registered: ${String(err)}`)
+    }
+    try {
+      await $.tool.register({ name: MERGE_TOOL.name, description: MERGE_TOOL.description, inputSchema: MERGE_TOOL.inputSchema })
+    } catch (err) {
+      debug($, `the merge tool was not registered: ${String(err)}`)
     }
     // MOD-28: the load. The templates are read here, once, with the code that renders them.
     await loadedTemplates($)
@@ -5986,6 +6322,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'lesson' || arg.startsWith('lesson ')) return { text: await runLesson($, arg.slice('lesson'.length)) }
     if (arg === 'config' || arg.startsWith('config ')) return { text: await runConfig($, arg.slice('config'.length)) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
+    if (arg === 'merge' || arg.startsWith('merge ')) return { text: await runMerge($, parseMergeArgs(arg.slice('merge'.length))) }
     if (arg === 'dashboard') {
       let placed = false
       let why = ''
@@ -6007,12 +6344,14 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => ({ result: await runVerdict($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async ($, e) => ({ result: await runInit($, pathOfCall(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async ($, e) => ({ result: await runSetup($, true, pathOfCall(e)) }))
+  // MOD-75: the merge tool, the command's second door
+  on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => ({ result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

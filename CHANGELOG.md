@@ -10,6 +10,47 @@
   engine-gate lock wait was the only other long clock wait in a dispatch and is a process wait too (a clock wait of 1 s
   at most when the sleep cannot start). Engine tests cover both.
 
+- **`/delegation merge <ID>` does the merge pipeline the brain typed by hand (MOD-75).** Half the brain's shell calls
+  were the same fifteen-step merge after every consistent verdict.
+  - Prepare: it refuses unless the last verdict is consistent with next=accept, the worktree is clean on its branch,
+    and the main checkout is on its default branch with no tracked changes. It then fetches and rebases the worktree
+    onto origin/main (a conflict aborts and names the files), commits the card as `cards: <ID> merged` (with
+    `--review` text, and a model trailer when the model can be named), and runs the card's gates in the worktree
+    (output in `.delegation/<ID>/merge-gates.txt`; a red gate stops it with the last 20 lines). It writes
+    `.delegation/<ID>/pr.md` and prints the push, `gh pr create`, `gh pr merge` and `--finish` lines as one block to
+    run verbatim.
+  - `--finish`: refuses until the branch (or its rebased twin) is in origin. It removes the root card when it matches
+    the merged one (else names the lines that differ), pulls, removes the worktree and branch, marks the record and
+    the ledger `merged`, and prints the branch delete and, when `hooks/lib/version.ts` moved, the tag, its push and
+    the loaded clone's pull. `/delegation` lists it under `merged:`.
+  - The `merge` tool does the same for the model. The mod still never pushes or calls `gh`: `allow.ts` is untouched,
+    and the local merge writes pass a narrower exact-shape check bound to the one task.
+
+- **`/delegation config` shows the options the mod really runs with, each with its source, short by default; sets
+  any of them on every screen; and every option is measured (MOD-73).** The list showed the manifest layer, not the
+  values in use (`maxWorkers = 0 (default)` while the repo file set 3), and in the VS Code extension, where the host
+  lists no settings rows for a folder-loaded mod, no option could be set at all.
+  - One truth: every option resolves to its effective value and a source, `default` < `repo` < `yours` < `host`
+    (`locked` for a policy row), the same values the mod and `/delegation status` use. A host value that is unset
+    (its empty placeholder, or the manifest default the host fills in) counts as absent. Maps still merge per key.
+  - Settable everywhere: a user options file, `~/.claude/chassis-delegation/options.json`, holds any option. The mod
+    rereads it when it changes. `/delegation config <field> <value>` writes there when the host has no row (or
+    refuses for having none) and answers `<field> = <value> (yours)`; with a host row it sets the row as before
+    (`(host)`). `<field> default` resets; `repo <field> <value>` writes a repo-scoped option into
+    `.chassis-delegation.json`, keeping its other keys and `_` comments, and refuses a personal one; a locked option
+    says `<field> is locked by policy`; a malformed options file is said once by toast and in the debug log, and
+    ignored.
+  - Short by default: `/delegation config` prints a count line, only the options not at their default (grouped), and
+    the how-to line; `all` prints every option with its summary, `<group>` one group, `<field>` one option with its
+    scope and an `in effect:` line when the mod does something other than the stored value says. The MOD-68 no-rows
+    line is gone.
+  - Names match in any case, and an unknown name suggests the nearest option. Values read as a person reads them
+    (on/off, `20 min`, `6 h`, `$10`/`no cap`, `200K`, `economy→haiku`, gate ids, `(none)`), lines are cut at 100
+    characters, and the same forms are accepted when typed.
+  - Measured: `tests/options.test.ts` sets each of the 49 options through `/delegation config` with no host rows and
+    asserts a change in what the mod does; a node test holds the option table to the manifest both ways and holds
+    that file to one case per option. The summary of `tierMap` and `ignore` now say what they do.
+
 ## 0.9.9 — 2026-10-13
 
 - **`/delegation config` shows the options the mod really runs with, each with its source, short by default; sets

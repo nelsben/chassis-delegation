@@ -592,6 +592,8 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/delegation debrief` | you type it | runs the background debrief now and ends with scrubbed findings about the mod, ready to post (see [The debrief now](#the-debrief-now)) |
 | `/delegation config [all \| <group> \| <field> [<value> \| default] \| repo <field> <value>]` | you type it | shows the options the mod runs with and where each came from (default, repo, yours, host, locked): the set ones by default, `all` or one group in full, one option with what is in effect; sets one in your options file (or the host row when there is one), resets it with `default`, or writes a repo option into the repo file with `repo`. Works on every screen. See [/delegation config](#delegation-config) |
 | `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
+| `/delegation merge <ID> [--review <text> \| --review-file <abs path>]` | you type it, or the brain after a consistent/accept verdict | the local half of the merge: rebases the worktree, commits the card as merged, runs the card's gates there, writes `.delegation/<ID>/pr.md` and prints the push and PR block to run verbatim (see [Merging a card](#merging-a-card)) |
+| `/delegation merge <ID> --finish` | you type it, or the brain after the PR landed | checks the branch is in origin, removes the root card when it matches the merged one, pulls, removes the worktree and branch, writes the `merged` ledger row and prints the remote cleanup (and release) block |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--repo <abs path>\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model, on its own | the same dispatch, as a tool; the model then makes the Agent call its result ends with |
@@ -599,6 +601,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `mcp__chassis-delegation__card` | the model, on its own | you say a task in a sentence; the model looks at the repo, calls this with the title, why, done-when, scope globs and red test (and `repo`: `none` or `here` for research or extraction with outputs outside the repo, see [Research cards](#research-cards), or the absolute path of another local checkout, see [Delegating into another repo](#delegating-into-another-repo); `resources` for a live app only one worker may use, and `lanes` to write several research cards at once, see [Exclusive resources and fan-out](#exclusive-resources-and-fan-out)); it writes the card, runs the dry run and returns the one-line summary, a line `card says <tier> · classifier says <tier>` (or `· classifier agrees`; one classifier call per card written, never on dispatch, off with `classifierSecondOpinion`) and the brief header. Dispatch when you say go (the `dispatch` tool, or `card` again with `dispatch: true`) |
 | `mcp__chassis-delegation__init` | the model, on its own | the same scaffold as `/delegation init`, as a tool (optional `path`, as for `setup`) |
 | `mcp__chassis-delegation__setup` | the model, on its own | the same checks and scaffold as `/delegation setup`, as a tool (optional `path`: another local checkout to set up instead, see [Delegating into another repo](#delegating-into-another-repo)) |
+| `mcp__chassis-delegation__merge` | the model, on its own | the same `/delegation merge`, as a tool: `task`, and optional `finish`, `review`, `reviewFile` |
 
 A user skill or command named `delegation` or `dispatch` under
 `~/.claude/skills` or `~/.claude/commands` shadows the mod's commands; remove it.
@@ -1831,6 +1834,87 @@ a hand-back when its verdict is consistent. A reviewer is a model: `confirmed`
 is its reading of the diff, not a proof, and a claim about CI or the runtime is
 usually `unverifiable`.
 
+## Merging a card
+
+After a consistent verdict with next=accept, `/delegation merge <ID>` (or the `merge` tool with
+`task: <ID>`) does the local half of the merge. It prints the remote half as one block for the
+brain to run verbatim, the way dispatch prints the Agent call.
+
+**What it refuses.** Each refusal is one line, and nothing runs after it:
+
+- the task's latest ledger row is not consistent with next=accept:
+  `<ID>: last verdict is <verdict> · next=<next>; merge needs consistent/accept`;
+- the task has no worktree on `agent/<domain>/<ID>`, or the worktree is not clean (the line
+  names the dirty files);
+- the main checkout is not on its default branch, or has tracked changes (untracked files are
+  fine; the root card is expected to be one).
+
+**What it does**, by argv, with no shell:
+
+1. In the worktree: `git fetch origin`, then `git rebase origin/main` (the configured
+   `baseRef`). On a conflict it runs `git rebase --abort` and answers
+   `<ID>: rebase onto origin/main conflicts in <files>; resolve by hand`.
+2. It copies the root card `<cardDir>/<ID>-*.md` into the worktree with `status: merged`, with a
+   `## Review` section from `--review <text>` or `--review-file <abs path>`. It commits that as
+   `cards: <ID> merged`, with a `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer
+   when the host's model id names a model. A worktree that already carries the merged card is
+   not committed again.
+3. It runs the card's gates in the worktree through the gate map, the same runner verification
+   uses. The output goes to `.delegation/<ID>/merge-gates.txt`. A failing gate answers
+   `<ID>: gate <id> failed at <sha>; not pushed` with its last 20 lines, and the command stops.
+4. It writes `.delegation/<ID>/pr.md`: the card's Done-when as a checklist, the verdict line,
+   the gate results and the Claude Code line. It holds no absolute path and no home folder.
+
+**The first block**, printed when the gates are green:
+
+```sh
+git -C <worktree> push -u origin agent/<domain>/<ID>
+gh pr create --repo <owner/repo> --base main --head agent/<domain>/<ID> --title '<card title>' --body-file <root>/.delegation/<ID>/pr.md
+gh pr merge --repo <owner/repo> agent/<domain>/<ID> --rebase
+/delegation merge <ID> --finish
+```
+
+**`--finish`**, once the PR has landed, does the following:
+
+1. It runs `git fetch origin` in the main checkout. It refuses with
+   `<ID>: <branch> is not in origin/main yet` unless the worktree's head, or its rebased twin
+   (same tree, same subject), is in origin/main.
+2. It compares the merged card on origin with the root card, with the status line aside (the
+   Review section may be extra).
+   - When they match, it removes the root card.
+   - Otherwise it names the lines that differ and stops there.
+3. It runs `git pull --ff-only` in the main checkout, then `git worktree remove` and
+   `git branch -D` for the task.
+4. It marks the task record `merged` with the sha and writes a ledger row
+   `{kind: 'merged', task, sha, pr?}`.
+5. `/delegation` lists the task under `merged:` for the rest of the session, and `running:`
+   no longer shows it.
+
+**The second block** comes next:
+
+```sh
+git push origin --delete agent/<domain>/<ID>
+git tag -a v<version> -m v<version>        # only when hooks/lib/version.ts changed
+git push origin v<version>                 # likewise
+git -C <loaded clone> pull --ff-only       # likewise, when the mod loads from another git checkout
+```
+
+The answer ends with `<ID> merged at <sha>`. When the version moved, a last line follows:
+`release v<version>: run the block above, then reload the window`.
+
+**The allowlist rule.** The merge never pushes, never calls `gh` and never touches the network.
+Every remote step is in the two blocks, and the brain runs them. `hooks/lib/allow.ts` is
+unchanged. The local writes the merge needs pass a second, narrower check, `checkMergeArgv` in
+`hooks/lib/mergecmd.ts`. It takes only these exact shapes, bound to the one task's worktree,
+branch and card path:
+
+- in the worktree: `fetch origin`, `rebase <baseRef>`, `rebase --abort`, `add -- <card>` and
+  `commit -q -m 'cards: <ID> merged'`;
+- in the main checkout: `fetch origin`, `remote get-url origin`, `pull --ff-only`,
+  `clean -q -f -- <card>`, `worktree remove <worktree>` and `branch -D <branch>`.
+
+A push, `gh`, `curl`, `sf` or `wget` is refused before either check.
+
 ## Configuration
 
 Four layers, lowest first; the higher one wins:
@@ -2219,6 +2303,9 @@ place of `{files}`, `{worktree}` and `{outdir}`: a command the allowlist would r
 verify time (say `claude plugin validate .`, which is not an absolute folder)
 is dropped from the map then, and named in the toast and log with its reason,
 so it is not found a gate run later.
+
+`/delegation merge` adds its own narrower door for the local merge writes, exact shapes bound to
+one task; see [Merging a card](#merging-a-card). It still never pushes or calls `gh`.
 
 The mod never runs your eval, your tests or a deploy itself. The eval runner
 and the debrief are ordinary subagents, under the session's own permissions.
