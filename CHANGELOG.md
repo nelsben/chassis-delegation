@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.10 — 2026-10-13
 
 - **The verdict tool waits for the verdict for real (MOD-72).** Live, every call failed with "registered the tool
   verdict but no tool.call hook answered this call": `runVerdict` waited in `$.clock.sleep(5000)` steps and the host
