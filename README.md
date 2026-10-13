@@ -581,7 +581,7 @@ headline, the spend over the session, the worktree table and spend by model.
 | `/delegation init [path]` | you type it | the bare scaffold, no checks (step 4 above) |
 | `/delegation update` | you type it | brings the loaded copy of the mod to origin/main (fast-forward only), migrates this repo's config and says whether the session reloaded or needs a restart (see [Upgrading](#upgrading)) |
 | `/delegation debrief` | you type it | runs the background debrief now and ends with scrubbed findings about the mod, ready to post (see [The debrief now](#the-debrief-now)) |
-| `/delegation config [<field> [<value>]]` | you type it | lists this mod's own options (`<field> = <value>`, marked `(default)` or `(locked)`), shows one, or sets one: `/delegation config wakeOnVerdict true`. Works where `/config` is taken or missing (the VS Code extension); the `/config` menu in a terminal changes the same options. A boolean takes true/false/on/off/yes/no, a number a finite number, a choice one of its options, text the rest of the line (`""` is empty) |
+| `/delegation config [all \| <group> \| <field> [<value> \| default] \| repo <field> <value>]` | you type it | shows the options the mod runs with and where each came from (default, repo, yours, host, locked): the set ones by default, `all` or one group in full, one option with what is in effect; sets one in your options file (or the host row when there is one), resets it with `default`, or writes a repo option into the repo file with `repo`. Works on every screen. See [/delegation config](#delegation-config) |
 | `/delegation dashboard` | you type it | opens the live dashboard pane (see [Dashboard](#dashboard)); nothing opens it unasked |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--repo <abs path>\|--force-overlap]` | you type it | dispatches a card: the brief, the worktree and the tier, then the spawn block, the one Agent call that starts the worker (see **Spawn** under [The contracts](#the-contracts)); the model can also run it through the tool. `--here` shares the session's own checkout (see [repo=here](#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you type it, or the brain after a `work present` row | spawns nothing: runs the verifier on the work already in the task's worktree at that sha (see **Look before you respawn** under [How a report is verified](#how-a-report-is-verified)) |
@@ -1824,23 +1824,67 @@ usually `unverifiable`.
 
 ## Configuration
 
-Three layers, in order of precedence:
+Four layers, lowest first; the higher one wins:
 
-    built-in defaults  <  <repo>/.chassis-delegation.json  <  /config (user settings)
+    default  <  repo (<repo>/.chassis-delegation.json)  <  yours (~/.claude/chassis-delegation/options.json)  <  host (a /config row)
 
-Settings win. Maps (`gateMap`, `agentTypes`, `tierMap`, `spendByTier`) merge key by key;
-other keys are replaced whole. In `/config`, a shared key left empty (`""`,
-or `0` for `maxWorkers`) means "not set here", so the repo file speaks.
+- **default** is the built-in value the mod runs with (`maxWorkers` 2, `tierMap` economy→haiku, standard→sonnet,
+  frontier→opus), never the manifest's empty placeholder.
+- **repo** is the repo file. It holds only the repo-scoped options (the table below). The file is JSON; keys starting
+  with `_` are comments. It is read at session start and again on every dispatch and verify.
+- **yours** is your own options file, `~/.claude/chassis-delegation/options.json` (under `HOME`): `{ "<field>": <value> }`
+  for any option. The mod reads it where it reads its other options, and rereads it when it changes, so a set or a hand
+  edit applies from the next hook without a reload.
+- **host** is a Claude Code settings row (the `/config` menu in a terminal, or `pluginConfigs["chassis-delegation"].options`
+  in `settings.json`). A host value that is unset counts as absent: its empty placeholder (`""`, `0`, `false`), or the
+  manifest default the host fills in for every option it does not list. A **locked** row (set by policy) always wins and
+  cannot be changed.
 
-The repo file is JSON; keys starting with `_` are comments. It is read at
-session start and again on every dispatch and verify. A bad key or value is
-ignored, named in a toast, and logged.
+Maps (`gateMap`, `agentTypes`, `tierMap`, `spendByTier`, `effortByTier`) merge key by key across the layers; other
+options are replaced whole. A bad key or value is ignored, named in a toast, and logged; a malformed options file is
+said once and ignored.
 
-`baseRef` and `ignore` are read from the repo file today. The settings layer
-reads them from `/config` too, but `/config` shows only what the manifest
-(`.claude-plugin/plugin.json`) declares; `baseRef`, `ignore` and `cardDir` are declared there.
+**Scope.** Every option is either *repo* (the 19 repo-file options in the first table: shared with everyone who works
+in the repo) or *user* (the rest: yours alone). A repo option can also be set in your options file or the host; a
+user option is never read from the repo file.
 
-| Key | Repo file | `/config` | Default | What it does |
+### /delegation config
+
+`/delegation config` shows the options the mod really runs with, each with where its value came from, and sets them on
+every screen (the VS Code extension has no `/config` rows for a folder-loaded mod; this command works there).
+
+- `/delegation config`: the short view. Line 1 is `chassis-delegation: 49 options, <k> set (<a> repo, <b> yours, <c> host,
+  <d> locked)`; then only the options not at their default, under their group headings, one line each
+  (` maxWorkers = 3 (repo)`); then the how-to line. With nothing set: line 1, `all 49 at their defaults`, the how-to line.
+- `/delegation config all`: every option, grouped, as `<field> = <value> (<source>)` with a one-line summary under it.
+- `/delegation config <group>`: one group in the same shape, named by its first word in any case: `workers`,
+  `checking`, `where`, `debriefs`, `evals`, `guards`, `display`.
+- `/delegation config <field>`: one option in full: the whole value (a gate map lists each command on its own line),
+  the summary, its kind and choices, an `in effect:` line when the mod does something other than the stored value
+  says (`autoEval` on with no `evalCommand` → `in effect: off (no evalCommand)`; `maxWorkers` 0 → `in effect: 2`;
+  `reviewTier` empty → `in effect: one tier below the worker`), its scope, and how to set or reset it.
+- `/delegation config <field> <value>`: sets it. With no host row for the option the value goes to your options file and
+  the answer is `<field> = <value> (yours)`; with a host row it goes to that row (`(host)`). A host that refuses because
+  it has no row falls back to your options file; any other refusal is `<field> was not set: <reason>`.
+- `/delegation config <field> default`: takes it out of your options file (or sets the host row back to its default).
+- `/delegation config repo <field> <value>`: writes a repo-scoped option into `<root>/.chassis-delegation.json`, keeping
+  the file's other keys and `_` comments, as 2-space JSON; the answer is `<field> = <value> (repo)`. A user option is
+  refused: it is personal, so it goes in your options file.
+- A locked option answers `<field> is locked by policy`.
+
+Names match in any case (`maxworkers` finds `maxWorkers`). An unknown name answers `no option "<typed>"; did you mean
+<field>?` when one is close (an edit distance of 3 or less, or the same first 4 letters), else `no option "<typed>";
+/delegation config all lists them`. The words `all`, `repo`, `default` and the group words are never option names.
+
+Values are shown as a person reads them: on/off; `20 min`, `6 h`; `$10` (`no cap` for 0); `200K`; maps as
+`economy→haiku, standard→sonnet`; a gate map as its ids (`validate, node, test`); lists comma-joined; `(none)` for
+empty. A line is at most 100 characters, cut with `…`; the one-option view holds the whole value. Values are typed the
+same way: `on`/`off`/`yes`/`no`/`true`/`false`, `20`, `500K`, `$3`, `no cap`, `a, b` for a list, `economy=sonnet,
+frontier=opus` (or JSON) for a map, `id=command; id=command` for a gate map, `""` for empty.
+
+Repo-scoped options (repo file, your options file, or the host):
+
+| Key | Repo file | Your options / host | Default | What it does |
 | --- | --- | --- | --- | --- |
 | `gateMap` | object | JSON string | `{}` | gate id → command, run by argv with no shell. `{files}` is files.txt, `{worktree}` the tree the gate runs in, `{outdir}` a research card's output folder; chain with ` && `. A command the allowlist would refuse is dropped at load and named. No `sf`, `git`, `gh`, network, `rm` or publish. An id not in the map is "gate not re-run" (unverified) |
 | `agentTypes` | object | JSON string | `{}` | card domain → subagent type. A domain not named runs on a subagent type of the same name if the session offers one, else `general-purpose` |
@@ -1863,7 +1907,7 @@ reads them from `/config` too, but `/config` shows only what the manifest
 | `review` | `off` \| `on` \| `on-frontier` | string (`off` = unset) | `off` | a fresh read-only reviewer reads each consistent hand-back against the diff before `next=accept` (MOD-21; see [Review](#review)). `on-frontier` reviews frontier and premium cards only; `off` changes nothing anywhere |
 | `reviewTier` | `economy` \| `standard` \| `frontier` \| `premium` | string | `""` (one tier below the worker's) | the tier the reviewer runs at; empty = one below the worker's, never below economy (see [Review](#review)) |
 
-Settings only (`/delegation config <field> <value>`, the `/config` menu in a terminal, or `pluginConfigs["chassis-delegation"].options` in `settings.json`):
+User-scoped options (`/delegation config <field> <value>`, your options file, or the host; never the repo file):
 
 | Key | Default | What it does |
 | --- | --- | --- |

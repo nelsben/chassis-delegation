@@ -34,7 +34,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['verdictVerbosity', 'Checking the work', 'How much detail shows when a worker\'s result is judged', 'choice', 'user', 'line', ['line', 'full', 'silent']],
   ['ledgerFile', 'Checking the work', 'Keep a log of every judged attempt inside the repo', 'bool', 'user', true],
   ['baseRef', 'Checking the work', 'The branch or commit that a worker\'s changes are compared against', 'text', 'repo', ''],
-  ['ignore', 'Checking the work', 'Files and folders left out when counting what a worker changed', 'list', 'repo', ''],
+  ['ignore', 'Checking the work', 'Files and folders left out when checking a worker that shares your checkout', 'list', 'repo', ''],
   ['briefDir', 'Where things go', 'The folder where worker instructions are saved', 'text', 'user', ''],
   ['briefTemplate', 'Where things go', 'A file to use as the layout for worker instructions', 'text', 'repo', ''],
   ['briefExtra', 'Where things go', 'Extra lines added to every worker\'s instructions, such as a test command', 'text', 'repo', ''],

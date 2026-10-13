@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- **`/delegation config` shows the options the mod really runs with, each with its source, short by default; sets
+  any of them on every screen; and every option is measured (MOD-73).** The list showed the manifest layer, not the
+  values in use (`maxWorkers = 0 (default)` while the repo file set 3), and in the VS Code extension, where the host
+  lists no settings rows for a folder-loaded mod, no option could be set at all.
+  - One truth: every option resolves to its effective value and a source, `default` < `repo` < `yours` < `host`
+    (`locked` for a policy row), the same values the mod and `/delegation status` use. A host value that is unset
+    (its empty placeholder, or the manifest default the host fills in) counts as absent. Maps still merge per key.
+  - Settable everywhere: a user options file, `~/.claude/chassis-delegation/options.json`, holds any option. The mod
+    rereads it when it changes. `/delegation config <field> <value>` writes there when the host has no row (or
+    refuses for having none) and answers `<field> = <value> (yours)`; with a host row it sets the row as before
+    (`(host)`). `<field> default` resets; `repo <field> <value>` writes a repo-scoped option into
+    `.chassis-delegation.json`, keeping its other keys and `_` comments, and refuses a personal one; a locked option
+    says `<field> is locked by policy`; a malformed options file is said once by toast and in the debug log, and
+    ignored.
+  - Short by default: `/delegation config` prints a count line, only the options not at their default (grouped), and
+    the how-to line; `all` prints every option with its summary, `<group>` one group, `<field>` one option with its
+    scope and an `in effect:` line when the mod does something other than the stored value says. The MOD-68 no-rows
+    line is gone.
+  - Names match in any case, and an unknown name suggests the nearest option. Values read as a person reads them
+    (on/off, `20 min`, `6 h`, `$10`/`no cap`, `200K`, `economy→haiku`, gate ids, `(none)`), lines are cut at 100
+    characters, and the same forms are accepted when typed.
+  - Measured: `tests/options.test.ts` sets each of the 49 options through `/delegation config` with no host rows and
+    asserts a change in what the mod does; a node test holds the option table to the manifest both ways and holds
+    that file to one case per option. The summary of `tierMap` and `ignore` now say what they do.
+
 ## 0.9.8 — 2026-10-12
 
 - **`/delegation config` lists the options in named groups, each with a short plain-English line (MOD-70).** The list
