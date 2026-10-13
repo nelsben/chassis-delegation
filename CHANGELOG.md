@@ -27,6 +27,14 @@
     asserts a change in what the mod does; a node test holds the option table to the manifest both ways and holds
     that file to one case per option. The summary of `tierMap` and `ignore` now say what they do.
 
+- **Every worker's model is visible all the time (MOD-74).** When a briefed worker starts the mod posts one row,
+  `<task> started · <alias> (<tier>) · attempt <n>/<budget>` (`resumed` for a resume, `started from queue` for a
+  queued start); when it hands back, before verification, one more: `<task> handed back · <alias> · <m> min · $<usd> ·
+  verifying` (`$?` while the spend is unknown). An ad hoc spawn posts neither, and `verdictVerbosity=silent`
+  suppresses both; `line` and `full` post them. `/delegation` status opens with a `running:` section, one line per
+  live, verifying or queued worker (`<task> · <alias> (<tier>) · <state> · <m> min · $<usd>`) and `brain: <model>`
+  from the host, or `running: none · brain: <model>` when nothing is live. Logic is in `hooks/lib/rows.ts`.
+
 ## 0.9.8 — 2026-10-12
 
 - **`/delegation config` lists the options in named groups, each with a short plain-English line (MOD-70).** The list

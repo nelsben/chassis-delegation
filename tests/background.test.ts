@@ -14,11 +14,13 @@ const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w
 const userRows = (w: { appended: { type: string; text: string }[] }) => w.appended.filter(a => a.type === 'user').map(a => a.text)
 // The rows that reached the conversation: the appended user rows live; in the kit (which
 // cannot answer a plugin's own session.append) the transcript log line the mod falls back to.
+// MOD-74: the started and handed-back rows are not verdict rows
+const notWorkerRow = (t: string) => !/^chassis-delegation: \S+ (started|resumed|started from queue|handed back) · /.test(t)
 const rowsOf = (w: { appended: { type: string; text: string }[]; logs: string[]; debugLogs: string[] }) => {
-  const appended = userRows(w)
+  const appended = userRows(w).filter(notWorkerRow)
   if (appended.length > 0) return appended
   const debug = new Set(w.debugLogs)
-  return w.logs.filter(l => !debug.has(l) && l.startsWith('chassis-delegation: ') && !l.startsWith('chassis-delegation: refused argv'))
+  return w.logs.filter(l => !debug.has(l) && notWorkerRow(l) && l.startsWith('chassis-delegation: ') && !l.startsWith('chassis-delegation: refused argv'))
 }
 const resultText = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
 const typeOf = (s: Record<string, unknown> | undefined) => s?.subagentType ?? s?.subagent_type

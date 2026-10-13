@@ -196,6 +196,7 @@ import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
+import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
@@ -611,6 +612,7 @@ let modManifest: string | null | undefined
 let cfg: Config = readConfig({}, {}).cfg
 const waiting = new Set<string>() // Agent tool calls still awaiting their result
 const handbacks = new Map<string, string>() // agentId → a SubagentHandback message a tool.call hook saw (the transcript is the live source: GH-2)
+const verifying = new Map<string, SpawnRecord>() // MOD-74: the spawn behind each attempt key in `finalizing`, for the status section
 const finalizing = new Map<string, Promise<Rendered>>() // attempt key → its verify, so a second fire waits on the first
 const posted = new Set<string>() // attempt keys whose verdict row went to the conversation
 const offered = new Set<string>()
@@ -3409,10 +3411,12 @@ async function finalize($: Host, spawnIn: SpawnRecord, text: string, measured: M
   if (running) return running
   const job = finalizeOnce($, spawnIn, text, measured)
   finalizing.set(key, job)
+  verifying.set(key, spawnIn)
   try {
     return await job
   } finally {
     finalizing.delete(key)
+    verifying.delete(key)
   }
 }
 
@@ -3738,6 +3742,32 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
   }
 }
 
+/** MOD-74: the row for a briefed worker that has started (or resumed); verdictVerbosity=silent posts none. */
+async function postStarted($: Host, i: { label: string; alias: string; tier: string; attempt: number; budget: number; kind: StartKind }) {
+  if (!postsRows(cfg.verbosity)) return
+  await appendRow($, startedRow(i))
+}
+
+/** MOD-74: a worker's spend this attempt as the verdict row computes it (its own turns, else the session's growth), undefined while unknown. */
+async function attemptUsd($: Host, spawn: SpawnRecord): Promise<number | undefined> {
+  const own = spawn.agentId ? await workerCost($, spawn.agentId, spawn.attempt) : undefined
+  if (own && own.usd !== null) return round4(own.usd)
+  const now0 = await sessionUsd($)
+  return now0 !== undefined && spawn.usdAtStart !== undefined ? round4(now0 - spawn.usdAtStart) : undefined
+}
+
+const handedBackPosted = new Set<string>()
+/** MOD-74: one row when a briefed worker hands back, before its verification starts; silent posts none. */
+async function postHandedBack($: Host, spawn: SpawnRecord) {
+  if (spawn.adhoc || spawn.review || !postsRows(cfg.verbosity)) return
+  const key = attemptKey(spawn)
+  if (handedBackPosted.has(key)) return
+  handedBackPosted.add(key)
+  const t = await now($)
+  const usd = await attemptUsd($, spawn)
+  await appendRow($, handedBackRow({ label: taskLabel(spawn.task, spawn.subtask), alias: spawn.alias, minutes: waitedMinutes(spawn.at ?? t, t), ...(usd !== undefined ? { usd } : {}) }))
+}
+
 /** Hands a verdict to the brain per verdictVerbosity: the row it returns, plus the log and toast (2B). */
 function sideEffects($: Host, r: Rendered, adhoc: boolean): string | undefined {
   const d = deliveryFor(cfg.verbosity, r)
@@ -3795,6 +3825,7 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   const next: SpawnRecord = { ...spawn, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
   await storeSet($, K.spawn(spawn.key), next)
   await setWorkers($, list => [...list, { task: spawn.task, subtask: spawn.subtask, attempt, kind: 'resume', tier: spawn.tier, alias: spawn.alias, agentId, verdict: 'pending', at: t }])
+  if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed' })
   return next
 }
 
@@ -4663,14 +4694,46 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   return [...wrote, ...shown.flatMap((block, i) => (i === 0 ? [block] : ['', block])), '', sayGo(shownIds)].join('\n')
 }
 
+/** MOD-74: every live, verifying and queued briefed worker with its alias, tier, time and spend. */
+async function runningWorkers($: Host): Promise<RunningWorker[]> {
+  const t = await now($)
+  const out: RunningWorker[] = []
+  const seen = new Set<string>()
+  const add = async (spawn: SpawnRecord, state: 'running' | 'verifying') => {
+    const label = taskLabel(spawn.task, spawn.subtask)
+    if (seen.has(label) || spawn.adhoc || spawn.review) return
+    seen.add(label)
+    const usd = await attemptUsd($, spawn)
+    out.push({ label, alias: spawn.alias, tier: spawn.tier, state, minutes: waitedMinutes(spawn.at ?? t, t), ...(usd !== undefined ? { usd } : {}) })
+  }
+  const live = await liveState($)
+  for (const w of live.workers) await add(w.spawn, 'running')
+  for (const p of live.pending) {
+    const spawn = await spawnByAgent($, p.agentId)
+    if (spawn) await add(spawn, 'verifying')
+  }
+  for (const spawn of verifying.values()) await add(spawn, 'verifying')
+  for (const q of await readQueue($)) {
+    const label = queuedLabel(q)
+    if (seen.has(label)) continue
+    seen.add(label)
+    const tier = tierOf(parseHeader(q.prompt)?.tier) ?? 'standard'
+    out.push({ label, alias: cfg.tierMap[tier], tier, state: 'queued', minutes: waitedMinutes(q.at, t), usd: 0 })
+  }
+  return out
+}
+
 /** `/delegation` with no argument: the delegation state and where the config came from. */
 async function statusReport($: Host): Promise<string> {
   await loadRepoConfig($)
+  const brainModel = await $.session.model().catch(() => undefined)
+  const running = runningSection(await runningWorkers($), brainModel ? aliasOf(brainModel) ?? brainModel : undefined)
   const s = await snapshot($)
   const state = isEmptyState(s) && s.recent.length === 0 ? ['Delegation state (chassis-delegation): nothing running, queued or owed.'] : renderState(s)
   const root = await $.session.root()
   const split = await brainView($)
   return [
+    ...running,
     ...state,
     '',
     ...(split.hasBrain ? [brainLine(split.summary)] : []),
@@ -5155,6 +5218,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     const fileHeader = briefText0(p)
     const other = !adhoc ? await adoptRepo($, task, fileHeader ?? header) : undefined
     const usdAtStart = await sessionUsd($)
+    let fromQueue = false
     const res = await start(alias, p.cwd)
     if (res.deny !== undefined) return res
     // a debrief agent or an eval runner the mod started: its record learns the agent id here
@@ -5167,7 +5231,10 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     // GH-101: a spawn of a queued task takes its queued place, now that it started
     if (!adhoc) {
       const held = await dropQueued($, task, subtask)
-      if (held) $.ui.toast(`started queued ${label} (waited ${waitedMinutes(held.at, t)} min)`)
+      if (held) {
+        fromQueue = true
+        $.ui.toast(`started queued ${label} (waited ${waitedMinutes(held.at, t)} min)`)
+      }
     }
 
     const classifierTier = !adhoc && attempt === 1 ? (await storeGet<{ classifier?: Tier }>($, K.classifier(task)))?.classifier : undefined
@@ -5246,6 +5313,8 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     }
 
     await setWorkers($, list => [...list, { task, subtask, attempt, kind: 'spawn', tier, alias, ...(res.agentId ? { agentId: res.agentId } : {}), verdict: 'pending', at: t }])
+    // MOD-74: a briefed worker's model is said where the person looks, once it has started
+    if (!adhoc) await postStarted($, { label, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started' })
     delegated = true
     await refreshStatus($)
     return res
@@ -5645,6 +5714,7 @@ export const register: Register = (on, opts) => {
       description: e.description,
       subagentType: e.subagent_type ?? 'general-purpose',
     }
+    if (spawn && isOpen(spawn)) await postHandedBack($, spawn)
     const rendered = await finalize($, base, text, { tokens, model })
     // a cardless report is judged like any other (GH-1 item 2); an ad hoc no-report stays quiet
     const row = sideEffects($, rendered, base.adhoc && !(isCardless(base) && extractReport(text) !== undefined))
@@ -5692,6 +5762,7 @@ export const register: Register = (on, opts) => {
         const hasReport = extractReport(text) !== undefined
         if (spawn.adhoc ? hasReport : !foreground || hasReport) {
           const tokens = e.usage ? e.usage.input_tokens + e.usage.output_tokens : undefined
+          await postHandedBack($, spawn)
           const rendered = await finalize($, spawn, text, { tokens })
           handbacks.delete(e.agentId)
           if (!foreground && (await claimPost($, spawn))) {
