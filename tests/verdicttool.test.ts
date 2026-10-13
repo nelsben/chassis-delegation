@@ -14,9 +14,16 @@ const MB = 'b'.repeat(40)
 const resultText = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
 
 /** A worker repo answered from memory; `gateMs` is how long the gate takes on the test clock. */
+let sleepFails = false
 const repo = (clock: { sleep: (ms: number) => Promise<void> }, gateMs = 0) => {
   let head = ''
   return async (argv: string[]): Promise<RunAnswer | undefined> => {
+    // MOD-72: the verdict tool's waits are `sleep` processes; on the test clock one takes its seconds
+    if (argv[0] === 'sleep') {
+      if (sleepFails) return { exitCode: 127, stdout: '' }
+      await clock.sleep(Number(argv[1]) * 1000)
+      return { exitCode: 0, stdout: '' }
+    }
     if (argv[0] === 'npx') {
       if (gateMs > 0) await clock.sleep(gateMs)
       return { exitCode: 0, stdout: '' }
@@ -37,6 +44,7 @@ const repo = (clock: { sleep: (ms: number) => Promise<void> }, gateMs = 0) => {
   }
 }
 const setup = (on: any, gateMs = 0, extra: Record<string, unknown> = {}) => {
+  sleepFails = false
   const slot: { sleep: (ms: number) => Promise<void> } = { sleep: async () => undefined }
   const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo(slot, gateMs), agentId: 'agent-4', ...extra })
   slot.sleep = ms => w.clock.sleep(ms)
@@ -94,6 +102,29 @@ describe('MOD-64: the verdict tool', () => {
     const waiting = call($, { task: 'T-4', waitSeconds: 10 })
     for (let i = 0; i < 3; i++) await w.clock.advance(5000)
     expect(resultText(await waiting)).toBe('T-4: still verifying after 10s; call verdict again')
+  })
+
+  test('MOD-72: the waits are sleep processes, never a $.clock.sleep (the host counts that against the hook budget)', { options: { ...GM } }, async ($, on) => {
+    const w = setup(on, 12_000)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    const done = $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    const waiting = call($, { task: 'T-4' })
+    for (let i = 0; i < 4; i++) await w.clock.advance(5000)
+    await done
+    const text = resultText(await waiting)
+    expect(text).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
+    expect(w.clockSleeps.filter(ms => ms >= 5000)).toEqual([])
+    const sleeps = w.runs.filter(r => r.argv[0] === 'sleep')
+    expect(sleeps.length).toBeGreaterThanOrEqual(2)
+    expect(sleeps[0]?.argv).toEqual(['sleep', '5'])
+  })
+
+  test('MOD-72: a sleep that cannot start answers still-verifying at once', { options: { ...GM } }, async ($, on) => {
+    const w = setup(on)
+    sleepFails = true
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    expect(resultText(await call($, { task: 'T-4' }))).toBe('T-4: still verifying after 600s; call verdict again')
+    expect(w.runs.filter(r => r.argv[0] === 'sleep')).toHaveLength(1)
   })
 
   test('an unknown task says so', { options: { ...GM } }, async ($, on) => {

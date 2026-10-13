@@ -50,6 +50,8 @@ export type World = {
   compactions: (string | undefined)[]
   /** The mocked clock: `advance` fires the mod's `$.clock.after` timers. */
   clock: MockClock
+  /** MOD-72: the ms of each $.clock.sleep the mod made. */
+  clockSleeps: number[]
   /** Pane ids the mod opened (`$.ui.open`), in order. */
   opened: string[]
   /** Pane ids the mod closed (`$.ui.close`). */
@@ -163,6 +165,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     tools: [],
     compactions: [],
     clock: undefined as unknown as MockClock,
+    clockSleeps: [],
     opened: [],
     closed: [],
     invalidations: 0,
@@ -182,7 +185,10 @@ export function world(on: On, options: WorldOptions = {}): World {
     ;(on as unknown as (n: string, h: unknown) => void)(name, ($: unknown, e: never) => fn(e))
   }
 
-  w.clock = mock.clock(on, { now: NOW })
+  // MOD-72: every $.clock.sleep the mod makes is recorded (the host counts one against a hook's budget)
+  const recording = ((n: string, h: (...a: unknown[]) => unknown) =>
+    (on as unknown as (n: string, h: unknown) => void)(n, n === 'clock.sleep' ? (($: unknown, e: { ms?: number }) => (w.clockSleeps.push(e?.ms ?? 0), h($, e))) : h)) as unknown as typeof on
+  w.clock = mock.clock(recording, { now: NOW })
   mock.env(on, { TMPDIR: TMP, HOME, PATH: '/usr/local/bin:/usr/bin' })
   hook('store.get', (e: { key: string }) => ({ value: w.store.get(e.key) }))
   hook('store.set', (e: { key: string; value: unknown }) => (w.store.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }))
@@ -247,7 +253,9 @@ export function world(on: On, options: WorldOptions = {}): World {
     w.runs.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env, stdin: e.init?.stdin })
     // MOD-35: an unanswered "is this sha on origin/main" reads as not merged (MOD-4's retire check, and the wake's skip rule); every other unanswered command exits 0
     const unmerged = e.argv[3] === 'merge-base' && e.argv[4] === '--is-ancestor' && e.argv[e.argv.length - 1] === 'origin/main'
-    const answer = (await options.run?.([...e.argv])) ?? { exitCode: unmerged ? 1 : 0, stdout: '' }
+    // MOD-72: a `sleep` process (the mod's budget-free wait) takes its seconds on the test clock unless the test answers it
+    const sleeps = e.argv[0] === 'sleep' ? async () => (await w.clock.sleep(Number(e.argv[1]) * 1000), { exitCode: 0, stdout: '' }) : undefined
+    const answer = (await options.run?.([...e.argv])) ?? (sleeps ? await sleeps() : { exitCode: unmerged ? 1 : 0, stdout: '' })
     return { value: { exitCode: answer.exitCode, stdout: answer.stdout, stderr: answer.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   hook('model.classify', () => ({ value: options.classify }))
