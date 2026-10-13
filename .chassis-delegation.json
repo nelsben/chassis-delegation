@@ -28,7 +28,7 @@
     "shared"
   ],
   "_maxWorkers": "Briefed workers at once; a briefed spawn past it waits in a queue.",
-  "maxWorkers": 3,
+  "maxWorkers": 5,
   "_worktreeRoot": "Folder for the workers' worktrees; empty = sibling folders <repo>-<id>.",
   "worktreeRoot": "",
   "_briefTemplate": "A brief body template file (absolute path); empty = the mod's hooks/templates/brief.md.",
