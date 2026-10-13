@@ -197,7 +197,7 @@ import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detect
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
-import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, settingsLayer, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
+import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
 import {
   parseReviewBlock,
@@ -266,7 +266,9 @@ import {
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
 import { MOD_VERSION } from './lib/version'
-import { configPlan, manifestDefaults, manifestFields, setAnswer, type CfgRow } from './lib/configcmd'
+import { configPlan, fieldAnswer, manifestFields, rowsByField, viewFields, type CfgRow, type CfgView, type Source } from './lib/configcmd'
+import { CONFIG_TABLE } from './lib/configtable'
+import { parseUserOptions, repoFileWith, resolveOptions, userFileWith, userOptionsPath, type Resolved } from './lib/configeff'
 import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
 import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
@@ -515,18 +517,26 @@ type Config = {
   reviewTier: Tier | ''
 }
 
-function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: string[] } {
+/**
+ * MOD-73: the config the mod runs with, out of four layers: the built-in defaults < the repo
+ * file < yours (the user options file) < the host's (`host`: the activation options, a listed
+ * /config row's value over them). `resolved` is the same values with the source of each: what
+ * `/delegation config` shows, so it never disagrees with what the mod does.
+ */
+function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, user: Readonly<Record<string, unknown>> = {}, locked: ReadonlySet<string> = new Set()): { cfg: Config; errors: string[]; resolved: Resolved } {
+  const resolved = resolveOptions(host, user, repo, locked)
+  const o = { ...host, ...resolved.opts } as PluginOptions
   const str = (k: string) => (typeof o[k] === 'string' ? (o[k] as string) : '')
   const budget = typeof o.defaultBudget === 'number' && o.defaultBudget >= 1 ? Math.floor(o.defaultBudget) : 3
   const num = (k: string, fallback: number): number => {
     const v = o[k]
     return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback
   }
-  const settings = settingsLayer(o)
-  const eff = mergeConfig(repo, settings.config)
+  const eff = resolved.eff
   const issues = resolveIssueRepo(eff, modManifest ?? undefined)
   return {
-    errors: settings.errors,
+    errors: resolved.errors,
+    resolved,
     cfg: {
       autoEscalate: o.autoEscalate === true,
       applyAmends: o.applyAmends !== false,
@@ -587,6 +597,13 @@ function readConfig(o: PluginOptions, repo: RepoConfig): { cfg: Config; errors: 
 // Module memory: a reload starts it over; the store and $.state stay.
 let options: PluginOptions = {}
 let repoLayer: RepoConfig = {}
+/** MOD-73: the user options file's text as last read (undefined = not read yet, null = none) and its values. */
+let userText: string | null | undefined
+let userOpts: Record<string, unknown> = {}
+/** MOD-73: the fields a locked /config row holds, as the last listing of the rows said. */
+let lockedFields: ReadonlySet<string> = new Set()
+/** MOD-73: every field's value and source, as the config was last made. */
+let resolvedNow: Resolved | undefined
 /** The repo file's text as last read: undefined = not read yet, null = no file. */
 let repoText: string | null | undefined
 /** MOD-18: the loaded copy's manifest as last read, which names the mod's own repository: undefined = not read yet, null = unreadable. */
@@ -770,8 +787,21 @@ async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<
 }
 
 // ---- part 5B: the repo file ---------------------------------------------------
-/** Reads `<root>/.chassis-delegation.json` (when it changed) and remakes the config: defaults < repo file < settings. */
-async function loadRepoConfig($: Host): Promise<void> {
+/** MOD-73: HOME, where the user options file lives; '' when the environment does not say. */
+async function homeDir($: Host): Promise<string> {
+  try {
+    return (await $.env.get('HOME')) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Reads `<root>/.chassis-delegation.json` and the user options file (when either changed) and
+ * remakes the config: defaults < repo file < yours < the host's settings. `force` remakes it
+ * though nothing changed (a /config row was just set).
+ */
+async function loadRepoConfig($: Host, force = false): Promise<void> {
   let root: string
   try {
     root = await $.session.root()
@@ -779,6 +809,8 @@ async function loadRepoConfig($: Host): Promise<void> {
     return
   }
   const text = (await readText($, `${root}/${REPO_CONFIG_FILE}`)) ?? null
+  const home = await homeDir($)
+  const uText = home ? ((await readText($, userOptionsPath(home))) ?? null) : null
   // MOD-18: the manifest is read beside the repo file, so a moved issueRepo default (after an update) is seen
   let manifest: string | null = null
   try {
@@ -786,14 +818,27 @@ async function loadRepoConfig($: Host): Promise<void> {
   } catch {
     manifest = null
   }
-  if (text === repoText && manifest === modManifest) return
+  if (!force && text === repoText && manifest === modManifest && uText === userText) return
+  const repoChanged = text !== repoText || manifest !== modManifest
+  const userChanged = uText !== userText
   repoText = text
   modManifest = manifest
   const parsed = text === null ? { config: {}, errors: [] } : parseRepoConfig(text)
   repoLayer = parsed.config
-  const next = readConfig(options, repoLayer)
+  if (userChanged) {
+    userText = uText
+    const u = parseUserOptions(uText ?? undefined)
+    userOpts = u.options
+    // MOD-73: a malformed user file is said once (per change of its text), and ignored
+    const where = userOptionsPath(home)
+    for (const err of u.errors) debug($, `${where}: ${err}`)
+    if (u.errors.length > 0) $.ui.toast(`${PLUGIN}: ${where}: ${u.errors[0]}${u.errors.length > 1 ? ` (+${u.errors.length - 1} more in the debug log)` : ''}`)
+  }
+  const next = readConfig(options, repoLayer, userOpts, lockedFields)
   cfg = next.cfg
-  const errors = [...parsed.errors, ...next.errors]
+  resolvedNow = next.resolved
+  if (!repoChanged && !userChanged) return
+  const errors = [...(repoChanged ? parsed.errors : []), ...next.errors]
   for (const err of errors) debug($, `${REPO_CONFIG_FILE}: ${err}`)
   if (errors.length > 0) $.ui.toast(`${PLUGIN}: ${REPO_CONFIG_FILE}: ${errors[0]}${errors.length > 1 ? ` (+${errors.length - 1} more in the debug log)` : ''}`)
 }
@@ -4694,8 +4739,9 @@ async function updateStatusLines($: Host): Promise<string[]> {
   }
 }
 
-/** MOD-66: `/delegation config [<field> [<value>]]`: this mod's own options, over the rows `$.config.list()` gives. */
-async function runConfig($: Host, rest: string): Promise<string> {
+/** MOD-66, MOD-73: the rows `$.config.list()` gives this mod's fields, and the view of every field: its value and source, as the mod runs with it. */
+async function configView($: Host): Promise<CfgView> {
+  await loadRepoConfig($)
   let rows: CfgRow[]
   try {
     rows = (await $.config.list()) as unknown as CfgRow[]
@@ -4704,16 +4750,114 @@ async function runConfig($: Host, rest: string): Promise<string> {
     rows = []
   }
   if (!Array.isArray(rows)) rows = []
-  const manifest = await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`)
-  const defaults = manifestDefaults(manifest)
-  const plan = configPlan(rows, defaults, rest, { plugin: ($.plugin as { name?: string }).name ?? PLUGIN, fields: manifestFields(manifest), live: options as Record<string, unknown> })
-  if (!('set' in plan)) return plan.text
-  try {
-    const out = await $.config.set({ key: plan.set.key, value: plan.set.value })
-    return setAnswer(plan.set.field, out.value, out.deny)
-  } catch (err) {
-    return `${plan.set.field} was not set: ${err instanceof Error ? err.message : String(err)}`
+  const plugin = ($.plugin as { name?: string }).name ?? PLUGIN
+  const specs = manifestFields(await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`))
+  const fields = viewFields(specs)
+  const mine = rowsByField(rows, plugin, fields)
+  const locked = new Set(Object.entries(mine).filter(([, r]) => r.isLocked).map(([f]) => f))
+  const lockChanged = locked.size !== lockedFields.size || [...locked].some(f => !lockedFields.has(f))
+  lockedFields = locked
+  // a listed row's value over the activation options: the host's layer as the menu shows it now
+  const host = { ...(options as Record<string, unknown>), ...Object.fromEntries(Object.entries(mine).map(([f, r]) => [f, r.value])) }
+  const r = readConfig(host, repoLayer, userOpts, locked)
+  if (lockChanged) {
+    const again = readConfig(options, repoLayer, userOpts, locked)
+    cfg = again.cfg
+    resolvedNow = again.resolved
   }
+  const values: Record<string, unknown> = { ...r.resolved.values }
+  const sources: Record<string, Source> = { ...r.resolved.sources }
+  // a manifest field the table lacks: the host's value, else its manifest default
+  for (const f of fields.filter(x => !CONFIG_TABLE[x])) {
+    const def = specs[f]?.default
+    const v = f in host ? host[f] : def
+    values[f] = v
+    sources[f] = locked.has(f) ? 'locked' : JSON.stringify(v) !== JSON.stringify(def) ? 'host' : 'default'
+  }
+  return { plugin, fields, values, sources, rows: mine, specs, derived: { issueRepo: r.cfg.issueRepo, cardDir: r.cfg.cardDir } }
+}
+
+/** A /config row the host has not got (it lists none for a folder-loaded mod): the set goes to the user options file instead. */
+const NO_ROW = /\bno (?:\/config )?row\b|no implementation|rejects? a key/i
+
+/** MOD-73: writes (or, with `value` undefined, removes) one field of the user options file; an error's text when it could not. */
+async function writeUserOption($: Host, field: string, value: unknown): Promise<string | undefined> {
+  const home = await homeDir($)
+  if (!home) return 'HOME is not set, so there is no user options file'
+  const path = userOptionsPath(home)
+  try {
+    await $.fs.write(path, userFileWith((await readText($, path)) ?? undefined, field, value))
+    return undefined
+  } catch (err) {
+    return `${path} could not be written: ${err instanceof Error ? err.message : String(err)}`
+  }
+}
+
+/** The field's line as the mod now runs with it. */
+async function lineNow($: Host, field: string): Promise<string> {
+  const view = await configView($)
+  return fieldAnswer(field, view.values[field], view.sources[field] ?? 'default')
+}
+
+/** MOD-66, MOD-73: `/delegation config [all | <group> | <field> [<value> | default] | repo <field> <value>]`. */
+async function runConfig($: Host, rest: string): Promise<string> {
+  const view = await configView($)
+  const plan = configPlan(view, rest)
+  if ('text' in plan) return plan.text
+  if ('repo' in plan) {
+    const { field, value } = plan.repo
+    let root: string
+    try {
+      root = await $.session.root()
+    } catch (err) {
+      return `${field} was not set: no repo root (${String(err)})`
+    }
+    const path = `${root}/${REPO_CONFIG_FILE}`
+    const next = repoFileWith((await readText($, path)) ?? undefined, field, value)
+    if (next === undefined) return `${field} was not set: ${path} is not a JSON object; fix it first`
+    try {
+      await $.fs.write(path, next)
+    } catch (err) {
+      return `${field} was not set: ${path} could not be written: ${err instanceof Error ? err.message : String(err)}`
+    }
+    await loadRepoConfig($, true)
+    const now = await configView($)
+    const src = now.sources[field] ?? 'default'
+    const head = value === undefined ? `${field} removed from ${REPO_CONFIG_FILE}` : fieldAnswer(field, value, 'repo')
+    return src === 'repo' || (value === undefined && src === 'default') ? (value === undefined ? `${head}; ${fieldAnswer(field, now.values[field], src)}` : head) : `${head}; ${fieldAnswer(field, now.values[field], src)} wins over it`
+  }
+  if ('unset' in plan) {
+    const { field, key, def } = plan.unset
+    const failed = await writeUserOption($, field, undefined)
+    if (failed) return `${field} was not reset: ${failed}`
+    if (key !== undefined) {
+      try {
+        const out = await $.config.set({ key, value: def as never })
+        if (out.deny !== undefined && !NO_ROW.test(out.deny)) return `${field} was not reset in /config: ${out.deny}`
+      } catch (err) {
+        if (!NO_ROW.test(String(err))) return `${field} was not reset in /config: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+    await loadRepoConfig($, true)
+    return lineNow($, field)
+  }
+  const { field, value, host, key } = plan.set
+  if (key !== undefined) {
+    let deny: string | undefined
+    try {
+      const out = await $.config.set({ key, value: host })
+      deny = out.deny
+      if (deny === undefined) return fieldAnswer(field, out.value ?? value, 'host')
+    } catch (err) {
+      deny = err instanceof Error ? err.message : String(err)
+    }
+    if (!NO_ROW.test(deny)) return `${field} was not set: ${deny}`
+  }
+  if (!CONFIG_TABLE[field]) return `${field} was not set: the host lists no /config row for it`
+  const failed = await writeUserOption($, field, value)
+  if (failed) return `${field} was not set: ${failed}`
+  await loadRepoConfig($, true)
+  return lineNow($, field)
 }
 
 /** `/delegation update`: bring the loaded copy of the mod to origin/main, migrate this repo's config, say what is left. */
@@ -4951,6 +5095,8 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
 async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: string) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> {
   let token: number | undefined
   try {
+    // MOD-73: a value changed in the repo file or the user options file applies from this spawn
+    await loadRepoConfig($)
     const p = await planSpawn($, e)
     const { t, key, named, header, adhoc, task, subtask, label, budget, spend, lane, records } = p
     // GH-1 item 6: a budget off the grammar falls back, and says so
@@ -5338,7 +5484,12 @@ export const register: Register = (on, opts) => {
   repoText = undefined
   modManifest = undefined
   repoLayer = {}
-  cfg = readConfig(options, repoLayer).cfg
+  userText = undefined
+  userOpts = {}
+  lockedFields = new Set()
+  const first = readConfig(options, repoLayer)
+  cfg = first.cfg
+  resolvedNow = first.resolved
   // A (re)load starts the per-process memory over; the store keeps what must last.
   templatesLoad = undefined
   finalizing.clear()
