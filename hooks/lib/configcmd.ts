@@ -5,6 +5,7 @@
 import { CONFIG_GROUPS, CONFIG_TABLE, GROUP_WORDS, OTHER_GROUP, RESERVED, TABLE_FIELDS, groupWord, type Render, type Source } from './configtable'
 import { parseRepoConfig } from './repoconfig'
 import { validUser } from './configeff'
+import { builtinGlyphText } from './glyph'
 
 export { CONFIG_GROUPS, CONFIG_TABLE, OTHER_GROUP }
 export type { Source }
@@ -224,6 +225,8 @@ export function inEffect(field: string, values: Readonly<Record<string, unknown>
       const l = items(v)
       return l.includes(card) ? undefined : [...l, card].join(', ')
     }
+    case 'modelGlyphs':
+      return empty(v) ? builtinGlyphText() : undefined
     case 'delegateOnly':
       return v !== 'off' ? 'only while the main assistant runs on opus or fable' : undefined
     case 'defaultBudget':
