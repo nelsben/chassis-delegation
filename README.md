@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.9.10, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.11, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,14 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.9.10 to 0.9.11
+
+What the brain will see:
+
+- **A glyph names the model on every row (MOD-78).** Every subagent the mod starts reaches the host with its model's glyph in front of the description, so the host's own task row shows the model. The started, resumed, handed-back and one-line verdict rows, the `running:` and `brain:` lines of `/delegation`, and the band and pane carry the same glyph before the alias. The legend is 🟢 haiku · 🔵 sonnet · 🟣 opus · 🟠 fable · ⚪ other; the ledger and the debug log stay bare.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change. `/delegation config modelGlyphs off` turns the glyphs off, and `alias=glyph` pairs such as `sonnet=🟦` change them.
 
 ### From 0.9.9 to 0.9.10
 
