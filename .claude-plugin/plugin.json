@@ -252,6 +252,12 @@
       "description": "Draw the delegation band above the prompt while a worker is live, queued or owed a verdict; hover it for the spend chart and worktrees, [ details ] opens the pane. Off hides the band; /delegation dashboard still opens the pane",
       "default": true
     },
+    "modelGlyphs": {
+      "type": "string",
+      "title": "Model glyphs (alias=glyph pairs | off)",
+      "description": "The glyph that marks each model on the host's subagent row and every mod row: alias=glyph pairs such as sonnet=🟦, off for none, empty for the built-in set (haiku 🟢, sonnet 🔵, opus 🟣, fable 🟠, other ⚪)",
+      "default": ""
+    },
     "delegateOnly": {
       "type": "string",
       "title": "Delegate only (off | warn | deny)",

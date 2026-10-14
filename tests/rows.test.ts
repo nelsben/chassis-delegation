@@ -12,7 +12,7 @@ describe('MOD-74: a row when a worker starts', () => {
   test('a briefed spawn posts `MOD-1 started · sonnet (standard) · attempt 1/2` at spawn', async ($, on) => {
     const w = world(on)
     await $.agent.spawn(spawnInput({ prompt: brief('MOD-1') }))
-    expect(delivered(w)).toContain('MOD-1 started · sonnet (standard) · attempt 1/2')
+    expect(delivered(w)).toContain('MOD-1 started · 🔵 sonnet (standard) · attempt 1/2')
     expect(w.appended.length + w.logs.length).toBeGreaterThan(0)
   })
 
@@ -30,7 +30,7 @@ describe('MOD-74: a row when a worker starts', () => {
     expect(delivered(w)).not.toContain('T-9 started')
     w.agents[0]!.status = 'completed'
     await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_D0000009' }))
-    expect(delivered(w)).toContain('T-9 started from queue · sonnet (standard) · attempt 1/2')
+    expect(delivered(w)).toContain('T-9 started from queue · 🔵 sonnet (standard) · attempt 1/2')
   })
 
   test('a message to a failed worker that records its resume says `resumed`', async ($, on) => {
@@ -38,7 +38,7 @@ describe('MOD-74: a row when a worker starts', () => {
     await $.agent.spawn(spawnInput({ prompt: brief('T-5') }))
     await $.turn.complete(turnInput('agent-1', 'I got stuck, no report.'))
     await $.session.send({ to: 'agent-1', text: 'try again', origin: { kind: 'model' } } as never)
-    expect(delivered(w)).toContain('T-5 resumed · sonnet (standard) · attempt 2/2')
+    expect(delivered(w)).toContain('T-5 resumed · 🔵 sonnet (standard) · attempt 2/2')
   })
 
   test('verdictVerbosity=silent posts neither the started nor the handed-back row; line posts both', { options: { verdictVerbosity: 'silent' } }, async ($, on) => {
@@ -57,7 +57,7 @@ describe('MOD-74: a row when a worker hands back', () => {
     await w.clock.advance(7 * 60_000)
     await $.turn.complete(turnInput('agent-1', REPORT('T-4'), usage('claude-sonnet-5-5', 1_000_000, 100_000)))
     const text = delivered(w)
-    expect(text).toMatch(/T-4 handed back · sonnet · 7 min · \$\d+\.\d\d · verifying/)
+    expect(text).toMatch(/T-4 handed back · 🔵 sonnet · 7 min · \$\d+\.\d\d · verifying/)
     expect(text.indexOf('T-4 handed back')).toBeLessThan(text.indexOf('T-4 attempt 1/2'))
   })
 
@@ -88,18 +88,18 @@ describe('MOD-74: the running: section of /delegation status', () => {
     const out = String((await $.command.run(status)).text).split('\n')
     expect(out[0]).toBe('running:')
     expect(out.slice(1, 4)).toEqual([
-      expect.stringMatching(/^T-1 · sonnet \(standard\) · running · 4 min · \$\d+\.\d\d$/),
-      expect.stringMatching(/^T-2 · sonnet \(standard\) · verifying · 4 min · \$\d+\.\d\d$/),
-      expect.stringMatching(/^T-9 · sonnet \(standard\) · queued · \d+ min · \$0\.00$/),
+      expect.stringMatching(/^T-1 · 🔵 sonnet \(standard\) · running · 4 min · \$\d+\.\d\d$/),
+      expect.stringMatching(/^T-2 · 🔵 sonnet \(standard\) · verifying · 4 min · \$\d+\.\d\d$/),
+      expect.stringMatching(/^T-9 · 🔵 sonnet \(standard\) · queued · \d+ min · \$0\.00$/),
     ])
-    expect(out[4]).toBe('brain: opus')
+    expect(out[4]).toBe('brain: 🟣 opus')
   })
 
   test('nothing live: `running: none · brain: <model>`; no model from the host: unknown', async ($, on) => {
     world(on, { model: 'claude-opus-4-7' })
     await $.session.start(sessionStart)
     const out = String((await $.command.run(status)).text)
-    expect(out.split('\n')[0]).toBe('running: none · brain: opus')
+    expect(out.split('\n')[0]).toBe('running: none · brain: 🟣 opus')
     expect(runningSection([], undefined)).toEqual(['running: none · brain: unknown'])
   })
 })

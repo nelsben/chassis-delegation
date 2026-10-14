@@ -166,7 +166,7 @@ What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_P
 What the brain will see:
 
 - **`/delegation config` shows the options the mod runs with, each with its source, and sets any of them on every screen (MOD-73).** The default view lists only the options that are set, with a count line; `all` or a group name lists more, and one option shows its scope and an `in effect:` line. Values read as a person reads them (on/off, `20 min`, `$10`, `200K`), and names match in any case. A set with no host row lands in `~/.claude/chassis-delegation/options.json` (`(yours)`); `repo <field> <value>` writes the repo file, and `default` resets.
-- **Every worker's model is visible all the time (MOD-74).** A started worker posts a `<task> started · <alias> (<tier>) · attempt n/b` row, and a handed-back worker a `<task> handed back · <alias> · <m> min · $<usd> · verifying` row. `/delegation` opens with a `running:` section, one line per worker, ending with `brain: <model>`.
+- **Every worker's model is visible all the time (MOD-74, MOD-78).** A started worker posts a `<task> started · <glyph> <alias> (<tier>) · attempt n/b` row, and a handed-back worker a `<task> handed back · <glyph> <alias> · <m> min · $<usd> · verifying` row. `/delegation` opens with a `running:` section, one line per worker, ending with `brain: <glyph> <model>`. Legend: 🟢 haiku · 🔵 sonnet · 🟣 opus · 🟠 fable · ⚪ other. The same glyph leads the description of every subagent the mod starts, so the host's own row shows it too. `modelGlyphs` changes the glyphs or turns them off; the ledger and the debug log never carry them.
 
 What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change. An option set by hand in the repo file still works; to set a personal option on the VS Code extension, use `/delegation config <field> <value>`.
 
@@ -2026,6 +2026,7 @@ User-scoped options (`/delegation config <field> <value>`, your options file, or
 | `ledgerFile` | `true` | append one JSON line per judged attempt to `<root>/.delegation/ledger.jsonl` |
 | `gitGuard` | `true` | the git guard on Bash |
 | `classifierSecondOpinion` | `true` | the card tool's dry run asks the classifier and prints its tier beside the card's; the answer is kept on the card's first attempt record as `classifierTier` |
+| `modelGlyphs` | `""` | the glyph that marks each model on the host's subagent row and every mod row: `alias=glyph` pairs (`sonnet=🟦`), `off` for none, empty for the built-in set (haiku 🟢, sonnet 🔵, opus 🟣, fable 🟠, other ⚪) |
 | `dashboardBand` | `true` | the band above the prompt while a worker is live, queued or owed a verdict (see [Dashboard](#dashboard)) |
 | `guardBranches` | `main,master` | the branches it holds |
 | `autoDebrief` | `true` | write a debrief in the background at a clean stop |

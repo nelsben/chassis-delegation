@@ -66,6 +66,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['readyFallbackMinutes', 'Guards and nudges for the brain', 'Minutes before a waiting task is started for you if you have not started it', 'minutes', 'user', 10],
   ['classifierSecondOpinion', 'Guards and nudges for the brain', 'In a dry run, also ask a classifier how hard a task is and show both answers', 'bool', 'user', true],
   ['dashboardBand', 'Display', 'Show a status strip above the prompt while workers are busy or waiting', 'bool', 'user', true],
+  ['modelGlyphs', 'Display', 'A glyph per model on every row: alias=glyph pairs, off, or empty for the built-in set', 'text', 'user', ''],
 ]
 
 /** The fields in table order. */

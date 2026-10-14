@@ -1662,7 +1662,7 @@ describe('GH-104: spend guards', () => {
     expect(w.sent).toHaveLength(0)
     expect(w.spawns).toHaveLength(1)
     const row = posted(w)[0] ?? ''
-    expect(row.split('\n')[0]).toBe(`chassis-delegation: T-4 attempt 1/3 no-report · sonnet · ~$0.00 · next=verify sha=${HEAD}`)
+    expect(row.split('\n')[0]).toBe(`chassis-delegation: T-4 attempt 1/3 no-report · 🔵 sonnet · ~$0.00 · next=verify sha=${HEAD}`)
     expect(row).toContain(WORK_PRESENT)
     expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.verdict, x.sha ?? null])).toEqual([
       [1, 'spawn', 'no-report', null],
@@ -2480,7 +2480,7 @@ describe('MOD-6: /delegation debrief', () => {
     await $.session.start(sessionStart)
     const out = String((await $.command.run(delegation('debrief'))).text)
     expect(w.spawns).toHaveLength(1)
-    expect(w.spawns[0]).toMatchObject({ description: 'debrief', model: 'sonnet' })
+    expect(w.spawns[0]).toMatchObject({ description: '🔵 debrief', model: 'sonnet' })
     expect(String(w.spawns[0]?.prompt)).toContain('mod_findings')
     expect(out).toContain('agent-1')
     expect(out).toContain('events')
@@ -4076,7 +4076,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
 
   test('the one-line row carries the block too, and /delegation says review is on', { options: { review: 'on', ...GM } }, async ($, on) => {
     const w = await handBack($, on)
-    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/2 consistent · sonnet')
+    expect(delivered(w)).toContain('chassis-delegation: T-4 attempt 1/2 consistent · 🔵 sonnet')
     expect(delivered(w)).toContain('next=review')
     expect(spawnCallOf(delivered(w))?.model).toBe('haiku')
     expect(await delegationText($)).toContain('review: on')
@@ -4269,7 +4269,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
 
     test('the one-line row reads: reviewed, the reviewer, its cost, the counts, next=accept', { options: { review: 'on', ...GM } }, async ($, on) => {
       const { row } = await reviewed($, on, REVIEW_CLEAN)
-      expect(row).toMatch(/chassis-delegation: T-4 attempt 1\/2 reviewed · haiku · ~?\$0\.\d\d · review: 2 confirmed, 1 unverifiable · next=accept/)
+      expect(row).toMatch(/chassis-delegation: T-4 attempt 1\/2 reviewed · 🟢 haiku · ~?\$0\.\d\d · review: 2 confirmed, 1 unverifiable · next=accept/)
     })
 
     test('refuted=1: next=resume naming the worker, and the refuted row quoted (the confirmed ones are not)', ON, async ($, on) => {
@@ -4286,7 +4286,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
 
     test('the one-line row quotes the refuted row under it', { options: { review: 'on', ...GM } }, async ($, on) => {
       const { row } = await reviewed($, on, REVIEW_REFUTED)
-      expect(row).toMatch(/chassis-delegation: T-4 attempt 1\/2 reviewed · haiku · .*review: 1 confirmed, 1 refuted, 0 unverifiable · next=resume agent=agent-4\n/)
+      expect(row).toMatch(/chassis-delegation: T-4 attempt 1\/2 reviewed · 🟢 haiku · .*review: 1 confirmed, 1 refuted, 0 unverifiable · next=resume agent=agent-4\n/)
       expect(row).toContain('refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1')
     })
 

@@ -268,10 +268,10 @@ const say = async ($: { command: { run: (c: never) => Promise<{ text?: unknown }
 const bare = (on: unknown, files: Record<string, string> = {}) => world(on as never, { manifest: MANIFEST, files })
 
 describe('MOD-73: /delegation config shows what the mod runs with', () => {
-  test('nothing set: the count line, "all 49 at their defaults", the how-to line, nothing else', async ($, on) => {
+  test('nothing set: the count line, "all 50 at their defaults", the how-to line, nothing else', async ($, on) => {
     bare(on)
     await $.session.start(sessionStart)
-    expect((await say($, '')).split('\n')).toEqual(['chassis-delegation: 49 options, 0 set (0 repo, 0 yours, 0 host, 0 locked)', 'all 49 at their defaults', HOW])
+    expect((await say($, '')).split('\n')).toEqual(['chassis-delegation: 50 options, 0 set (0 repo, 0 yours, 0 host, 0 locked)', 'all 50 at their defaults', HOW])
   })
 
   test('the short view lists only what is set, by group, one line each, with the source; any case finds the name', async ($, on) => {
@@ -280,7 +280,7 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
     expect(await say($, 'maxworkers 4')).toBe('maxWorkers = 4 (yours)')
     expect(await say($, 'DEBRIEFIDLEMINUTES 45')).toBe('debriefIdleMinutes = 45 min (yours)')
     expect((await say($, '')).split('\n')).toEqual([
-      'chassis-delegation: 49 options, 3 set (1 repo, 2 yours, 0 host, 0 locked)',
+      'chassis-delegation: 50 options, 3 set (1 repo, 2 yours, 0 host, 0 locked)',
       'Workers and models',
       ' maxWorkers = 4 (yours)',
       'Checking the work',

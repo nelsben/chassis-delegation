@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Every subagent row and every mod row carries a model glyph (MOD-78).** 🟢 haiku · 🔵 sonnet · 🟣 opus · 🟠 fable · ⚪ other.
+  The agent.spawn hook rewrites the description of every spawn it resolves a model for to `<glyph> <description>`
+  (once; a description already starting with a known glyph is kept), so the host's own subagent row shows the model.
+  The started, resumed, started-from-queue and handed-back rows, the one-line verdict row, the `running:` and
+  `brain:` lines of `/delegation`, and the dashboard's band and pane lines put the same glyph before the alias. The
+  full-form verdict row, the ledger and the debug log stay bare (machine-read). New option `modelGlyphs`:
+  `alias=glyph` pairs, `off`, or empty for the built-in set.
+
 ## 0.9.10 — 2026-10-13
 
 - **The verdict tool waits for the verdict for real (MOD-72).** Live, every call failed with "registered the tool

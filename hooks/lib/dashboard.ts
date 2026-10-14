@@ -46,6 +46,9 @@ export function decisionText(r: { verdict: string; reason?: string; advice?: str
   return advice ? `${verdict} · ${advice}` : verdict
 }
 
+/** MOD-78: a queued row may carry the alias it will run on (the host's type has none). */
+type QueuedItem = Extract<BandItem, { kind: 'queued' }> & { alias?: string }
+
 export type BandLine = { key: string; text: string; clear?: boolean }
 
 /** Room the band keeps at a line's end for its `[ clear ]`. */
@@ -55,11 +58,12 @@ export const CLEAR_COLUMNS = 10
  * One line per item, sized to the band's columns. The running workers'
  * fields are padded to one another so the numbers line up.
  */
-export function bandLines(items: readonly BandItem[], now: number, columns: number): BandLine[] {
+export function bandLines(items: readonly BandItem[], now: number, columns: number, glyphOf: (alias: string) => string = () => ''): BandLine[] {
+  const mark = (alias: string) => { const g = glyphOf(alias); return `${g ? `${g} ` : ''}${alias}` }
   const running = items.filter((i): i is Extract<BandItem, { kind: 'running' }> => i.kind === 'running')
   const width = (f: (i: Extract<BandItem, { kind: 'running' }>) => string) => Math.max(0, ...running.map(i => [...f(i)].length))
   const taskW = width(i => i.task)
-  const tierW = width(i => `${i.tier}/${i.alias}`)
+  const tierW = width(i => `${i.tier}/${mark(i.alias)}`)
   const timeW = width(i => elapsed(now - i.at))
   const usdW = width(i => usdText(i.usd === undefined ? undefined : { usd: i.usd }))
   return items.map((item, n): BandLine => {
@@ -68,7 +72,7 @@ export function bandLines(items: readonly BandItem[], now: number, columns: numb
         const cost = usdText(item.usd === undefined ? undefined : { usd: item.usd })
         const text = [
           `${ARROW} ${item.task.padEnd(taskW)}`,
-          `${item.tier}/${item.alias}`.padEnd(tierW),
+          `${item.tier}/${mark(item.alias)}`.padEnd(tierW),
           elapsed(now - item.at).padStart(timeW),
           cost.padEnd(usdW),
           item.phase,
@@ -78,7 +82,7 @@ export function bandLines(items: readonly BandItem[], now: number, columns: numb
       case 'decision':
         return { key: `decide-${item.task}-${n}`, text: fit(`${ARROW} ${item.task} · ${item.text}`, columns) }
       case 'queued':
-        return { key: `queued-${item.task}-${n}`, text: fit(`${ARROW} queued: ${item.task} (pos ${item.position})`, columns) }
+        return { key: `queued-${item.task}-${n}`, text: fit(`${ARROW} queued: ${item.task} (pos ${item.position})${(item as QueuedItem).alias ? ` · ${mark((item as QueuedItem).alias as string)}` : ''}`, columns) }
       case 'eval-failed': {
         const score = item.total !== undefined && item.pass !== undefined ? ` ${item.pass}/${item.total}` : ' (no result block)'
         return { key: 'eval-failed', text: fit(`${ARROW} eval ${item.tier}${score} — see transcript`, Math.max(1, columns - CLEAR_COLUMNS)), clear: true }
@@ -90,18 +94,19 @@ export function bandLines(items: readonly BandItem[], now: number, columns: numb
 }
 
 /** The pane's "Open items": every band item with the exact next action. */
-export function openItemLines(items: readonly BandItem[], now: number, verdictTool = false): string[] {
+export function openItemLines(items: readonly BandItem[], now: number, verdictTool = false, glyphOf: (alias: string) => string = () => ''): string[] {
+  const mark = (alias: string) => { const g = glyphOf(alias); return `${g ? `${g} ` : ''}${alias}` }
   return items.map(item => {
     switch (item.kind) {
       case 'running':
         return item.phase === 'verifying'
-          ? `${item.task}: verifying ${item.tier}/${item.alias} ${elapsed(now - item.at)} — ${verifyingTail(item.task, verdictTool)}`
-          : `${item.task}: running ${item.tier}/${item.alias} ${elapsed(now - item.at)} — wait for the hand-back`
+          ? `${item.task}: verifying ${item.tier}/${mark(item.alias)} ${elapsed(now - item.at)} — ${verifyingTail(item.task, verdictTool)}`
+          : `${item.task}: running ${item.tier}/${mark(item.alias)} ${elapsed(now - item.at)} — wait for the hand-back`
       case 'decision':
         return `${item.task}: ${item.next}`
       case 'queued':
         // MOD-24: a row held up by a resource names it and who holds it; a row waiting for a slot reads as it did
-        return `${item.task}: queued (position ${item.position}) — ${item.waits ? `waits for ${item.waits.resource} (held by ${item.waits.holder})` : 'starts when a worker slot frees'}`
+        return `${item.task}: queued (position ${item.position})${(item as QueuedItem).alias ? ` · ${mark((item as QueuedItem).alias as string)}` : ''} — ${item.waits ? `waits for ${item.waits.resource} (held by ${item.waits.holder})` : 'starts when a worker slot frees'}`
       case 'eval-failed': {
         const score = item.total !== undefined && item.pass !== undefined ? ` ${item.pass}/${item.total}` : ''
         return `eval ${item.tier}${score} at ${item.sha.slice(0, 8)}: read the failing names in the transcript, then press clear in the band`

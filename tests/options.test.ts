@@ -349,7 +349,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.spawns).toHaveLength(0)
     await w.clock.advance(25 * MIN)
     expect(w.spawns).toHaveLength(1)
-    expect(w.spawns[0]).toMatchObject({ description: 'debrief' })
+    expect(w.spawns[0]).toMatchObject({ description: '🔵 debrief' })
   })
 
   test('debriefMinNewLines: 50 holds a debrief back on 30 new lines (the built-in 25 runs it)', async ($, on) => {
@@ -438,7 +438,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     await $.turn.complete(mainTurn())
     await w.clock.advance(10 * MIN)
     expect(w.spawns).toHaveLength(1)
-    expect(w.spawns[0]).toMatchObject({ description: 'eval T1' })
+    expect(w.spawns[0]).toMatchObject({ description: '🔵 eval T1' })
   })
 
   test('evalIdleMinutes: 30 waits 30 quiet minutes (the built-in 10)', async ($, on) => {
@@ -475,7 +475,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     const w = evalWorld(on)
     await live($, w, [['evalLiveCommand', './scripts/live.sh'], ['evalLive', 'on']])
     expect(w.spawns).toHaveLength(2)
-    expect(w.spawns[1]).toMatchObject({ description: 'eval T2' })
+    expect(w.spawns[1]).toMatchObject({ description: '🔵 eval T2' })
   })
 
   test('evalLiveCommand: the command is what the real-world runner is told to run', async ($, on) => {
@@ -620,6 +620,15 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(await band()).toBeDefined()
     await set($, 'dashboardBand', 'off')
     expect(await band()).toBeUndefined()
+  })
+
+  test('modelGlyphs: off removes the glyph from a started row', async ($, on) => {
+    const w = world(on)
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1') }))
+    expect(delivered(w)).toContain('T-1 started · 🔵 sonnet (standard)')
+    await set($, 'modelGlyphs', 'off')
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_02ABCDEFGH' }))
+    expect(delivered(w)).toContain('T-2 started · sonnet (standard)')
   })
 })
 
