@@ -268,6 +268,14 @@ const say = async ($: { command: { run: (c: never) => Promise<{ text?: unknown }
 const bare = (on: unknown, files: Record<string, string> = {}) => world(on as never, { manifest: MANIFEST, files })
 
 describe('MOD-73: /delegation config shows what the mod runs with', () => {
+  test('MOD-78: modelGlyphs: empty lists the built-in map on its in effect line; off and pairs show none', async ($, on) => {
+    bare(on)
+    await $.session.start(sessionStart)
+    expect(await say($, 'modelGlyphs')).toContain('in effect: haiku=🟢, sonnet=🔵, opus=🟣, fable=🟠, other=⚪')
+    await say($, 'modelGlyphs off')
+    expect(await say($, 'modelGlyphs')).not.toContain('in effect')
+  })
+
   test('nothing set: the count line, "all 50 at their defaults", the how-to line, nothing else', async ($, on) => {
     bare(on)
     await $.session.start(sessionStart)
