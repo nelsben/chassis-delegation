@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.11 — 2026-10-13
 
 - **Every subagent row and every mod row carries a model glyph (MOD-78).** 🟢 haiku · 🔵 sonnet · 🟣 opus · 🟠 fable · ⚪ other.
   The agent.spawn hook rewrites the description of every spawn it resolves a model for to `<glyph> <description>`
