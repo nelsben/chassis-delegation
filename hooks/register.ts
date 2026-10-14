@@ -196,6 +196,7 @@ import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
+import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
@@ -509,6 +510,9 @@ type Config = {
   gitGuard: boolean
   /** GH-112: the band above the prompt. */
   dashboardBand: boolean
+  /** MOD-78: the glyph per model on every row: a map, or 'off'; `glyphsText` is the option as written. */
+  glyphs: GlyphMap | 'off'
+  glyphsText: string
   /** GH-114: the card tool's dry run asks the classifier beside the card's tier. */
   classifierSecondOpinion: boolean
   guardBranches: string[]
@@ -602,6 +606,8 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       ledgerFile: o.ledgerFile !== false,
       gitGuard: o.gitGuard !== false,
       dashboardBand: o.dashboardBand !== false,
+      glyphs: parseGlyphs(str('modelGlyphs')),
+      glyphsText: str('modelGlyphs'),
       classifierSecondOpinion: o.classifierSecondOpinion !== false,
       guardBranches: parseGuardBranches(str('guardBranches')),
       gateMap: eff.gateMap,
@@ -650,6 +656,19 @@ let repoText: string | null | undefined
 /** MOD-18: the loaded copy's manifest as last read, which names the mod's own repository: undefined = not read yet, null = unreadable. */
 let modManifest: string | null | undefined
 let cfg: Config = readConfig({}, {}).cfg
+/** MOD-78: the glyph for an alias or model id ('' with modelGlyphs off). */
+const glyphOf = (alias: string | undefined): string => (cfg.glyphs === 'off' || !alias ? '' : modelGlyph(alias, cfg.glyphs))
+/** MOD-78: a description with the model's glyph in front, once; untouched with modelGlyphs off. */
+const glyphDescription = (description: string, alias: string | undefined): string => (cfg.glyphs === 'off' ? description : withGlyph(description, glyphOf(alias), cfg.glyphs))
+const glyphLogged = new Set<string>()
+/** MOD-78: a malformed modelGlyphs entry is named in the debug log, once. */
+function noteGlyphIssues($: Host): void {
+  for (const line of glyphIssues(cfg.glyphsText)) {
+    if (glyphLogged.has(line)) continue
+    glyphLogged.add(line)
+    debug($, line)
+  }
+}
 const waiting = new Set<string>() // Agent tool calls still awaiting their result
 const handbacks = new Map<string, string>() // agentId → a SubagentHandback message a tool.call hook saw (the transcript is the live source: GH-2)
 const verifying = new Map<string, SpawnRecord>() // MOD-74: the spawn behind each attempt key in `finalizing`, for the status section
@@ -3929,7 +3948,7 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }), workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   const full = spawnText ? `${verdictRows}\n${spawnText}` : verdictRows
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines })
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines })
   const line = [quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n')
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
@@ -4001,7 +4020,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   }
 
   const long = [reviewVerdictLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, counts, usd, usdApprox, model, next }), reviewClause(counts), ...shown].join('\n')
-  const quiet = reviewLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, alias: spawn.alias, ...(usd !== undefined ? { usd, usdApprox } : {}), counts, next })
+  const quiet = reviewLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), counts, next })
   const line = [quiet, ...shown].join('\n')
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: long, verdictLine: line })
@@ -4066,7 +4085,7 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
 /** MOD-74: the row for a briefed worker that has started (or resumed); verdictVerbosity=silent posts none. */
 async function postStarted($: Host, i: { label: string; alias: string; tier: string; attempt: number; budget: number; kind: StartKind }) {
   if (!postsRows(cfg.verbosity)) return
-  await appendRow($, startedRow(i))
+  await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias) }))
 }
 
 /** MOD-74: a worker's spend this attempt as the verdict row computes it (its own turns, else the session's growth), undefined while unknown. */
@@ -4086,7 +4105,7 @@ async function postHandedBack($: Host, spawn: SpawnRecord) {
   handedBackPosted.add(key)
   const t = await now($)
   const usd = await attemptUsd($, spawn)
-  await appendRow($, handedBackRow({ label: taskLabel(spawn.task, spawn.subtask), alias: spawn.alias, minutes: waitedMinutes(spawn.at ?? t, t), ...(usd !== undefined ? { usd } : {}) }))
+  await appendRow($, handedBackRow({ label: taskLabel(spawn.task, spawn.subtask), alias: spawn.alias, glyph: glyphOf(spawn.alias), minutes: waitedMinutes(spawn.at ?? t, t), ...(usd !== undefined ? { usd } : {}) }))
 }
 
 /** Hands a verdict to the brain per verdictVerbosity: the row it returns, plus the log and toast (2B). */
@@ -5041,14 +5060,14 @@ async function runningWorkers($: Host): Promise<RunningWorker[]> {
     const tier = tierOf(parseHeader(q.prompt)?.tier) ?? 'standard'
     out.push({ label, alias: cfg.tierMap[tier], tier, state: 'queued', minutes: waitedMinutes(q.at, t), usd: 0 })
   }
-  return out
+  return out.map(w => ({ ...w, glyph: glyphOf(w.alias) }))
 }
 
 /** `/delegation` with no argument: the delegation state and where the config came from. */
 async function statusReport($: Host): Promise<string> {
   await loadRepoConfig($)
   const brainModel = await $.session.model().catch(() => undefined)
-  const running = runningSection(await runningWorkers($), brainModel ? aliasOf(brainModel) ?? brainModel : undefined)
+  const running = runningSection(await runningWorkers($), brainModel ? aliasOf(brainModel) ?? brainModel : undefined, brainModel ? glyphOf(brainModel) : undefined)
   const s = await snapshot($)
   // MOD-75: a task merged this session is listed under merged:, and no longer as running or pending
   const sid = await sessionIdOf($)
@@ -5486,6 +5505,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
   try {
     // MOD-73: a value changed in the repo file or the user options file applies from this spawn
     await loadRepoConfig($)
+    noteGlyphIssues($)
     const p = await planSpawn($, e)
     const { t, key, named, header, adhoc, task, subtask, label, budget, spend, lane, records } = p
     // GH-1 item 6: a budget off the grammar falls back, and says so
@@ -5809,9 +5829,10 @@ async function spawnSelf($: Host, input: { prompt: string; description: string; 
   selfDecided.add(pk)
   try {
     return await decideSpawn($, { tool_use_id: '', ...input }, async alias => {
-      const r = await $.agent.spawn({ prompt: input.prompt, description: input.description, subagentType: input.subagentType, model: alias, ...(input.cwd ? { cwd: input.cwd } : {}) })
+      const description = glyphDescription(input.description, alias)
+      const r = await $.agent.spawn({ prompt: input.prompt, description, subagentType: input.subagentType, model: alias, ...(input.cwd ? { cwd: input.cwd } : {}) })
       if (r.deny !== undefined) return r
-      const agentId = r.agentId ?? selfIds.get(pk) ?? (await agentList($)).find(a => !before.has(a.id) && a.description === input.description)?.id
+      const agentId = r.agentId ?? selfIds.get(pk) ?? (await agentList($)).find(a => !before.has(a.id) && a.description === description)?.id
       return agentId ? { ...r, agentId } : r
     })
   } catch (err) {
@@ -5903,9 +5924,9 @@ export const register: Register = (on, opts) => {
     const asked = { ...e, subagentType: e.subagentType || (e as unknown as { subagent_type?: string }).subagent_type || 'general-purpose' }
     // MOD-21: a reviewer's prompt opens with its marker. Read before the brief the prompt names: that is not a worker.
     const marker = parseReviewMarker(e.prompt)
-    if (marker) return decideReview($, asked, marker, (alias, cwd) => next({ ...e, model: alias, ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
+    if (marker) return decideReview($, asked, marker, (alias, cwd) => next({ ...e, model: alias, description: glyphDescription(e.description, alias), ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
     // MOD-12: the brain's Agent call names no folder; a briefed worker runs where /dispatch prepared it
-    return decideSpawn($, asked, (alias, cwd) => next({ ...e, model: alias, ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
+    return decideSpawn($, asked, (alias, cwd) => next({ ...e, model: alias, description: glyphDescription(e.description, alias), ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
   })
 
   // ---- every tool call: the worker's SubagentHandback text; denials as friction (5E) ---
@@ -6365,7 +6386,7 @@ export const register: Register = (on, opts) => {
       ]
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
       const blocks = blocksFor({ current: metricsFromRecords(mine, since), history: [metricsFromRecords(mine, since)], driveLines: driveLines(await readDrive($)) })
-      return paneTree(p, { blocks, open: openItemLines(items, view.now, !cfg.wakeOnVerdict), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e) }, () => void $.ui.close({ id: DASH_PANE })) as never
+      return paneTree(p, { blocks, open: openItemLines(items, view.now, !cfg.wakeOnVerdict, glyphOf), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e) }, () => void $.ui.close({ id: DASH_PANE })) as never
     } catch (err) {
       debug($, `pane not drawn: ${String(err)}`)
       return next(e)

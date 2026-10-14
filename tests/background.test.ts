@@ -100,7 +100,7 @@ describe('2B: quiet verdicts', () => {
   }
   const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
   const RED = 'claim gate: failed — gate=pass claimed but the gate is RED at 1234abcd (exit 1)'
-  const ROW = 'chassis-delegation: T-4 attempt 1/3 refuted on gate (gate=pass claimed but the gate is RED at 1234abcd (exit 1)) · sonnet · ~$0.00 · next=resume agent=agent-4'
+  const ROW = 'chassis-delegation: T-4 attempt 1/3 refuted on gate (gate=pass claimed but the gate is RED at 1234abcd (exit 1)) · 🔵 sonnet · ~$0.00 · next=resume agent=agent-4'
   const FULL_FIRST = 'chassis-delegation: verdict=refuted task=T-4 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=resume agent=agent-4 — SendMessage it the verifier lines below'
 
   test('line, the default: a background verdict is one row; the claim lines go to the debug log and $.state', { options: GM }, async ($, on) => {
@@ -257,7 +257,7 @@ describe('2C: the clean-stop debrief', () => {
     await w.clock.advance(1 * MIN)
     expect(w.spawns).toHaveLength(1)
     expect(w.spawns[0]).toMatchObject({
-      description: 'debrief',
+      description: '🔵 debrief',
       model: 'sonnet',
     })
     expect(String(w.spawns[0]?.prompt).split('\n')[0]).toBe(`Run the /debrief skill exactly as written in ${SKILL}. Session id sess-1. Write only what the skill allows.`)
@@ -377,7 +377,7 @@ describe('2D: the eval trigger', () => {
     await $.turn.complete(mainTurn())
     await w.clock.advance(10 * MIN)
     expect(w.spawns).toHaveLength(1)
-    expect(w.spawns[0]).toMatchObject({ description: 'eval T1', model: 'sonnet' })
+    expect(w.spawns[0]).toMatchObject({ description: '🔵 eval T1', model: 'sonnet' })
     const prompt = String(w.spawns[0]?.prompt)
     expect(prompt).toContain(`Run \`npm run eval -- --ci\` once in ${ROOT}`)
     expect(prompt).toContain(`[[eval v=1 tier=T1 sha=${A} total=N pass=N fail=N result=<path or none>]]`)
@@ -468,7 +468,7 @@ describe('2D: the eval trigger', () => {
     await w.clock.advance(10 * MIN)
     await $.turn.complete(turnInput('agent-1', `[[eval v=1 tier=T1 sha=${A} total=63 pass=63 fail=0 result=none]]`))
     expect(w.spawns).toHaveLength(2)
-    expect(w.spawns[1]).toMatchObject({ description: 'eval T2', model: 'sonnet' })
+    expect(w.spawns[1]).toMatchObject({ description: '🔵 eval T2', model: 'sonnet' })
     expect(String(w.spawns[1]?.prompt)).toContain('Run `./scripts/eval-live.sh` once in')
     expect(String(w.spawns[1]?.prompt)).toContain('at most $1.00')
     await $.turn.complete(turnInput('agent-2', `[[eval v=1 tier=T2 sha=${A} total=12 pass=12 fail=0 result=/tmp/t2.json]]`))
