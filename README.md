@@ -13,7 +13,7 @@ against the repo itself (branch, sha, changed files, scope, gate, PR) and hands
 the brain one verdict line with what to do next. At a quiet stop it can write a
 debrief in the background, and it can run your eval when `origin/main` moves.
 It is a Claude Code mod (a plugin of function hooks). It needs nothing from
-any other repo: no scripts, no harness, no network. Version 0.9.11, MIT.
+any other repo: no scripts, no harness, no network. Version 0.9.12, MIT.
 
 ## Install on a new machine
 
@@ -151,6 +151,15 @@ cases of tests/eval/classifier-cases.jsonl`.
    `/delegation setup` in the repo: in a repo already set up it changes no
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
+
+### From 0.9.11 to 0.9.12
+
+What the brain will see:
+
+- **One delegation meter (MOD-81).** While the band above the prompt is drawn, the host status line under it is cleared. The band's row names the live workers and the context percent, and both read the same newest dollars, so the two no longer disagree. With the band off, empty or not drawn for over a minute, the status line shows as before.
+- **`debrief post` and `apply` find your debrief (MOD-80).** With your own debrief skill installed, the findings land under `~/.claude/harness/debriefs`, and the by-hand doors now read this session's debrief there. Another session's file in that shared folder is never picked. A refusal names every folder it looked in.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change.
 
 ### From 0.9.10 to 0.9.11
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.12 — 2026-10-15
 
 - **One delegation meter (MOD-81).** While the band above the prompt is drawn, the host status line is cleared
   instead of repeating it. The band's row now names the live workers and the context percent
