@@ -293,6 +293,9 @@ export type LiveView = {
   firstTry: { n: number; m: number }
   /** GH-113: the brain's own spend beside the workers'; absent before the brain's first turn. */
   brain?: BrainSummary
+  /** MOD-81: the live workers as the status line named them (`T-1 $0.42`), and the context percent; absent while unknown. */
+  labels?: string[]
+  ctx?: number
 }
 
 /** Cards judged on their first attempt this session: how many came back consistent. */
@@ -303,7 +306,7 @@ export function firstTry(records: readonly AttemptRecord[]): { n: number; m: num
   return { n: judged.filter(r => r.verdict === 'consistent').length, m: judged.length }
 }
 
-export type ViewInput = WorktreeInput & { since: number; usd: number; series: readonly SpendPoint[]; owed: number; brain?: BrainRecord; sessionId?: string; adhoc?: AdHoc }
+export type ViewInput = WorktreeInput & { since: number; usd: number; series: readonly SpendPoint[]; owed: number; labels?: readonly string[]; ctx?: number; brain?: BrainRecord; sessionId?: string; adhoc?: AdHoc }
 
 export function liveView(i: ViewInput): LiveView {
   const records = sessionRecords(i.records, i.since, { ...(i.sessionId ? { sessionId: i.sessionId } : {}), root: i.root })
@@ -312,6 +315,8 @@ export function liveView(i: ViewInput): LiveView {
     live: Object.keys(i.liveAt).length,
     queued: i.queue.length,
     owed: i.owed,
+    ...(i.labels ? { labels: [...i.labels] } : {}),
+    ...(i.ctx !== undefined ? { ctx: i.ctx } : {}),
     usd: i.usd,
     series: [...i.series],
     events: events(records, i.since),
@@ -338,8 +343,21 @@ export const isActive = (v: Pick<LiveView, 'live' | 'queued' | 'owed'>): boolean
 
 const dollars = (n: number) => `$${n.toFixed(2)}`
 
-export function bandSummary(v: LiveView): string {
-  return ['delegation', `${v.live} live`, `${v.queued} queued`, ...(v.owed > 0 ? [`${v.owed} owed`] : []), dollars(v.usd)].join(' · ')
+export const ctxText = (pct: number | undefined): string => (pct === undefined ? 'ctx –' : `ctx ${Math.round(pct)}%`)
+
+/**
+ * MOD-81: `delegation · 2 live: OPS-165, OPS-160 · 0 queued · $109.92 · ctx 11%`. When `room` (the columns the
+ * text may take) is short, the label list is cut with `…` first, so the dollars and the context stay.
+ */
+export function bandSummary(v: LiveView, room = Number.POSITIVE_INFINITY): string {
+  const tail = [`${v.queued} queued`, ...(v.owed > 0 ? [`${v.owed} owed`] : []), dollars(v.usd), ctxText(v.ctx)]
+  const head = (live: string) => ['delegation', live, ...tail].join(' · ')
+  const labels = (v.labels ?? []).join(', ')
+  if (v.live === 0 || !labels) return head(`${v.live} live`)
+  const full = head(`${v.live} live: ${labels}`)
+  if (full.length <= room) return full
+  const avail = room - head(`${v.live} live: `).length
+  return avail >= 2 ? head(`${v.live} live: ${labels.slice(0, avail - 1).trimEnd()}…`) : head(`${v.live} live`)
 }
 
 /** The last 30 minutes of cumulative dollars, thinned to at most `n` values: the band's sparkline. */
@@ -384,7 +402,7 @@ const cell = (s: string) => s.replace(/\|/g, '\\|')
  */
 export function dashboardText(v: LiveView): string {
   const ft = v.firstTry.m > 0 ? ` · ${v.firstTry.n} of ${v.firstTry.m} consistent on the first attempt` : ''
-  const lines = [`**Delegation** · ${v.live} live · ${v.queued} queued${v.owed > 0 ? ` · ${v.owed} owed` : ''} · ${dollars(v.usd)} this session${ft}`]
+  const lines = [`**Delegation** · ${v.live} live · ${v.queued} queued${v.owed > 0 ? ` · ${v.owed} owed` : ''} · ${dollars(v.usd)} this session · ${ctxText(v.ctx)}${ft}`]
   const series = v.series
   if (series.length >= 2) {
     const first = series[0] as SpendPoint

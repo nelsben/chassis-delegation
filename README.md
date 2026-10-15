@@ -554,8 +554,14 @@ A live view of what delegation is doing and spending, in two places:
 
 - **The band above the prompt**, drawn only while a worker is live, a spawn is
   queued or a verdict is owed (nothing otherwise):
-  `delegation · 2 live · 1 queued · $4.12 ·` a sparkline of the last 30
-  minutes of spend, and a `[ details ]` button that opens the pane. The whole
+  `delegation · 2 live: OPS-165, OPS-160 · 1 queued · $4.12 · ctx 11% ·` a
+  sparkline of the last 30 minutes of spend, and a `[ details ]` button that
+  opens the pane. While the band is drawn it replaces the host status line
+  (the `2 workers · $… · ctx …` text under the prompt): the line is cleared,
+  and shows again as before when the band is off, has nothing to show, or the
+  screen has not drawn it for a minute. The band and the old line read the same
+  session dollars. A long worker list is cut with `…` to fit the width before
+  the dollars are. The whole
   band is a hover scope: hover it and a card opens beneath the row with the
   first three blocks below. Turn the band off with the `dashboardBand`
   setting (`/delegation config dashboardBand false`; default on); `/delegation dashboard` still opens the pane.
