@@ -9,6 +9,14 @@
   `$.session.usage()` cost the mod has seen, so their dollars agree; the sparkline still draws from the sampled
   series. With the band off, empty, or undrawn for over a minute, the status line shows as before.
 
+- **`/delegation debrief post` and `apply` find the findings where the debrief wrote them (MOD-80).** With your own
+  debrief skill installed the debrief and its `.findings.json` land under `~/.claude/harness/debriefs`, which the
+  by-hand doors never read, so `debrief post 1` answered "no .findings.json under <root>/.delegation/debriefs/" right
+  after a debrief that wrote one. One resolver (`hooks/lib/debriefdir.ts`) now picks: this session's debrief record
+  path, else the newest findings file in `<root>/.delegation/debriefs`, else the newest in the harness folder whose
+  debrief has this session's `session_id` (another session's file there is never picked). `apply`, the settled-notes
+  and the posture line read through it, and a refusal names every folder it looked in.
+
 ## 0.9.11 — 2026-10-13
 
 - **Every subagent row and every mod row carries a model glyph (MOD-78).** 🟢 haiku · 🔵 sonnet · 🟣 opus · 🟠 fable · ⚪ other.
