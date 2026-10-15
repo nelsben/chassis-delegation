@@ -2145,7 +2145,8 @@ a card is yours to decide; the mod only puts the proposals in front of you.
 
 `/delegation debrief apply` turns a proposal into an action you approve (MOD-33):
 
-- `apply` lists the latest debrief's proposals, numbered, each as `[n] <target> ·
+- `apply` looks where `debrief post` does (this session's record, `<root>/.delegation/debriefs/`,
+  then this session's debriefs under `~/.claude/harness/debriefs/`; MOD-80) and lists the latest debrief's proposals, numbered, each as `[n] <target> ·
   <summary on one line> · open`, or `done: <note> (<date>)` / `dismissed: <reason>
   (<date>)`; none prints `no proposals in <debrief path>`.
 - `apply <n>` prints proposal n in full (target, rationale, proposed diff) and one
@@ -2222,8 +2223,13 @@ the default and `issues: <owner/name>` when the repo file names one. Set
 an explicit `"issueRepo": ""` turns posting off (leaving the key out does not).
 Posting is two steps on purpose:
 
-1. `/delegation debrief post` reads the latest `.findings.json` under
-   `<root>/.delegation/debriefs/` and prints every finding in full, scrubbed
+1. `/delegation debrief post` reads the findings file of this session's debrief (the
+   debrief record's path, which is where your own debrief skill wrote it, usually
+   under `~/.claude/harness/debriefs/`), else the latest `.findings.json` under
+   `<root>/.delegation/debriefs/`, else the newest one under
+   `~/.claude/harness/debriefs/` whose debrief belongs to this session (that folder is
+   shared by every repo, so another session's file is never picked). When none is
+   found it names every folder it looked in (MOD-80). It prints every finding in full, scrubbed
    again, as it would be posted: the title (`[went well]` first for a went_well
    one), a body whose first line is `**Surface:** … · **Fault class:** … ·
    **Severity:** …`, the text, an Evidence list and a footer `posted by

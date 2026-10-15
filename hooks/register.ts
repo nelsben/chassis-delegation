@@ -117,6 +117,7 @@ import {
   windowFacts,
   type FrictionEvent,
 } from './lib/cleanstop'
+import { resolveFindings, notFoundLine, expandHome } from './lib/debriefdir'
 import { checkDebrief, windowOf, userMessagesOf, userMessagesFromJsonl, transcriptPath, type DebriefWindow, type UserMessage } from './lib/debriefcheck'
 import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedRowsFrom, prsFrom, renderState, SECTION_ID, splitOwed, type RecentVerdict, type StateSnapshot } from './lib/compaction'
 import {
@@ -2688,20 +2689,16 @@ async function postCore($: Host, argText: string, opts: { path?: string; auto?: 
   // MOD-18: nothing is filed while the person's own redact list is empty; the read-only form still shows the drafts, with the warning on top
   if (arg !== '' && cfg.redact.length === 0) return `debrief post refused, nothing posted: ${REDACT_EMPTY}`
   const root = (await $.session.root()).replace(/\/+$/, '')
-  let folder = `${root}/.delegation/debriefs`
-  let names: string[] = []
-  try {
-    names = (await $.fs.list(folder)).map(e => e.name).filter(n => n.endsWith('.findings.json')).sort()
-  } catch {
-    names = []
+  let path: string
+  if (opts.path !== undefined) path = opts.path
+  else {
+    const found = await findFindings($, root)
+    if ('looked' in found) return notFoundLine('post', found.looked)
+    path = found.path
   }
-  let name = names[names.length - 1]
-  if (opts.path !== undefined) {
-    folder = opts.path.replace(/\/[^/]*$/, '')
-    name = opts.path.slice(folder.length + 1)
-  }
-  if (name === undefined) return `debrief post: no .findings.json under ${folder}/. Run /delegation debrief first.`
-  const path = `${folder}/${name}`
+  // the body files for gh stay where the allowlist lets them be read (<root>/.delegation/debriefs), unless the auto path names its own folder
+  const folder = opts.path !== undefined ? path.replace(/\/[^/]*$/, '') : `${root}/.delegation/debriefs`
+  const name = path.slice(path.lastIndexOf('/') + 1)
   const text = await readText($, path)
   let parsed: Record<string, unknown> = {}
   try {
@@ -2860,38 +2857,102 @@ async function proposalsAt($: Host, debrief: string): Promise<LatestProposals | 
   return { debrief, findings, proposals: parseProposals(text), statuses: parseStatuses(doc?.proposals_status), doc }
 }
 
-/** The latest debrief's proposals: the one this session's record names, else the newest in <root>/.delegation/debriefs. */
-async function latestProposals($: Host): Promise<LatestProposals | undefined> {
-  const sid = await sessionIdOf($)
-  const rec = sid ? await storeGet<DebriefRecord>($, K.debrief(sid)) : undefined
-  if (rec?.path) {
-    const home = (await homeOf($)).replace(/\/+$/, '')
-    const got = await proposalsAt($, rec.path.startsWith('~/') ? `${home}${rec.path.slice(1)}` : rec.path)
-    if (got) return got
-  }
-  const folder = `${(await $.session.root()).replace(/\/+$/, '')}/.delegation/debriefs`
-  let stems: string[] = []
+/** MOD-80: the names in a folder ending `ext`, sorted; [] when it cannot be listed. */
+async function namesIn($: Host, folder: string, ext: string): Promise<string[]> {
   try {
-    stems = (await $.fs.list(folder)).map(e => e.name).filter(n => n.endsWith('.json')).map(n => n.replace(/\.findings\.json$/, '').replace(/\.json$/, '')).filter(n => !/\.post-\d+/.test(n))
-  } catch {
-    stems = []
-  }
-  const stem = [...new Set(stems)].sort().at(-1)
-  return stem === undefined ? undefined : proposalsAt($, `${folder}/${stem}.json`)
-}
-
-/** `already done: …` / `dismissed: …` lines from the last few debriefs in the repo folder, each summary once. */
-async function settledNotes($: Host): Promise<string[]> {
-  const folder = `${(await $.session.root()).replace(/\/+$/, '')}/.delegation/debriefs`
-  let stems: string[] = []
-  try {
-    stems = (await $.fs.list(folder)).map(e => e.name).filter(n => n.endsWith('.findings.json')).map(n => n.replace(/\.findings\.json$/, '')).sort().slice(-10)
+    return (await $.fs.list(folder)).map(e => e.name).filter(n => n.endsWith(ext)).sort()
   } catch {
     return []
   }
+}
+
+/** MOD-80: the debrief file a name in the harness folder belongs to is this session's: its `session_id` is the session id. The folder is shared by every repo on the machine. */
+async function harnessMine($: Host, folder: string, names: readonly string[], sid: string, home: string): Promise<string[]> {
+  if (sid === '') return []
+  const mine: string[] = []
+  for (const n of names.slice(-10)) {
+    let debrief = `${folder}/${n.replace(/\.findings\.json$/, '.json')}`
+    if (n.endsWith('.findings.json')) {
+      try {
+        const j: unknown = JSON.parse((await readText($, `${folder}/${n}`)) ?? 'null')
+        const named = j !== null && typeof j === 'object' ? (j as Record<string, unknown>).debrief : undefined
+        if (typeof named === 'string' && named.trim() !== '') debrief = expandHome(named, home)
+      } catch {
+        // the sibling debrief file is used
+      }
+    }
+    try {
+      const d: unknown = JSON.parse((await readText($, debrief)) ?? 'null')
+      if (d !== null && typeof d === 'object' && (d as Record<string, unknown>).session_id === sid) mine.push(n)
+    } catch {
+      // not readable: not this session's
+    }
+  }
+  return mine
+}
+
+/** MOD-80: this session's record path, expanded, when its debrief file exists. */
+async function recordDebrief($: Host, sid: string, home: string): Promise<string | undefined> {
+  const rec = sid ? await storeGet<DebriefRecord>($, K.debrief(sid)) : undefined
+  if (!rec?.path) return undefined
+  const p = expandHome(rec.path, home)
+  return (await readText($, p)) === undefined ? undefined : p
+}
+
+/** MOD-80: the findings file the by-hand doors read (see resolveFindings): the record's, the repo folder's newest, this session's newest in the harness folder. */
+async function findFindings($: Host, root: string): Promise<{ path: string } | { looked: string[] }> {
+  const home = (await homeOf($)).replace(/\/+$/, '')
+  const sid = await sessionIdOf($)
+  const repoFolder = `${root}/.delegation/debriefs`
+  const harnessFolder = `${home}/.claude/harness/debriefs`
+  const recd = await recordDebrief($, sid, home)
+  let recordFindings: string | undefined
+  if (recd !== undefined) {
+    const f = findingsPathOf(recd)
+    if ((await readText($, f)) !== undefined) recordFindings = f
+  }
+  const repoNames = await namesIn($, repoFolder, '.findings.json')
+  const harnessNames = repoNames.length > 0 || recordFindings !== undefined ? [] : await namesIn($, harnessFolder, '.findings.json')
+  return resolveFindings({ repoFolder, harnessFolder, recordFindings, repoNames, harnessMine: await harnessMine($, harnessFolder, harnessNames, sid, home) })
+}
+
+/** The latest debrief's proposals: the one this session's record names, else the newest in <root>/.delegation/debriefs, else this session's newest in the harness folder (MOD-80). */
+async function latestProposals($: Host): Promise<LatestProposals | undefined> {
+  const r = await findDebrief($)
+  return 'path' in r ? proposalsAt($, r.path) : undefined
+}
+
+/** MOD-80: the debrief file `debrief apply` reads, or the folders looked in. A debrief with no findings file counts. */
+async function findDebrief($: Host): Promise<{ path: string } | { looked: string[] }> {
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const home = (await homeOf($)).replace(/\/+$/, '')
+  const sid = await sessionIdOf($)
+  const repoFolder = `${root}/.delegation/debriefs`
+  const harnessFolder = `${home}/.claude/harness/debriefs`
+  const rec = await recordDebrief($, sid, home)
+  if (rec !== undefined) return { path: rec }
+  const stemsOf = (names: string[]): string[] => [...new Set(names.map(n => n.replace(/\.findings\.json$/, '').replace(/\.json$/, '')).filter(n => !/\.post-\d+/.test(n)))].sort()
+  const repo = stemsOf(await namesIn($, repoFolder, '.json')).at(-1)
+  if (repo !== undefined) return { path: `${repoFolder}/${repo}.json` }
+  const hNames = (await namesIn($, harnessFolder, '.json')).filter(n => !n.endsWith('.findings.json') && !/\.post-\d+/.test(n))
+  const mine = await harnessMine($, harnessFolder, hNames, sid, home)
+  const h = stemsOf(mine).at(-1)
+  return h === undefined ? { looked: [repoFolder, harnessFolder] } : { path: `${harnessFolder}/${h}.json` }
+}
+
+/** `already done: …` / `dismissed: …` lines from the last few debriefs in the repo folder and this session's in the harness folder, each summary once. */
+async function settledNotes($: Host): Promise<string[]> {
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const home = (await homeOf($)).replace(/\/+$/, '')
+  const sid = await sessionIdOf($)
+  const repoFolder = `${root}/.delegation/debriefs`
+  const harnessFolder = `${home}/.claude/harness/debriefs`
+  const stemOf = (n: string): string => n.replace(/\.findings\.json$/, '')
+  const repo = (await namesIn($, repoFolder, '.findings.json')).slice(-10).map(n => `${repoFolder}/${stemOf(n)}.json`)
+  const harness = (await harnessMine($, harnessFolder, await namesIn($, harnessFolder, '.findings.json'), sid, home)).map(n => `${harnessFolder}/${stemOf(n)}.json`)
   const lines = new Set<string>()
-  for (const stem of stems) {
-    const got = await proposalsAt($, `${folder}/${stem}.json`)
+  for (const debrief of [...repo, ...harness]) {
+    const got = await proposalsAt($, debrief)
     if (got) for (const l of settledLines(got.proposals, got.statuses)) lines.add(l)
   }
   return lines.size === 0 ? [] : [...lines, SETTLED_ASK]
@@ -2904,7 +2965,11 @@ async function settledNotes($: Host): Promise<string[]> {
  */
 async function runDebriefApply($: Host, argText: string): Promise<string> {
   const latest = await latestProposals($)
-  if (latest === undefined) return 'debrief apply: no debrief found under .delegation/debriefs/. Run /delegation debrief first.'
+  if (latest === undefined) {
+    const f = await findDebrief($)
+    const home = (await homeOf($)).replace(/\/+$/, '')
+    return notFoundLine('apply', 'looked' in f ? f.looked : [`${(await $.session.root()).replace(/\/+$/, '')}/.delegation/debriefs`, `${home}/.claude/harness/debriefs`])
+  }
   const { proposals, statuses } = latest
   const m = /^\s*(\S*)\s*(\S*)\s*([\s\S]*)$/.exec(argText)
   const [, nText = '', verb = '', rest = ''] = m ?? []
