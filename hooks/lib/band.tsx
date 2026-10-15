@@ -12,6 +12,9 @@ import { liveBlocks, type PaneTable } from './pane'
 
 export const DASH_SCOPE = 'chassis-delegation-dash'
 
+/** MOD-81: columns the sparkline, the details button and the gaps take beside the summary text. */
+const BAND_RESERVED = 32
+
 /** Lines past the band's rows fold into one `… n more` line; the Button keeps the last row. */
 export function capLines(lines: readonly BandLine[], maxRows: number): BandLine[] {
   const room = Math.max(1, maxRows - 1)
@@ -49,7 +52,7 @@ export function bandTree(p: PaneTable, v: LiveView, scheme: Scheme, columns: num
   return (
     <Box key="dash-band" flexDirection="column" hover={{ scope: DASH_SCOPE }}>
       <Box flexDirection="row" gap={1} hover={{ scope: DASH_SCOPE }}>
-        <Text wrap="truncate-end">{bandSummary(v)} ·</Text>
+        <Text wrap="truncate-end">{bandSummary(v, Math.max(20, columns - BAND_RESERVED))} ·</Text>
         {sparkline(p, v)}
         <Button key="details" label="details" hotkey="d" variant="primary" onPress={onDetails} />
       </Box>

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **One delegation meter (MOD-81).** While the band above the prompt is drawn, the host status line is cleared
+  instead of repeating it. The band's row now names the live workers and the context percent
+  (`delegation · 2 live: OPS-165, OPS-160 · 0 queued · $109.92 · ctx 11%`; a long list is cut with `…` before the
+  dollars), and the pane's header gains the same `ctx` part. The band and the status line read the newest
+  `$.session.usage()` cost the mod has seen, so their dollars agree; the sparkline still draws from the sampled
+  series. With the band off, empty, or undrawn for over a minute, the status line shows as before.
+
 ## 0.9.11 — 2026-10-13
 
 - **Every subagent row and every mod row carries a model glyph (MOD-78).** 🟢 haiku · 🔵 sonnet · 🟣 opus · 🟠 fable · ⚪ other.

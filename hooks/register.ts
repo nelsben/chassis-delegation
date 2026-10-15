@@ -680,6 +680,14 @@ let delegated = false
 /** GH-106: the turn id a subagent's `turn.start` carried (the engine gives none today), by agentId. */
 const turnOf = new Map<string, string>()
 let lastUsd: number | undefined
+/** MOD-81: the newest session dollars any read of $.session.usage() gave the mod, with when: the band and the status line both show this. */
+let latestUsage: { usd: number; at: number } | undefined
+/** MOD-81: when the ui.render handler last drew the band; undefined once it declines to. */
+let bandDrawnAt: number | undefined
+async function noteUsd($: Host, usd: number | undefined, at?: number): Promise<void> {
+  if (usd === undefined) return
+  latestUsage = { usd, at: at ?? (await now($)) }
+}
 let lastCostChangeAt = 0
 let statusTimer: { cancel: () => void } | undefined
 let sampleTimer: { cancel: () => void } | undefined
@@ -816,7 +824,9 @@ async function now($: Host): Promise<number> {
 }
 async function sessionUsd($: Host): Promise<number | undefined> {
   try {
-    return (await $.session.usage()).cost?.usd
+    const usd = (await $.session.usage()).cost?.usd
+    await noteUsd($, usd)
+    return usd
   } catch {
     return undefined
   }
@@ -1316,13 +1326,16 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
   const queue = await readQueue($)
   let since = 0
   let usd = 0
+  let ctx: number | undefined
   try {
     const u = await $.session.usage()
     since = u.startedAt ?? 0
-    usd = u.cost?.usd ?? 0
+    ctx = u.context.percent
+    await noteUsd($, u.cost?.usd, t)
   } catch {
     // unknown: the series and the records still draw
   }
+  usd = latestUsage?.usd ?? 0
   let root = ''
   try {
     root = await $.session.root()
@@ -1356,6 +1369,8 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     usd,
     series: await readSpend($),
     owed: live.pending.length,
+    labels: await liveLabels($, live.workers),
+    ...(ctx !== undefined ? { ctx } : {}),
     ...(brain ? { brain } : {}),
   })
   return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits }
@@ -1404,6 +1419,7 @@ async function refreshStatus($: Host) {
     // leave them unknown
   }
   const t = await now($)
+  await noteUsd($, usd, t)
   if (usd !== lastUsd) {
     lastUsd = usd
     lastCostChangeAt = t
@@ -1420,7 +1436,19 @@ async function refreshStatus($: Host) {
     }
     return
   }
-  const liveNow = (await liveState($)).workers
+  const liveAll = await liveState($)
+  const liveNow = liveAll.workers
+  // MOD-81: one meter. While the band is drawn it carries the workers, the dollars and the context, so the host line is cleared
+  if (cfg.dashboardBand && bandDrawnAt !== undefined && t - bandDrawnAt <= STATUS_EVERY_MS && isActive({ live: liveNow.length, queued: liveAll.queued, owed: liveAll.pending.length })) {
+    $.ui.status(undefined)
+    try {
+      await $.state.set(STATUS, '')
+    } catch {
+      // view only
+    }
+    armStatusTimer($)
+    return
+  }
   const text = statusText({ running, usd, pct }) + (liveNow.length > 0 ? ` · (${liveNow.length} live: ${(await liveLabels($, liveNow)).join(', ')})` : '')
   $.ui.status(text)
   try {
@@ -1428,6 +1456,9 @@ async function refreshStatus($: Host) {
   } catch {
     // view only
   }
+  armStatusTimer($)
+}
+function armStatusTimer($: Host) {
   if (!statusTimer) {
     try {
       // a worker killed without a turn.complete frees its slot: the next prompt's state section says ready (MOD-12)
@@ -6359,12 +6390,15 @@ export const register: Register = (on, opts) => {
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    bandDrawnAt = undefined
     if (!cfg.dashboardBand || e.props.hasSurvey) return next(e)
     try {
       const { view } = await liveModel($)
       if (!isActive(view)) return next(e)
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      return bandTree(p, view, pickScheme(e), e.props.bodyColumns, () => void $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })) as never
+      const tree = bandTree(p, view, pickScheme(e), e.props.bodyColumns, () => void $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })) as never
+      bandDrawnAt = await now($)
+      return tree
     } catch (err) {
       debug($, `band not drawn: ${String(err)}`)
       return next(e)

@@ -16,6 +16,7 @@ import {
   type BandItem,
 } from '../hooks/lib/dashboard'
 import { emptyMetrics } from '../hooks/lib/metrics'
+import { bandSummary, type LiveView } from '../hooks/lib/live'
 import { world, NOW as WORLD_NOW } from './harness'
 
 const NOW = 10_000_000
@@ -216,6 +217,55 @@ const drawnBand = async ($: any) => {
 }
 
 describe('GH-112: the band and the pane', () => {
+  // MOD-81: one meter. While the band is drawn the host status line is cleared; otherwise it shows as before.
+  const spawnT7 = ($: any) => $.agent.spawn({ tool_use_id: 'toolu_C0000081', prompt: '[[brief v=1 task=T-7 subtask=main tier=standard]]\nDo it.', description: 'T-7', subagentType: 'general-purpose', provider: { kind: 'model' }, parentModel: 'claude-opus-5-5', background: true, fork: false } as never)
+  test('MOD-81: with the band drawn, the next status refresh leaves the host status line cleared', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await spawnT7($)
+    expect(w.statuses.at(-1)).toMatch(/^1 worker · \$/)
+    expect(await drawnBand($)).toBeDefined()
+    await w.clock.advance(60_000)
+    expect(w.statuses.length).toBeGreaterThan(1)
+    expect(w.statuses.at(-1)).toBeUndefined()
+    expect(w.state.get('chassis-delegation.status')).toBe('')
+  })
+  test('MOD-81: the band says the live workers and the context, cut to the columns before the dollars', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await spawnT7($)
+    const band = await drawnBand($)
+    expect(band).toBeDefined()
+    const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+    expect(await ui.find({ type: 'Text', text: /^delegation · 1 live: T-7 · 0 queued · \$1\.50 · ctx 12% ·/ })).toBeDefined()
+    w.context = { window: 1_000_000, percent: 40 }
+    const ui2 = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+    expect(await ui2.find({ type: 'Text', text: /ctx 40%/ })).toBeDefined()
+  })
+  test('MOD-81: after a usage read moves the cost from $1.00 to $1.40 with no new sample, the band says $1.40', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    w.usd = 1
+    await spawnT7($)
+    expect((await (await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })).find({ type: 'Text', text: /\$1\.00/ }))).toBeDefined()
+    w.usd = 1.4
+    const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+    expect(await ui.find({ type: 'Text', text: /\$1\.40/ })).toBeDefined()
+  })
+  test('MOD-81: the band off, the status line shows as before', { options: { dashboardBand: false } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await spawnT7($)
+    await drawnBand($)
+    await w.clock.advance(60_000)
+    expect(w.statuses.at(-1)).toMatch(/^1 worker · \$.*\(1 live: T-7/)
+  })
+  test('MOD-81: a band not drawn for longer than one refresh interval gives the status line back', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await spawnT7($)
+    expect(await drawnBand($)).toBeDefined()
+    await w.clock.advance(60_000)
+    expect(w.statuses.at(-1)).toBeUndefined()
+    await w.clock.advance(60_000)
+    await w.clock.advance(60_000)
+    expect(w.statuses.at(-1)).toMatch(/^1 worker · \$/)
+  })
   test('the band draws nothing while no worker is live or queued', async ($, on) => {
     world(on)
     expect(await drawnBand($)).toBeUndefined()
@@ -315,5 +365,22 @@ describe('GH-112: the band and the pane', () => {
     expect(await term.find({ type: 'Raster' })).toBeDefined()
     expect(await term.find({ key: 'dash-card' })).toBeDefined()
     expect(await term.find({ key: 'details' })).toBeDefined()
+  })
+})
+
+describe('MOD-81: the band summary line', () => {
+  const view = { now: 1, live: 2, queued: 0, owed: 0, usd: 109.92, series: [], events: [], rows: [], byModel: [], firstTry: { n: 0, m: 0 }, labels: ['OPS-165 $1.20', 'OPS-160'], ctx: 11 } as LiveView
+  test('names the live workers, the dollars and the context', () => {
+    expect(bandSummary(view)).toBe('delegation · 2 live: OPS-165 $1.20, OPS-160 · 0 queued · $109.92 · ctx 11%')
+  })
+  test('ctx is an en dash while unknown; no label list when none is live', () => {
+    const { ctx: _c, ...rest } = view
+    expect(bandSummary({ ...rest, live: 0, labels: [] } as LiveView)).toBe('delegation · 0 live · 0 queued · $109.92 · ctx –')
+  })
+  test('a short room cuts the labels with an ellipsis, never the dollars', () => {
+    const s = bandSummary(view, 60)
+    expect(s.length).toBeLessThanOrEqual(60)
+    expect(s).toMatch(/^delegation · 2 live: OPS-165.*… · 0 queued · \$109\.92 · ctx 11%$/)
+    expect(bandSummary(view, 10)).toBe('delegation · 2 live · 0 queued · $109.92 · ctx 11%')
   })
 })
