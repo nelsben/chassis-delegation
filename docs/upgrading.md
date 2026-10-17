@@ -81,6 +81,18 @@ cases of tests/eval/classifier-cases.jsonl`.
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
 
+### From 0.9.13 to 0.9.14
+
+What the brain will see:
+
+- **The card tool never reuses a task id (MOD-87).** The next id now also skips every id that has a brief in the brief folder or a row in `.delegation/ledger.jsonl`, so a card deleted after its run no longer hands its id, old brief and attempts to a new card.
+
+- **Scope is checked under an outside folder too big to list (MOD-85).** A forbid or scope root outside the repo that holds more than 10000 files used to come back unchecked. The dispatch now says `<root> holds more than 10000 files, so changes there will be found by modification time`, and the hand-back judges every file and folder there modified since the dispatch. Anything else that writes under that root during the run (an app, Finder's `.DS_Store`) counts too, so a card should forbid the narrowest folder that matters.
+
+- **`/delegation merge` works with a git-ignored card folder (MOD-86).** When the card folder is git-ignored the merge marks the root card merged in place and commits no card. Its first line says `card kept local (git-ignored): <path> marked merged`, `--finish` keeps that card, and setup and init print a `cards: <cardDir> is git-ignored, …` line. A tracked card behaves as before.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change.
+
 ### From 0.9.12 to 0.9.13
 
 What the brain will see:

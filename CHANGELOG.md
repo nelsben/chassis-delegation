@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.14 — 2026-10-16
 
 - **The card tool never reuses an id that owns a brief or a ledger row (MOD-87).** `nextNumber` read only the card folder, so after a card was deleted the next card could take its id and dispatch reused the old brief, tier and attempts. The ids in the session root's brief folder (and the scratchpad brief folder when no briefDir is set) and in `.delegation/ledger.jsonl` now count as taken. A ledger line that is not JSON, or has no task, is skipped.
 
