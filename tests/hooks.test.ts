@@ -4491,6 +4491,43 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     expect(row).not.toContain('claim scope: held')
   })
 
+  describe('MOD-85: a forbid root past 10000 files is watched by modification time', () => {
+    const BIG_CARD = CARD.replace('scope: [/out/hair/**, /out/notes/*.md]', 'scope: [/out/hair/**]').replace('forbid: []', 'forbid: [/big/**]')
+    const bigSetup = (on: Parameters<typeof world>[0]) => {
+      const files: Record<string, string> = { [`${ROOT}/agents/tasks/${NAME}`]: BIG_CARD, [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ briefTemplate: '/tpl/brief.md' }), '/tpl/brief.md': TEMPLATE }
+      for (let i = 0; i < 10001; i++) files[`/big/d${i % 50}/f${i}.txt`] = 'x'
+      return world(on, { files, dirs: { [`${ROOT}/agents/tasks`]: [NAME] }, trees: ['/out/hair', '/big'], run, agentId: 'agent-r', store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    }
+
+    test('the dispatch records a watermark and says so; a file changed after it refutes scope, naming the file', { options: OPTIONS }, async ($, on) => {
+      const w = bigSetup(on)
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(commandInput('OPS-9'))).text)
+      expect(out).toContain('/big holds more than 10000 files, so changes there will be found by modification time')
+      const saved = w.store.get('delegation.outside.OPS-9') as { roots: Record<string, unknown>[] }
+      expect(saved.roots.find(r => r.root === '/big')).toEqual({ root: '/big', since: 1_000_000, files: 10001 })
+      await brainSpawn($, out)
+      w.files.set('/out/hair/model.glb', 'glTF')
+      w.files.set('/big/d3/f3.txt', 'changed')
+      w.mtimes.set('/big/d3/f3.txt', 1_005_000)
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      const row = delivered(w)
+      expect(row).toContain('verdict=refuted (no repo) task=OPS-9')
+      expect(row).toContain('claim scope: failed — touches forbid path: /big/d3/f3.txt (outside delta)')
+    })
+
+    test('with nothing changed the scope claim holds, checked by modification time, not unchecked', { options: OPTIONS }, async ($, on) => {
+      const w = bigSetup(on)
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      w.files.set('/out/hair/model.glb', 'glTF')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      const row = delivered(w)
+      expect(row).toContain('claim scope: held — every file in scope; outside delta: 1 changed path under /out/hair, /big, every one within scope and none in forbid (checked by modification time)')
+      expect(row).not.toContain('claim scope: unchecked')
+    })
+  })
+
   test('the card tool takes repo none and an absolute scope: the card, the header and the folders', { options: { briefDir: `${SCRATCH}/briefs`, gateMap: '{"check":"checker {outdir}"}' } }, async ($, on) => {
     const w = world(on, { dirs: { [`${ROOT}/agents/tasks`]: ['README.md'] }, trees: ['/out/hair'], store: { 'delegation.agentTypes': ['general-purpose'] } })
     await $.session.start(sessionStart)

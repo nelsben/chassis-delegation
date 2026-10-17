@@ -4,6 +4,8 @@
 
 - **The card tool never reuses an id that owns a brief or a ledger row (MOD-87).** `nextNumber` read only the card folder, so after a card was deleted the next card could take its id and dispatch reused the old brief, tier and attempts. The ids in the session root's brief folder (and the scratchpad brief folder when no briefDir is set) and in `.delegation/ledger.jsonl` now count as taken. A ledger line that is not JSON, or has no task, is skipped.
 
+- **Scope is checked under an outside folder too big to list (MOD-85).** A forbid or scope root outside the repo that holds more than 10000 files used to come back unchecked, because its listing is kept in the store. Now the dispatch records the time before that root's walk (a watermark) and says `<root> holds more than 10000 files, so changes there will be found by modification time`; at hand-back the root is walked again (up to 1000000 entries, links not followed) and every file and folder modified since is judged against scope and forbid, a deleted file showing as its folder. Nothing newer holds the claim.
+
 ## 0.9.13 — 2026-10-16
 
 - **The README is a front door (MOD-83).** README.md is now a short page: what the mod is, one picture, install in three lines and a list of pages. The reference moved, text unchanged, into eight pages under docs/ (install, guide, contracts, review-and-merge, configuration, spend, internals, upgrading), and the per-version upgrade notes are in docs/upgrading.md. `/delegation update` now points at `docs/upgrading.md` for the `From <old> to <new>` section. tests/node/docs.node.mjs keeps the links honest.
