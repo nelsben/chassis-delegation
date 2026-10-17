@@ -81,6 +81,14 @@ cases of tests/eval/classifier-cases.jsonl`.
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
 
+### From 0.9.12 to 0.9.13
+
+What the brain will see:
+
+- **The README is a front door (MOD-83).** README.md is now a short page: what the mod is, install in three lines and a list of pages. The reference moved, text unchanged, into eight pages under docs/, and `/delegation update` now ends its changelog lines with `docs/upgrading.md: From <old> to <new>` where it used to say `README: …`. A bookmark to an old README anchor now opens the README's top, and the section is on the docs page of the same heading.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change.
+
 ### From 0.9.11 to 0.9.12
 
 What the brain will see:

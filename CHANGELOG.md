@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.13 — 2026-10-16
 
 - **The README is a front door (MOD-83).** README.md is now a short page: what the mod is, one picture, install in three lines and a list of pages. The reference moved, text unchanged, into eight pages under docs/ (install, guide, contracts, review-and-merge, configuration, spend, internals, upgrading), and the per-version upgrade notes are in docs/upgrading.md. `/delegation update` now points at `docs/upgrading.md` for the `From <old> to <new>` section. tests/node/docs.node.mjs keeps the links honest.
 
