@@ -172,6 +172,23 @@ gh pr merge --repo <owner/repo> agent/<domain>/<ID> --rebase
 5. `/delegation` lists the task under `merged:` for the rest of the session, and `running:`
    no longer shows it.
 
+**A git-ignored card folder (MOD-86).** A repo that keeps its cards local through
+`.git/info/exclude` or `.gitignore` merges the same way, with the card never committed. The merge asks
+git `git -C <root> check-ignore -q -- <card path>` (exit 0 = ignored) and, when it is:
+
+- prepare rewrites the root card (the main checkout's) in place with `status: merged`, plus the
+  Review section when one is given, runs no `git add` of the card and makes no card commit. The rest
+  runs as before: the rebase, the gates in the worktree, the PR body from the card text and the push
+  block. The first line says `card kept local (git-ignored): <root card path> marked merged` in place
+  of `card committed as merged`.
+- `--finish` does not look for the card on origin and does not remove the root card: it is the only
+  copy, and it already reads merged. It confirms the merge by the worktree head being on
+  origin/main or having a rebased twin there; when neither, it refuses naming the head and changes
+  nothing. Then it pulls, removes the worktree and branch, writes the merged ledger row and prints
+  the remote cleanup lines as usual.
+
+A tracked card behaves exactly as described above.
+
 **The second block** comes next:
 
 ```sh
@@ -195,6 +212,9 @@ base ref, card path and id, and clears it when it ends. The shapes are:
   `commit -q -m 'cards: <ID> merged'`, with an optional `Co-Authored-By` trailer;
 - in the main checkout: `fetch origin`, `remote get-url origin`, `pull --ff-only`,
   `clean -q -f -- <card>`, `worktree remove <worktree>` and `branch -D <branch>`.
+
+`git -C <dir> check-ignore -q -- <one path>` is a read shape that passes at any time (any other
+option, or more than one path, is refused).
 
 Outside a merge, every one of these is refused as before. While the merge runs, a push, `gh`,
 `curl`, `sf` or `wget` is refused ahead of every other rule.

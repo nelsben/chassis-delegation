@@ -115,4 +115,8 @@ before a dispatch: a worktree dispatch reads the card from the main checkout,
 and in `repo=here` mode the card folder is in the always-applied `ignore=` set.
 A consistent verdict means the report matches git, not that the work is right:
 read the diff.
+When the card folder is git-ignored (`git check-ignore`), setup and `/delegation init` print one more line,
+`cards: <cardDir> is git-ignored, so cards stay local; /delegation merge marks them merged in place`
+(MOD-86): such cards are never committed, and `/delegation merge` marks the root card merged in place
+([Merging a card](review-and-merge.md#merging-a-card)). Nothing else they write or check changes.
 `/delegation` in a root with no config adds `not set up here: run /delegation setup`.

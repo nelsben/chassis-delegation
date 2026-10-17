@@ -239,6 +239,12 @@ export function cardDiff(origin: string, root: string): string[] {
   return out
 }
 
+/** MOD-86: the first-line clause when the card is git-ignored: the root card is the only copy, marked merged in place. */
+export const cardKeptLocalClause = (rootCardPath: string): string => `card kept local (git-ignored): ${rootCardPath} marked merged`
+
+/** MOD-86: --finish for an ignored card cannot find the head on origin: the line names the head. */
+export const notLandedIgnoredLine = (id: string, branch: string, head: string, def: string): string => `${id}: ${branch} (head ${head.slice(0, 10)}) is not in origin/${def} yet; nothing was removed`
+
 // ---- the version a merge releases --------------------------------------------------------
 
 export const VERSION_FILE = 'hooks/lib/version.ts'

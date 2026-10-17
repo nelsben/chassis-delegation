@@ -7,6 +7,7 @@
 //   git [-C <dir>] worktree list [--porcelain|-v|--verbose|-z]
 //   git [-C <dir>] fetch [-q] origin main                    (exact)
 //   git -C <plugin root> merge --ff-only origin/main        (exact; <plugin root> is the loaded folder only; /delegation update)
+//   git -C <dir> check-ignore -q -- <one path>               (MOD-86: is the card git-ignored; exit 0 = ignored)
 //   git -C <root> worktree add -q -b agent/<domain>/<id>[-replay] <worktree> <origin/main|7-40 hex sha>
 //                                       (<domain>: the configured domains, by default
 //                                        frontend|backend|ops|dispatcher|cross|shared;
@@ -98,6 +99,12 @@ function checkGit(args: readonly string[], allow: AllowConfig): Check {
   if (GIT_READ.includes(sub)) {
     const bad = tail.find(a => GIT_WRITEY_FLAGS.test(a))
     return bad ? refuse(`git ${sub} ${bad} is not on the list`) : ok
+  }
+  if (sub === 'check-ignore') {
+    // MOD-86: is this path git-ignored? Exactly `-q -- <one path>`; no other option, no second path.
+    const [q, dd, path, ...more] = tail
+    const exact = dirs.length === 1 && q === '-q' && dd === '--' && more.length === 0 && path !== undefined && path !== '' && !path.startsWith('-')
+    return exact ? ok : refuse(`git check-ignore ${tail.join(' ')} is not the exact shape (-C <dir> check-ignore -q -- <path>)`)
   }
   if (sub === 'ls-tree') {
     const [flag, sha, path, ...more] = tail

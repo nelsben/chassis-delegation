@@ -6,6 +6,16 @@
 
 - **Scope is checked under an outside folder too big to list (MOD-85).** A forbid or scope root outside the repo that holds more than 10000 files used to come back unchecked, because its listing is kept in the store. Now the dispatch records the time before that root's walk (a watermark) and says `<root> holds more than 10000 files, so changes there will be found by modification time`; at hand-back the root is walked again (up to 1000000 entries, links not followed) and every file and folder modified since is judged against scope and forbid, a deleted file showing as its folder. Nothing newer holds the claim.
 
+- **`/delegation merge` works with a git-ignored card folder (MOD-86).** A repo that keeps its cards local
+  through `.git/info/exclude` could not use the merge: prepare's `git add` of the card was refused as an ignored
+  path, and `--finish` refused because the card was not on origin. The merge now asks
+  `git check-ignore -q -- <card>` (a new read shape in the allowlist, nothing but `-q -- <one path>`). For an
+  ignored card, prepare marks the root card `status: merged` in place (with the Review section), makes no card
+  commit and says `card kept local (git-ignored): <path> marked merged`; `--finish` keeps the root card, confirms
+  the merge by the worktree head or its rebased twin on origin, then cleans up and writes the merged row.
+  `/delegation setup` and `/delegation init` print a `cards: <cardDir> is git-ignored, so cards stay local; …` line.
+  A tracked card behaves as before.
+
 ## 0.9.13 — 2026-10-16
 
 - **The README is a front door (MOD-83).** README.md is now a short page: what the mod is, one picture, install in three lines and a list of pages. The reference moved, text unchanged, into eight pages under docs/ (install, guide, contracts, review-and-merge, configuration, spend, internals, upgrading), and the per-version upgrade notes are in docs/upgrading.md. `/delegation update` now points at `docs/upgrading.md` for the `From <old> to <new>` section. tests/node/docs.node.mjs keeps the links honest.

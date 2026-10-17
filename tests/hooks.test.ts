@@ -644,6 +644,29 @@ describe('5B: /delegation init and the init tool', () => {
     expect(w.files.get(`${ROOT}/.gitignore`)).toBe('node_modules/\n.delegation/\n')
   })
 
+  const localCardsLine = (ignored: boolean): TestBody => async ($, on) => {
+    const LINE = 'cards: agents/tasks is git-ignored, so cards stay local; /delegation merge marks them merged in place'
+    const ignoredWhen = (ignored: boolean) => (argv: string[]): RunAnswer | undefined => {
+      if (argv[3] === 'check-ignore') return { exitCode: ignored ? 0 : 1, stdout: '' }
+      const rest = argv.slice(3).join(' ')
+      if (rest === 'rev-parse --is-inside-work-tree') return { exitCode: 0, stdout: 'true\n' }
+      if (rest === 'rev-parse --show-toplevel') return { exitCode: 0, stdout: `${ROOT}\n` }
+      if (rest === 'rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n' }
+      if (rest === 'rev-parse --verify --quiet origin/main') return { exitCode: 1, stdout: '' }
+      return { exitCode: 0, stdout: '' }
+    }
+    const files = { [`${ROOT}/package.json`]: '{"scripts":{"test":"node --test"}}', '/usr/bin/git': '', '/usr/bin/node': '', '/usr/bin/npm': '' }
+    const w = world(on, { run: ignoredWhen(ignored), files, dirs: { [ROOT]: ['package.json'] } })
+    await $.session.start(sessionStart)
+    const init = String((await $.command.run(delegation('init'))).text)
+    const setup = String((await $.command.run(delegation('setup'))).text)
+    expect(init.includes(LINE)).toBe(ignored)
+    expect(setup.includes(LINE)).toBe(ignored)
+    expect(w.runs.map(r => r.argv.join(' '))).toContain(`git -C ${ROOT} check-ignore -q -- agents/tasks`)
+  }
+  test('MOD-86: init and setup print the local-cards line when the card folder is git-ignored', localCardsLine(true))
+  test('MOD-86: init and setup print no local-cards line when it is not', localCardsLine(false))
+
   test('GH-109: /delegation setup in an empty folder lists the failing checks and writes nothing', async ($, on) => {
     const w = world(on, { run: () => ({ exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' }) })
     await $.session.start(sessionStart)
