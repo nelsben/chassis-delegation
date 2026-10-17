@@ -5408,7 +5408,7 @@ async function runUpdate($: Host): Promise<string> {
     const newHead = await gitIn($, root, ['rev-parse', 'HEAD'])
     const newVersion = await versionAt()
     out.push(updateLine(oldVersion, oldSha, newVersion, newHead.ok ? newHead.out.trim().slice(0, 7) : '?', commits))
-    const slice = changelogSlice((await readText($, `${root}/CHANGELOG.md`)) ?? '', oldVersion, newVersion, await readText($, `${root}/README.md`))
+    const slice = changelogSlice((await readText($, `${root}/CHANGELOG.md`)) ?? '', oldVersion, newVersion, await readText($, `${root}/docs/upgrading.md`))
     if (slice.text !== '') out.push('', slice.text)
   }
   await storeSet($, UPDATE_CHECK, { at: await now($), behind: 0 })

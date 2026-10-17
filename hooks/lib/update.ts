@@ -91,10 +91,10 @@ export function compareVersions(a: string, b: string): number {
 
 /**
  * The CHANGELOG sections newer than `oldVersion` (Unreleased counts as newer),
- * newest first, capped at 40 lines; a README `### From <old> to <new>` section
- * gets a pointer when `readme` has one.
+ * newest first, capped at 40 lines; the upgrading page's `### From <old> to <new>` section
+ * gets a pointer when `upgrading` has one.
  */
-export function changelogSlice(changelog: string, oldVersion: string, newVersion?: string, readme?: string): { text: string; truncated: boolean } {
+export function changelogSlice(changelog: string, oldVersion: string, newVersion?: string, upgrading?: string): { text: string; truncated: boolean } {
   const parts = changelog.split(/^(?=## )/m).filter(p => p.startsWith('## '))
   const keep = parts.filter(p => {
     const head = /^## (\S+)/.exec(p)?.[1] ?? ''
@@ -105,7 +105,7 @@ export function changelogSlice(changelog: string, oldVersion: string, newVersion
   const truncated = body.length > CHANGELOG_CAP
   const out = truncated ? [...body.slice(0, CHANGELOG_CAP), `… ${body.length - CHANGELOG_CAP} more lines in CHANGELOG.md`] : body
   const heading = newVersion !== undefined ? `### From ${oldVersion} to ${newVersion}` : undefined
-  if (body.length > 0 && heading && readme?.split('\n').some(l => l.trimEnd() === heading)) out.push(`README: ${heading.slice(4)}`)
+  if (body.length > 0 && heading && upgrading?.split('\n').some(l => l.trimEnd() === heading)) out.push(`docs/upgrading.md: ${heading.slice(4)}`)
   return { text: out.join('\n'), truncated }
 }
 
