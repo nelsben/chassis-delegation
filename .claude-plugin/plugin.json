@@ -1,7 +1,7 @@
 {
   "name": "chassis-delegation",
   "version": "0.9.12",
-  "description": "brain-seat delegation for Claude Code: tiering, verification, background debrief and eval, dashboard",
+  "description": "Delegate coding tasks to verified Claude workers: tiering, verification, background debrief and eval, dashboard",
   "author": {
     "name": "Ben Nelsen"
   },

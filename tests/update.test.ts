@@ -65,7 +65,7 @@ describe('MOD-3: the changelog slice', () => {
   test('an Unreleased section is newer than any version', () => {
     expect(changelogSlice(LOG('## Unreleased\n\n- new\n\n'), '0.5.0').text).toBe('## Unreleased\n\n- new')
   })
-  test('capped at 40 lines with a pointer to the changelog, and to the README section when it exists', () => {
+  test('capped at 40 lines with a pointer to the changelog, and to the upgrade page section when it exists', () => {
     const big = `## 0.5.0 — x\n\n${Array.from({ length: 80 }, (_, i) => `- item ${i}`).join('\n')}\n\n## 0.4.0 — y\n\n- old\n`
     const s = changelogSlice(big, '0.4.0')
     expect(s.text.split('\n').length).toBeLessThanOrEqual(41)
@@ -73,7 +73,7 @@ describe('MOD-3: the changelog slice', () => {
     expect(s.text).not.toContain('- item 79')
     expect(s.truncated).toBe(true)
     const withReadme = changelogSlice(big, '0.4.0', '0.5.0', '### From 0.4.0 to 0.5.0\n\ntext')
-    expect(withReadme.text).toContain('README')
+    expect(withReadme.text).toContain('docs/upgrading.md: From 0.4.0 to 0.5.0')
     expect(withReadme.text).toContain('From 0.4.0 to 0.5.0')
     expect(changelogSlice(big, '0.4.0', '0.5.0', '### From 0.3.0 or earlier').text).not.toContain('From 0.4.0 to 0.5.0')
   })

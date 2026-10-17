@@ -35,7 +35,7 @@ if printf '%s' "$out" | grep -q 'rollout switch'; then
   echo
   echo "Without the mod, the verifier and the git guard still run as ordinary hooks (node 22.18 or newer;"
   echo "this node: $(node --version 2>/dev/null || echo 'not found')). Merge this into the \"hooks\" block of"
-  echo "~/.claude/settings.json, or .claude/settings.json in the repo (README: Without the engine):"
+  echo "~/.claude/settings.json, or .claude/settings.json in the repo (docs/internals.md: Without the engine):"
   cat <<EOF
 {
   "hooks": {
