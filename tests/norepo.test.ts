@@ -13,6 +13,9 @@ import {
   workTreeArgv,
   isNotWorkTree,
   noRepoVerdictText,
+  outsideCheck,
+  outsideClaim,
+  type RootListing,
 } from '../hooks/lib/norepo'
 
 const MOD = '/Users/b/.claude/dev-mods/s1/chassis-delegation'
@@ -144,5 +147,41 @@ describe('3A: the no-repo verdict', () => {
     expect(noRepoVerdict({ ...base, gates: [], notRerun: ['G2'] })).toMatchObject({ verdict: 'unverified', why: 'gate not re-run: G2' })
     expect(noRepoVerdict({ ...base, gates: [], noGate: true })).toMatchObject({ verdict: 'unverified', why: 'no gate= in the brief' })
     expect(noRepoVerdict({ ...base, gates: [{ label: 'x', error: 'timed out' }] })).toMatchObject({ verdict: 'unverified', why: 'gate x did not run: timed out' })
+  })
+})
+
+describe('MOD-85: a root too big to list is checked by modification time', () => {
+  const mark: RootListing = { root: '/big', since: 1000, files: 30000 }
+  const after = (entries: { path: string; size: number; mtimeMs: number }[], dirs: { path: string; mtimeMs: number }[] = []): RootListing => ({ root: '/big', entries, dirs })
+
+  test('a file newer than since under a forbid root fails the claim, naming it', () => {
+    const c = outsideClaim({ before: [mark], after: [after([{ path: 'a/b.txt', size: 1, mtimeMs: 2000 }, { path: 'old.txt', size: 1, mtimeMs: 10 }])], scope: ['/out/**'], forbid: ['/big/**'] })
+    expect(c).toEqual({ status: 'failed', detail: 'touches forbid path: /big/a/b.txt (outside delta)' })
+  })
+  test('only a newer folder (a deletion) under a forbid root fails, naming the folder', () => {
+    const c = outsideClaim({ before: [mark], after: [after([], [{ path: 'a', mtimeMs: 2000 }])], scope: [], forbid: ['/big/**'] })
+    expect(c).toEqual({ status: 'failed', detail: 'touches forbid path: /big/a (outside delta)' })
+    const root = outsideClaim({ before: [mark], after: [after([], [{ path: '', mtimeMs: 2000 }])], scope: [], forbid: ['/big/**'] })
+    expect(root?.detail).toBe('touches forbid path: /big (outside delta)')
+  })
+  test('nothing newer holds, said to be checked by modification time', () => {
+    const c = outsideClaim({ before: [mark], after: [after([])], scope: [], forbid: ['/big/**'] })
+    expect(c?.status).toBe('held')
+    expect(c?.detail).toContain('modification time')
+  })
+  test('a newer path within scope and outside forbid holds', () => {
+    const c = outsideClaim({ before: [mark], after: [after([{ path: 'n.txt', size: 1, mtimeMs: 2000 }])], scope: ['/big/**'], forbid: [] })
+    expect(c?.status).toBe('held')
+  })
+  test('a walk past the hard ceiling is unchecked, naming the root and the ceiling', async () => {
+    const c = await outsideCheck([], ['/big/**'], { before: [mark], list: async root => ({ root, error: 'more than 1000000 entries' }) })
+    expect(c?.status).toBe('unchecked')
+    expect(c?.detail).toContain('/big')
+    expect(c?.detail).toContain('1000000')
+  })
+  test('outsideCheck hands the watermark time to the lister', async () => {
+    const seen: (number | undefined)[] = []
+    await outsideCheck([], ['/big/**'], { before: [mark], list: async (root, since) => (seen.push(since), after([])) })
+    expect(seen).toEqual([1000])
   })
 })

@@ -195,7 +195,7 @@ import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
-import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
+import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
@@ -3554,7 +3554,7 @@ async function takeEngineTurn($: Host, label: string): Promise<{ line?: string; 
 }
 
 // ---- MOD-22: research cards, the folders outside the repo ----------------------------------
-/** A root with more files than this is not listed (the claim is left unchecked): the listing lives in the store. */
+/** A root with more files than this is not listed in the store (MOD-85: it gets a watermark, a time, instead). */
 const OUTSIDE_MAX_ENTRIES = 10000
 
 const isEnoent = (err: unknown): boolean => /ENOENT/.test(String(err))
@@ -3562,9 +3562,13 @@ const isEnoent = (err: unknown): boolean => /ENOENT/.test(String(err))
 /**
  * One root as a before-and-after listing: every file under it as (relative path, size, mtime), folders
  * walked and links not followed. A root that is not there yet lists as empty; a root that is a file is
- * itself the one entry (path ''); a root that cannot be read, or holds too many files, says why.
+ * itself the one entry (path ''); a root that cannot be read says why. MOD-85: a root past
+ * OUTSIDE_MAX_ENTRIES files is recorded as a watermark ({ root, since, files }) and its files are not stored.
+ * With `since` (the hand-back walk of a watermark root) the walk has no 10000 cap but a ceiling of
+ * OUTSIDE_WALK_CEILING entries, and keeps only the files and folders modified after `since`.
  */
-async function listRoot($: Host, root: string): Promise<RootListing> {
+async function listRoot($: Host, root: string, since?: number): Promise<RootListing> {
+  const started = await now($)
   let kind: string
   let st: { size: number; mtimeMs: number }
   try {
@@ -3577,6 +3581,10 @@ async function listRoot($: Host, root: string): Promise<RootListing> {
   if (kind === 'file') return { root, entries: [{ path: '', size: st.size, mtimeMs: st.mtimeMs }] }
   if (kind !== 'dir') return { root, error: `${root} is neither a folder nor a file` }
   const entries: { path: string; size: number; mtimeMs: number }[] = []
+  const dirs: { path: string; mtimeMs: number }[] = []
+  let seen = 0
+  let files = 0
+  if (since !== undefined && st.mtimeMs > since) dirs.push({ path: '', mtimeMs: st.mtimeMs })
   const walk = async (dir: string, rel: string): Promise<string | undefined> => {
     let listed: { name: string; kind: string; size: number; mtimeMs: number; isLink: boolean }[]
     try {
@@ -3586,18 +3594,22 @@ async function listRoot($: Host, root: string): Promise<RootListing> {
     }
     for (const e of listed) {
       const path = rel === '' ? e.name : `${rel}/${e.name}`
+      if (++seen > OUTSIDE_WALK_CEILING) return `more than ${OUTSIDE_WALK_CEILING} entries`
       if (e.kind === 'dir' && !e.isLink) {
+        if (since !== undefined && e.mtimeMs > since) dirs.push({ path, mtimeMs: e.mtimeMs })
         const why = await walk(`${dir}/${e.name}`, path)
         if (why !== undefined) return why
-      } else {
-        entries.push({ path, size: e.size, mtimeMs: e.mtimeMs })
-        if (entries.length > OUTSIDE_MAX_ENTRIES) return `more than ${OUTSIDE_MAX_ENTRIES} files`
-      }
+      } else if (since !== undefined) {
+        if (e.mtimeMs > since) entries.push({ path, size: e.size, mtimeMs: e.mtimeMs })
+      } else if (entries.length <= OUTSIDE_MAX_ENTRIES) entries.push({ path, size: e.size, mtimeMs: e.mtimeMs })
+      else files += 1
     }
     return undefined
   }
   const why = await walk(root, '')
-  return why === undefined ? { root, entries } : { root, error: why }
+  if (why !== undefined) return { root, error: why }
+  if (since !== undefined) return { root, entries, dirs }
+  return entries.length > OUTSIDE_MAX_ENTRIES ? { root, since: started, files: entries.length + files } : { root, entries }
 }
 
 /** What is at an artefact path: missing, or its size (a folder: its entry count). */
@@ -3615,7 +3627,7 @@ async function statArtefact($: Host, path: string): Promise<ArtefactStat> {
 async function outsideFor($: Host, task: string | undefined): Promise<OutsideInput | undefined> {
   if (!task) return undefined
   const saved = await storeGet<{ roots?: RootListing[] }>($, K.outside(task))
-  return Array.isArray(saved?.roots) ? { before: saved.roots, list: root => listRoot($, root) } : undefined
+  return Array.isArray(saved?.roots) ? { before: saved.roots, list: (root, since) => listRoot($, root, since) } : undefined
 }
 
 /** The system temp dir (TMPDIR), or '' when the environment has none. */
@@ -3644,7 +3656,8 @@ async function recordOutside($: Host, task: string, briefPath: string, reused: b
   await storeSet($, K.outside(task), { at: await now($), briefPath, roots: listed })
   const files = listed.reduce((n, l) => n + ('entries' in l ? l.entries.length : 0), 0)
   const bad = listed.filter((l): l is { root: string; error: string } => 'error' in l)
-  return `outside: listed ${roots.join(', ')} before the run (${files} file${files === 1 ? '' : 's'})${bad.length > 0 ? `; ${bad.map(b => `${b.root} could not be listed: ${b.error}`).join('; ')}, so scope will be unchecked there` : ''}`
+  const marks = listed.filter((l): l is { root: string; since: number; files: number } => 'since' in l)
+  return `outside: listed ${roots.join(', ')} before the run (${files} file${files === 1 ? '' : 's'})${bad.length > 0 ? `; ${bad.map(b => `${b.root} could not be listed: ${b.error}`).join('; ')}, so scope will be unchecked there` : ''}${marks.map(m => `; ${m.root} holds more than ${OUTSIDE_MAX_ENTRIES} files, so changes there will be found by modification time`).join('')}`
 }
 
 async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<VerifyResult> {

@@ -150,11 +150,22 @@ export const defaultScratch = (tmp: string, task: string): string => `${tmp.repl
 /** One file under a listed root: its path relative to the root, its size and its modification time. */
 export type OutsideEntry = { path: string; size: number; mtimeMs: number }
 /** A root's listing, or why it could not be made. */
-export type RootListing = { root: string; entries: OutsideEntry[] } | { root: string; error: string }
+/**
+ * A root's listing, or why it could not be made. MOD-85: a root too big to list is recorded at dispatch
+ * as a watermark (`since`, the ms time before its walk began, and `files`, the count walked); at hand-back
+ * its walk holds only what is newer than `since`: the files in `entries`, the folders in `dirs` (path ''
+ * is the root itself).
+ */
+export type RootListing =
+  | { root: string; entries: OutsideEntry[]; dirs?: { path: string; mtimeMs: number }[] }
+  | { root: string; error: string }
+  | { root: string; since: number; files: number }
+/** The most entries the hand-back walk of a watermark root visits before the claim is left unchecked. */
+export const OUTSIDE_WALK_CEILING = 1000000
 export type ClaimResult = { status: 'held' | 'failed' | 'unchecked'; detail: string }
 
 const absOf = (root: string, rel: string): string => (root === '/' ? `/${rel}` : `${root}/${rel}`)
-const anyMatch = (path: string, globs: readonly string[]): boolean => globs.some(g => isAbsolute(g) && matchGlob(path, g))
+const anyMatch = (path: string, globs: readonly string[], dir = false): boolean => globs.some(g => isAbsolute(g) && (matchGlob(path, g) || (dir && matchGlob(`${path === '/' ? '' : path}/x`, g))))
 
 /**
  * The scope claim for what changed outside the repo: every root in either
@@ -168,14 +179,26 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
   const roots = [...new Set([...input.before.map(l => l.root), ...input.after.map(l => l.root)])]
   if (roots.length === 0) return undefined
   const changed: string[] = []
+  const changedDirs = new Set<string>()
+  let watched = false
   let unchecked: string | undefined
   for (const root of roots) {
     const b = input.before.find(l => l.root === root)
     const a = input.after.find(l => l.root === root)
     if (b === undefined) unchecked ??= `outside delta: no listing of ${root} was taken at dispatch`
     else if ('error' in b) unchecked ??= `outside delta: ${root} could not be listed at dispatch: ${b.error}`
-    else if (a === undefined) unchecked ??= `outside delta: ${root} was not listed at hand-back`
+    else if ('since' in b) {
+      if (a === undefined) unchecked ??= `outside delta: ${root} was not listed at hand-back`
+      else if ('error' in a) unchecked ??= `outside delta: ${root} could not be listed at hand-back: ${a.error}`
+      else if ('since' in a) unchecked ??= `outside delta: ${root} was not walked at hand-back`
+      else {
+        watched = true
+        for (const e of a.entries) if (e.mtimeMs > b.since) changed.push(absOf(root, e.path))
+        for (const d of a.dirs ?? []) if (d.mtimeMs > b.since) changedDirs.add(d.path === '' ? root : absOf(root, d.path))
+      }
+    } else if (a === undefined) unchecked ??= `outside delta: ${root} was not listed at hand-back`
     else if ('error' in a) unchecked ??= `outside delta: ${root} could not be listed at hand-back: ${a.error}`
+    else if ('since' in a) unchecked ??= `outside delta: ${root} was not listed at hand-back`
     else {
       const was = new Map(b.entries.map(e => [e.path, e]))
       const now = new Map(a.entries.map(e => [e.path, e]))
@@ -186,17 +209,22 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
       for (const path of was.keys()) if (!now.has(path)) changed.push(absOf(root, path))
     }
   }
-  const paths = [...new Set(changed)].sort()
-  const bad = paths.flatMap(p => (anyMatch(p, input.forbid) ? [{ p, why: 'touches forbid path' }] : anyMatch(p, input.scope) ? [] : [{ p, why: 'out-of-scope path' }]))
+  const files = [...new Set(changed)].filter(p => !changedDirs.has(p))
+  const paths = [...new Set([...files, ...changedDirs])].sort()
+  const bad = paths.flatMap(p => {
+    const dir = changedDirs.has(p)
+    return anyMatch(p, input.forbid, dir) ? [{ p, why: 'touches forbid path' }] : anyMatch(p, input.scope, dir) ? [] : [{ p, why: 'out-of-scope path' }]
+  })
   const first = bad[0]
   if (first) return { status: 'failed', detail: `${first.why}: ${first.p} (outside delta${bad.length > 1 ? `, +${bad.length - 1} more` : ''})` }
   if (unchecked !== undefined) return { status: 'unchecked', detail: unchecked }
   const where = roots.join(', ')
-  return { status: 'held', detail: paths.length === 0 ? `outside delta: nothing changed under ${where}` : `outside delta: ${plural(paths.length, 'changed path')} under ${where}, every one within scope and none in forbid` }
+  const by = watched ? ' (checked by modification time)' : ''
+  return { status: 'held', detail: paths.length === 0 ? `outside delta: nothing changed under ${where}${by}` : `outside delta: ${plural(paths.length, 'changed path')} under ${where}, every one within scope and none in forbid${by}` }
 }
 
 /** What the verifier needs to compare the outside: the listings taken at dispatch, and a way to list a root now. */
-export type OutsideInput = { before: readonly RootListing[]; list: (root: string) => Promise<RootListing> }
+export type OutsideInput = { before: readonly RootListing[]; list: (root: string, since?: number) => Promise<RootListing> }
 
 /**
  * Lists the roots again (those listed at dispatch and those the scope and forbid name now) and judges
@@ -210,7 +238,8 @@ export async function outsideCheck(scope: readonly string[], forbid: readonly st
   const after: RootListing[] = []
   for (const root of roots) {
     try {
-      after.push(await outside.list(root))
+      const mark = outside.before.find(l => l.root === root)
+      after.push(await outside.list(root, mark !== undefined && 'since' in mark ? mark.since : undefined))
     } catch (err) {
       after.push({ root, error: String(err) })
     }

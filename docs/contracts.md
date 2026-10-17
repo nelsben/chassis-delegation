@@ -684,9 +684,17 @@ changes, and it goes through the same dispatch, hand-back and verdict:
        claim scope: failed — out-of-scope path: scratch.py (repo delta)
 
    A root that does not exist yet lists as empty. A root that exists but cannot be
-   read, or holds more than 10000 files, leaves the claim **unchecked**, never held;
-   so does a root nobody listed at dispatch while others were (a root an amend
-   added). A brief with no listing at all (one that never went through `/dispatch`)
+   read leaves the claim **unchecked**, never held. A root that holds more than 10000
+   files is not listed: the dispatch records the time before its walk (a watermark,
+   and says so: `<root> holds more than 10000 files, so changes there will be found
+   by modification time`), and at hand-back the root is walked again (links not
+   followed, at most 1000000 entries; past that the claim is unchecked, naming the
+   root and the ceiling). Every file and every folder modified since that time counts
+   as changed (a folder's time moves when an entry in it is added, removed or
+   renamed, so a deletion shows as its folder) and is judged against scope and
+   forbid like a listed root's delta; nothing newer holds the claim, said to be
+   checked by modification time. A root nobody listed at dispatch while others were (a root an amend
+   added) is unchecked too. A brief with no listing at all (one that never went through `/dispatch`)
    is checked as it always was, plus `note: outside delta not checked: …`. The mod can only see
    the folders the card names, so name what you want watched: a `forbid` entry such
    as `~/exports/avatar/**` is listed too, and a change under it fails the claim.
