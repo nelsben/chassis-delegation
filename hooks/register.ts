@@ -5058,7 +5058,23 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     }
   }
   // an id is free in the session's own board too: the ledger, the briefs and the store are keyed by the id alone
-  const names = target ? [...new Set([...(await listNames(dir)), ...(await listNames(cardDirPath(root, cfg.cardDir)))])] : await listNames(dir)
+  const cardNames = target ? [...new Set([...(await listNames(dir)), ...(await listNames(cardDirPath(root, cfg.cardDir)))])] : await listNames(dir)
+  // MOD-87: an id that owns a brief or a ledger row is taken too, or a deleted card's old brief, tier and attempts come back
+  const briefNames = [...(await listNames(briefDirFor(root, cfg.briefDir)))]
+  if (!cfg.briefDir) {
+    const sid = await sessionIdOf($)
+    if (sid) briefNames.push(...(await listNames(defaultBriefDir(root, sid))))
+  }
+  const ledgerNames: string[] = []
+  for (const line of ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '').split('\n')) {
+    try {
+      const task = (JSON.parse(line) as { task?: unknown } | null)?.task
+      if (typeof task === 'string' && task) ledgerNames.push(`${task}.ledger`)
+    } catch {
+      // a line that is not JSON is skipped
+    }
+  }
+  const names = [...cardNames, ...briefNames, ...ledgerNames]
   // repo=here when the repo has no origin/main (worktree mode cuts from it); a baseRef alone says nothing about the mode
   const originMain = target ? undefined : await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', 'origin/main'])
   const here = target ? false : !(originMain?.ok && originMain.exitCode === 0)
@@ -5074,7 +5090,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   // all or none: every lane's file is checked before the first is written
   for (const c of made) {
     const path = `${dir}/${c.file}`
-    if (names.includes(c.file) || (await exists($, path))) return `card refused: ${path} exists; cards are never overwritten`
+    if (cardNames.includes(c.file) || (await exists($, path))) return `card refused: ${path} exists; cards are never overwritten`
   }
   const wrote: string[] = []
   for (const c of made) {

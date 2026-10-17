@@ -2141,6 +2141,19 @@ describe('GH-111: the card tool', () => {
     expect(w.spawns).toHaveLength(0)
   })
 
+  test('MOD-87: an id that owns a brief or a ledger row is taken, so a deleted card never gets its old brief back', async ($, on) => {
+    const ledger = ['{"task":"OPS-4","verdict":"pass"}', 'not json at all', '{"verdict":"pass"}', ''].join('\n')
+    const w = world(on, {
+      files: { [`${ROOT}/.chassis-delegation.json`]: cfgFile, [`${ROOT}/.delegation/ledger.jsonl`]: ledger, [`${ROOT}/.delegation/briefs/OPS-3.brief.md`]: 'old brief' },
+      dirs: { [`${ROOT}/agents/tasks`]: ['README.md', 'OPS-1-a.md', 'OPS-2-b.md'], [`${ROOT}/.delegation/briefs`]: ['OPS-3.brief.md'] },
+      store: { 'delegation.agentTypes': ['general-purpose'] },
+    })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
+    expect(out).toContain(`wrote ${ROOT}/agents/tasks/OPS-5-the-rom-reader-returns-the-header.md`)
+    expect(w.files.get(`${ROOT}/.delegation/briefs/OPS-3.brief.md`)).toBe('old brief')
+  })
+
   test('a refusal writes nothing and says what to change', async ($, on) => {
     const w = setup(on)
     await $.session.start(sessionStart)
