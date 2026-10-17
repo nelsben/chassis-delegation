@@ -192,7 +192,7 @@ import { engineLockDecision, gateCommandTemplates, gateTemplatesOf, isEngineGate
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
-import { INIT_FILES, PLUGIN_MANIFEST, initPlan, initText } from './lib/init'
+import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
@@ -271,6 +271,8 @@ import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, p
 import { MOD_VERSION } from './lib/version'
 import {
   cardDiff,
+  cardKeptLocalClause,
+  notLandedIgnoredLine,
   coAuthorTrailer,
   commitArgv,
   conflictLine,
@@ -2242,6 +2244,12 @@ async function cardNameIn($: Host, dir: string, id: string): Promise<string | un
   }
 }
 
+/** MOD-86: is this repo-relative path git-ignored in `dir`? `git -C <dir> check-ignore -q -- <path>`: exit 0 = ignored, 1 = not; anything else reads as not. */
+async function isIgnored($: Host, dir: string, rel: string): Promise<boolean> {
+  const r = await run($, ['git', '-C', dir, 'check-ignore', '-q', '--', rel], { cwd: dir, timeoutMs: 15000 })
+  return r.ok && r.exitCode === 0
+}
+
 /** `/delegation merge <ID> [--finish]` and the merge tool: one function, two doors. */
 async function runMerge($: Host, parsed: MergeArgs | { error: string }): Promise<string> {
   if ('error' in parsed) return parsed.error
@@ -2301,6 +2309,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   if (!name) return `${id}: no card ${cardDir}/${id}-*.md in ${root}; nothing to merge`
   const cardRel = `${cardDir}/${name}`
   mergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef, cardRel, id }
+  const ignored = await isIgnored($, root, cardRel)
   const origin = okOut(await run($, ['git', '-C', root, 'remote', 'get-url', 'origin'], { cwd: root, timeoutMs: 15000 }))
   const ownerRepo = ownerRepoOf(origin ?? '')
   if (!ownerRepo) return `${id}: origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); the PR block needs owner/repo`
@@ -2326,9 +2335,11 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
     await run($, ['git', '-C', wt.path, 'rebase', '--abort'], { cwd: wt.path, timeoutMs: 60000 })
     return conflictLine(id, baseRef, unmerged.split('\n').map(l => l.trim()).filter(Boolean))
   }
-  // the merged card, committed once
+  // the merged card, committed once; a git-ignored card is marked merged in the root checkout and committed nowhere (MOD-86)
   let committed = false
-  if (!(wtCard !== undefined && readsMerged(wtCard))) {
+  if (ignored) {
+    if (!(rootCard !== undefined && readsMerged(rootCard))) await $.fs.write(`${root}/${cardRel}`, markMerged(rootCard ?? (wtCard as string), review))
+  } else if (!(wtCard !== undefined && readsMerged(wtCard))) {
     await $.fs.write(wtCardPath, markMerged(rootCard ?? (wtCard as string), review))
     const added = await run($, ['git', '-C', wt.path, 'add', '--', cardRel], { cwd: wt.path, timeoutMs: 15000 })
     if (!added.ok || added.exitCode !== 0) return `${id}: git add ${cardRel} failed in the worktree: ${whyOf(added)}`
@@ -2405,7 +2416,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   const title = card.title || `${id} merged`
   const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id })
   return [
-    `${id}: rebased onto ${baseRef}; ${committed ? `card committed as merged (${cardRel})` : 'the worktree already carries the merged card; nothing committed again'}; gates green at ${short}${results.length > 0 ? ` (${results.map(r => r.id).join(', ')})` : ' (the card names no gate)'}`,
+    `${id}: rebased onto ${baseRef}; ${ignored ? cardKeptLocalClause(`${root}/${cardRel}`) : committed ? `card committed as merged (${cardRel})` : 'the worktree already carries the merged card; nothing committed again'}; gates green at ${short}${results.length > 0 ? ` (${results.map(r => r.id).join(', ')})` : ' (the card names no gate)'}`,
     `pr body: ${prFile} · gate output: ${outDir}/merge-gates.txt${version ? ` · releases v${version}` : ''}`,
     remoteBlock('remote: run these lines verbatim, in order (the mod never pushes nor calls gh):', lines),
   ].join('\n')
@@ -2418,6 +2429,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const name = await cardNameIn($, `${root}/${cardDir}`, id)
   const cardRel = name ? `${cardDir}/${name}` : undefined
   mergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef: `origin/${def}`, id, ...(cardRel ? { cardRel } : {}) }
+  const ignored = cardRel !== undefined && (await isIgnored($, root, cardRel))
   const fetched = await run($, ['git', '-C', root, 'fetch', 'origin'], { cwd: root, timeoutMs: 120000 })
   if (!fetched.ok || fetched.exitCode !== 0) return `${id}: git fetch origin failed in the main checkout: ${whyOf(fetched)}`
   const head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
@@ -2432,10 +2444,10 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
     const theirs = okOut(await run($, ['git', '-C', root, 'log', '--format=%H%x09%T%x09%s', '-n', '200', `origin/${def}`], { cwd: root, timeoutMs: 15000 })) ?? ''
     if (tree !== '') sha = twinIn(theirs, tree, subject.join('\t'))
   }
-  if (!sha) return `${id}: ${wt.branch} is not in origin/${def} yet`
+  if (!sha) return ignored ? notLandedIgnoredLine(id, wt.branch, head, def) : `${id}: ${wt.branch} is not in origin/${def} yet`
   const short = sha.slice(0, 10)
-  // the root card goes only when the merged card on origin says the same (status aside; a Review section may be extra)
-  if (cardRel) {
+  // the root card goes only when the merged card on origin says the same (status aside; a Review section may be extra); a git-ignored card is the only copy and stays (MOD-86)
+  if (cardRel && !ignored) {
     const merged = okOut(await run($, ['git', '-C', root, 'show', `${sha}:${cardRel}`], { cwd: root, timeoutMs: 15000 }))
     if (merged === undefined) return `${id}: ${cardRel} is not in origin/${def} at ${short}; the root card is left and nothing else was done`
     const rootCard = (await readText($, `${root}/${cardRel}`)) ?? ''
@@ -2485,7 +2497,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const loaded = $.plugin.root.replace(/\/+$/, '')
   const loadedClone = version && loaded !== root && (await exists($, `${loaded}/.git`)) ? loaded : undefined
   return [
-    `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
+    `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${ignored ? 'root card kept (git-ignored), ' : cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
     ...notes,
     remoteBlock('remote: run these lines verbatim (the mod never pushes):', finishLines({ branch: wt.branch, ...(version ? { version } : {}), ...(loadedClone ? { loadedClone } : {}) })),
     `${id} merged at ${sha}`,
@@ -4883,6 +4895,18 @@ async function targetRoot($: Host, who: 'init' | 'setup', pathIn: string | undef
   return { root: r.path, other: true }
 }
 
+/** MOD-86: the card folder init and setup work with: the config's cardDir when it names one, else docs/cards in a plugin repo, else the default; the line when git ignores it. */
+async function cardsLocalNote($: Host, root: string, existing: Readonly<Record<string, string | undefined>>): Promise<string[]> {
+  let dir = existing[`${root}/${PLUGIN_MANIFEST}`] !== undefined ? PLUGIN_CARD_DIR : DEFAULT_CARD_DIR
+  try {
+    const named = (JSON.parse(existing[`${root}/${REPO_CONFIG_FILE}`] ?? '{}') as { cardDir?: unknown }).cardDir
+    if (typeof named === 'string' && named.trim() !== '') dir = named.replace(/^\/+|\/+$/g, '')
+  } catch {
+    // an unreadable config names no folder
+  }
+  return (await isIgnored($, root, dir)) ? [cardsLocalLine(dir)] : []
+}
+
 async function runInit($: Host, pathIn?: string): Promise<string> {
   const target = await targetRoot($, 'init', pathIn)
   if ('refused' in target) return target.refused
@@ -4912,7 +4936,7 @@ async function runInit($: Host, pathIn?: string): Promise<string> {
     repoText = undefined
     await loadRepoConfig($)
   }
-  return initText(root, plan, failed, !target.other)
+  return [initText(root, plan, failed, !target.other), ...(await cardsLocalNote($, root, existing))].join('\n')
 }
 
 // ---- GH-109: /delegation setup and the setup tool ----------------------------------------
@@ -5031,6 +5055,7 @@ async function runSetup($: Host, viaTool = false, pathIn?: string): Promise<stri
     initText(root, plan, failed, false, false),
     ...(wroteConfig ? configLines(found) : []),
     ...(hadConfig ? [wouldSet(found)] : []),
+    ...(await cardsLocalNote($, root, existing)),
     '',
     handoverText(detectGate(facts)),
     ...(viaTool ? [BRAIN_HANDOVER] : []),

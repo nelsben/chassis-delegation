@@ -184,3 +184,6 @@ export function initText(root: string, plan: readonly InitStep[], failed: Readon
   const why = plugin ? [`- cards go under ${PLUGIN_CARD_DIR}/ (this repo is a plugin: agents/ is the engine's subagent folder)`] : []
   return [`chassis-delegation init in ${root}:`, ...lines.map(l => `- ${l}`), ...why, ...(nextLine ? [`Next: write a card under ${dir}/ (copy OPS-000-sample.md), set status: queued, and ask the brain to dispatch it.`] : []), ...(updateNote ? [RESTART_NOTE] : [])].join('\n')
 }
+
+/** MOD-86: the one line setup and init print when the card folder is git-ignored. */
+export const cardsLocalLine = (cardDir: string): string => `cards: ${cardDir} is git-ignored, so cards stay local; /delegation merge marks them merged in place`

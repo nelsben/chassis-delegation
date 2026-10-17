@@ -290,6 +290,26 @@ describe('MOD-72: the verdict tool\'s wait', () => {
   })
 })
 
+describe('MOD-86: git check-ignore, the one read shape', () => {
+  test('-C <dir> check-ignore -q -- <one path> passes, with or without the merge context', () => {
+    ok(['git', '-C', R, 'check-ignore', '-q', '--', 'docs/cards/MOD-1-a-thing.md'])
+    ok(['git', '-C', `${R}-MOD-1`, 'check-ignore', '-q', '--', 'agents/tasks'])
+    ok(['git', '-C', R, 'check-ignore', '-q', '--', 'docs/cards/MOD-1-a-thing.md'], { ...ALLOW, merge: { root: R, worktree: `${R}-MOD-1`, branch: 'agent/mod/MOD-1', baseRef: 'origin/main', id: 'MOD-1' } })
+  })
+  test('any other option, a second path, no path or no -- is refused', () => {
+    no(['git', '-C', R, 'check-ignore', '-q', '--', 'a', 'b'])
+    no(['git', '-C', R, 'check-ignore', '-q', '--', 'a', '-v'])
+    no(['git', '-C', R, 'check-ignore', '-v', '-q', '--', 'a'])
+    no(['git', '-C', R, 'check-ignore', '--stdin'])
+    no(['git', '-C', R, 'check-ignore', '-q', '--no-index', '--', 'a'])
+    no(['git', '-C', R, 'check-ignore', '-q', '--'])
+    no(['git', '-C', R, 'check-ignore', '-q', 'a'])
+    no(['git', '-C', R, 'check-ignore', '--', 'a'])
+    no(['git', '-C', R, 'check-ignore', '-q', '--', '-v'])
+    no(['git', 'check-ignore', '-q', '--', 'a'])
+  })
+})
+
 describe('MOD-75: the merge shapes, on only while /delegation merge runs', () => {
   const WT = `${R}-MOD-1`
   const BRANCH = 'agent/mod/MOD-1'

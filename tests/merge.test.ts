@@ -51,6 +51,8 @@ const happy = (over: Answers = () => undefined): Answers => argv => {
   const o = over(argv)
   if (o) return o
   if (is(argv, 'git', '-C', ROOT, 'worktree', 'list', '--porcelain')) return { exitCode: 0, stdout: PORCELAIN }
+  // MOD-86: a tracked card: git does not ignore the card path
+  if (is(argv, 'git', '-C', ROOT, 'check-ignore', '-q', '--', `docs/cards/${CARD_NAME}`)) return { exitCode: 1, stdout: '' }
   if (is(argv, 'git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD')) return { exitCode: 0, stdout: 'main\n' }
   if (is(argv, 'git', '-C', ROOT, 'status', '--porcelain')) return { exitCode: 0, stdout: `?? docs/cards/${CARD_NAME}\n` }
   if (is(argv, 'git', '-C', ROOT, 'remote', 'get-url', 'origin')) return { exitCode: 0, stdout: 'git@github.com:acme/acme-app.git\n' }
@@ -91,6 +93,7 @@ describe('MOD-75: /delegation merge <id>', () => {
       ['git', '-C', WT, 'status', '--porcelain'],
       ['git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD'],
       ['git', '-C', ROOT, 'status', '--porcelain'],
+      ['git', '-C', ROOT, 'check-ignore', '-q', '--', `docs/cards/${CARD_NAME}`],
       ['git', '-C', ROOT, 'remote', 'get-url', 'origin'],
       ['git', '-C', WT, 'fetch', 'origin'],
       ['git', '-C', WT, 'rebase', 'origin/main'],
@@ -237,6 +240,7 @@ describe('MOD-75: /delegation merge <id>', () => {
     const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
     expect(w.runs.slice(from).map(r => r.argv)).toEqual([
       ['git', '-C', ROOT, 'worktree', 'list', '--porcelain'],
+      ['git', '-C', ROOT, 'check-ignore', '-q', '--', `docs/cards/${CARD_NAME}`],
       ['git', '-C', ROOT, 'fetch', 'origin'],
       ['git', '-C', WT, 'rev-parse', 'HEAD'],
       ['git', '-C', ROOT, 'merge-base', '--is-ancestor', HEAD, 'origin/main'],
@@ -302,6 +306,82 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(ran.length).toBeGreaterThan(20)
     expect(ran.filter(a => ['gh', 'curl', 'sf'].includes(a[0] ?? '') || a.includes('push'))).toEqual([])
     expect(ran.filter(a => isRemoteArgv(a))).toEqual([])
+  })
+})
+
+describe('MOD-86: a git-ignored card folder', () => {
+  const REL = `docs/cards/${CARD_NAME}`
+  /** The stand-in git of a repo that keeps its cards local: check-ignore says ignored, and add refuses an ignored path. */
+  const ignoring = (over: Answers = () => undefined): Answers =>
+    happy(argv => {
+      const o = over(argv)
+      if (o) return o
+      if (is(argv, 'git', '-C', ROOT, 'check-ignore', '-q', '--', REL)) return { exitCode: 0, stdout: '' }
+      if (argv[3] === 'add') return { exitCode: 1, stdout: '', stderr: 'The following paths are ignored by one of your .gitignore files:\n' + REL }
+      return undefined
+    })
+
+  test('red: an ignored card is marked merged in the root checkout; no add, no card commit; the first line says it was kept local', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store, run: ignoring() })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(`${ID} --review Accepted as handed back.`))).text)
+    const ran = w.runs.map(r => r.argv.join(' '))
+    expect(ran).toContain(`git -C ${ROOT} check-ignore -q -- ${REL}`)
+    expect(ran.some(a => a.includes(' add '))).toBe(false)
+    expect(ran.some(a => a.includes(' commit '))).toBe(false)
+    const root = w.files.get(CARD_PATH) ?? ''
+    expect(readsMerged(root)).toBe(true)
+    expect(root).toContain('## Review\n\nAccepted as handed back.')
+    expect(w.files.has(WT_CARD)).toBe(false)
+    expect(out.split('\n')[0]).toContain(`card kept local (git-ignored): ${CARD_PATH} marked merged; gates green at ${HEAD.slice(0, 10)}`)
+    expect(out).not.toContain('card committed as merged')
+    expect(ran).toContain(`git -C ${WT} rebase origin/main`)
+    expect(ran).toContain(`claude plugin test ${WT}`)
+    expect(blockOf(out)[0]).toBe(`git -C ${WT} push -u origin ${BRANCH}`)
+    expect(w.files.get(`${ROOT}/.delegation/${ID}/pr.md`)).toContain('- [x] The thing works.')
+  })
+
+  const TWIN = '9999999999999999999999999999999999999999'
+  const TREE = 'aaaa111122223333444455556666777788889999'
+  const merged = markMerged(CARD, 'ok')
+  const landedIgnored = (over: Answers = () => undefined): Answers =>
+    ignoring(argv => {
+      const o = over(argv)
+      if (o) return o
+      if (is(argv, 'git', '-C', WT, 'log', '-1', '--format=%T%x09%s', 'HEAD')) return { exitCode: 0, stdout: `${TREE}\tcards: ${ID} merged\n` }
+      if (is(argv, 'git', '-C', ROOT, 'log', '--format=%H%x09%T%x09%s', '-n', '200', 'origin/main')) return { exitCode: 0, stdout: `${TWIN}\t${TREE}\tcards: ${ID} merged\n` }
+      return undefined
+    })
+
+  test('--finish with a rebased twin on origin: cleans up, writes the merged row, keeps the root card', async ($, on) => {
+    const w = world(on, { files: { ...files(), [CARD_PATH]: merged }, dirs, store, run: landedIgnored() })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    const ran = w.runs.slice(from).map(r => r.argv.join(' '))
+    expect(ran.some(a => / (show|clean) /.test(a))).toBe(false)
+    expect(ran).toContain(`git -C ${ROOT} pull --ff-only`)
+    expect(ran).toContain(`git -C ${ROOT} worktree remove ${WT}`)
+    expect(ran).toContain(`git -C ${ROOT} branch -D ${BRANCH}`)
+    expect(w.files.get(CARD_PATH)).toBe(merged)
+    expect(blockOf(out)).toEqual([`git push origin --delete ${BRANCH}`])
+    expect(out).toContain('root card kept (git-ignored)')
+    expect(out.split('\n').at(-1)).toBe(`${ID} merged at ${TWIN}`)
+    const rows = (w.files.get(LEDGER) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    expect(rows.at(-1)).toMatchObject({ kind: 'merged', task: ID, sha: TWIN })
+  })
+
+  test('--finish with neither the head nor a twin on origin refuses, names the head and removes nothing', async ($, on) => {
+    const w = world(on, { files: { ...files(), [CARD_PATH]: merged }, dirs, store, run: landedIgnored(argv => (is(argv, 'git', '-C', ROOT, 'log', '--format=%H%x09%T%x09%s', '-n', '200', 'origin/main') ? { exitCode: 0, stdout: '1234567123456712345671234567123456712345\tbbbb\tolder\n' } : undefined)) })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    expect(out).toContain(HEAD.slice(0, 10))
+    expect(out).toContain('is not in origin/main yet')
+    const ran = w.runs.slice(from).map(r => r.argv.join(' '))
+    expect(ran.some(a => / (clean|pull|worktree remove|branch -D) /.test(` ${a} `))).toBe(false)
+    expect(w.files.get(CARD_PATH)).toBe(merged)
+    expect(w.files.get(LEDGER)).not.toContain('"kind":"merged"')
   })
 })
 
