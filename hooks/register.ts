@@ -313,6 +313,7 @@ import { CONFIG_TABLE } from './lib/configtable'
 import { parseUserOptions, repoFileWith, resolveOptions, userFileWith, userOptionsPath, type Resolved } from './lib/configeff'
 import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
 import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
+import { abortedDeny, budgetDelay, decisionId, isStopped, outOfTimeDeny, stopper, turns, type Stopper } from './lib/serial'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
 type Host = EngineInterface
@@ -1664,13 +1665,17 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
  * looks: a free slot is not taken, a full one queues the task all the same.
  * A spawn of the same task still starting is refused (MOD-12: never twice).
  */
-async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true, wants: readonly string[] = []): Promise<{ token?: number } | { deny: string }> {
+async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true, wants: readonly string[] = [], s?: Stopper): Promise<{ token?: number } | { deny: string }> {
+  // MOD-92: a stopped spawn decision leaves the lock at its next step (or its pending one), holding no slot
+  const step = <T>(p: Promise<T>): Promise<T> => (s ? s.race(p) : p)
   return withLock(async () => {
+    s?.check()
     if ([...starting.values()].includes(label)) return { deny: runningDeny(label) }
-    const live = await liveState($)
+    const live = await step(liveState($))
     const others = startingOthers(starting.values(), label)
-    const holders = [...(await liveLabels($, live.workers)), ...others]
-    const queue = await readQueue($)
+    const holders = [...(await step(liveLabels($, live.workers))), ...others]
+    const queue = await step(readQueue($))
+    s?.check()
     // MOD-23: a resource a running attempt (or a spawn starting) holds queues the task whether or not a slot is free
     const blocked = resourceBlock(wants, heldResources(live.workers), label)
     if (!blocked && hasSlot(live.workers.length, others.length, cfg.maxWorkers)) {
@@ -5729,9 +5734,10 @@ async function runningAttempt($: Host, p: SpawnPlan): Promise<{ attempt: number;
  * only looked at by a dispatch. A refusal retrying cannot cure takes the task
  * out of the queue.
  */
-async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' | 'subtask' | 'at'>, claim: boolean, looked = false): Promise<{ token?: number } | { deny: string }> {
+async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' | 'subtask' | 'at'>, claim: boolean, looked = false, s?: Stopper): Promise<{ token?: number } | { deny: string }> {
   if (p.adhoc) return {}
-  const running = await runningAttempt($, p)
+  const step = <T>(q: Promise<T>): Promise<T> => (s ? s.race(q) : q)
+  const running = await step(runningAttempt($, p))
   if (running) return { deny: runningDeny(p.label, running) }
   if (p.prior >= p.budget) {
     const deny = budgetDenyMessage(p.label, p.prior, p.named)
@@ -5742,7 +5748,8 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
   if (p.prior > 0 && !looked) {
     const fileHeader = p.briefText !== undefined ? parseHeader(p.briefText) : undefined
     const look: LookFor = { task: p.task, subtask: p.subtask, ...(p.cwd ? { cwd: p.cwd } : {}), ...(p.lane ? { replay: true, ...(p.lane.base ? { base: p.lane.base } : {}) } : {}) }
-    const work = await workInWorktree($, look, fileHeader ?? p.header, p.records, p.lane)
+    const work = await step(workInWorktree($, look, fileHeader ?? p.header, p.records, p.lane))
+    s?.check()
     if (work) {
       const last = attemptsFor(p.records, p.subtask, p.lane).at(-1)
       await recordWorkPresent($, { task: p.task, subtask: p.subtask, tier: last?.tier ?? 'standard', alias: last?.alias ?? cfg.tierMap.standard, purpose: p.header?.purpose ?? 'build', ...(p.named ? { briefPath: p.named } : {}), ...((fileHeader ?? p.header)?.repo?.startsWith('/') ? { repo: (fileHeader ?? p.header)?.repo } : {}) }, work, p.lane)
@@ -5754,7 +5761,7 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
   }
   // 2F: a briefed spawn takes a worker slot or waits in the queue; an ad hoc one never waits.
   const repo = (p.briefText !== undefined ? parseHeader(p.briefText)?.repo : undefined) ?? p.header?.repo
-  return claimSlot($, { ...item, ...(p.cwd ? { cwd: p.cwd } : {}), ...(repo?.startsWith('/') ? { repo } : {}), task: p.task, subtask: p.subtask, at: p.t }, p.label, claim, p.resources)
+  return claimSlot($, { ...item, ...(p.cwd ? { cwd: p.cwd } : {}), ...(repo?.startsWith('/') ? { repo } : {}), task: p.task, subtask: p.subtask, at: p.t }, p.label, claim, p.resources, s)
 }
 
 /**
@@ -5766,13 +5773,15 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
  * which calls this with `$.agent.spawn`: they need none of the hooks.
  * `start(alias, cwd)` starts the subagent on the alias the decision picked.
  */
-async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: string) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> {
+async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: string) => Promise<AgentSpawnResult>, s?: Stopper): Promise<AgentSpawnResult> {
   let token: number | undefined
+  // MOD-92: before the start, every await is a step a stop (an abort, the budget) ends at once
+  const step = <T>(q: Promise<T>): Promise<T> => (s ? s.race(q) : q)
   try {
     // MOD-73: a value changed in the repo file or the user options file applies from this spawn
-    await loadRepoConfig($)
+    await step(loadRepoConfig($))
     noteGlyphIssues($)
-    const p = await planSpawn($, e)
+    const p = await step(planSpawn($, e))
     const { t, key, named, header, adhoc, task, subtask, label, budget, spend, lane, records } = p
     // GH-1 item 6: a budget off the grammar falls back, and says so
     const budgetWarn = budgetWarning(p.budgetRaw, cfg.defaultBudget)
@@ -5780,12 +5789,13 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     const tierWarn = tierWarning(header?.tier)
     if (tierWarn) debug($, `${label}: ${tierWarn}`)
 
-    const gate = await gateSpawn($, p, { prompt: e.prompt, description: e.description, subagentType: p.subagentType, ...(e.model ? { model: e.model } : {}) }, true)
+    const gate = await step(gateSpawn($, p, { prompt: e.prompt, description: e.description, subagentType: p.subagentType, ...(e.model ? { model: e.model } : {}) }, true, false, s))
     if ('deny' in gate) return { deny: gate.deny }
     token = gate.token
+    s?.check()
 
     // GH-6: no brief file named, a header inline: the header is the brief.
-    const inline = named === undefined && header !== undefined ? await inlineBrief($, e.prompt, header) : undefined
+    const inline = named === undefined && header !== undefined ? await step(inlineBrief($, e.prompt, header)) : undefined
     const briefPath = named ?? (inline && 'path' in inline ? inline.path : undefined)
     const noBrief = inline && 'why' in inline ? inline.why : undefined
     if (inline && 'path' in inline) debug($, `${label}: inline header → brief ${inline.path}`)
@@ -5795,11 +5805,13 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     const classify = needsClassifier({ hadHeader: header !== undefined, headerTier: header?.tier, callerModel: e.model })
     if (classify) {
       try {
-        classified = await $.model.classify(classifierText(e.prompt), CLASSIFIER_LABELS)
+        classified = await step($.model.classify(classifierText(e.prompt), CLASSIFIER_LABELS))
       } catch (err) {
+        if (isStopped(err)) throw err
         debug($, `classifier failed: ${String(err)}`)
       }
     }
+    s?.check()
     const { pick, tier, alias, fableRewritten } = pickFor(p, e.model, classified)
     // GH-1 item 8: fable asked for (tier map, caller, or the brief's model=) and opus spawned is said out loud
     const fableAsked = fableRequested(alias, fableRewritten, header?.model)
@@ -5821,16 +5833,19 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     let here: string | undefined
     if (!adhoc && header?.repo === 'here') {
       try {
-        here = await $.session.root()
-      } catch {
+        here = await step($.session.root())
+      } catch (err) {
+        if (isStopped(err)) throw err
         here = undefined
       }
     }
     // MOD-44: the other local repo this task is for (its path), when the brief names one
     const fileHeader = briefText0(p)
-    const other = !adhoc ? await adoptRepo($, task, fileHeader ?? header) : undefined
-    const usdAtStart = await sessionUsd($)
+    const other = !adhoc ? await step(adoptRepo($, task, fileHeader ?? header)) : undefined
+    const usdAtStart = await step(sessionUsd($))
     let fromQueue = false
+    // MOD-92: the point of no return. Stopped before it (an abort, the budget), nothing has started and nothing is written.
+    s?.commit()
     const res = await start(alias, p.cwd)
     if (res.deny !== undefined) return res
     // a debrief agent or an eval runner the mod started: its record learns the agent id here
@@ -5904,6 +5919,12 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     await storeSet($, K.spawn(key), spawn)
     if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
+    delegated = true
+    // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
+    if (s?.stopped) {
+      debug($, `${label}: started; its views skipped (the hook was ${s.stopped === 'abort' ? 'abandoned' : 'near its budget'})`)
+      return res
+    }
 
     // alias drift: the resolved id behind the alias moved
     const resolved = res.model
@@ -5926,8 +5947,8 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     await setWorkers($, list => [...list, { task, subtask, attempt, kind: 'spawn', tier, alias, ...(res.agentId ? { agentId: res.agentId } : {}), verdict: 'pending', at: t }])
     // MOD-74: a briefed worker's model is said where the person looks, once it has started
     if (!adhoc) await postStarted($, { label, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started' })
-    delegated = true
-    await refreshStatus($)
+    // MOD-92: the status line walks every agent's records and need not decide the spawn: the hook refreshes it once the next decision may run
+    if (!s) await refreshStatus($)
     return res
   } finally {
     // the slot is held by the record (and $.agent.list) from here on
@@ -5938,20 +5959,75 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
   }
 }
 
+/** MOD-92 (#168): the agent.spawn decisions, one at a time in the order the hooks were raised (the mod's own spawns too). */
+const spawnTurns = turns()
+
+/**
+ * MOD-92 (#168): a spawn decision as the hook runs it. It waits its turn behind the decisions
+ * raised before it, so each sees the records, slots, queue and attempt numbers the earlier ones
+ * wrote. Its signal aborting stops it at once (the hook returns; the decision's next step, or
+ * the one in flight, throws, and nothing has started or been written). Its budget is watched
+ * on the host clock: with DECISION_RESERVE_MS left and the subagent not yet started, it is
+ * refused with one line rather than overrunning. The clock re-reads the budget when it fires,
+ * since waits on `$` and `next` cost the hook nothing. `after` (the status line's walk) runs
+ * once the decision has let the next one go, and a stop cuts it short.
+ */
+async function decideInBudget($: Host, signal: AbortSignal | undefined, remaining: () => number | undefined, id: string, decide: (s: Stopper) => Promise<AgentSpawnResult>, after: () => Promise<void>): Promise<AgentSpawnResult> {
+  const s = stopper()
+  if (signal?.aborted) return { deny: abortedDeny(id) }
+  const onAbort = () => s.stop('abort')
+  signal?.addEventListener('abort', onAbort, { once: true })
+  let timer: { cancel: () => void } | undefined
+  const watch = () => {
+    timer = undefined
+    if (s.stopped) return
+    const wait = budgetDelay(remaining())
+    if (wait === undefined) return
+    if (wait <= 0) return s.stop('budget')
+    try {
+      timer = $.clock.after(wait, watch)
+    } catch {
+      timer = undefined
+    }
+  }
+  watch()
+  try {
+    const res = await s.race(
+      spawnTurns.run(async () => {
+        s.check()
+        return decide(s)
+      }),
+    )
+    // outside the turn, so the next decision is not held by it; a stop (the signal, the budget) cuts it short
+    if (res.deny === undefined && !s.stopped) await Promise.race([after().catch(err => debug($, `after the spawn: ${String(err)}`)), s.settled])
+    return res
+  } catch (err) {
+    if (!isStopped(err)) throw err
+    const deny = err.why === 'budget' ? outOfTimeDeny(id) : abortedDeny(id)
+    debug($, deny)
+    return { deny }
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+    timer?.cancel()
+  }
+}
+
 /**
  * MOD-21: the agent.spawn hook's decision for a reviewer (a prompt that opens with its marker). Its tier is one below
  * the worker's, or reviewTier; it runs where the worker ran. It is recorded as an attempt of kind `review`, which is on
  * no ladder: no budget, no slot, no queue, no escalation. The brain's model hint gives way to the tier, as a worker's does.
  */
-async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start: (alias: string, cwd?: string) => Promise<AgentSpawnResult>): Promise<AgentSpawnResult> {
-  await loadRepoConfig($)
-  const t = await now($)
+async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start: (alias: string, cwd?: string) => Promise<AgentSpawnResult>, s?: Stopper): Promise<AgentSpawnResult> {
+  const step = <T>(q: Promise<T>): Promise<T> => (s ? s.race(q) : q)
+  await step(loadRepoConfig($))
+  const t = await step(now($))
   spawnSeq += 1
   const key = e.tool_use_id || `plugin-${t}-${spawnSeq}`
   const label = taskLabel(marker.task, marker.subtask)
-  const worker = await spawnByAgent($, marker.worker)
+  const worker = await step(spawnByAgent($, marker.worker))
   const lane = worker ? laneOf(worker) : undefined
-  const before = await loadAttempts($, marker.task)
+  const before = await step(loadAttempts($, marker.task))
+  s?.check()
   const reviewed = attemptsFor(before, marker.subtask, lane).find(r => r.attempt === marker.attempt)
   const { tier, alias } = reviewerPick(worker?.tier ?? reviewed?.tier ?? 'standard', cfg.reviewTier || undefined, cfg.tierMap)
   try {
@@ -5962,7 +6038,8 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
   debug($, tierPickLine(`${label} review of attempt ${marker.attempt}`, tier, { tier, source: 'review' }, undefined, false))
   if (e.model && aliasOf(e.model) !== alias) debug($, `${label}: the review call asked for ${e.model}; tier=${tier} spawns ${alias}`)
   const cwd = e.cwd ?? worker?.cwd
-  const usdAtStart = await sessionUsd($)
+  const usdAtStart = await step(sessionUsd($))
+  s?.commit()
   const res = await start(alias, cwd)
   if (res.deny !== undefined) return res
   const briefPath = worker?.briefPath ?? reviewed?.briefPath
@@ -6012,7 +6089,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
   if (res.agentId) await storeSet($, K.agent(res.agentId), key)
   if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
   delegated = true
-  await refreshStatus($)
+  if (!s) await refreshStatus($)
   return res
 }
 
@@ -6092,13 +6169,16 @@ async function spawnSelf($: Host, input: { prompt: string; description: string; 
   const before = new Set((await agentList($)).map(a => a.id))
   selfDecided.add(pk)
   try {
-    return await decideSpawn($, { tool_use_id: '', ...input }, async alias => {
-      const description = glyphDescription(input.description, alias)
-      const r = await $.agent.spawn({ prompt: input.prompt, description, subagentType: input.subagentType, model: alias, ...(input.cwd ? { cwd: input.cwd } : {}) })
-      if (r.deny !== undefined) return r
-      const agentId = r.agentId ?? selfIds.get(pk) ?? (await agentList($)).find(a => !before.has(a.id) && a.description === description)?.id
-      return agentId ? { ...r, agentId } : r
-    })
+    // MOD-92: one decision at a time, the brain's spawns and the mod's own alike (the hook passes this one's start through, untaken)
+    return await spawnTurns.run(() =>
+      decideSpawn($, { tool_use_id: '', ...input }, async alias => {
+        const description = glyphDescription(input.description, alias)
+        const r = await $.agent.spawn({ prompt: input.prompt, description, subagentType: input.subagentType, model: alias, ...(input.cwd ? { cwd: input.cwd } : {}) })
+        if (r.deny !== undefined) return r
+        const agentId = r.agentId ?? selfIds.get(pk) ?? (await agentList($)).find(a => !before.has(a.id) && a.description === description)?.id
+        return agentId ? { ...r, agentId } : r
+      }),
+    )
   } catch (err) {
     return { deny: String(err) }
   } finally {
@@ -6188,9 +6268,19 @@ export const register: Register = (on, opts) => {
     const asked = { ...e, subagentType: e.subagentType || (e as unknown as { subagent_type?: string }).subagent_type || 'general-purpose' }
     // MOD-21: a reviewer's prompt opens with its marker. Read before the brief the prompt names: that is not a worker.
     const marker = parseReviewMarker(e.prompt)
-    if (marker) return decideReview($, asked, marker, (alias, cwd) => next({ ...e, model: alias, description: glyphDescription(e.description, alias), ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
     // MOD-12: the brain's Agent call names no folder; a briefed worker runs where /dispatch prepared it
-    return decideSpawn($, asked, (alias, cwd) => next({ ...e, model: alias, description: glyphDescription(e.description, alias), ...(cwd && cwd !== e.cwd ? { cwd } : {}) }))
+    const start = (alias: string, cwd?: string) => next({ ...e, model: alias, description: glyphDescription(e.description, alias), ...(cwd && cwd !== e.cwd ? { cwd } : {}) })
+    const header = marker ? undefined : parseHeader(e.prompt)
+    const id = marker ? taskLabel(marker.task, marker.subtask) : decisionId(header?.task, header?.subtask, findBriefPath(e.prompt))
+    // MOD-92 (#168): one decision at a time, stopped by the signal, refused before the budget runs out
+    const remaining = (): number | undefined => {
+      try {
+        return next.budget?.remainingMs
+      } catch {
+        return undefined
+      }
+    }
+    return decideInBudget($, next.signal, remaining, id, s => (marker ? decideReview($, asked, marker, start, s) : decideSpawn($, asked, start, s)), () => refreshStatus($))
   })
 
   // ---- every tool call: the worker's SubagentHandback text; denials as friction (5E) ---

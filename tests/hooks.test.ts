@@ -5649,3 +5649,85 @@ describe('MOD-89 (#157, #159): the store stays under the host cap', () => {
     expect(text).not.toContain('writes refused')
   })
 })
+
+describe('MOD-92 (#168): concurrent agent.spawn events are decided one at a time, inside the budget, and an abort stops the decision', () => {
+  const brief = (task: string, subtask = 'main') => `[[brief v=1 task=${task} subtask=${subtask} purpose=build tier=standard]]\nDo it.`
+  const BRIEF_FILE = `${SCRATCH}/briefs/T-3.brief.md`
+  const queueOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.queue') ?? []) as Record<string, unknown>[]
+  const workersOf = (w: { state: Map<string, unknown> }) => (w.state.get('chassis-delegation.workers') ?? []) as Record<string, unknown>[]
+
+  test('three spawns in one message with two workers live and maxWorkers 2: each is decided once, queued in the order made', { options: { maxWorkers: 2 } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: { [BRIEF_FILE]: brief('T-3') } })
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    // the first names its brief file (one read more than the others): it is still decided first
+    const res = await Promise.all([
+      $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF_FILE}. Read it whole.`, tool_use_id: 'toolu_C0000003' })),
+      $.agent.spawn(spawnInput({ prompt: brief('T-4'), tool_use_id: 'toolu_D0000004' })),
+      $.agent.spawn(spawnInput({ prompt: brief('T-5'), tool_use_id: 'toolu_E0000005' })),
+    ])
+    expect(w.spawns).toHaveLength(2)
+    expect(res.map(r => r.deny?.split(' — ')[0])).toEqual(['queued: T-3', 'queued: T-4', 'queued: T-5'])
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-3', 'T-4', 'T-5'])
+    expect(res[2]?.deny).toContain('2 live: T-1, T-2; 3 queued: T-3, T-4, T-5')
+  })
+
+  test('three spawns at once with maxWorkers 2 and no worker live: the first two made start, the third queues; no record is lost and no attempt number is shared', { options: { maxWorkers: 2 } }, async ($, on) => {
+    const w = world(on, { listAgents: true, files: { [BRIEF_FILE]: brief('T-3') } })
+    const res = await Promise.all([
+      $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF_FILE}. Read it whole.`, tool_use_id: 'toolu_C0000003' })),
+      $.agent.spawn(spawnInput({ prompt: brief('T-3', 'b'), tool_use_id: 'toolu_D0000004' })),
+      $.agent.spawn(spawnInput({ prompt: brief('T-5'), tool_use_id: 'toolu_E0000005' })),
+    ])
+    expect(res.map(r => r.deny === undefined)).toEqual([true, true, false])
+    expect(res[2]?.deny).toMatch(/^queued: T-5 — /)
+    expect(w.spawns).toHaveLength(2)
+    // both subtasks of T-3 are on its record, attempt 1 each, each its own agent
+    expect(records(w, 'T-3').map(r => [r.subtask, r.attempt, r.agentId])).toEqual([
+      ['main', 1, res[0]?.agentId],
+      ['b', 1, res[1]?.agentId],
+    ])
+    expect(res[0]?.agentId).not.toBe(res[1]?.agentId)
+    expect(workersOf(w).map(x => [x.task, x.subtask, x.attempt])).toEqual([
+      ['T-3', 'main', 1],
+      ['T-3', 'b', 1],
+    ])
+    expect(queueOf(w).map(q => q.task)).toEqual(['T-5'])
+  })
+
+  test('the signal aborted mid-decision: the hook stops there; it starts nothing, records nothing, and the next spawn is decided at once', { plugins: [{ name: 'impatient', tier: 'prepend', register(on) {
+    // a hook above that settles first: it gives up on the spawn after one (mock) second
+    on('agent.spawn', ($, e, next) =>
+      new Promise(resolve => {
+        const late = $.clock.after(1000, () => resolve({ deny: 'impatient: gave up' }))
+        next(e).then(
+          r => (late.cancel(), resolve(r)),
+          err => (late.cancel(), resolve({ deny: String(err) })),
+        )
+      }),
+    )
+  } }] }, async ($, on) => {
+    let hold = true
+    const w = world(on, { listAgents: true, skip: ['agent.list'] })
+    // $.agent.list answers late while `hold`: the decision is in flight at its slot check
+    on('agent.list', async () => {
+      if (hold) await w.clock.sleep(20_000)
+      return { value: w.agents.map(a => ({ ...a })) } as never
+    })
+    const first = $.agent.spawn(spawnInput({ prompt: brief('T-8'), tool_use_id: 'toolu_F0000008' }))
+    await w.clock.settle()
+    await w.clock.advance(1000)
+    expect((await first).deny).toBe('impatient: gave up')
+    hold = false
+    // the aborted decision holds no slot, no lock and no turn: the next spawn of the task starts with no clock moved
+    const second = $.agent.spawn(spawnInput({ prompt: brief('T-8'), tool_use_id: 'toolu_G0000009' }))
+    await w.clock.settle()
+    expect(w.spawns).toHaveLength(1)
+    expect((await second).deny).toBeUndefined()
+    // the late answer comes: the aborted decision does nothing with it
+    await w.clock.advance(20_000)
+    await w.clock.settle()
+    expect(w.spawns).toHaveLength(1)
+    expect(records(w, 'T-8').map(r => [r.attempt, r.toolUseId])).toEqual([[1, 'toolu_G0000009']])
+  })
+})

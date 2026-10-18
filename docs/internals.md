@@ -113,6 +113,20 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
   too, slot or no slot: `queued: BE-314 — waiting for resource blender-live
   (held by BE-310)`. Only a running or starting worker holds a resource; a
   worker that has handed back holds none, even while its verdict is still out.
+- **Several Agent calls in one message are decided one at a time (MOD-92,
+  #168).** The spawn hook decides each spawn in the order the calls came, and
+  each decision sees the records, slots, queue and attempt numbers the earlier
+  ones wrote. The host gives a hook 10 s of its own time, and time spent waiting
+  behind another decision counts. So a decision that has not started its
+  subagent with 2.5 s of budget left is refused with
+  `<id>: the spawn decision ran out of time; make the Agent call again`. An
+  aborted hook stops at its next step, starting and recording nothing. The
+  status-line refresh runs after the next decision is let go.
+- **A killed hooks worker takes the mod's tools with it until a restart.** If
+  the host kills the hooks worker (a hook that runs on after its abort twice in
+  a row), it also disconnects the chassis-delegation MCP server, so `card`,
+  `dispatch` and `verdict` are gone for the rest of the session. That is how
+  the host behaves, not the mod. Restarting Claude Code brings the tools back.
 - **The git guard reads the command text.** It cannot see a commit made inside
   a script, or a folder named through a variable.
 - **The background runners act on the session's permissions.** The built-in
