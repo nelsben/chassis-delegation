@@ -1753,6 +1753,80 @@ describe('GH-104: spend guards', () => {
     expect(String((await $.command.run(delegationCmd(''))).text)).not.toContain('owed: T-4')
   })
 
+  // MOD-101 (#158): work cherry-picked onto the session's current branch retires the row; accept takes several ids or --owed
+  const cherryRun = (answer: string) => {
+    const base = worker()
+    return (argv: string[]): RunAnswer | undefined =>
+      argv[3] === 'merge-base' && argv[4] === '--is-ancestor' ? { exitCode: 1, stdout: '' } : argv[3] === 'log' && argv.includes('--cherry-mark') ? { exitCode: 0, stdout: answer } : base(argv)
+  }
+  const owedWith = async ($: any, on: any, run: (argv: string[]) => RunAnswer | undefined, f = files()) => {
+    const w = world(on, { files: f, dirs, run, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: PROMPT, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'All done, the gate is green.'))
+    await $.session.start(sessionStart)
+    return w
+  }
+
+  test('MOD-101: a sha whose patch is on the current branch by cherry-pick (the cherry log marks it =) retires the owed row', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = await owedWith($, on, cherryRun(`=${'1'.repeat(40)}\n`))
+    const out = String((await $.command.run(delegationCmd(''))).text)
+    expect(out).not.toContain('owed: T-4')
+    expect(records(w, 'T-4').at(-1)).toMatchObject({ retired: 'merged' })
+    expect(w.runs.some(x => x.argv[3] === 'log' && x.argv.includes('--cherry-mark') && x.argv.includes(`HEAD...${HEAD}`))).toBe(true)
+  })
+
+  test('MOD-101: a sha whose patch is not on the current branch (the cherry log marks it >) stays owed', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = await owedWith($, on, cherryRun(`=${'1'.repeat(40)}\n>${HEAD}\n`))
+    expect(String((await $.command.run(delegationCmd(''))).text)).toContain(`- owed: T-4: verify sha=${HEAD}`)
+    expect(records(w, 'T-4').at(-1)?.retired).toBeUndefined()
+  })
+
+  for (const status of ['merged', 'landed']) {
+    test(`MOD-101: a card reading ${status} in the working tree retires the row`, { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+      const w = await owedWith($, on, cherryRun(`>${HEAD}\n`), { ...files(), [`${ROOT}/agents/tasks/${CARD_NAME}`]: CARD.replace('status: queued', `status: ${status}`) })
+      expect(String((await $.command.run(delegationCmd(''))).text)).not.toContain('owed: T-4')
+      expect(records(w, 'T-4').at(-1)).toMatchObject({ retired: 'merged' })
+    })
+  }
+
+  test('MOD-101: /delegation accept A B C [note] retires each named id, one line per id; an unknown id says so and the rest retire', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = await owedWith($, on, cherryRun(`>${HEAD}\n`))
+    const t4 = records(w, 'T-4')
+    w.store.set('delegation.tasks.T-5', t4.map(r => ({ ...r, task: 'T-5' })))
+    const out = String((await $.command.run(delegationCmd('accept T-4 NOPE-9 T-5 landed by hand'))).text).split('\n')
+    expect(out).toHaveLength(3)
+    expect(out[0]).toContain('T-4')
+    expect(out[1]).toContain('NOPE-9')
+    expect(out[1]).toContain('no attempts recorded')
+    expect(out[2]).toContain('T-5')
+    expect(records(w, 'T-4').at(-1)).toMatchObject({ retired: 'accepted', accepted: { note: 'landed by hand' } })
+    expect(records(w, 'T-5').at(-1)).toMatchObject({ retired: 'accepted', accepted: { note: 'landed by hand' } })
+    const again = String((await $.command.run(delegationCmd('accept T-4 T-5'))).text).split('\n')
+    expect(again).toHaveLength(2)
+    expect(again[0]).toContain('already')
+  })
+
+  test('MOD-101: /delegation accept --owed [note] retires every owed row of the session and says how many', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = await owedWith($, on, cherryRun(`>${HEAD}\n`))
+    const recentKey = [...w.store.keys()].find(k => k.startsWith('delegation.recent'))
+    expect(recentKey).toBeDefined()
+    w.store.set('delegation.tasks.T-5', records(w, 'T-4').map(r => ({ ...r, task: 'T-5' })))
+    w.store.set(recentKey as string, [...((w.store.get(recentKey as string) ?? []) as object[]), { task: 'T-5', attempt: 1, verdict: 'work-present', line: 'x', at: Date.now(), owed: 'T-5: verify sha=abc' }])
+    const out = String((await $.command.run(delegationCmd('accept --owed swept'))).text)
+    expect(out).toContain('retired 2')
+    expect(records(w, 'T-4').at(-1)).toMatchObject({ retired: 'accepted', accepted: { note: 'swept' } })
+    expect(records(w, 'T-5').at(-1)).toMatchObject({ retired: 'accepted' })
+    expect(String((await $.command.run(delegationCmd('accept --owed'))).text)).toContain('retired 0')
+  })
+
+  test('MOD-101: /delegation accept OPS-1 landed by hand is still one id with the note', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
+    const w = await owedWith($, on, cherryRun(`>${HEAD}\n`))
+    w.store.set('delegation.tasks.OPS-1', records(w, 'T-4').map(r => ({ ...r, task: 'OPS-1' })))
+    const out = String((await $.command.run(delegationCmd('accept OPS-1 landed by hand'))).text)
+    expect(out.split('\n')).toHaveLength(1)
+    expect(records(w, 'OPS-1').at(-1)).toMatchObject({ retired: 'accepted', accepted: { note: 'landed by hand' } })
+  })
+
   test('(b) /dispatch --verify <sha> runs the verifier on the branch head with a synthetic report, no spawn; the work-present attempt takes the verdict', { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, run: worker({ gate: 0 }), agentId: 'agent-4' })
     await $.session.start(sessionStart)

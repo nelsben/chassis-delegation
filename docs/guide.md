@@ -84,15 +84,25 @@ lines.
 
 Three rules keep that section about what is still live:
 
-- **An owed row retires by itself when the task's work is on the default
-  branch.** The last attempt's sha is an ancestor of `origin/main`, or the
-  task's card on `origin/main` (in the configured `cardDir`) reads `status:
-  merged`. The check runs at most once per 15 minutes per task, and a check that
-  gets no answer leaves the row as it is. The attempt record keeps `retired:
-  merged`.
-- **`/delegation accept <id> [note]` closes one by hand.** It records
-  `accepted` and the note on the task's last attempt, retires its row and
-  prints one line; an unknown id prints one line and changes nothing.
+- **An owed row retires by itself when the task's work has landed.** The
+  last attempt's sha is an ancestor of `origin/main`; or its patch is already on
+  the session's current branch (work cherry-picked onto a long-lived working
+  branch, where the sha never reaches `origin/main`: every commit of the
+  worker's side has a patch-equal commit on `HEAD`, the answer `git cherry`
+  gives, #158); or the task's card, on `origin/main` or in the working tree (in
+  the configured `cardDir`), reads `status: merged` or `status: landed`. The
+  cherry-pick check, like the ancestry one, applies to a consistent verdict only
+  and to the session's own repo. The check runs at most once per 15 minutes per
+  task, and a check that gets no answer leaves the row as it is. The attempt
+  record keeps `retired: merged`.
+- **`/delegation accept <id> [<id> ...] [note]` closes rows by hand.** Each
+  id (a token shaped like a task id, `PREFIX-N`) is recorded as `accepted`, with
+  the note, on its task's last attempt and its row is retired; one line prints
+  per id. An unknown or already-retired id says so on its line and the others
+  still retire. Anything that is not an id is the note, so `accept OPS-1 landed
+  by hand` is one id with the note `landed by hand`.
+  `/delegation accept --owed [note]` retires every owed row of the session and
+  says how many.
 - **The block keeps the live rows and counts the rest.** Running workers,
   pending verdicts and owed rows not yet checked or younger than 24 hours print
   in full; the older checked ones become one line, `n older owed rows: <ids>`.

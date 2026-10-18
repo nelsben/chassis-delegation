@@ -243,21 +243,22 @@ export function retireDue(records: readonly AttemptRecord[], subtask: string, no
   return last.retireTriedAt === undefined || now - last.retireTriedAt >= RETIRE_EVERY_MS
 }
 
-/** MOD-4: does a card's frontmatter read `status: merged`? (A line in the body does not.) */
+/** MOD-4: does a card's frontmatter read `status: merged` (MOD-101: or `landed`)? (A line in the body does not.) */
 export function cardReadsMerged(text: string): boolean {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
-  return m !== null && /^status:\s*["']?merged["']?\s*$/m.test(m[1] as string)
+  return m !== null && /^status:\s*["']?(?:merged|landed)["']?\s*$/m.test(m[1] as string)
 }
 
 /**
  * MOD-4: what one retire check leaves on the last attempt. `ancestor` is what
  * `git merge-base --is-ancestor <sha> origin/main` said (undefined: it could not
- * say), `card` the card's text on origin/main (undefined: not read). Merged on
+ * say), `picked` (MOD-101, #158) whether the sha's patch is already on the session's current branch
+ * (cherry-picked: no commit of it is left unmatched), `card` the card's text on origin/main (undefined: not read). Merged on
  * either; with neither answered the row is left as it is (only the try is noted).
  */
-export function retirePatch(probe: { ancestor?: boolean; card?: string }, now: number): Partial<AttemptRecord> {
-  if (probe.ancestor === true || (probe.card !== undefined && cardReadsMerged(probe.card))) return { retired: 'merged', retireTriedAt: now, retireCheckedAt: now }
-  if (probe.ancestor === undefined && probe.card === undefined) return { retireTriedAt: now }
+export function retirePatch(probe: { ancestor?: boolean; picked?: boolean; card?: string }, now: number): Partial<AttemptRecord> {
+  if (probe.ancestor === true || probe.picked === true || (probe.card !== undefined && cardReadsMerged(probe.card))) return { retired: 'merged', retireTriedAt: now, retireCheckedAt: now }
+  if (probe.ancestor === undefined && probe.picked === undefined && probe.card === undefined) return { retireTriedAt: now }
   return { retireTriedAt: now, retireCheckedAt: now }
 }
 
