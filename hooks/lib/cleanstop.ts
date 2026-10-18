@@ -50,7 +50,14 @@ export type CleanStopInput = {
   cooldownMs: number
   /** The watermark the last background debrief started at. */
   lastWatermark?: number
+  /** MOD-91: when the latest debrief started, whatever its check said (lastAt is the last that passed). */
+  lastAttemptAt?: number
+  /** MOD-91: the checks that failed from one start watermark. */
+  failedChecks?: { watermark: number; count: number }
 }
+
+/** MOD-91: how many failed checks on one window stop the automatic start. */
+export const DEBRIEF_FAILED_CHECKS_MAX = 2
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
 
@@ -67,8 +74,13 @@ export function cleanStop(i: CleanStopInput): { ok: true } | { ok: false; why: s
   const fresh = i.lines - i.watermark
   if (fresh < i.minNewLines) return { ok: false, why: `only ${Math.max(0, fresh)} new breadcrumb lines (need ${i.minNewLines})` }
   if (i.lastWatermark !== undefined && i.lastWatermark === i.watermark) return { ok: false, why: `already debriefed at watermark ${i.watermark}` }
-  if (i.lastAt !== undefined && i.now - i.lastAt < i.cooldownMs) {
-    return { ok: false, why: `last debrief ${((i.now - i.lastAt) / H).toFixed(1)}h ago (cooldown ${i.cooldownMs / H}h)` }
+  if (i.failedChecks && i.failedChecks.watermark === i.watermark && i.failedChecks.count >= DEBRIEF_FAILED_CHECKS_MAX) {
+    return { ok: false, why: `debrief stopped: the check failed twice on the window from line ${i.watermark}; run /delegation debrief to retry by hand` }
+  }
+  // MOD-91: the cooldown counts from the latest start, a failed check included
+  const started = i.lastAt === undefined && i.lastAttemptAt === undefined ? undefined : Math.max(i.lastAt ?? -Infinity, i.lastAttemptAt ?? -Infinity)
+  if (started !== undefined && i.now - started < i.cooldownMs) {
+    return { ok: false, why: `last debrief ${((i.now - started) / H).toFixed(1)}h ago (cooldown ${i.cooldownMs / H}h)` }
   }
   return { ok: true }
 }

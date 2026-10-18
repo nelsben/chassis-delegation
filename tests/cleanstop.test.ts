@@ -329,3 +329,31 @@ describe('MOD-33: /delegation debrief apply, the proposals as actions the person
     expect(settledLines(ps, [])).toEqual([])
   })
 })
+
+describe('MOD-91: a failed check counts as an attempt', () => {
+  test('the cooldown counts from the latest start, not the last passed debrief', () => {
+    // lastAt is a day old; the failed attempt started 1 hour ago
+    const r = cleanStop({ ...base, lastAt: 76 * H, lastAttemptAt: 99 * H })
+    expect(r).toEqual({ ok: false, why: 'last debrief 1.0h ago (cooldown 6h)' })
+  })
+  test('an attempt older than the cooldown lets the next one start', () => {
+    expect(cleanStop({ ...base, lastAt: 76 * H, lastAttemptAt: 90 * H })).toEqual({ ok: true })
+  })
+  test('a lastAttemptAt older than lastAt changes nothing', () => {
+    expect(cleanStop({ ...base, lastAt: 95 * H, lastAttemptAt: 10 * H })).toEqual({ ok: false, why: 'last debrief 5.0h ago (cooldown 6h)' })
+  })
+  test('a second failed check on the same start watermark refuses, past the cooldown', () => {
+    const r = cleanStop({ ...base, lastAt: 1 * H, lastAttemptAt: 2 * H, failedChecks: { watermark: 10, count: 2 } })
+    expect(r).toEqual({ ok: false, why: 'debrief stopped: the check failed twice on the window from line 10; run /delegation debrief to retry by hand' })
+  })
+  test('one failed check on the watermark still lets the next start', () => {
+    expect(cleanStop({ ...base, lastAt: 1 * H, lastAttemptAt: 2 * H, failedChecks: { watermark: 10, count: 1 } })).toEqual({ ok: true })
+  })
+  test('a new watermark resets the count', () => {
+    expect(cleanStop({ ...base, lastAt: 1 * H, lastAttemptAt: 2 * H, failedChecks: { watermark: 4, count: 2 } })).toEqual({ ok: true })
+  })
+  test('a clean record (no attempt, no failures) is unaffected', () => {
+    expect(cleanStop({ ...base, lastAt: 1 * H })).toEqual({ ok: true })
+    expect(cleanStop({ ...base, lastAt: 94 * H, lastAttemptAt: 94 * H })).toEqual({ ok: true })
+  })
+})

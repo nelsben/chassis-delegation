@@ -2588,12 +2588,54 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
     expect(out).toContain('lines 2 to 4')
     expect(String(w.spawns[0]?.prompt)).toContain('2026-10-10T10:20:00Z')
     await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
-    expect(w.store.get('delegation.debrief.sess-1')).toEqual(PRIOR)
+    expect(w.store.get('delegation.debrief.sess-1')).toMatchObject(PRIOR)
+    expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ failedChecks: { watermark: 1, count: 1 } })
     expect(w.files.has(FINDINGS)).toBe(false)
     expect(shown(w)).toContain('stripped 1 tool_denials entry outside the window')
     expect(shown(w)).toContain('record not moved')
     expect(JSON.parse(w.files.get(DEBRIEF) ?? '{}').tool_denials).toEqual([])
     expect(w.files.get(CRUMBS.replace(/\.jsonl$/, '.done'))).toBe('1\n')
+  })
+
+  test('MOD-91 (#156): a debrief whose check fails twice starts no third time, says the stopped row once, and leaves .check.txt and .orig.json beside the debrief', { options: { autoEval: false } }, async ($, on) => {
+    const MIN = 60_000
+    const HR = 60 * MIN
+    const old = Array.from({ length: 10 }, () => JSON.stringify({ ts: '2026-10-08T09:00:00Z', kind: 'session_start', detail: {} }))
+    const fresh = Array.from({ length: 30 }, (_, i) => JSON.stringify({ ts: `2026-10-10T10:${String(i % 60).padStart(2, '0')}:00Z`, kind: i % 2 ? 'correction' : 'permission_prompt', detail: {} }))
+    const bad = JSON.stringify({ summary: 'x', mod_findings: [finding], tool_denials: [{ text: 'Bash denied', at: '2026-10-08T09:00:00Z' }] })
+    const w = world(on, { listAgents: true, store: { 'delegation.debrief.sess-1': { ...PRIOR, lastAt: -30_000_000 } }, files: { [CRUMBS]: [...old, ...fresh].join('\n') + '\n', [CRUMBS.replace(/\.jsonl$/, '.done')]: '10\n', [DEBRIEF]: bad } })
+    const mainT = { answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer' } as never
+    const idle = async (hours: number) => {
+      await w.clock.advance(hours * HR)
+      await $.turn.complete(mainT)
+      await w.clock.advance(20 * MIN)
+    }
+    await $.session.start(sessionStart)
+    await idle(0)
+    expect(w.spawns).toHaveLength(1)
+    await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
+    // the failed attempt started a moment ago: the cooldown holds, though the last passed debrief is old
+    await idle(0)
+    expect(w.spawns).toHaveLength(1)
+    await idle(7)
+    expect(w.spawns).toHaveLength(2)
+    w.files.set(DEBRIEF, bad)
+    await $.turn.complete(turnInput('agent-2', `Wrote ${DEBRIEF}`))
+    expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ watermark: 1, failedChecks: { watermark: 10, count: 2 } })
+    await idle(7)
+    await idle(7)
+    expect(w.spawns).toHaveLength(2)
+    const stopped = 'debrief stopped: the check failed twice on the window from line 10; run /delegation debrief to retry by hand'
+    expect(w.appended.map(a => a.text).join('\n').split(stopped)).toHaveLength(2)
+    const check = DEBRIEF.replace(/\.json$/, '.check.txt')
+    const orig = DEBRIEF.replace(/\.json$/, '.orig.json')
+    expect(w.files.get(check)).toContain('stripped 1 tool_denials entry outside the window')
+    expect(w.files.get(orig)).toBe(bad)
+    expect(shown(w)).toContain(check)
+    expect(shown(w)).toContain(orig)
+    // by hand still runs
+    await $.command.run(delegation('debrief'))
+    expect(w.spawns).toHaveLength(3)
   })
 
   test('a clean hand-back moves the record and writes the findings', { options: { autoEval: false, autoDebrief: false } }, async ($, on) => {
@@ -2646,7 +2688,7 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
     await $.command.run(delegation('debrief'))
     await $.turn.complete(turnInput('agent-1', `Wrote ${DEBRIEF}`))
     expect(shown(w)).toContain('flagged corrections')
-    expect(w.store.get('delegation.debrief.sess-1')).toEqual(PRIOR)
+    expect(w.store.get('delegation.debrief.sess-1')).toMatchObject(PRIOR)
     expect(w.sent).toHaveLength(0)
   })
 

@@ -109,7 +109,7 @@ User-scoped options (`/delegation config <field> <value>`, your options file, or
 | `debriefIdleMinutes` | `20` | minutes without a turn before the clean-stop check |
 | `debriefMinNewLines` | `25` | the harness breadcrumb lines a debrief needs, when a breadcrumb file exists |
 | `debriefMinEvents` | `5` | without breadcrumbs, the corrections, tool denials and refutes a debrief needs |
-| `debriefCooldownHours` | `6` | hours between two debriefs of one session |
+| `debriefCooldownHours` | `6` | hours between two debriefs of one session, counted from the latest start, a debrief whose check failed included (MOD-91); two failed checks on one window stop the automatic start (see [The debrief now](#the-debrief-now)) |
 | `debriefAgent` | `general-purpose` | the debrief's subagent type |
 | `evalIdleMinutes` | `10` | minutes without a turn before the eval looks at `origin/main` |
 | `evalLive` | `false` | run T2 after a clean T1, once a session, within the cost cap |
@@ -139,6 +139,8 @@ Otherwise it runs the built-in `hooks/templates/debrief.md`. That template write
   - a refuted verdict.
 
 ### The debrief now
+
+**A failed check (MOD-91, #156).** A debrief whose check fails does not move the record, so its window is covered again, but it counts as an attempt: the cooldown counts from its start, and the second failed check on the same window (the same start line) stops the automatic start with one row, `debrief stopped: the check failed twice on the window from line <n>; run /delegation debrief to retry by hand`. `/delegation debrief` still runs, and a clean check clears the count. The check's lines are kept in `<debrief>.check.txt`, and the file as the agent wrote it in `<debrief>.orig.json` when the check rewrote it, both beside the debrief; the session row names them.
 
 `/delegation debrief` starts the same background debrief the clean stop starts,
 now. It skips the idle, cooldown and minimum-friction tests, keeps one debrief at
