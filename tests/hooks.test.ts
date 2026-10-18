@@ -2207,7 +2207,7 @@ describe('GH-111: the card tool', () => {
     const w = setup(on)
     await $.session.start(sessionStart)
     const out = resultText(await $.tool.call({ tool: TOOL, ...given, doneWhen: ['`artifacts/kit/index.html` exists'], forbid: ['artifacts/*.html'] } as never))
-    expect(out).toContain('warning: forbid artifacts/*.html matches artifacts/kit/index.html named in done-when')
+    expect(out).toContain('warning: forbid covers paths done-when names: artifacts/kit/index.html (artifacts/*.html)')
     const path = `${ROOT}/agents/tasks/OPS-1-the-rom-reader-returns-the-header.md`
     expect(out).toContain(`wrote ${path}`)
     expect(w.files.get(path)).toContain('forbid: [artifacts/*.html]\n')

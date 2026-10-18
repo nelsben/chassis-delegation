@@ -69,6 +69,8 @@ export type SpendTier = 'economy' | 'standard' | 'frontier'
 
 export type RepoConfig = {
   gateMap?: Record<string, string>
+  /** MOD-98: gateMap entries the gate checker refused, id → why; they are not in gateMap. */
+  refusedGates?: Record<string, string>
   agentTypes?: Record<string, string>
   tierMap?: Partial<Record<Tier, Alias>>
   evalCommand?: string
@@ -104,6 +106,8 @@ export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
   gateMap: Record<string, string>
+  /** MOD-98: gateMap ids a layer wrote that the gate checker refused (and no layer defines validly), id → why. */
+  refusedGates: Record<string, string>
   agentTypes: Record<string, string>
   tierMap: Record<Tier, Alias>
   evalCommand: string
@@ -138,7 +142,7 @@ type Parsed = { config: RepoConfig; errors: string[] }
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
 
 /** A map of strings, `_`-keys (comments) skipped, non-strings named. */
-function stringMap(key: string, v: unknown, errors: string[], where: string): Record<string, string> | undefined {
+function stringMap(key: string, v: unknown, errors: string[], where: string, refused?: Record<string, string>): Record<string, string> | undefined {
   if (!isObject(v)) {
     errors.push(`${key}${where}: not an object (ignored)`)
     return undefined
@@ -150,8 +154,10 @@ function stringMap(key: string, v: unknown, errors: string[], where: string): Re
     else {
       // GH-11: a gate command the allowlist would refuse at verify time is refused now
       const c = key === 'gateMap' ? checkGateEntry(x) : undefined
-      if (c && !c.ok) errors.push(`${key}.${k}${where}: ${c.reason} (ignored)`)
-      else out[k] = x
+      if (c && !c.ok) {
+        errors.push(`${key}.${k}${where}: ${c.reason} (ignored)`)
+        if (refused) refused[k] = c.reason
+      } else out[k] = x
     }
   }
   return Object.keys(out).length > 0 ? out : undefined
@@ -246,8 +252,10 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
     switch (key) {
       case 'gateMap':
       case 'agentTypes': {
-        const m = stringMap(key, v, errors, where)
+        const refused: Record<string, string> = {}
+        const m = stringMap(key, v, errors, where, key === 'gateMap' ? refused : undefined)
         if (m) config[key] = m
+        if (Object.keys(refused).length > 0) config.refusedGates = refused
         break
       }
       case 'tierMap': {
@@ -380,8 +388,11 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
   const sources = Object.fromEntries(REPO_KEYS.map(k => [k, settings[k] !== undefined ? 'settings' : user[k] !== undefined ? 'yours' : repo[k] !== undefined ? 'repo' : 'default'])) as Effective['sources']
   const pick = <K extends RepoKey>(k: K, fallback: NonNullable<RepoConfig[K]>): NonNullable<RepoConfig[K]> =>
     (settings[k] ?? user[k] ?? repo[k] ?? fallback) as NonNullable<RepoConfig[K]>
+  const gateMap = { ...repo.gateMap, ...user.gateMap, ...settings.gateMap }
+  const refusedGates = Object.fromEntries(Object.entries({ ...repo.refusedGates, ...user.refusedGates, ...settings.refusedGates }).filter(([id]) => !(id in gateMap)))
   return {
-    gateMap: { ...repo.gateMap, ...user.gateMap, ...settings.gateMap },
+    gateMap,
+    refusedGates,
     agentTypes: { ...DEFAULT_AGENT_TYPES, ...repo.agentTypes, ...user.agentTypes, ...settings.agentTypes },
     tierMap: { ...DEFAULT_TIER_MAP, ...repo.tierMap, ...user.tierMap, ...settings.tierMap },
     evalCommand: pick('evalCommand', ''),

@@ -137,11 +137,15 @@ The dry run (and `/dispatch`) checks each `forbid` glob against the card and pri
 one warning line per collision (MOD-29). The card is still written; nothing is refused:
 
     warning: forbid artifacts/*.html matches scope artifacts/kit/**
-    warning: forbid artifacts/*.html matches artifacts/kit/index.html named in done-when
+    warning: forbid covers paths done-when names: artifacts/kit/index.html (artifacts/*.html)
 
 A forbid collides with a scope entry it can name, or with a path-like word of a
 `Done when` line (a word with a slash and a dot, in backticks or bare). Each uses the
-verifier's rule for its entry: in a repo path `*` crosses folders, so `artifacts/*.html`
+verifier's rule for its entry. The paths a `Done when` line only mentions share the one
+`forbid covers paths done-when names:` line; a path its line says is written, changed,
+created, added or updated keeps its own `forbid <glob> matches <path> named in done-when`
+line, listed first (#160). A scope or forbid entry may hold a space when given as a list
+element (the header quotes it). The verifier's rule for an entry: in a repo path `*` crosses folders, so `artifacts/*.html`
 covers `artifacts/kit/index.html`, and no repo glob stays in one folder (list the
 files); an absolute entry keeps `*` inside one folder. Fix the card (shrink the forbid
 or list the files) before you say go.

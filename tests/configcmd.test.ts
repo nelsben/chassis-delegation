@@ -1,7 +1,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { world, sessionStart, HOME } from './harness'
 import { REDACT_EMPTY } from '../hooks/lib/findings'
-import { configPlan, cut, editDistance, inEffect, manifestDefaults, rowsByField, shownValue, unknownName, HOW, type CfgRow, type CfgView } from '../hooks/lib/configcmd'
+import { configPlan, cut, editDistance, inEffect, manifestDefaults, rowsByField, shownValue, unknownName, configShow, configShort, HOW, type CfgRow, type CfgView } from '../hooks/lib/configcmd'
 import { CONFIG_TABLE, RESERVED, TABLE_FIELDS } from '../hooks/lib/configtable'
 import { resolveOptions } from '../hooks/lib/configeff'
 
@@ -454,5 +454,32 @@ describe('MOD-73: the pure half', () => {
     expect(inEffect('probeModels', v({ probeModels: true, candidateIds: '' }))).toBe('off (no candidateIds)')
     expect(inEffect('postFindings', v({}), { issueRepo: '' })).toBe('off (no issue repo)')
     expect(inEffect('ignore', v({ ignore: [] }), { cardDir: 'docs/cards' })).toBe('docs/cards/**')
+  })
+})
+
+describe('MOD-98: /delegation config shows a refused gate (#160)', () => {
+  const view = (refusedGates?: Record<string, string>): CfgView => ({
+    plugin: 'chassis-delegation',
+    fields: ['gateMap'],
+    values: { gateMap: { test: 'npm test' } },
+    sources: { gateMap: 'repo' },
+    rows: {},
+    ...(refusedGates ? { refusedGates } : {}),
+  })
+
+  test('the show view lists each refused entry and its reason on one line under gateMap', () => {
+    const out = configShow(view({ envgate: 'a gate may not run env' }), 'gateMap').split('\n')
+    expect(out).toContain('  envgate: refused: a gate may not run env')
+    expect(out.indexOf('  envgate: refused: a gate may not run env')).toBeGreaterThan(out.indexOf('  test: npm test'))
+  })
+
+  test('the short view carries it under the gateMap line', () => {
+    const out = configShort(view({ envgate: 'a gate may not run env' })).split('\n')
+    const at = out.findIndex(l => l.includes('gateMap = test (repo)'))
+    expect(out[at + 1]).toBe('  envgate: refused: a gate may not run env')
+  })
+
+  test('nothing refused adds no line', () => {
+    expect(configShow(view(), 'gateMap')).not.toContain('refused')
   })
 })

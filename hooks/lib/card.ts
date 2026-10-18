@@ -6,7 +6,7 @@
 // MOD-23: `resources` names what the worker holds while it runs, and `lanes` splits one
 // sentence into several cards (one per worker) with sequential ids, the shared fields
 // and each lane's own scope.
-import { RESOURCE_NAME, scopeOverlap } from './brief'
+import { isSpacedPath, RESOURCE_NAME, scopeOverlap } from './brief'
 import { dollars, spendCeiling } from './cost'
 import { scopeLooksProse, yamlScalar } from './dispatch'
 import { gateCommandTemplates } from './gates'
@@ -19,6 +19,8 @@ export type CardCtx = {
   domains: readonly string[]
   /** The ids in the effective gateMap. */
   gateIds: readonly string[]
+  /** MOD-98: gateMap ids the gate checker refused, id → why (the card tool names the reason). */
+  refusedGates?: Readonly<Record<string, string>>
   /** The file names in the card folder. */
   names: readonly string[]
   spendByTier: Readonly<Record<string, number>>
@@ -116,6 +118,9 @@ export function nextNumber(names: readonly string[], prefix: string): number {
   return max + 1
 }
 
+/** MOD-98: a spaced path is double-quoted in the card's flow list, so the parser reads it back whole. */
+const inList = (e: string): string => (isSpacedPath(e) ? `"${e}"` : e)
+
 /** The title as a file-name slug: lower case, at most six words joined by `-`. */
 export const slugOf = (title: string): string => (title.toLowerCase().match(/[a-z0-9]+/g) ?? []).slice(0, 6).join('-') || 'task'
 
@@ -183,6 +188,12 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
 
   // MOD-44: for another repo, one command (words, no comma) is a gate of its own, as the person would type it
   const oneOff = ctx.repoPath !== undefined && typeof input.gate === 'string' && text(input.gate) !== '' && !/^[A-Za-z0-9_.-]+(\s*,\s*[A-Za-z0-9_.-]+)*$/.test(text(input.gate))
+  if (!oneOff && typeof input.gate === 'string') {
+    for (const g of text(input.gate).split(/\s*,\s*/).filter(Boolean)) {
+      const why = ctx.refusedGates?.[g]
+      if (why !== undefined && !ctx.gateIds.includes(g)) return { error: `gate "${g}" refused: ${why}; put the command in a script file and name the script as the gate` }
+    }
+  }
   if (ctx.gateIds.length === 0 && !oneOff) {
     return { error: ctx.repoPath !== undefined ? `${ctx.repoPath} has no gate: no gateMap in its .chassis-delegation.json and no test command found (package.json scripts.test, pytest, cargo or go); name one in gate, e.g. "npm run build"` : 'gateMap has no gate; run /delegation setup, or add a gateMap entry in .chassis-delegation.json' }
   }
@@ -213,8 +224,8 @@ title: ${yamlScalar(title)}
 domain: ${domain}
 tier: ${tier}
 status: queued
-${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.join(', ')}]
-forbid: [${forbid.join(', ')}]
+${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
+forbid: [${forbid.map(inList).join(', ')}]
 ${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
 gate: ${gate.join(', ')}
 budget: ${budget}-attempts
@@ -440,14 +451,38 @@ export function doneStatementCount(lines: readonly string[]): number {
   return items > 0 ? items : lines.filter(l => l.trim() !== '').length
 }
 
+/** MOD-98: the verbs that make a done-when statement a write: written, changed, created, added, updated (and their kin). */
+const WRITE_VERB = /\b(?:writ(?:e|es|ten|ing)|wrote|chang(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|add(?:s|ed|ing)?|updat(?:e|es|ed|ing)|edit(?:s|ed|ing)?|modif(?:y|ies|ied|ying))\b/i
+
+/** MOD-98: whether a done-when statement naming `path` says it is written: a write verb within a few words of the path. */
+function isWritten(path: string, statements: readonly string[]): boolean {
+  // the words next to the path, up to the clause end or the next path
+  const near = (words: string[]): string[] => {
+    const stop = words.findIndex(w => w.includes('/'))
+    return stop < 0 ? words : words.slice(0, stop)
+  }
+  for (const st of statements) {
+    for (let at = st.indexOf(path); at >= 0; at = st.indexOf(path, at + path.length)) {
+      const after = near((st.slice(at + path.length).split(/;|\.(?:\s|$)/)[0] ?? '').split(/\s+/).filter(Boolean).slice(0, 5)).join(' ')
+      const before = near((st.slice(0, at).split(/;|\.\s/).pop() ?? '').split(/\s+/).filter(Boolean).slice(-4).reverse()).reverse().join(' ')
+      if (WRITE_VERB.test(`${before} ${after}`)) return true
+    }
+  }
+  return false
+}
+
 /**
  * The warnings for each forbid glob that collides with the card: `warning: forbid <glob> matches scope <entry>`
  * for a scope entry (literal or glob) the forbid can name, and `warning: forbid <glob> matches <path> named in
- * done-when` for a path-like word of a done-when statement. Nothing is refused; the card is still written.
+ * done-when` for a path-like word of a done-when statement the verb of which writes it (MOD-98); the other paths share
+ * one line, `warning: forbid covers paths done-when names: <path> (<glob>), …`. Nothing is refused; the card is still written.
  */
 export function forbidCollisions(scope: readonly string[], forbid: readonly string[], doneWhen: readonly string[]): string[] {
   const out: string[] = []
   const paths = [...new Set(doneWhen.flatMap(donePaths))]
+  const written = new Set(paths.filter(p => isWritten(p, doneWhen)))
+  const own: string[] = []
+  const quiet: string[] = []
   for (const f of forbid) {
     if (f === '') continue
     for (const s of scope) {
@@ -457,13 +492,19 @@ export function forbidCollisions(scope: readonly string[], forbid: readonly stri
     for (const p of paths) {
       // MOD-52: a path the scope already names is covered by the scope warning above
       if (scope.some(s => s !== '' && namedBy(p, s))) continue
-      const line = `warning: forbid ${f} matches ${p} named in done-when`
-      if (collides(p, f) && !out.includes(line)) out.push(line)
+      if (!collides(p, f)) continue
+      // MOD-98: a path the done-when says is written keeps its own line; the others share one
+      if (written.has(p)) {
+        const line = `warning: forbid ${f} matches ${p} named in done-when`
+        if (!own.includes(line)) own.push(line)
+      } else {
+        const entry = `${p} (${f})`
+        if (!quiet.includes(entry)) quiet.push(entry)
+      }
     }
   }
-  return out
+  return [...out, ...own, ...(quiet.length > 0 ? [`warning: forbid covers paths done-when names: ${quiet.join(', ')}`] : [])]
 }
-
 
 /**
  * MOD-55: the warnings for each path-like word of the red_test (the donePaths rule) the brief cannot let the worker

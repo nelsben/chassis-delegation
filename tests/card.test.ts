@@ -133,8 +133,9 @@ describe('GH-111: cardFromFields', () => {
     if ('error' in c) throw new Error(c.error)
     expect(c.scope).toEqual(['/out/hair/**', '~/exports/*.glb', 'notes/x.md'])
     expect(c.forbid).toEqual(['/etc/**', '~/Documents/**'])
-    // prose is still refused, absolute or not
-    expect('error' in cardFromFields(input({ scope: ['/out/my folder/**'] }), ctx())).toBe(true)
+    // prose is still refused, absolute or not (MOD-98: a path whose folder name holds a space is not prose)
+    expect('error' in cardFromFields(input({ scope: ['the /out folder'] }), ctx())).toBe(true)
+    expect('error' in cardFromFields(input({ scope: ['/out/my folder/**'] }), ctx())).toBe(false)
   })
 
   test('MOD-22: the tool takes repo, and its description says when to use it', () => {
@@ -160,7 +161,7 @@ describe('GH-111: cardFromFields', () => {
 describe('MOD-29: the dry run warns when a forbid glob collides with the card', () => {
   test('a forbid glob that matches a path named in done-when warns, naming both', () => {
     expect(forbidCollisions([], ['artifacts/*.html'], ['`artifacts/kit/index.html` exists'])).toEqual([
-      'warning: forbid artifacts/*.html matches artifacts/kit/index.html named in done-when',
+      'warning: forbid covers paths done-when names: artifacts/kit/index.html (artifacts/*.html)',
     ])
     // a bare path (no backticks), a trailing full stop, and a path under the forbid's folder all count
     expect(forbidCollisions([], ['docs/**'], ['docs/notes.md is written.'])).toEqual(['warning: forbid docs/** matches docs/notes.md named in done-when'])
@@ -187,7 +188,7 @@ describe('MOD-29: the dry run warns when a forbid glob collides with the card', 
   test('an absolute forbid stays in one folder: /out/*.png does not match /out/sub/a.png', () => {
     expect(forbidCollisions([], ['/out/*.png'], ['`/out/sub/a.png` exists'])).toEqual([])
     expect(forbidCollisions(['/out/sub/**'], ['/out/*.png'], [])).toEqual([])
-    expect(forbidCollisions([], ['/out/*.png'], ['`/out/a.png` exists'])).toEqual(['warning: forbid /out/*.png matches /out/a.png named in done-when'])
+    expect(forbidCollisions([], ['/out/*.png'], ['`/out/a.png` exists'])).toEqual(['warning: forbid covers paths done-when names: /out/a.png (/out/*.png)'])
   })
 
   test('only the Done when statements are read: a path in the why or the title is not a collision', () => {
@@ -222,6 +223,9 @@ describe('MOD-52: a done-when path in markdown bold or trailing punctuation is c
   test('a bold path outside scope that a forbid matches is warned once, naming the cleaned path', () => {
     expect(forbidCollisions(['src/**'], ['docs/**'], ['**docs/notes.md:** and **docs/notes.md**: are written.'])).toEqual([
       'warning: forbid docs/** matches docs/notes.md named in done-when',
+    ])
+    expect(forbidCollisions(['src/**'], ['docs/**'], ['**docs/notes.md:** and **docs/notes.md**: exist.'])).toEqual([
+      'warning: forbid covers paths done-when names: docs/notes.md (docs/**)',
     ])
   })
 })
@@ -327,5 +331,55 @@ describe('MOD-55: the dry run warns when the red_test names a path the worker ca
     expect(redTestWarnings('a pure test in tests/verify.test.ts', ['tests/**'], ['docs/**'])).toEqual([])
     expect(redTestWarnings('a pure test of the advice', [], [])).toEqual([])
     expect(redTestWarnings('none', [], [])).toEqual([])
+  })
+})
+
+describe('MOD-98: card tool paper cuts (#160)', () => {
+  test('a gate the config refused is named with its reason, not reported as missing', () => {
+    const refusedGates = { envgate: 'a gate may not run env' }
+    const r = cardFromFields(input({ gate: 'envgate' }), ctx({ refusedGates } as Partial<CardCtx>))
+    expect(r).toEqual({ error: 'gate "envgate" refused: a gate may not run env; put the command in a script file and name the script as the gate' })
+    // the same when the map holds no usable gate at all
+    const bare = cardFromFields(input({ gate: 'envgate' }), ctx({ gateIds: [], refusedGates } as Partial<CardCtx>))
+    expect(bare).toEqual({ error: 'gate "envgate" refused: a gate may not run env; put the command in a script file and name the script as the gate' })
+    // an id that is neither usable nor refused is still just missing
+    expect('error' in cardFromFields(input({ gate: 'nope' }), ctx({ refusedGates } as Partial<CardCtx>))).toBe(true)
+    expect((cardFromFields(input({ gate: 'nope' }), ctx({ refusedGates } as Partial<CardCtx>)) as { error: string }).error).toContain('gate nope is not in gateMap')
+  })
+
+  test('a forbid and a scope entry with a space is written whole and read back whole', () => {
+    const r = ok(cardFromFields(input({ scope: ['src/**', 'My Docs/notes.md'], forbid: ['Old Stuff/**', 'plain/**'] }), ctx()))
+    expect(r.forbid).toEqual(['Old Stuff/**', 'plain/**'])
+    const back = parseCard(r.text)
+    if ('error' in back) throw new Error(back.error)
+    expect(back.forbid).toEqual(['Old Stuff/**', 'plain/**'])
+    expect(back.scope).toEqual(['src/**', 'My Docs/notes.md'])
+    // prose is still refused
+    expect((cardFromFields(input({ scope: ['the decompiler'] }), ctx()) as { error: string }).error).toContain('scope must be globs')
+  })
+
+  test('five read-only done-when mentions give one warning line', () => {
+    const done = ['`docs/a.md` exists', '`docs/b.md` exists', '`docs/c.md` exists', '`docs/d.md` exists', '`docs/e.md` exists']
+    expect(forbidCollisions([], ['docs/**'], done)).toEqual([
+      'warning: forbid covers paths done-when names: docs/a.md (docs/**), docs/b.md (docs/**), docs/c.md (docs/**), docs/d.md (docs/**), docs/e.md (docs/**)',
+    ])
+  })
+
+  test('a path the done-when says is written keeps its own full line, listed first', () => {
+    const done = ['`docs/a.md` exists', '`docs/b.md` is updated', '`docs/c.md` exists']
+    expect(forbidCollisions([], ['docs/**'], done)).toEqual([
+      'warning: forbid docs/** matches docs/b.md named in done-when',
+      'warning: forbid covers paths done-when names: docs/a.md (docs/**), docs/c.md (docs/**)',
+    ])
+    for (const verb of ['written', 'changed', 'created', 'added', 'updated']) {
+      expect(forbidCollisions([], ['docs/**'], [`docs/x.md is ${verb}`])).toEqual(['warning: forbid docs/** matches docs/x.md named in done-when'])
+    }
+  })
+
+  test('scope warnings are unchanged beside the collapsed line', () => {
+    expect(forbidCollisions(['docs/a.md'], ['docs/**'], ['`docs/z.md` exists'])).toEqual([
+      'warning: forbid docs/** matches scope docs/a.md',
+      'warning: forbid covers paths done-when names: docs/z.md (docs/**)',
+    ])
   })
 })
