@@ -262,7 +262,8 @@ export function retirePatch(probe: { ancestor?: boolean; card?: string }, now: n
 }
 
 /**
- * MOD-35: the key one ledger row is written under. An accept row is one per task
+ * MOD-35: the key one ledger row is written under. A spawn row (MOD-94, `event: spawn`) is one per
+ * spawn; an accept row is one per task
  * attempt; a verdict row is one per (task, attempt, sha, verdict), so a hand-back
  * that arrives twice (as a tool result and as a notification, or from a second
  * copy of the mod) leaves one line. A row with neither a verdict nor a kind of
@@ -270,6 +271,8 @@ export function retirePatch(probe: { ancestor?: boolean; card?: string }, now: n
  */
 export function ledgerRowKey(row: Record<string, unknown>): string | undefined {
   const head = `${String(row.task ?? '')}|${String(row.subtask ?? 'main')}|${String(row.attempt ?? '')}`
+  // MOD-94: a spawn row is one per spawn (its tool_use_id, else its agent), and a replay's apart from a real run's
+  if (row.event === 'spawn') return `spawn|${head}|${row.replay ? `replay-${String(row.base ?? '')}` : ''}|${String(row.toolUseId ?? row.agentId ?? '')}`
   if (row.kind === 'accept') return `accept|${head}`
   if (typeof row.verdict !== 'string') return undefined
   // a reviewer's rows are told apart by the spawn they came from; a worker's by (task, attempt, sha, verdict)

@@ -154,6 +154,13 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
   default branch, or the git guard saw the brain run `gh pr merge` naming the task's
   branch or PR, or `git merge agent/<domain>/<id>`) or `how: accepted`
   (`/delegation accept <id>`). One accept line per task attempt, never two.
+  A spawn line (MOD-94) is written when a briefed spawn starts (not an ad hoc one, not a reviewer):
+  `{event: spawn, task, subtask, attempt, lineage, budget, tier, alias, purpose, at, agentId, toolUseId,
+  briefPath, cwd, repo, sessionId}`, the optional fields only when known, plus `replay` and `base` for a
+  replay. It is marked by `event`, never `kind` (a verdict line takes `kind` from its attempt record), and
+  carries no `verdict`, so every reader of judged lines (the merge command's latest verdict, the accept
+  and verdict write guards) reads past it; the card tool still counts its task id as taken. It is written
+  once per spawn (its tool_use_id) and not at all with `ledgerFile` off.
 - **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`, with
   these keys:
   - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named, and `metrics`, the report's `metrics=` (MOD-22); a `work-present` attempt, kind `verify`, carries the branch head it found; a reviewer's attempt, kind `review` (MOD-21), carries the number of the attempt it reviewed, its verdict `reviewed` and the `review` counts, and is on no ladder);
@@ -186,6 +193,24 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
   `store write failed: <key> (<reason>); new workers may have no verdict until the store is pruned`; later
   ones are counted. `/delegation` shows `store: <x> MiB of 4 MiB`, and
   `store: <n> writes refused this session (last <key>)` when any were.
+
+  A worker whose spawn record was refused still counts and still gets a verdict (MOD-94, #157, #159):
+  - **The live count** reads an agent's spawn record from the store, else from the hook's own memory of the
+    briefed workers it saw start in this process (every spawn record it writes, kept whether or not the
+    write landed). So claimSlot, the resource hold, the status line, the git guard and `/delegation` count a
+    running worker of this process even when its record never landed. A worker leaves the count when it
+    stops running or its verdict lands. A worker started in an earlier process counts only through the store.
+  - **The verdict** of a hand-back (the turn's end, or a foreground Agent result) is judged on the store's
+    spawn record, else on the hook's memory, else on the newest ledger spawn line for that agent (or that
+    spawn) plus the brief it names, unless a verdict line already judged that attempt. The attempt is judged
+    as if its record were there: the verdict row is posted, the verdict line appended, the owed list moves.
+  - **The verdict tool**, for a task with no attempt record, answers from the hook's memory, then from the
+    task's newest ledger spawn line: judged there already, that verdict; its worker still running, it waits;
+    else it runs the verifier on the line and the brief and returns the row. Only with none of the three does
+    it say no attempt is recorded.
+  - A verdict reached either way says so once in the debug log
+    (`<task> attempt <n>: judged from the hook's memory; the store had no record`) and on its row's tail:
+    `(from memory: the store had no record)` or `(from the ledger: the store had no record)`.
 - **`$.state`** holds `chassis-delegation.workers`, `.status`, `.lastVerdict`
   and `.queue`, declared in `hooks/types/index.d.ts`.
 

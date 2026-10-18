@@ -199,6 +199,7 @@ import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbso
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
+import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLine, spawnRow, verdictAfter, withTail, type Fallback, type RowQuery } from './lib/storeloss'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
@@ -479,6 +480,8 @@ type SpawnRecord = {
    * (the resume goes to it), `sha` the commit under review. A reviewer is on no ladder, holds no slot, and edits nothing.
    */
   review?: { worker?: string; sha?: string }
+  /** MOD-94: set (never stored) on a record a hand-back or the verdict tool rebuilt because the store had none. */
+  fallback?: Fallback
 }
 
 const laneOf = (s: { replay?: boolean; base?: string }): Lane | undefined =>
@@ -679,6 +682,14 @@ const handbacks = new Map<string, string>() // agentId → a SubagentHandback me
 const verifying = new Map<string, SpawnRecord>() // MOD-74: the spawn behind each attempt key in `finalizing`, for the status section
 const finalizing = new Map<string, Promise<Rendered>>() // attempt key → its verify, so a second fire waits on the first
 const posted = new Set<string>() // attempt keys whose verdict row went to the conversation
+/**
+ * MOD-94 (#159, #157): the briefed workers this process saw start, by agent id, each as its spawn record was last
+ * written (every `delegation.spawn.*` write lands here too, refused or not). A running one whose verdict is still
+ * out is a live worker whether or not the store kept its record; it leaves the live set when its verdict lands.
+ * The store stays the source for a worker started in an earlier process.
+ */
+const remembered = new Map<string, SpawnRecord>()
+const REMEMBER_CAP = 500
 const offered = new Set<string>()
 let seedingTypes = false
 let delegated = false
@@ -807,6 +818,8 @@ async function storeGet<T>($: Host, key: string): Promise<T | undefined> {
 async function storeSet($: Host, key: string, value: unknown): Promise<void> {
   // a task's attempt records changed: the dashboard's copy is stale (GH-112)
   if (key.startsWith(K.tasks(''))) recordsCache = undefined
+  // MOD-94: a remembered worker's record follows every write of it, whether or not the store takes the write
+  if (key.startsWith(K.spawn(''))) rememberWrite(value)
   try {
     await $.store.set(key, value)
   } catch (err) {
@@ -3990,10 +4003,39 @@ async function finalize($: Host, spawnIn: SpawnRecord, text: string, measured: M
   }
 }
 
+const withTailIf = (text: string, tail: string | undefined): string => (tail ? withTail(text, tail) : text)
+
+/** MOD-94: the attempt record a spawn record stands for, as the spawn hook (or a resume) would have written it. */
+async function attemptOfSpawn($: Host, spawn: SpawnRecord): Promise<AttemptRecord> {
+  const rec: HereRecord = {
+    ...(await ownerFields($, spawn.repo)),
+    task: spawn.task,
+    subtask: spawn.subtask,
+    attempt: spawn.attempt,
+    kind: spawn.attempt === spawn.lineage ? 'spawn' : 'resume',
+    lineage: spawn.lineage,
+    tier: spawn.tier,
+    alias: spawn.alias,
+    ...(spawn.resolvedModel ? { resolvedModel: spawn.resolvedModel } : {}),
+    verdict: 'pending',
+    at: spawn.at ?? (await now($)),
+    ...(spawn.agentId ? { agentId: spawn.agentId } : {}),
+    toolUseId: spawn.key,
+    ...(spawn.briefPath ? { briefPath: spawn.briefPath } : {}),
+    purpose: spawn.purpose,
+    ...laneFields(laneOf(spawn)),
+    ...(spawn.here ? { here: spawn.here } : {}),
+  }
+  return rec
+}
+
 const renderedOf = (s: SpawnRecord): Rendered => ({ full: s.verdictBlock as string, line: s.verdictLine ?? (s.verdictBlock as string).split('\n')[0] ?? '' })
 
 /** Verifies, records, acts on the advice (autoEscalate), and returns the row in both forms (2B). */
-async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measured: Measured): Promise<Rendered> {
+async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured: Measured): Promise<Rendered> {
+  // MOD-94: a record rebuilt from memory or the ledger is judged as any other; its verdict says where it came from
+  const from = given.fallback
+  const { fallback: _fallback, ...spawnIn } = given
   // MOD-21: a reviewer's hand-back is read for its [[review]] block, not checked as a worker's report
   if (spawnIn.review) return finalizeReview($, spawnIn, text, measured)
   if (spawnIn.verdictAttempt === spawnIn.attempt && spawnIn.verdictBlock) return renderedOf(spawnIn)
@@ -4085,7 +4127,9 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
     advice = advise({ verdict, task: label, attempts: 1, budget: spawn.budget, lineageResumes: 0, tier: spawn.tier, adhoc: true })
   } else {
     const lane = laneOf(spawn)
-    const before = await loadAttempts($, spawn.task)
+    const held = await loadAttempts($, spawn.task)
+    // MOD-94: an attempt whose record the store refused is judged on the record it would have had
+    const before = from && !attemptsFor(held, spawn.subtask, lane).some(r => r.attempt === spawn.attempt) ? [...held, await attemptOfSpawn($, spawn)] : held
     // A resume's own record has no model: it runs on its lineage's spawn.
     if (model === undefined) {
       model = attemptsFor(before, spawn.subtask, lane)
@@ -4188,9 +4232,12 @@ async function finalizeOnce($: Host, spawnIn: SpawnRecord, text: string, measure
   const workLine = work ? workPresentLine(work) : undefined
   const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }), workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
-  const full = spawnText ? `${verdictRows}\n${spawnText}` : verdictRows
+  // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
+  const tail = from ? fallbackTail(from) : undefined
+  if (from) debug($, fallbackLog(shownLabel, shownAttempt, from))
+  const full = withTailIf(spawnText ? `${verdictRows}\n${spawnText}` : verdictRows, tail)
   const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines })
-  const line = [quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n')
+  const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
   await setWorkers($, list => list.map(w => (w.task === spawn.task && w.subtask === spawn.subtask && w.attempt === spawn.attempt ? { ...w, verdict } : w)))
@@ -4277,22 +4324,54 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
  * MOD-64: the verdict tool. The task's latest attempt, from the attempt record and the spawn record (the mod's own
  * records, never a shell): judged and its row posted, still verifying, or none. Waits in 5 second `sleep` processes (MOD-72), not clock sleeps.
  */
-async function verdictNow($: Host, task: string, subtask: string): Promise<{ kind: 'none' } | { kind: 'wait' } | { kind: 'judged'; text: string }> {
+type VerdictNow = { kind: 'none' } | { kind: 'wait' } | { kind: 'judged'; text: string }
+
+async function verdictNow($: Host, task: string, subtask: string): Promise<VerdictNow> {
   const label = taskLabel(task, subtask)
   const latest = attemptsFor(await loadAttempts($, task), subtask).at(-1)
-  if (!latest) return { kind: 'none' }
+  // MOD-94 (#157): an attempt the store has no record of: this process's memory of its start, else the ledger
+  const mem = rememberedFor(task, subtask)
+  if (mem && (!latest || mem.attempt > latest.attempt)) return mem.verdictAttempt === mem.attempt && mem.verdictBlock ? postedOf($, mem, undefined) : { kind: 'wait' }
+  if (!latest) return verdictFromLedger($, task, subtask)
   if (latest.verdict === 'pending') return { kind: 'wait' }
   const spawn = (await spawnByAgent($, latest.agentId)) ?? (latest.toolUseId ? await storeGet<SpawnRecord>($, K.spawn(latest.toolUseId)) : undefined)
   if (!spawn || spawn.attempt !== latest.attempt || spawn.task !== task || spawn.subtask !== subtask) return { kind: 'judged', text: `${PLUGIN}: ${label} attempt ${latest.attempt} ${latest.verdict}` }
   // the verdict is patched into the attempt record before its row is stored
   if (spawn.verdictAttempt !== spawn.attempt || !spawn.verdictBlock) return { kind: 'wait' }
+  return postedOf($, spawn, latest.verdictAt)
+}
+
+/** A judged attempt's row as the verdict tool returns it: the row posted, else the rendered verdict. */
+async function postedOf($: Host, spawn: SpawnRecord, verdictAt: number | undefined): Promise<VerdictNow> {
   const key = attemptKey(spawn)
   const sent = await storeGet<string>($, K.postedRow(key))
   if (sent !== undefined && sent !== '') return { kind: 'judged', text: sent }
   // claimed and not yet appended: the row is about to be stored (a row posted before postedRow was kept is never waited on)
-  if (sent === undefined && rowRaceOpen(latest.verdictAt, await now($)) && (await storeGet<boolean>($, K.posted(key))) === true) return { kind: 'wait' }
+  if (sent === undefined && rowRaceOpen(verdictAt, await now($)) && (await storeGet<boolean>($, K.posted(key))) === true) return { kind: 'wait' }
   const rendered = renderedOf(spawn)
   return { kind: 'judged', text: deliveryFor(cfg.verbosity, rendered).row ?? rendered.line }
+}
+
+/**
+ * MOD-94 (#157): the verdict tool for a task neither the store nor this process holds: the newest ledger spawn
+ * row for it. Judged there already: that verdict. Its worker still running: wait. Else the verifier runs now,
+ * from the row and the brief it names, and its row is the answer. No row: none.
+ */
+async function verdictFromLedger($: Host, task: string, subtask: string): Promise<VerdictNow> {
+  const text = await ledgerText($)
+  const row = text === '' ? undefined : latestSpawnRow(text, { task, subtask })
+  if (!row) return { kind: 'none' }
+  const done = verdictAfter(text, row)
+  if (done) return { kind: 'judged', text: ledgerJudgedLine(PLUGIN, taskLabel(task, subtask), row.attempt, done.verdict, done.next) }
+  if (row.agentId && (await agentList($)).some(a => a.id === row.agentId && a.status === 'running')) return { kind: 'wait' }
+  const spawn = await ledgerSpawn($, { task, subtask }, text)
+  if (!spawn) return { kind: 'none' }
+  const rendered = await finalize($, spawn, spawn.agentId ? await workerText($, spawn.agentId, '') : '', {})
+  const shown = deliveryFor(cfg.verbosity, rendered).row ?? rendered.line
+  // the tool's answer is the row: a later hand-back of the same attempt posts no second one
+  if (await claimPost($, spawn)) await storeSet($, K.postedRow(attemptKey(spawn)), shown)
+  await refreshStatus($)
+  return { kind: 'judged', text: shown }
 }
 
 /**
@@ -4410,10 +4489,81 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   return next
 }
 
-async function spawnByAgent($: Host, agentId: string | undefined): Promise<SpawnRecord | undefined> {
+/** The spawn record the store holds for an agent (its pointer, then the record). */
+async function storedSpawnByAgent($: Host, agentId: string | undefined): Promise<SpawnRecord | undefined> {
   if (!agentId) return undefined
   const key = await storeGet<string>($, K.agent(agentId))
   return key ? storeGet<SpawnRecord>($, K.spawn(key)) : undefined
+}
+
+/** An agent's spawn record: the store's, else (MOD-94) the one this process remembers from its start. */
+async function spawnByAgent($: Host, agentId: string | undefined): Promise<SpawnRecord | undefined> {
+  if (!agentId) return undefined
+  return (await storedSpawnByAgent($, agentId)) ?? remembered.get(agentId)
+}
+
+/** MOD-94: a briefed worker this process saw start (or rebuilt from the ledger) is remembered, as written. */
+function remember(spawn: SpawnRecord): void {
+  if (!spawn.agentId || spawn.adhoc || spawn.review) return
+  const { fallback: _fallback, ...rec } = spawn
+  remembered.delete(spawn.agentId)
+  remembered.set(spawn.agentId, rec)
+  // the oldest go first; a judged record is all that is ever old enough to reach the cap
+  while (remembered.size > REMEMBER_CAP) remembered.delete(remembered.keys().next().value as string)
+}
+
+/** MOD-94: a write of a remembered worker's spawn record (a verdict, a resume) updates the memory too. */
+function rememberWrite(value: unknown): void {
+  const rec = value as SpawnRecord | undefined
+  if (!rec || typeof rec !== 'object' || typeof rec.agentId !== 'string' || !remembered.has(rec.agentId)) return
+  remember(rec)
+}
+
+/** MOD-94: the newest worker of a task this process remembers. */
+function rememberedFor(task: string, subtask: string): SpawnRecord | undefined {
+  let best: SpawnRecord | undefined
+  for (const r of remembered.values()) if (r.task === task && r.subtask === subtask && !r.replay && (best === undefined || r.attempt >= best.attempt)) best = r
+  return best
+}
+
+/**
+ * MOD-94 (#157): the spawn record a hand-back is judged by. The store's (by the spawn's tool_use_id, then the
+ * agent); else the record this process remembers; else the newest ledger spawn row for the agent (or the
+ * spawn) plus the brief it names, when no verdict row has judged that attempt yet. The last two are marked,
+ * so the verdict says where it came from.
+ */
+async function handbackSpawn($: Host, agentId: string | undefined, toolUseId?: string): Promise<SpawnRecord | undefined> {
+  const stored = (toolUseId ? await storeGet<SpawnRecord>($, K.spawn(toolUseId)) : undefined) ?? (await storedSpawnByAgent($, agentId))
+  if (stored) return stored
+  const mem = agentId ? remembered.get(agentId) : undefined
+  if (mem) return { ...mem, fallback: 'memory' }
+  if (!agentId && !toolUseId) return undefined
+  return ledgerSpawn($, { ...(agentId ? { agentId } : {}), ...(toolUseId ? { toolUseId } : {}) })
+}
+
+/** MOD-94: the session ledger's text, '' when it is off or unread. */
+async function ledgerText($: Host): Promise<string> {
+  if (!cfg.ledgerFile) return ''
+  const root = await sessionRootOf($)
+  return root ? ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '') : ''
+}
+
+/** MOD-94: the open attempt the newest matching ledger spawn row names, rebuilt as a spawn record (and remembered); undefined once judged. */
+async function ledgerSpawn($: Host, q: RowQuery, text?: string): Promise<SpawnRecord | undefined> {
+  const ledger = text ?? (await ledgerText($))
+  if (ledger === '') return undefined
+  const row = latestSpawnRow(ledger, q)
+  if (!row || verdictAfter(ledger, row)) return undefined
+  const f = fieldsOfRow(row)
+  const spawn: SpawnRecord = {
+    ...f,
+    tier: f.tier as Tier,
+    adhoc: false,
+    description: f.description ?? taskLabel(f.task, f.subtask),
+    subagentType: f.subagentType ?? 'general-purpose',
+  }
+  remember(spawn)
+  return { ...spawn, fallback: 'ledger' }
 }
 
 // ---- part 5D: the git guard ---------------------------------------------------------------
@@ -5916,9 +6066,13 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(here ? { here } : {}),
       ...(other ? { repo: other.path } : {}),
     }
+    // MOD-94 (#159): the worker counts from this process's memory too, should the store refuse its record
+    if (!adhoc) remember(spawn)
     await storeSet($, K.spawn(key), spawn)
     if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
+    // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
+    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t }, await sessionIdOf($)))
     delegated = true
     // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
     if (s?.stopped) {
@@ -6253,6 +6407,7 @@ export const register: Register = (on, opts) => {
   // A (re)load starts the per-process memory over; the store keeps what must last.
   templatesLoad = undefined
   finalizing.clear()
+  remembered.clear()
   posted.clear()
 
   // ---- agent.spawn: tier, budget, record, drift --------------------------------------
@@ -6381,7 +6536,8 @@ export const register: Register = (on, opts) => {
     const result = ran.result as Record<string, unknown> | undefined
     const status = typeof result?.status === 'string' ? result.status : undefined
     const agentId = typeof result?.agentId === 'string' ? result.agentId : undefined
-    const spawn = (await storeGet<SpawnRecord>($, K.spawn(e.tool_use_id))) ?? (await spawnByAgent($, agentId))
+    // MOD-94: the store's record, else this process's memory, else the ledger spawn row
+    const spawn = await handbackSpawn($, agentId, e.tool_use_id)
     if (status === 'async_launched' || status === 'remote_launched') {
       if (!spawn || spawn.adhoc) return ran
       const line = `${PLUGIN}: ${spawn.review ? 'review' : 'verify'} deferred — runs when ${agentId ?? (spawn.review ? 'the reviewer' : 'the worker')} hands back (background)`
@@ -6438,7 +6594,8 @@ export const register: Register = (on, opts) => {
       // the answer plus the hand-back (GH-2), read once and only for an agent the mod judges
       let said: Promise<string> | undefined
       const saidOnce = () => (said ??= workerText($, agentId, e.answer))
-      let spawn = await spawnByAgent($, agentId)
+      // MOD-94 (#157): a hand-back whose spawn record the store refused is judged from memory, else the ledger
+      let spawn = await handbackSpawn($, agentId)
       // MOD-41: the brain resumed a worker whose last attempt was judged and not advised a resume: a hand-back at a new sha is the next attempt
       if (!warned && spawn && !spawn.adhoc && !spawn.review && spawn.verdictAttempt === spawn.attempt) {
         const block = extractReport(await saidOnce())
