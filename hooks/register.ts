@@ -198,6 +198,7 @@ import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detect
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
+import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
@@ -385,7 +386,6 @@ const K = {
 
 const PROBE_EVERY_MS = 24 * 60 * 60 * 1000
 const STATUS_EVERY_MS = 60 * 1000
-const PROMPT_CAP = 20000
 const MIN_MS = 60 * 1000
 const HOUR_MS = 60 * MIN_MS
 const RECENT_CAP = 50
@@ -446,7 +446,8 @@ type SpawnRecord = {
   briefPath?: string
   /** Why a spawn with no brief file has none (GH-6): what its inline header lacks, or why its brief could not be written. */
   noBrief?: string
-  prompt: string
+  // MOD-89: no `prompt`: nothing read it back, and at about 1.4 KB a record it was most of the store (#157).
+  // A record written before keeps it; the brief path, the key (the tool_use_id) and the description are what is read.
   description: string
   subagentType: string
   cwd?: string
@@ -809,7 +810,86 @@ async function storeSet($: Host, key: string, value: unknown): Promise<void> {
     await $.store.set(key, value)
   } catch (err) {
     debug($, `store.set ${key} failed: ${String(err)}`)
+    await storeRefused($, key, err)
   }
+}
+
+/**
+ * MOD-89 (#157): a refused set is said out loud. The first in a session is a toast and a row (a spawn record lost
+ * this way leaves its worker with no verdict); later ones are only counted, for `/delegation`.
+ */
+let refusedWrites: { count: number; last: string } = { count: 0, last: '' }
+async function storeRefused($: Host, key: string, err: unknown): Promise<void> {
+  refusedWrites = { count: refusedWrites.count + 1, last: key }
+  if (refusedWrites.count > 1) return
+  const reason = (err instanceof Error ? err.message : String(err)).split('\n')[0] ?? ''
+  const row = refusedRow(key, reason)
+  try {
+    $.ui.toast(`${PLUGIN}: ${row}`)
+  } catch {
+    // the row stands
+  }
+  await appendRow($, row)
+}
+
+/** Every key and value in the store, as `$.store` reads them (a key that fails to read is left out). */
+async function storeEntries($: Host): Promise<StoreEntry[]> {
+  const keys = await $.store.keys()
+  const out: StoreEntry[] = []
+  for (let i = 0; i < keys.length; i += 100) {
+    const read = await Promise.all(keys.slice(i, i + 100).map(async k => [k, await $.store.get(k)] as const).map(p => p.catch(() => undefined)))
+    for (const r of read) if (r && r[1] !== undefined) out.push(r)
+  }
+  return out
+}
+
+/**
+ * MOD-89 (#157, #159): the retention plan (hooks/lib/retention.ts), run at session.start and after each verdict,
+ * through `$.store.delete` only. The open tasks (a running worker, a pending verdict, a queued spawn) are never
+ * touched. One debug line when anything went, and at session.start one row.
+ */
+let pruning: Promise<void> | undefined
+function pruneStore($: Host, at: 'start' | 'verdict'): Promise<void> {
+  if (pruning) return pruning
+  pruning = pruneOnce($, at).finally(() => {
+    pruning = undefined
+  })
+  return pruning
+}
+async function pruneOnce($: Host, at: 'start' | 'verdict'): Promise<void> {
+  try {
+    const entries = await storeEntries($)
+    const live = await liveState($)
+    const open = [...live.workers.flatMap(w => [w.label, w.spawn.task]), ...live.pending.map(p => p.task), ...(await readQueue($)).map(q => q.task), ...finalizing.keys()]
+    const plan = retentionPlan({ entries, open, now: await now($) })
+    let n = 0
+    for (const key of plan.delete) {
+      try {
+        await $.store.delete(key)
+        n += 1
+        if (key.startsWith(K.tasks(''))) recordsCache = undefined
+      } catch (err) {
+        debug($, `store.delete ${key} failed: ${String(err)}`)
+      }
+    }
+    if (n === 0) return
+    const line = prunedLine(n, plan.before, plan.after)
+    debug($, line)
+    if (at === 'start') await appendRow($, line)
+  } catch (err) {
+    debug($, `store prune skipped: ${String(err)}`)
+  }
+}
+
+/** `/delegation`: the store's size, and the refused writes of this session when there were any. */
+async function storeStatusLines($: Host): Promise<string[]> {
+  let size: string[] = []
+  try {
+    size = [storeLine(storeBytes(await storeEntries($)))]
+  } catch (err) {
+    debug($, `store size not read: ${String(err)}`)
+  }
+  return [...size, ...(refusedWrites.count > 0 ? [refusedWritesLine(refusedWrites.count, refusedWrites.last)] : [])]
 }
 async function exists($: Host, path: string): Promise<boolean> {
   try {
@@ -3867,6 +3947,8 @@ async function finalize($: Host, spawnIn: SpawnRecord, text: string, measured: M
   } finally {
     finalizing.delete(key)
     verifying.delete(key)
+    // MOD-89: after each verdict the store is pruned, off the verdict's own path
+    void pruneStore($, 'verdict')
   }
 }
 
@@ -5235,6 +5317,7 @@ async function statusReport($: Host): Promise<string> {
     ...(split.hasEdits ? [`brain edits: ${split.summary.edits}`] : []),
     ...driveLines(await readDrive($)),
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
+    ...(await storeStatusLines($)),
     ...(await codeSkewLines($)),
     ...(await updateStatusLines($)),
     ...(cfg.issueRepo ? [`issues: ${cfg.issueRepo}${cfg.issueRepoOwn ? " (the mod's own tracker)" : ''}`, postModeLine(cfg.postFindings, cfg.issueRepo)] : []),
@@ -5772,7 +5855,6 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       purpose,
       ...(briefPath ? { briefPath } : {}),
       ...(noBrief !== undefined ? { noBrief } : {}),
-      prompt: e.prompt.slice(0, PROMPT_CAP),
       description: e.description,
       subagentType: p.subagentType,
       ...(p.cwd ? { cwd: p.cwd } : {}),
@@ -5883,7 +5965,6 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
     budget: worker?.budget ?? cfg.defaultBudget,
     purpose: 'review',
     ...(briefPath ? { briefPath } : {}),
-    prompt: e.prompt.slice(0, PROMPT_CAP),
     description: e.description,
     subagentType: e.subagentType,
     ...(cwd ? { cwd } : {}),
@@ -6207,7 +6288,6 @@ export const register: Register = (on, opts) => {
       alias: cfg.tierMap.standard,
       budget: cfg.defaultBudget,
       purpose: 'build',
-      prompt: '',
       description: e.description,
       subagentType: e.subagent_type ?? 'general-purpose',
     }
@@ -6425,6 +6505,9 @@ export const register: Register = (on, opts) => {
     }
     // MOD-28: the load. The templates are read here, once, with the code that renders them.
     await loadedTemplates($)
+    // MOD-89: a new session counts its own refused writes, and starts with the store pruned
+    refusedWrites = { count: 0, last: '' }
+    await pruneStore($, 'start')
     await loadRepoConfig($)
     void sampleSpend($)
     try {

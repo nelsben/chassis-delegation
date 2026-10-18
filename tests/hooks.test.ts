@@ -5531,3 +5531,79 @@ describe('MOD-44: the brain delegates into another local repo (repo set to an ab
     expect(w.runs.length).toBeGreaterThan(0)
   })
 })
+
+describe('MOD-89 (#157, #159): the store stays under the host cap', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const status = { command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never
+  const spawnRec = (key: string, task: string, at: number, extra: Record<string, unknown> = {}) => ({ key, task, subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 2, purpose: 'build', description: task, subagentType: 'general-purpose', agentId: `ag-${key}`, at, ...extra })
+  const attemptRec = (task: string, key: string, at: number, verdict: string) => [{ task, subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict, at, toolUseId: key, agentId: `ag-${key}` }]
+
+  test('session.start prunes a closed task older than 7 days through $.store.delete, keeps a running one as old and a fresh one, and says so once', async ($, on) => {
+    const old = NOW - 8 * DAY
+    const w = world(on, {
+      store: {
+        'delegation.tasks.T-OLD': attemptRec('T-OLD', 'k-old', old, 'consistent'),
+        'delegation.spawn.k-old': spawnRec('k-old', 'T-OLD', old, { verdictAttempt: 1 }),
+        'delegation.agent.ag-k-old': 'k-old',
+        'delegation.tasks.T-RUN': attemptRec('T-RUN', 'k-run', old, 'consistent'),
+        'delegation.spawn.k-run': spawnRec('k-run', 'T-RUN', old, { attempt: 2 }),
+        'delegation.agent.ag-k-run': 'k-run',
+        'delegation.tasks.T-NEW': attemptRec('T-NEW', 'k-new', NOW - DAY, 'consistent'),
+        'delegation.recent.sess-0': [{ task: 'T-OLD', attempt: 1, verdict: 'consistent', line: 'x', at: old }],
+      },
+    })
+    w.agents.push({ id: 'ag-k-run', type: 'general-purpose', description: 'T-RUN', status: 'running' })
+    await $.session.start(sessionStart)
+    expect(w.store.has('delegation.tasks.T-OLD')).toBe(false)
+    expect(w.store.has('delegation.spawn.k-old')).toBe(false)
+    expect(w.store.has('delegation.agent.ag-k-old')).toBe(false)
+    expect(w.store.has('delegation.spawn.k-run')).toBe(true)
+    expect(w.store.has('delegation.tasks.T-RUN')).toBe(true)
+    expect(w.store.has('delegation.tasks.T-NEW')).toBe(true)
+    expect(w.store.has('delegation.recent.sess-0')).toBe(true)
+    const line = /store: pruned 3 records \(\d+\.\d\d MiB to \d+\.\d\d MiB of 4 MiB\)/
+    expect(delivered(w)).toMatch(line)
+    expect(w.debugLogs.some(l => line.test(l))).toBe(true)
+    // nothing left to prune: a second start says nothing more
+    const rows = w.appended.length
+    await $.session.start(sessionStart)
+    expect(w.appended.slice(rows).some(a => a.text.startsWith('store: pruned'))).toBe(false)
+  })
+
+  test('a spawn record no longer keeps the prompt text', async ($, on) => {
+    const w = world(on)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-1 subtask=main purpose=build tier=standard]]\nDo it, at length.' }))
+    const rec = w.store.get('delegation.spawn.toolu_01ABCDEFGH') as Record<string, unknown>
+    expect(rec).toMatchObject({ task: 'T-1', description: 'task' })
+    expect('prompt' in rec).toBe(false)
+  })
+
+  test('a refused $.store.set: the first makes a toast and one row, later ones count; /delegation shows the size and the count', async ($, on) => {
+    const w = world(on, { skip: ['store.set'] })
+    on('store.set', (_$, e) => {
+      if (e.key.startsWith('delegation.spawn.')) return { deny: 'store over 4 MiB' } as never // the host refuses: the store would pass 4 MiB
+      w.store.set(e.key, JSON.parse(JSON.stringify(e.value)))
+      return { value: undefined } as never
+    })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-1 subtask=main purpose=build tier=standard]]\nDo it.' }))
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-2 subtask=main purpose=build tier=standard]]\nDo it.', tool_use_id: 'toolu_02ABCDEFGH' }))
+    const said = delivered(w).split('\n').filter(l => l.startsWith('store write failed: '))
+    expect(said.length).toBe(1)
+    expect(said[0]).toContain('store write failed: delegation.spawn.toolu_01ABCDEFGH (')
+    expect(said[0]).toContain('store over 4 MiB')
+    expect(said[0]).toContain('); new workers may have no verdict until the store is pruned')
+    expect(w.toasts.filter(t => t.includes('store write failed: ')).length).toBe(1)
+    const text = String((await $.command.run(status)).text)
+    expect(text).toMatch(/^store: \d+\.\d\d MiB of 4 MiB$/m)
+    expect(text).toContain('store: 2 writes refused this session (last delegation.spawn.toolu_02ABCDEFGH)')
+  })
+
+  test('/delegation shows the store size and no refused line when every write went in', async ($, on) => {
+    world(on)
+    await $.session.start(sessionStart)
+    const text = String((await $.command.run(status)).text)
+    expect(text).toMatch(/^store: \d+\.\d\d MiB of 4 MiB$/m)
+    expect(text).not.toContain('writes refused')
+  })
+})

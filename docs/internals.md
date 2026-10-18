@@ -149,6 +149,29 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
   - `delegation.debrief.<session>`;
   - `delegation.friction.<session>`;
   - `delegation.evals`.
+
+  The host refuses a `$.store.set` once the store passes **4 MiB** of JSON text in all (MOD-89, #157). So the
+  mod prunes it at session start and after each verdict, through `$.store.delete` only (never the file), with
+  the plan in `hooks/lib/retention.ts`:
+  - a per-task record (`delegation.spawn`, `.agent`, `.agentName`, `.cost`, `.tasks`, `.handoff`, `.replay`,
+    `.classifier`, `.effort`, `.posted`, `.postedRow`, `.outside`, `.taskRepo`, `.mergePrep`) is deleted when its
+    newest timestamp is more than **7 days** old and its task is not open. A record with no timestamp of its own
+    takes that of the record it hangs off (an agent pointer its spawn's, a cost its agent's, an effort its task's
+    attempts), and a spawn counts its task's attempts too. A record with no timestamp at all is left alone;
+  - an open task is never touched, whatever its age: a running worker, a pending verdict, a queued spawn, and
+    (a worker of another session) a task with a pending attempt younger than 7 days;
+  - when the store is over **3.5 MiB**, closed records younger than 7 days go too, oldest first, until it is
+    under **3 MiB**;
+  - session-level and global keys (`delegation.recent`, `.debrief`, `.friction`, `.brain`, `.adhoc`, `.evals`
+    and the like) are never deleted; the lists among them are capped where they are written (`recent` 50
+    lines, `friction` 100 events, `adhoc` 200 attempts, `evals` 100 rows).
+
+  A prune that deleted anything writes one debug line, and at session start one row:
+  `store: pruned <n> records (<x> MiB to <y> MiB of 4 MiB)`. A spawn record keeps no prompt text (MOD-89).
+  A refused write is said out loud: the first in a session is a toast and the row
+  `store write failed: <key> (<reason>); new workers may have no verdict until the store is pruned`; later
+  ones are counted. `/delegation` shows `store: <x> MiB of 4 MiB`, and
+  `store: <n> writes refused this session (last <key>)` when any were.
 - **`$.state`** holds `chassis-delegation.workers`, `.status`, `.lastVerdict`
   and `.queue`, declared in `hooks/types/index.d.ts`.
 

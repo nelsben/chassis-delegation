@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The store stays under the host's 4 MiB cap (MOD-89, #157, #159).** The host refuses a `$.store.set` once the plugin's store passes 4 MiB of JSON text, and the mod never deleted a record, so the store shared by every repo and session filled up: new spawn records were refused, the verdict tool said "no attempt recorded", no verifier ran, and `maxWorkers` was not enforced (a worker counts only when its spawn record reads back). Now, at session start and after each verdict, the mod deletes (through `$.store.delete` only) every per-task record whose newest timestamp is more than 7 days old and whose task is not open (no running worker, pending verdict or queued spawn); over 3.5 MiB it also deletes closed records younger than that, oldest first, until the store is under 3 MiB. An open task, a record with no timestamp, and the session-level keys are never touched. A prune says `store: pruned <n> records (<x> MiB to <y> MiB of 4 MiB)` in the debug log, and at session start as a row. A new spawn record no longer keeps the prompt text (nothing read it). A refused write is said out loud: the first in a session is a toast and the row `store write failed: <key> (<reason>); new workers may have no verdict until the store is pruned`, and `/delegation` shows `store: <x> MiB of 4 MiB`, plus `store: <n> writes refused this session (last <key>)` when any were. No new option.
+
 ## 0.9.14 — 2026-10-16
 
 - **The card tool never reuses an id that owns a brief or a ledger row (MOD-87).** `nextNumber` read only the card folder, so after a card was deleted the next card could take its id and dispatch reused the old brief, tier and attempts. The ids in the session root's brief folder (and the scratchpad brief folder when no briefDir is set) and in `.delegation/ledger.jsonl` now count as taken. A ledger line that is not JSON, or has no task, is skipped.
