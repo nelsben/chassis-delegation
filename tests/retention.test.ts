@@ -33,6 +33,24 @@ describe('MOD-89: the retention plan', () => {
     expect(plan(entries).delete.sort()).toEqual(entries.map(e => e[0]).sort())
   })
 
+  test('MOD-97: a task\'s records for another repo (<ID>@<repo>) are pruned with its family, and kept while it is open', () => {
+    const old = NOW - 8 * DAY
+    const entries: StoreEntry[] = [
+      [`delegation.tasks.T-7@/other`, (attempts('T-7', old)[1] as unknown[])],
+      spawn('k-T-7', 'T-7', old),
+      ['delegation.outside.T-7@/other', { at: old, briefPath: '/b', roots: [] }],
+      ['delegation.posted.T-7@/other:1:1', true],
+    ]
+    expect(plan(entries).delete.sort()).toEqual(entries.map(e => e[0]).sort())
+    expect(plan(entries, ['T-7']).delete).toEqual([])
+    // a pending attempt of another repo's task is open too
+    const pending: StoreEntry[] = [[`delegation.tasks.T-8@/other`, attempts('T-8', NOW - DAY, 'pending')[1] as unknown[]], ['delegation.effort.T-8@/other', 'high']]
+    const pad = 'x'.repeat(100 * 1024)
+    for (let i = 0; i < 40; i++) pending.push(spawn(`k${i}`, `T-${i}`, NOW - DAY + i, { pad }))
+    pending.push(spawn('k-T-8', 'T-8', NOW - DAY, { pad }))
+    expect(plan(pending).delete).not.toContain('delegation.spawn.k-T-8')
+  })
+
   test('an open task is kept whatever its age: running, pending verdict or queued, by task id or by label', () => {
     const ancient = NOW - 60 * DAY
     const entries: StoreEntry[] = [attempts('T-2', ancient), spawn('k-T-2', 'T-2', ancient), ['delegation.agent.ag-k-T-2', 'k-T-2'], attempts('T-3', ancient), spawn('k-T-3', 'T-3', ancient, { subtask: 'api' })]

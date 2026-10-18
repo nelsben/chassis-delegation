@@ -336,6 +336,8 @@ const DASH_PANE = 'delegation-dash'
 
 const K = {
   tasks: (task: string) => `delegation.tasks.${task}`,
+  /** MOD-97 (#163): a task's records in one repo's key space: the bare key for the session's repo, `<id>@<repo>` for another local repo. */
+  tasksIn: (task: string, repo: string) => `delegation.tasks.${task}${repo ? `@${repo}` : ''}`,
   adhoc: 'delegation.adhoc',
   /** MOD-47: the brain's record for the conversation that started at `since`. */
   brain: (since: number) => `delegation.brain.${since}`,
@@ -379,7 +381,7 @@ const K = {
   /** MOD-20: whose engine-suite gate (`claude plugin test`) is running; verifiers take turns on it. */
   engineGate: 'delegation.engineGate',
   /** MOD-22: the listing of a research card's absolute scope and forbid roots, taken at /dispatch. */
-  outside: (task: string) => `delegation.outside.${task}`,
+  outside: (task: string, repo = '') => `delegation.outside.${task}${repo ? `@${trimRepo(repo)}` : ''}`,
   /** MOD-44: the other local repo a task is for (its absolute path), so the id alone finds its card, brief and tree. */
   taskRepo: (task: string) => `delegation.taskRepo.${task}`,
   /** MOD-75: the tasks `/delegation merge --finish` merged in a session (task, sha, version), for the `merged:` lines. */
@@ -489,9 +491,9 @@ type SpawnRecord = {
 const laneOf = (s: { replay?: boolean; base?: string }): Lane | undefined =>
   s.replay ? { replay: true, ...(s.base ? { base: s.base } : {}) } : undefined
 
-/** `<task>:<lineage>:<attempt>` (the subtask and a replay lane folded into the task) — one verdict per key. */
+/** `<task>:<lineage>:<attempt>` (the subtask, a replay lane and (MOD-97) another repo folded into the task) — one verdict per key. */
 const attemptKey = (s: SpawnRecord): string =>
-  `${taskLabel(s.task, s.subtask)}${s.replay ? `@replay${s.base ? `-${s.base}` : ''}` : ''}:${s.review ? `review-${s.key}` : s.lineage}:${s.attempt}`
+  `${taskLabel(s.task, s.subtask)}${s.repo ? `@${trimRepo(s.repo)}` : ''}${s.replay ? `@replay${s.base ? `-${s.base}` : ''}` : ''}:${s.review ? `review-${s.key}` : s.lineage}:${s.attempt}`
 
 type Config = {
   autoEscalate: boolean
@@ -686,6 +688,7 @@ function noteGlyphIssues($: Host): void {
   }
 }
 const waiting = new Set<string>() // Agent tool calls still awaiting their result
+const resumeCalls = new Map<string, string>() // MOD-97 (#155): an ad hoc Agent call that resumed a briefed worker -> that worker's spawn key
 const handbacks = new Map<string, string>() // agentId → a SubagentHandback message a tool.call hook saw (the transcript is the live source: GH-2)
 const verifying = new Map<string, SpawnRecord>() // MOD-74: the spawn behind each attempt key in `finalizing`, for the status section
 const finalizing = new Map<string, Promise<Rendered>>() // attempt key → its verify, so a second fire waits on the first
@@ -2027,7 +2030,7 @@ async function flushWakes($: Host): Promise<void> {
     let drop = false
     if (spawn && h.text !== '') {
       const label = taskLabel(spawn.task, spawn.subtask)
-      const later = spawn.adhoc || spawn.review ? undefined : supersededBy(await loadAttempts($, spawn.task), spawn.subtask, spawn.attempt, laneOf(spawn))
+      const later = spawn.adhoc || spawn.review ? undefined : supersededBy(await loadAttempts($, spawn), spawn.subtask, spawn.attempt, laneOf(spawn))
       if (later !== undefined) {
         debug($, `wake skipped: ${label} attempt ${spawn.attempt} superseded by attempt ${later}`)
         drop = true
@@ -2129,8 +2132,8 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
   let judged: AttemptRecord | undefined
   if (!spawnIn.adhoc) {
     const lane = laneOf(spawnIn)
-    const records = patchRecord(await loadAttempts($, spawnIn.task), spawnIn.subtask, spawnIn.attempt, { verdict: 'over-spend', usd: own, verdictAt: t }, lane)
-    await storeSet($, K.tasks(spawnIn.task), records)
+    const records = patchRecord(await loadAttempts($, spawnIn), spawnIn.subtask, spawnIn.attempt, { verdict: 'over-spend', usd: own, verdictAt: t }, lane)
+    await saveAttempts($, spawnIn, records)
     judged = attemptsFor(records, spawnIn.subtask, lane).find(r => r.attempt === spawnIn.attempt)
   }
   const row = overSpendLine({ label, task: spawnIn.task, attempt: spawnIn.attempt, budget: spawnIn.budget, usd: own, spend: ceiling })
@@ -2168,8 +2171,8 @@ async function stepEffort($: Host, agentId: string): Promise<Effort | undefined>
   stepEfforts.set(agentId, effort ?? null)
   if (effort) {
     const lane = laneOf(spawn)
-    const records = await loadAttempts($, spawn.task)
-    await storeSet($, K.tasks(spawn.task), patchRecord(records, spawn.subtask, spawn.attempt, { effort }, lane))
+    const records = await loadAttempts($, spawn)
+    await saveAttempts($, spawn, patchRecord(records, spawn.subtask, spawn.attempt, { effort }, lane))
   }
   return effort
 }
@@ -2314,10 +2317,12 @@ async function retireProbe($: Host, task: string, sha: string | undefined, repo?
  * 15 minutes, the sha is looked for in origin/main and the card there for
  * `status: merged`; a check that gets no answer leaves the row as it is.
  */
-async function retireCheck($: Host, label: string, t: number, force = false, cardOnly = false): Promise<{ retired: boolean; checked: boolean }> {
+async function retireCheck($: Host, label: string, t: number, force = false, cardOnly = false, repo?: string): Promise<{ retired: boolean; checked: boolean }> {
   const { task, subtask } = splitLabel(label)
+  // MOD-97: a hand-back names its repo; an owed row is its id alone
+  const ref: TaskRef = repo !== undefined ? { task, repo } : task
   try {
-    const records = await loadAttempts($, task)
+    const records = await loadAttempts($, ref)
     const last = attemptsFor(records, subtask).at(-1)
     if (!last) return { retired: false, checked: false }
     if (last.retired) return { retired: true, checked: true }
@@ -2325,7 +2330,7 @@ async function retireCheck($: Host, label: string, t: number, force = false, car
     const patch = retirePatch(await retireProbe($, task, last.sha, last.root, cardOnly), t)
     // a card-only check (a non-consistent verdict) records nothing unless the card reads merged: it must not hold off the sha check of the 15-minute retire sweep
     if (cardOnly && patch.retired === undefined) return { retired: false, checked: last.retireCheckedAt !== undefined }
-    await storeSet($, K.tasks(task), patchRecord(await loadAttemptsRaw($, task), subtask, last.attempt, patch))
+    await saveAttempts($, ref, patchRecord(await loadAttemptsRaw($, ref), subtask, last.attempt, patch))
     if (patch.retired === 'merged') await appendLedger($, acceptRow(last, 'merged', t))
     return { retired: patch.retired !== undefined, checked: patch.retireCheckedAt !== undefined || last.retireCheckedAt !== undefined }
   } catch (err) {
@@ -2344,7 +2349,7 @@ async function acceptTask($: Host, rest: string): Promise<string> {
   if (!last) return `/delegation accept: no attempts recorded for ${id}; nothing changed`
   const note = words.join(' ')
   const at = await now($)
-  await storeSet($, K.tasks(task), patchRecord(await loadAttemptsRaw($, task), subtask, last.attempt, { retired: 'accepted', accepted: { ...(note ? { note } : {}), at } }))
+  await saveAttempts($, task, patchRecord(await loadAttemptsRaw($, task), subtask, last.attempt, { retired: 'accepted', accepted: { ...(note ? { note } : {}), at } }))
   await appendLedger($, { ...acceptRow(last, 'accepted', at), sessionId: await sessionIdOf($) })
   return `accepted ${id} by hand (attempt ${last.attempt})${note ? `: ${note}` : ''}; its owed row is retired`
 }
@@ -2359,9 +2364,9 @@ async function acceptTask($: Host, rest: string): Promise<string> {
 async function alreadyMerged($: Host, spawn: SpawnRecord, force = false, anyVerdict = false): Promise<boolean> {
   if (spawn.adhoc || spawn.review || spawn.replay) return false
   try {
-    const rec = attemptsFor(await loadAttempts($, spawn.task), spawn.subtask).find(r => r.attempt === spawn.attempt)
+    const rec = attemptsFor(await loadAttempts($, spawn), spawn.subtask).find(r => r.attempt === spawn.attempt)
     if (!anyVerdict && rec?.verdict !== 'consistent') return false
-    return (await retireCheck($, taskLabel(spawn.task, spawn.subtask), await now($), force, rec?.verdict !== 'consistent')).retired
+    return (await retireCheck($, taskLabel(spawn.task, spawn.subtask), await now($), force, rec?.verdict !== 'consistent', spawn.repo ?? '')).retired
   } catch (err) {
     debug($, `${taskLabel(spawn.task, spawn.subtask)}: merged check failed: ${String(err)}`)
     return false
@@ -2394,7 +2399,7 @@ async function noteMergeCommand($: Host, command: string): Promise<void> {
       const raw = await loadAttemptsRaw($, id)
       const last = attemptsFor(records, 'main').at(-1) ?? records.filter(r => r.kind !== 'review' && !r.replay).sort((a, b) => a.attempt - b.attempt).at(-1)
       if (!last) continue
-      if (!last.retired) await storeSet($, K.tasks(id), patchRecord(raw, last.subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }))
+      if (!last.retired) await saveAttempts($, id, patchRecord(raw, last.subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }))
       await appendLedger($, { ...acceptRow(last, 'merged', t), sessionId: await sessionIdOf($) })
     } catch (err) {
       debug($, `${id}: merge not recorded: ${String(err)}`)
@@ -2446,7 +2451,7 @@ async function mergeCommand($: Host, parsed: MergeArgs): Promise<string> {
     const ledger = cfg.ledgerFile ? ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '') : ''
     let row: VerdictRow | undefined = latestVerdictRow(ledger, id)
     if (!row) {
-      const last = attemptsFor(await loadAttempts($, id), 'main').at(-1)
+      const last = attemptsFor(await loadAttempts($, { task: id }), 'main').at(-1)
       if (last && last.verdict !== 'pending') row = { verdict: last.verdict, ...(last.verdict === 'consistent' ? { next: 'accept' } : {}), attempt: last.attempt, ...(last.sha ? { sha: last.sha } : {}) }
     }
     const refused = verdictRefusal(id, row)
@@ -2651,9 +2656,10 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const prRef = [...recent].reverse().find(r => splitLabel(r.task).task === id && r.pr)?.pr
   const pr = prRef ? /(\d+)\s*$/.exec(prRef)?.[1] : undefined
   try {
-    const records = await loadAttempts($, id)
+    // MOD-97: the merge is of the session repo's worktree, so of that repo's attempt
+    const records = await loadAttempts($, { task: id })
     const last = attemptsFor(records, 'main').at(-1)
-    if (last) await storeSet($, K.tasks(id), patchRecord(await loadAttemptsRaw($, id), 'main', last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t, mergedSha: sha } as Partial<AttemptRecord>))
+    if (last) await saveAttempts($, { task: id }, patchRecord(await loadAttemptsRaw($, { task: id }), 'main', last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t, mergedSha: sha } as Partial<AttemptRecord>))
   } catch (err) {
     debug($, `${id}: merge not recorded on the task: ${String(err)}`)
   }
@@ -3515,13 +3521,57 @@ async function replayBase($: Host, briefPath: string): Promise<{ base?: string }
   return typeof base === 'string' && base ? { base } : {}
 }
 
-/** The task's records as stored: a write patches these, so a record written before the rename keeps its word. */
-async function loadAttemptsRaw($: Host, task: string): Promise<AttemptRecord[]> {
-  return (await storeGet<AttemptRecord[]>($, K.tasks(task))) ?? []
+/**
+ * MOD-97 (#163): whose records a read or write means. An object names the task and the other local repo it is for
+ * (absent, or the session root: the session's own); an id alone, from a door that takes only an id (the verdict
+ * tool, accept, merge, the owed rows), is the repo /dispatch remembered for it (MOD-44), else the session's.
+ */
+type TaskRef = string | { task: string; repo?: string | undefined }
+const trimRepo = (path: string): string => path.replace(/\/+$/, '') || '/'
+
+/** The task id of a ref and the other repo it is for ('' for the session's own repo). */
+async function refOf($: Host, ref: TaskRef): Promise<{ task: string; repo: string; root: string }> {
+  const task = typeof ref === 'string' ? ref : ref.task
+  const named = typeof ref === 'string' ? await storeGet<string>($, K.taskRepo(ref)) : ref.repo
+  const root = trimRepo(await sessionRootOf($))
+  const repo = typeof named === 'string' && named !== '' ? trimRepo(named) : ''
+  return { task, repo: repo === root ? '' : repo, root }
 }
 
-async function loadAttempts($: Host, task: string): Promise<AttemptRecord[]> {
-  return readRetired($, K.tasks(task), await loadAttemptsRaw($, task))
+/** A record of the bare key belongs to the repo its `root` names (a record with none: to any repo); `repo` '' is the session's. */
+const belongsTo = (r: AttemptRecord, repo: string, root: string): boolean => {
+  if (!r.root) return true
+  const own = trimRepo(r.root)
+  return repo ? own === repo : root === '/' || own === root
+}
+
+/**
+ * The task's records as stored: a write patches these, so a record written before the rename keeps its word.
+ * MOD-97: a task for another repo has a key of its own (`<id>@<repo>`); until it is written, the bare key's
+ * records that belong to that repo stand for it. The bare key reads only the session repo's (and legacy ones).
+ */
+async function loadAttemptsRaw($: Host, ref: TaskRef): Promise<AttemptRecord[]> {
+  const { task, repo, root } = await refOf($, ref)
+  if (repo) {
+    const own = await storeGet<AttemptRecord[]>($, K.tasksIn(task, repo))
+    if (Array.isArray(own)) return own
+  }
+  const bare = (await storeGet<AttemptRecord[]>($, K.tasks(task))) ?? []
+  return Array.isArray(bare) ? bare.filter(r => belongsTo(r, repo, root)) : []
+}
+
+async function loadAttempts($: Host, ref: TaskRef): Promise<AttemptRecord[]> {
+  const { task, repo } = await refOf($, ref)
+  return readRetired($, K.tasksIn(task, repo), await loadAttemptsRaw($, ref))
+}
+
+/** MOD-97: writes a task's records under its repo's key; a bare-key write keeps the records there that belong to other repos. */
+async function saveAttempts($: Host, ref: TaskRef, records: readonly AttemptRecord[]): Promise<void> {
+  const { task, repo, root } = await refOf($, ref)
+  if (repo) return storeSet($, K.tasksIn(task, repo), records)
+  const stored = await storeGet<AttemptRecord[]>($, K.tasks(task))
+  const foreign = Array.isArray(stored) ? stored.filter(r => !belongsTo(r, '', root)) : []
+  await storeSet($, K.tasks(task), [...foreign, ...records])
 }
 
 /** MOD-19 (0.8.0): a stored record that still holds the retired verdict word reads as consistent; each one is logged at debug. */
@@ -3544,9 +3594,8 @@ function readRecent($: Host, rows: readonly RecentVerdict[]): RecentVerdict[] {
 }
 
 /** MOD-95: the number of an attempt of `task` that is running or awaiting its verdict (a non-replay record still pending), else undefined. */
-async function openAttemptOf($: Host, task: string): Promise<number | undefined> {
-  const records = await storeGet<AttemptRecord[]>($, K.tasks(task))
-  if (!Array.isArray(records)) return undefined
+async function openAttemptOf($: Host, ref: TaskRef): Promise<number | undefined> {
+  const records = await loadAttemptsRaw($, ref)
   return records.findLast(r => r.verdict === 'pending' && r.replay !== true)?.attempt
 }
 /**
@@ -3700,11 +3749,11 @@ async function recordWorkPresent(
   w: WorkPresent,
   lane: Lane | undefined,
 ): Promise<number> {
-  const all = await loadAttempts($, s.task)
+  const all = await loadAttempts($, s)
   const ladder = all.filter(r => (r as HereRecord).adhoc !== true)
   const last = attemptsFor(ladder, s.subtask, lane).at(-1)
   if (last?.verdict === 'work-present') {
-    if (last.sha !== w.sha) await storeSet($, K.tasks(s.task), all.map(r => (r === last ? { ...r, sha: w.sha } : r)))
+    if (last.sha !== w.sha) await saveAttempts($, s, all.map(r => (r === last ? { ...r, sha: w.sha } : r)))
     return last.attempt
   }
   const attempt = nextAttempt(ladder, s.subtask, lane)
@@ -3727,7 +3776,7 @@ async function recordWorkPresent(
     purpose: s.purpose,
     ...laneFields(lane),
   }
-  await storeSet($, K.tasks(s.task), [...all, rec])
+  await saveAttempts($, s, [...all, rec])
   return attempt
 }
 
@@ -3849,9 +3898,10 @@ async function statArtefact($: Host, path: string): Promise<ArtefactStat> {
 }
 
 /** The listings /dispatch took of a task's absolute roots, with a way to list them again; undefined when none were taken. */
-async function outsideFor($: Host, task: string | undefined): Promise<OutsideInput | undefined> {
+async function outsideFor($: Host, task: string | undefined, repo?: string): Promise<OutsideInput | undefined> {
   if (!task) return undefined
-  const saved = await storeGet<{ roots?: RootListing[] }>($, K.outside(task))
+  // MOD-97 (#164): the listing is the card's repo's: another repo's task of the same id never lends it one
+  const saved = await storeGet<{ roots?: RootListing[] }>($, K.outside(task, repo))
   return Array.isArray(saved?.roots) ? { before: saved.roots, list: (root, since) => listRoot($, root, since) } : undefined
 }
 
@@ -3869,16 +3919,26 @@ async function tmpDirOf($: Host): Promise<string> {
  * verifier to compare. A brief that was reused keeps the listing it has, so the delta stays cumulative
  * across attempts. Returns what to say about it, or undefined when the brief names no outside root.
  */
-async function recordOutside($: Host, task: string, briefPath: string, reused: boolean): Promise<string | undefined> {
+async function recordOutside($: Host, task: string, briefPath: string, reused: boolean, repo?: string): Promise<string | undefined> {
   const text = await readText($, briefPath)
   const contract = text !== undefined ? briefContract(text) : undefined
   if (!contract || !contract.ok) return undefined
   const roots = outsideRoots(contract.scope.filter(isAbsolute), contract.forbid.filter(isAbsolute))
-  if (roots.length === 0) return undefined
-  if (reused && (await storeGet<unknown>($, K.outside(task))) !== undefined) return `outside: the listing of ${roots.join(', ')} taken at the first dispatch stands`
+  // MOD-97 (#164): a brief that names no outside root leaves no listing behind for its verifier to read
+  if (roots.length === 0) {
+    if ((await storeGet<unknown>($, K.outside(task, repo))) != null) {
+      try {
+        await $.store.delete(K.outside(task, repo))
+      } catch (err) {
+        debug($, `store.delete ${K.outside(task, repo)} failed: ${String(err)}`)
+      }
+    }
+    return undefined
+  }
+  if (reused && (await storeGet<unknown>($, K.outside(task, repo))) != null) return `outside: the listing of ${roots.join(', ')} taken at the first dispatch stands`
   const listed: RootListing[] = []
   for (const root of roots) listed.push(await listRoot($, root))
-  await storeSet($, K.outside(task), { at: await now($), briefPath, roots: listed })
+  await storeSet($, K.outside(task, repo), { at: await now($), briefPath, roots: listed })
   const files = listed.reduce((n, l) => n + ('entries' in l ? l.entries.length : 0), 0)
   const bad = listed.filter((l): l is { root: string; error: string } => 'error' in l)
   const marks = listed.filter((l): l is { root: string; since: number; files: number } => 'since' in l)
@@ -3906,16 +3966,16 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const report = parseReport(block)
   const filesPath = filesPathFor(scratchFor(briefPath), spawn.task)
   const allowed = (argv: readonly string[]) => checkArgv(argv, allowCfg()).ok
-  if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task)
+  if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path)
   // GH-16: repo=here verifies the session's own checkout, shared with the brain and other workers
   const here = header?.repo === 'here'
   const repo = here ? root : await workerRepo($, spawn, header?.repo, root)
   const probed = await run($, workTreeArgv(repo), { cwd: root, timeoutMs: 15000 })
-  if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task)
+  if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path)
   // GH-20: a red file must differ from every earlier attempt's of this task + subtask
-  const priorRed = priorRedHashes(await loadAttempts($, spawn.task), spawn.subtask, spawn.attempt, laneOf(spawn))
+  const priorRed = priorRedHashes(await loadAttempts($, spawn), spawn.subtask, spawn.attempt, laneOf(spawn))
   const others = here ? (await inFlightHere($, root, taskLabel(spawn.task, spawn.subtask))).map(c => ({ card: c.label, files: c.files })) : []
-  const outside = await outsideFor($, spawn.task)
+  const outside = await outsideFor($, spawn.task, other?.path)
   const r = await verifyNative(
     {
       repo,
@@ -3942,7 +4002,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
  * first scope root and lie in scope; the gate (map id, or a bare allowlisted
  * command such as `claude plugin validate <folder>`) must exit 0.
  */
-async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string, task?: string): Promise<VerifyResult> {
+async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string, task?: string, repo?: string): Promise<VerifyResult> {
   const contract = briefContract(briefText)
   if (!contract.ok) return { verdict: 'refused', lines: [...amendLines, contract.line], noRepo: true }
   // GH-103: a prose scope= gives no root to check files under; the work stands, unverified
@@ -3957,7 +4017,7 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const absScope = contract.scope.filter(isAbsolute)
   const absForbid = contract.forbid.filter(isAbsolute)
   const watched = outsideRoots(absScope, absForbid)
-  const baseline = await outsideFor($, task)
+  const baseline = await outsideFor($, task, repo)
   const outside = await outsideCheck(absScope, absForbid, baseline)
   const artefacts = await artefactsCheck(reportArtefacts(report.artefacts), contract.outdir ?? scopeRoot, path => statArtefact($, path))
   const metrics = reportMetrics(report.metrics)
@@ -4139,7 +4199,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   // GH-16: a repo=here worker's claimed files go on its record before the verify, so a sibling verifying now subtracts them
   if (report && spawn.here && !spawn.adhoc) {
     const claimed: Partial<AttemptRecord> & HereFields = { files: reportFiles(report.files) }
-    await storeSet($, K.tasks(spawn.task), patchRecord(await loadAttempts($, spawn.task), spawn.subtask, spawn.attempt, claimed, laneOf(spawn)))
+    await saveAttempts($, spawn, patchRecord(await loadAttempts($, spawn), spawn.subtask, spawn.attempt, claimed, laneOf(spawn)))
   }
   const cardless = report !== undefined && isCardless(spawn)
   if (!block) verdict = 'no-report'
@@ -4176,7 +4236,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     // GH-1 item 2: recorded under the report's task= (else adhoc-<key>); no ladder, no budget
     const task = reportTaskOf(report?.task) ?? spawn.task
     const subtask = reportTaskOf(report?.subtask) ?? 'main'
-    const before = await loadAttempts($, task)
+    // MOD-97: a cardless hand-back is the session repo's
+    const before = await loadAttempts($, { task })
     const attempt = nextAttempt(before, subtask)
     const rec: HereRecord = {
       ...(await ownerFields($)),
@@ -4200,7 +4261,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
       purpose: spawn.purpose,
       adhoc: true,
     }
-    await storeSet($, K.tasks(task), [...before, rec])
+    await saveAttempts($, { task }, [...before, rec])
     judged = rec
     shownLabel = taskLabel(task, subtask)
     shownAttempt = attempt
@@ -4209,7 +4270,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     advice = advise({ verdict, task: label, attempts: 1, budget: spawn.budget, lineageResumes: 0, tier: spawn.tier, adhoc: true })
   } else {
     const lane = laneOf(spawn)
-    const held = await loadAttempts($, spawn.task)
+    const held = await loadAttempts($, spawn)
     // MOD-94: an attempt whose record the store refused is judged on the record it would have had
     const before = from && !attemptsFor(held, spawn.subtask, lane).some(r => r.attempt === spawn.attempt) ? [...held, await attemptOfSpawn($, spawn)] : held
     // A resume's own record has no model: it runs on its lineage's spawn.
@@ -4242,7 +4303,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
       },
       lane,
     )
-    await storeSet($, K.tasks(spawn.task), records)
+    await saveAttempts($, spawn, records)
     judged = attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.attempt)
     advice = advise({
       verdict,
@@ -4266,7 +4327,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   if (!spawn.adhoc && spawn.briefPath && (advice.kind === 'resume' || advice.kind === 'respawn')) {
     const lane = laneOf(spawn)
     const briefText = await readText($, spawn.briefPath)
-    work = await workInWorktree($, spawn, briefText !== undefined ? parseHeader(briefText) : undefined, await loadAttempts($, spawn.task), lane)
+    work = await workInWorktree($, spawn, briefText !== undefined ? parseHeader(briefText) : undefined, await loadAttempts($, spawn), lane)
     if (work) {
       await recordWorkPresent($, spawn, work, lane)
       advice = verifyAdvice(work)
@@ -4357,7 +4418,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   const counts = parseReviewBlock(text, spawn.task)
   const rows = counts && counts.refuted > 0 ? refutedRows(text) : []
   const shown = shownRefuted(counts, rows, text)
-  const before = await loadAttempts($, spawn.task)
+  const before = await loadAttempts($, spawn)
   const worker = spawn.review?.worker ? await spawnByAgent($, spawn.review.worker) : undefined
   const advice = reviewAdvice({ counts, refuted: rows, ...(worker?.agentId ? { agentId: worker.agentId } : {}), attempts: attemptsFor(before, spawn.subtask, lane).length, budget: spawn.budget, label })
 
@@ -4370,7 +4431,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
     ...(measured.tokens !== undefined ? { tokens: measured.tokens } : {}),
     ...(model !== undefined ? { resolvedModel: model } : {}),
   })
-  await storeSet($, K.tasks(spawn.task), records)
+  await saveAttempts($, spawn, records)
   const judged = records.find(r => r.kind === 'review' && r.toolUseId === spawn.key)
 
   let next = advice.next
@@ -4411,9 +4472,11 @@ type VerdictNow = { kind: 'none' } | { kind: 'wait' } | { kind: 'judged'; text: 
 
 async function verdictNow($: Host, task: string, subtask: string): Promise<VerdictNow> {
   const label = taskLabel(task, subtask)
-  const latest = attemptsFor(await loadAttempts($, task), subtask).at(-1)
+  // MOD-97: the id alone is the repo its dispatch remembered (else the session's); the attempt and the worker are that repo's
+  const { repo } = await refOf($, task)
+  const latest = attemptsFor(await loadAttempts($, { task, repo }), subtask).at(-1)
   // MOD-94 (#157): an attempt the store has no record of: this process's memory of its start, else the ledger
-  const mem = rememberedFor(task, subtask)
+  const mem = rememberedFor(task, subtask, repo)
   if (mem && (!latest || mem.attempt > latest.attempt)) return mem.verdictAttempt === mem.attempt && mem.verdictBlock ? postedOf($, mem, undefined) : { kind: 'wait' }
   if (!latest) return verdictFromLedger($, task, subtask)
   if (latest.verdict === 'pending') return { kind: 'wait' }
@@ -4540,6 +4603,19 @@ async function claimPost($: Host, spawn: SpawnRecord): Promise<boolean> {
   return true
 }
 
+/**
+ * MOD-41: a briefed worker whose last attempt was judged hands back at a new sha: that is its next attempt (a resume),
+ * recorded and opened for a verdict against the same brief. Else the spawn as it is.
+ */
+async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: string): Promise<SpawnRecord> {
+  if (spawn.adhoc || spawn.review || spawn.verdictAttempt !== spawn.attempt) return spawn
+  const block = extractReport(text)
+  const sha = block ? parseReport(block)?.sha : undefined
+  if (!sha) return spawn
+  const records = await loadAttempts($, spawn)
+  return isResumeAfterJudged(records, spawn.subtask, sha, laneOf(spawn)) ? recordResume($, spawn, records, agentId) : spawn
+}
+
 /** Records the next attempt of a task as a resume of `spawn`'s worker (kind resume, same lineage) and opens it for a verdict. */
 async function recordResume($: Host, spawn: SpawnRecord, records: readonly AttemptRecord[], agentId: string): Promise<SpawnRecord> {
   const lane = laneOf(spawn)
@@ -4563,7 +4639,7 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
     ...laneFields(lane),
     ...(spawn.here ? { here: spawn.here } : {}),
   }
-  await storeSet($, K.tasks(spawn.task), [...records, rec])
+  await saveAttempts($, spawn, [...records, rec])
   const usdAtStart = await sessionUsd($)
   const next: SpawnRecord = { ...spawn, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
   await storeSet($, K.spawn(spawn.key), next)
@@ -4602,10 +4678,13 @@ function rememberWrite(value: unknown): void {
   remember(rec)
 }
 
-/** MOD-94: the newest worker of a task this process remembers. */
-function rememberedFor(task: string, subtask: string): SpawnRecord | undefined {
+/** MOD-94: the newest worker of a task this process remembers; MOD-97: of the repo given ('' the session's), when one is. */
+function rememberedFor(task: string, subtask: string, repo?: string): SpawnRecord | undefined {
   let best: SpawnRecord | undefined
-  for (const r of remembered.values()) if (r.task === task && r.subtask === subtask && !r.replay && (best === undefined || r.attempt >= best.attempt)) best = r
+  for (const r of remembered.values()) {
+    if (repo !== undefined && (r.repo ? trimRepo(r.repo) : '') !== repo) continue
+    if (r.task === task && r.subtask === subtask && !r.replay && (best === undefined || r.attempt >= best.attempt)) best = r
+  }
   return best
 }
 
@@ -4616,7 +4695,11 @@ function rememberedFor(task: string, subtask: string): SpawnRecord | undefined {
  * so the verdict says where it came from.
  */
 async function handbackSpawn($: Host, agentId: string | undefined, toolUseId?: string): Promise<SpawnRecord | undefined> {
-  const stored = (toolUseId ? await storeGet<SpawnRecord>($, K.spawn(toolUseId)) : undefined) ?? (await storedSpawnByAgent($, agentId))
+  const byCall = toolUseId ? await storeGet<SpawnRecord>($, K.spawn(toolUseId)) : undefined
+  const byAgent = byCall === undefined || isCardless(byCall) ? await storedSpawnByAgent($, agentId) : undefined
+  // MOD-97 (#155): an ad hoc call that resumed a briefed worker hands back as that worker, judged against its brief
+  if (byCall && byAgent && !byAgent.adhoc && !byAgent.review) return byAgent
+  const stored = byCall ?? byAgent
   if (stored) return stored
   const mem = agentId ? remembered.get(agentId) : undefined
   if (mem) return { ...mem, fallback: 'memory' }
@@ -4886,7 +4969,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       card: `${tasksDir}/${name}`,
     })
     if (drift.points.length > 0) {
-      const open = await openAttemptOf($, id)
+      const open = await openAttemptOf($, { task: id, repo: target?.path })
       if (open !== undefined) return briefStaleRefusal(id, existing, drift, open)
       stale = drift
     }
@@ -5084,7 +5167,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   }
 
   // MOD-22: the absolute scope and forbid roots are listed now; the verifier lists them again at hand-back
-  const listedOutside = await recordOutside($, id, briefPath, reuse !== undefined)
+  const listedOutside = await recordOutside($, id, briefPath, reuse !== undefined, target?.path)
   if (listedOutside) out.push(`   ${listedOutside}`)
 
   if (here) out.push(`3. no worktree (repo=here): the worker shares ${root}`)
@@ -5173,7 +5256,9 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
     const current = await run($, currentBranchArgv(root), { cwd: root, timeoutMs: 10000 })
     branch = current.ok && current.exitCode === 0 && current.stdout.trim() ? current.stdout.trim() : branch
   }
-  const all = await loadAttempts($, id)
+  // MOD-97: that repo's attempts
+  const ref: TaskRef = { task: id, repo: other?.path }
+  const all = await loadAttempts($, ref)
   const ladder = all.filter(r => (r as HereRecord).adhoc !== true)
   const last = attemptsFor(ladder, subtask).at(-1)
   // a worker still running owns the tree; a pending attempt whose agent is gone is not waited on
@@ -5221,9 +5306,9 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
       purpose: header?.purpose ?? 'build',
       ...(here ? { here: root } : {}),
     }
-    await storeSet($, K.tasks(id), [...all, rec])
+    await saveAttempts($, ref, [...all, rec])
   }
-  const rec = attemptsFor(await loadAttempts($, id), subtask).find(r => r.attempt === attempt && (r as HereRecord).adhoc !== true)
+  const rec = attemptsFor(await loadAttempts($, ref), subtask).find(r => r.attempt === attempt && (r as HereRecord).adhoc !== true)
   const spawn: SpawnRecord = {
     key: `verify-${id}-${subtask}-${attempt}${target.rejudge ? `-rejudge-${t}` : ''}`,
     task: id,
@@ -5891,6 +5976,8 @@ type SpawnPlan = {
   subagentType: string
   task: string
   subtask: string
+  /** MOD-97: the other local repo the brief names (an absolute repo=), whose key space the records are from. */
+  repo?: string
   label: string
   budget: number
   /** The budget= as written (the brief file's, else the prompt's), for the warning. */
@@ -5931,7 +6018,10 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
   // A /dispatch --replay brief is named <id>.replay.brief.md; its base commit is in the store.
   const replay = !adhoc && named !== undefined && named.endsWith('.replay.brief.md')
   const lane: Lane | undefined = replay && named ? { replay: true, ...(await replayBase($, named)) } : undefined
-  const records = adhoc ? [] : (await loadAttempts($, task)).filter(r => (r as HereRecord).adhoc !== true)
+  // MOD-97 (#163): the ladder of the repo the brief names (another local repo keys its own)
+  const named0 = (fileHeader ?? header)?.repo
+  const repo = !adhoc && named0 !== undefined && named0.startsWith('/') ? named0 : undefined
+  const records = adhoc ? [] : (await loadAttempts($, { task, repo })).filter(r => (r as HereRecord).adhoc !== true)
   // MOD-12: no folder on the call, a brief /dispatch prepared: its worktree (the root for repo=here)
   const cwd = e.cwd ?? (!adhoc && named ? (await storeGet<{ cwd?: string }>($, K.handoff(named)))?.cwd : undefined)
   return {
@@ -5944,6 +6034,7 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
     subagentType: e.subagentType || 'general-purpose',
     task,
     subtask,
+    ...(repo ? { repo } : {}),
     label: taskLabel(task, subtask),
     budget: parseBudget(budgetRaw, cfg.defaultBudget),
     ...(budgetRaw !== undefined ? { budgetRaw } : {}),
@@ -6142,7 +6233,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     }
     rateHeld = undefined // MOD-56: the brain dispatched again
     if (adhoc) await storeSet($, K.adhoc, [...((await storeGet<AttemptRecord[]>($, K.adhoc)) ?? []), rec].slice(-200))
-    else await storeSet($, K.tasks(task), [...records, rec])
+    else await saveAttempts($, { task, repo: other?.path ?? p.repo }, [...records, rec])
     const spawn: SpawnRecord = {
       key,
       task,
@@ -6172,7 +6263,13 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     // MOD-94 (#159): the worker counts from this process's memory too, should the store refuse its record
     if (!adhoc) remember(spawn)
     await storeSet($, K.spawn(key), spawn)
-    if (res.agentId) await storeSet($, K.agent(res.agentId), key)
+    // MOD-97 (#155): a briefed worker the engine starts again as an ad hoc spawn (a resume) stays that worker: its pointer, and so its brief, stand
+    const resumed = adhoc && res.agentId ? await storedSpawnByAgent($, res.agentId) : undefined
+    const keepsBrief = resumed !== undefined && !resumed.adhoc && !resumed.review
+    if (keepsBrief) {
+      resumeCalls.set(key, resumed.key)
+      debug($, `${taskLabel(resumed.task, resumed.subtask)}: ${res.agentId} started again with no brief; its hand-back is judged against ${resumed.briefPath ?? 'its brief'}`)
+    } else if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
     // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
     if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t }, await sessionIdOf($)))
@@ -6283,7 +6380,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
   const label = taskLabel(marker.task, marker.subtask)
   const worker = await step(spawnByAgent($, marker.worker))
   const lane = worker ? laneOf(worker) : undefined
-  const before = await step(loadAttempts($, marker.task))
+  const before = await step(loadAttempts($, worker ?? marker.task))
   s?.check()
   const reviewed = attemptsFor(before, marker.subtask, lane).find(r => r.attempt === marker.attempt)
   const { tier, alias } = reviewerPick(worker?.tier ?? reviewed?.tier ?? 'standard', cfg.reviewTier || undefined, cfg.tierMap)
@@ -6319,7 +6416,8 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
     purpose: 'review',
     ...laneFields(lane),
   }
-  await storeSet($, K.tasks(marker.task), [...(await loadAttempts($, marker.task)), rec])
+  const reviewRef: TaskRef = worker ?? marker.task
+  await saveAttempts($, reviewRef, [...(await loadAttempts($, reviewRef)), rec])
   const spawn: SpawnRecord = {
     key,
     task: marker.task,
@@ -6634,13 +6732,14 @@ export const register: Register = (on, opts) => {
       ran = await next(e)
     } finally {
       waiting.delete(e.tool_use_id)
+      resumeCalls.delete(e.tool_use_id)
     }
     if (ran.deny !== undefined) return ran
     const result = ran.result as Record<string, unknown> | undefined
     const status = typeof result?.status === 'string' ? result.status : undefined
     const agentId = typeof result?.agentId === 'string' ? result.agentId : undefined
     // MOD-94: the store's record, else this process's memory, else the ledger spawn row
-    const spawn = await handbackSpawn($, agentId, e.tool_use_id)
+    let spawn = await handbackSpawn($, agentId, e.tool_use_id)
     if (status === 'async_launched' || status === 'remote_launched') {
       if (!spawn || spawn.adhoc) return ran
       const line = `${PLUGIN}: ${spawn.review ? 'review' : 'verify'} deferred — runs when ${agentId ?? (spawn.review ? 'the reviewer' : 'the worker')} hands back (background)`
@@ -6657,6 +6756,8 @@ export const register: Register = (on, opts) => {
       .filter(Boolean)
       .join('\n')
     if (agentId) handbacks.delete(agentId)
+    // MOD-41, MOD-97 (#155): a judged worker the brain resumed in the foreground hands back its next attempt, against its brief
+    if (spawn && agentId && !spawn.adhoc && !spawn.review && spawn.verdictAttempt === spawn.attempt) spawn = await resumedIfNew($, spawn, agentId, text)
     const tokens = typeof result?.totalTokens === 'number' ? result.totalTokens : undefined
     const model = typeof result?.resolvedModel === 'string' ? result.resolvedModel : undefined
     const base: SpawnRecord = spawn ?? {
@@ -6700,12 +6801,7 @@ export const register: Register = (on, opts) => {
       // MOD-94 (#157): a hand-back whose spawn record the store refused is judged from memory, else the ledger
       let spawn = await handbackSpawn($, agentId)
       // MOD-41: the brain resumed a worker whose last attempt was judged and not advised a resume: a hand-back at a new sha is the next attempt
-      if (!warned && spawn && !spawn.adhoc && !spawn.review && spawn.verdictAttempt === spawn.attempt) {
-        const block = extractReport(await saidOnce())
-        const sha = block ? parseReport(block)?.sha : undefined
-        const records = sha ? await loadAttempts($, spawn.task) : []
-        if (sha && isResumeAfterJudged(records, spawn.subtask, sha, laneOf(spawn))) spawn = await recordResume($, spawn, records, agentId)
-      }
+      if (!warned && spawn && !spawn.adhoc && !spawn.review && spawn.verdictAttempt === spawn.attempt) spawn = await resumedIfNew($, spawn, agentId, await saidOnce())
       // a worker just told to wrap up is going on: this turn's end is not its hand-back
       if (warned) debug($, `${taskLabel(spawn?.task ?? '', spawn?.subtask ?? 'main')}: wrap-up sent; its next turn is the hand-back`)
       // An ad hoc background agent is judged into the brain's conversation only
@@ -6714,7 +6810,7 @@ export const register: Register = (on, opts) => {
       let row: string | undefined
       let claimed = false
       // a foreground worker's Agent result carries its verdict and any ready line (the tool.call hook)
-      const foreground = spawn !== undefined && waiting.has(spawn.key)
+      const foreground = spawn !== undefined && [...waiting].some(id => id === spawn?.key || resumeCalls.get(id) === spawn?.key)
       // MOD-99 (#161): a briefed background worker that ends a turn saying it waits, with no report, is waiting, not handing back
       let waitedOnly = false
       if (!warned && spawn && !spawn.adhoc && !spawn.review && !foreground && spawn.verdictAttempt !== spawn.attempt && saysWaiting(await saidOnce())) {
@@ -6832,7 +6928,7 @@ export const register: Register = (on, opts) => {
     const spawn = await spawnByAgent($, agentId)
     if (!agentId || !spawn || spawn.adhoc || spawn.verdictAttempt !== spawn.attempt || !spawn.lastFailed) return nx(e)
     const lane = laneOf(spawn)
-    const records = await loadAttempts($, spawn.task)
+    const records = await loadAttempts($, spawn)
     const attempts = attemptsFor(records, spawn.subtask, lane).length
     // GH-3: re-read the budget from the brief file named in the record; the record is not rewritten.
     let budget = spawn.budget
