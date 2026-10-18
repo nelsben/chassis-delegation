@@ -1,6 +1,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { parseReport } from '../hooks/lib/brief'
 import { engineLockDecision, ENGINE_POLL_MS, isEngineGate, readEngineLock, waitedLine } from '../hooks/lib/gates'
+import { advise } from '../hooks/lib/verify'
 import { gateFailures, timeoutRerun, verifyNative, type ExecOut } from '../hooks/lib/verify-native'
 
 // MOD-20: a gate red only on timeouts in tests the delta never touched is re-run once; an engine
@@ -252,5 +253,21 @@ describe('MOD-20: an engine gate takes its turn', () => {
     const w = world([ok()], { turn: {} })
     await verifyNative(input(), w.io)
     expect(w.events).toEqual(['run npm test'])
+  })
+})
+
+describe('MOD-96 (#147): a gate the runner stopped at the limit is advised as a by-hand run and a re-verify', () => {
+  const stopped: ExecOut = { ok: false, why: 'Error: process timed out after 540000 ms' }
+  const adv = (lines: readonly string[], over = {}) =>
+    advise({ verdict: 'unverified', reportGate: 'pass', task: 'T-1', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', adhoc: false, agentId: 'agent-1', briefPath: '/b/T-1.brief.md', sha: 'a1b2c3d', lines, ...over })
+  test('the verifier leaves the gate unchecked, and the row advises check, not resume', async () => {
+    const w = world([stopped])
+    const r = await verifyNative(input(), w.io)
+    expect(r.verdict).toBe('unverified')
+    expect(claim(r.lines, 'gate')).toBe('claim gate: unchecked — gate npm test did not run: Error: process timed out after 540000 ms')
+    const a = adv(r.lines)
+    expect(a.kind).toBe('check')
+    expect(a.next).toBe("gate npm test hit the verifier's 9-minute limit: time it by hand in the worktree, then re-run the verifier with `/dispatch T-1 --verify a1b2c3d` (no attempt spent)")
+    expect(a.next).not.toContain('resume')
   })
 })

@@ -13,6 +13,7 @@ import {
   resumeText,
   isProveResume,
   uncheckedClaimLines,
+  gateTimedOut,
   amendedLine,
   amendPendingLine,
   amendMalformedLine,
@@ -62,6 +63,41 @@ describe('verdict, advice and budgets', () => {
     const a = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 2, lineageResumes: 0, tier: 'standard' })
     expect(a.kind).toBe('resume')
     expect(a.next).toBe('resume agent=agent-7 — SendMessage it the verifier lines below')
+  })
+  describe('MOD-96 (#147): a gate the verifier stopped at its time limit', () => {
+    const stopped = 'claim gate: unchecked — gate test did not run: Error: process timed out after 540000 ms'
+    const inp = { ...base, verdict: 'unverified' as const, reportGate: 'pass', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard' as const, sha: 'a1b2c3d' }
+    test('the helper reads the gate id and the limit from the claim line; a failed or unstarted gate is not one', () => {
+      expect(gateTimedOut(stopped)).toEqual({ id: 'test', minutes: 9 })
+      expect(gateTimedOut('claim gate: unchecked — gate node did not run: aborted after 300000 ms')).toEqual({ id: 'node', minutes: 5 })
+      expect(gateTimedOut('claim gate: unchecked — gate test did not run: refused: not allowed')).toBeUndefined()
+      expect(gateTimedOut('claim gate: unchecked — gate not re-run: test (not in gateMap)')).toBeUndefined()
+      expect(gateTimedOut('claim gate: failed — gate=pass claimed but the gate is RED at a1b2c3d (exit 1)')).toBeUndefined()
+      expect(gateTimedOut('claim red: unchecked — gate x did not run: timed out')).toBeUndefined()
+    })
+    test('the only unchecked claim: a check naming the by-hand run and the --verify re-run, no resume', () => {
+      const a = advise({ ...inp, lines: [stopped] })
+      expect(a.kind).toBe('check')
+      expect(a.next).toBe('gate test hit the verifier\'s 9-minute limit: time it by hand in the worktree, then re-run the verifier with `/dispatch FE-1 --verify a1b2c3d` (no attempt spent)')
+      expect(a.next).not.toContain('resume')
+    })
+    test('without a sha the line still says --verify', () => {
+      const a = advise({ ...inp, sha: undefined, lines: [stopped] })
+      expect(a.next).toContain('`/dispatch FE-1 --verify <sha>`')
+    })
+    test('a gate that failed to start keeps the resume advice', () => {
+      const a = advise({ ...inp, lines: ['claim gate: unchecked — gate test did not run: refused: not allowed'] })
+      expect(a.kind).toBe('resume')
+    })
+    test('mixed with another unchecked claim: still a resume, the prove list saying the gate need not be proved', () => {
+      const a = advise({ ...inp, lines: [stopped, 'claim red: unchecked — no red= evidence named; the brief asks for the red test\'s failing output'] })
+      expect(a.kind).toBe('resume')
+      expect(a.next).toContain('gate (timed out at the verifier\'s 9-minute limit; the worker need not prove it)')
+      expect(a.next).toContain('red (no red= evidence named')
+    })
+    test('a refuted verdict is unchanged', () => {
+      expect(advise({ ...inp, verdict: 'refuted', lines: [stopped] }).kind).toBe('resume')
+    })
   })
   test('second failing verdict: respawn at the next tier with the same brief', () => {
     const a = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard' })

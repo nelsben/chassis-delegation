@@ -4165,6 +4165,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     advice = advise({
       verdict,
       reportGate: report?.gate,
+      ...(report?.sha ? { sha: report.sha } : {}),
       task: label,
       attempts: attemptsFor(records, spawn.subtask, lane).length,
       budget: spawn.budget,

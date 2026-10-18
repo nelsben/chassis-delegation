@@ -76,6 +76,8 @@ export type AdviseInput = {
    * `review` where it would have been `accept`. Nothing else about the advice changes.
    */
   review?: boolean
+  /** MOD-96: the sha the attempt reported, named in the by-hand re-verify line. */
+  sha?: string
 }
 
 /** An unchecked claim's reason is cut to this many characters in `next=`. */
@@ -91,8 +93,21 @@ export function proveList(lines: readonly string[]): string {
   return lines
     .map(parseClaimLine)
     .filter((c): c is ClaimLine => c?.status === 'unchecked')
-    .map(c => `${c.name} (${cutTo(c.detail, PROVE_REASON_CAP)})`)
+    .map(c => {
+      const t = gateTimedOut(c)
+      return t ? `${c.name} (timed out at the verifier's ${t.minutes}-minute limit; the worker need not prove it)` : `${c.name} (${cutTo(c.detail, PROVE_REASON_CAP)})`
+    })
     .join(', ')
+}
+
+/** MOD-96 (#147): the gate and limit of a claim line saying the verifier stopped a gate at its time limit (the runner's `did not run: … timed out|aborted`). */
+export function gateTimedOut(line: string | ClaimLine | undefined): { id: string; minutes: number } | undefined {
+  const c = typeof line === 'string' ? parseClaimLine(line) : line
+  if (!c || c.name !== 'gate' || c.status !== 'unchecked') return undefined
+  const m = /^gate (.+?) did not run: ([\s\S]*)$/.exec(c.detail)
+  if (!m || /^refused:/.test(m[2] ?? '') || !/\b(?:timed?[ -]?out|timeout|aborted)\b/i.test(m[2] ?? '')) return undefined
+  const ms = /(\d+)\s*ms\b/.exec(m[2] ?? '')
+  return { id: m[1] as string, minutes: ms ? Math.max(1, Math.round(Number(ms[1]) / 60000)) : 9 }
 }
 
 /** GH-115: a refuted verdict's first failed claim, as the verifier's lines name it. */
@@ -130,6 +145,9 @@ export function advise(input: AdviseInput): Advice {
     // MOD-59: a red file with no failure marker is one the worker cannot change by a resume; look at it
     const unchecked = uncheckedClaimLines(input.lines ?? []).map(parseClaimLine)
     const only = unchecked.length === 1 ? unchecked[0] : undefined
+    // MOD-96: a gate the verifier stopped at its limit is not the worker's to prove: time it by hand, re-verify the same sha (no attempt spent)
+    const timed = only ? gateTimedOut(only) : undefined
+    if (timed) return { kind: 'check', next: `gate ${timed.id} hit the verifier's ${timed.minutes}-minute limit: time it by hand in the worktree, then re-run the verifier with \`/dispatch ${input.task} --verify ${input.sha ?? '<sha>'}\` (no attempt spent)` }
     const noMarker = only?.name === 'red' ? /^no failure marker found in red=(\S+) \(\d+ bytes\)/.exec(only.detail) : null
     if (noMarker && input.reportGate === 'pass') {
       const resume = input.agentId && input.attempts < input.budget ? `; else resume agent=${input.agentId} — prove: red` : ''
