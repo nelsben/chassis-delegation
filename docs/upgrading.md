@@ -81,6 +81,15 @@ cases of tests/eval/classifier-cases.jsonl`.
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
 
+### From 0.9.15 to 0.9.16
+
+What the brain will see:
+
+- **A failed debrief check no longer restarts the debrief (MOD-91).** The cooldown now counts from the latest start of a debrief, not from the last clean one. A second failed check on the same window stops the automatic start with the row `debrief stopped: the check failed twice on the window from line <n>; run /delegation debrief to retry by hand`. `/delegation debrief` still runs by hand.
+- **Several Agent calls in one message are decided one at a time (MOD-92).** Each spawn is decided in the order the calls came. An aborted hook starts and records nothing. A decision short of time is refused with `<id>: the spawn decision ran out of time; make the Agent call again`, which the brain answers by making that Agent call again.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change.
+
 ### From 0.9.14 to 0.9.15
 
 What the brain will see:

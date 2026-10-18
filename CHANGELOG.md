@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.16 — 2026-10-18
 
 - **A failed debrief check no longer restarts the debrief (MOD-91, #156).** A debrief whose check failed put back the previous record, whose time and watermark made both clean-stop guards pass, so the next idle stop started the same debrief again, each run spending an agent. The record now carries `lastAttemptAt` and `failedChecks`: the cooldown counts from the latest start, and a second failed check on the same start watermark stops the automatic start with one row per session (`debrief stopped: the check failed twice on the window from line <n>; run /delegation debrief to retry by hand`). `/delegation debrief` still runs; a clean check clears the count. A check that is not clean keeps its lines in `<debrief>.check.txt`, and a check that rewrites the file keeps the agent's original as `<debrief>.orig.json`. No new option.
 
