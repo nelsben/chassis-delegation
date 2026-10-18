@@ -96,6 +96,32 @@ describe('MOD-48: the warn row', () => {
   })
 })
 
+describe('MOD-99: the polling nudge names the move', () => {
+  const OPUS = 'claude-opus-5-5'
+  const POLL = 'until grep -q done /tmp/blender-live.log; do sleep 5; done'
+  const step = (command: string, extra: Record<string, unknown> = {}) => driveStep(emptyWatch(), { command, context: 250_000, threshold: 200_000, model: OPUS, enabled: true, ...extra } as never).row
+
+  test('a command naming a declared resource says to card it with resources', () => {
+    expect(step(POLL, { resources: ['blender-live'] })).toContain('card it with resources: [blender-live] so one worker drives it')
+  })
+  test('a poll while a worker runs says to wait with the verdict tool', () => {
+    expect(step('until test -f /tmp/done; do sleep 5; done', { waitingOnWorker: true })).toContain('wait with the verdict tool (it returns when the worker hands back) instead of polling')
+  })
+  test('a resource beats the worker form when the command names it', () => {
+    const row = step(POLL, { resources: ['blender-live'], waitingOnWorker: true }) ?? ''
+    expect(row).toContain('card it with resources: [blender-live]')
+    expect(row).not.toContain('verdict tool')
+  })
+  test('otherwise today\'s text stays and points at the guide section', () => {
+    const row = step('until test -f /tmp/done; do sleep 5; done') ?? ''
+    expect(row).toContain('A standard card would drive this loop')
+    expect(row).toContain('see docs/guide.md#one-client-resources')
+  })
+  test('a resource the command does not name is not offered', () => {
+    expect(step('until test -f /tmp/done; do sleep 5; done', { resources: ['blender-live'] })).toContain('see docs/guide.md#one-client-resources')
+  })
+})
+
 describe('MOD-53: the fresh-session row', () => {
   test('below the threshold, nothing', () => {
     expect(freshSessionRow(399_999, 400_000)).toBeUndefined()

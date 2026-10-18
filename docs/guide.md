@@ -186,6 +186,18 @@ back to `defaultBudget`, and `/dispatch` says so once:
 spawn whose header carries such a budget logs the same line to debug. The
 `frontier` part is never taken as the tier: the card's `tier` stays the tier.
 
+## One-client resources
+
+A live app that takes one client at a time (a running Blender, a device on a bench) is declared on the card with
+`resources: [blender-live]`. The card's brief then holds the resource while its worker runs, and a second card
+naming it waits in the queue instead of starting. One worker drives the app from a small context on a cheaper
+model, and the brain does not poll it: it waits with the `verdict` tool, which returns when the worker hands back.
+The brain's polling row (`driveWarn`) points here when it sees the same command run again and again.
+
+A worker that is waiting on its own background job without handing back wakes the brain once, saying what it
+waits on; past `waitStallMin` (default 20) it says once that the worker is stalled, so the brain can resume or
+stop it (MOD-99).
+
 ## Lessons
 
 A lesson that lives only in the brain's context reaches a worker when the brain remembers

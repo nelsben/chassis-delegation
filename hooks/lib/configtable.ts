@@ -64,6 +64,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['freshSessionTokens', 'Guards and nudges for the brain', 'Suggest a fresh session once this many tokens are in use; 0 turns it off', 'tokens', 'user', 400000],
   ['wakeOnVerdict', 'Guards and nudges for the brain', 'Start a new turn on its own when a worker\'s result has been judged', 'bool', 'user', false],
   ['readyFallbackMinutes', 'Guards and nudges for the brain', 'Minutes before a waiting task is started for you if you have not started it', 'minutes', 'user', 10],
+  ['waitStallMin', 'Guards and nudges for the brain', 'Minutes a worker may wait before the mod says it is stalled; 0 turns it off', 'minutes', 'user', 20],
   ['classifierSecondOpinion', 'Guards and nudges for the brain', 'In a dry run, also ask a classifier how hard a task is and show both answers', 'bool', 'user', true],
   ['dashboardBand', 'Display', 'Show a status strip above the prompt while workers are busy or waiting', 'bool', 'user', true],
   ['modelGlyphs', 'Display', 'A glyph per model on every row: alias=glyph pairs, off, or empty for the built-in set', 'text', 'user', ''],
