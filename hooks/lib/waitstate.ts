@@ -1,6 +1,7 @@
 // MOD-99 (#161): a briefed worker that is waiting (its turn ended with no hand-back) wakes the brain once per
 // state, says what it waits on, and says it is stalled once past a ceiling. Pure: no `$`.
 import { extractReport } from './brief'
+import { detectRateLimit } from './verify'
 
 /** Default `waitStallMin`: minutes a worker may wait before the mod says it is stalled; 0 is off. */
 export const WAIT_STALL_DEFAULT_MIN = 20
@@ -13,8 +14,19 @@ export type WaitState = { since: number; stalled?: true }
 /** The resource a waiting worker's card names and the worker that holds it. */
 export type WaitOn = { resource: string; holder: string }
 
-/** A worker turn that ended with no report and says it is waiting. */
-export const saysWaiting = (text: string): boolean => extractReport(text) === undefined && /\bwait(?:ing|s|ed)?\b/i.test(text)
+const WAIT_NOW = /\b(?:waiting|(?:i['\u2019]?ll|i will|will|going to|still|now)\s+wait(?:ing)?)\s+(?:on|for)\s+(?:the\s+|a\s+|an\s+|my\s+|its\s+|another\s+)?(?:\w+\s+){0,3}?(?:background|job|task|process|render|build|lock|resource|agent|worker)/i
+
+/**
+ * A worker turn that ended with no report and whose last paragraph (at most its last 400 characters) says it is
+ * waiting now on a job, task, process, render, build, lock, resource or another agent. A usage-limit text
+ * (MOD-56) is never a wait; past tense or a bare "wait" elsewhere does not count.
+ */
+export function saysWaiting(text: string): boolean {
+  if (extractReport(text) !== undefined || detectRateLimit(text) !== undefined) return false
+  const paras = text.trim().split(/\n\s*\n/)
+  const last = (paras[paras.length - 1] ?? '').slice(-400)
+  return WAIT_NOW.test(last)
+}
 
 const minutes = (ms: number): number => Math.max(0, Math.round(ms / MIN_MS))
 

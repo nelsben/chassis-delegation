@@ -9,7 +9,7 @@ const REPORT = '[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=
 const OPTS = { gateMap: '{"prettier":"npx prettier --check {files}"}', wakeOnVerdict: true }
 const MB = 'b'.repeat(40)
 const MIN = 60_000
-const WAITING = 'The bench is still running in the background; I am waiting for it to finish.'
+const WAITING = 'The bench is running in the background.\n\nWaiting on the background job to finish.'
 
 const repo = (argv: string[]): RunAnswer | undefined => {
   if (argv[0] === 'npx') return { exitCode: 0, stdout: '' }
@@ -47,6 +47,22 @@ describe('MOD-99: the wait state (pure)', () => {
   test('a worker whose card names a resource another worker holds says which', () => {
     expect(waitText('T-5', 0, { resource: 'blender-live', holder: 'T-4' })).toBe('T-5 waiting on blender-live held by T-4')
     expect(stallText('T-5', 25 * MIN)).toBe('T-5 stalled 25 min; resume or stop it')
+  })
+})
+
+describe('MOD-99: only a worker waiting now is a wait', () => {
+  test('a real wait is one', () => {
+    expect(saysWaiting('Waiting on the background render (job 3) before I continue.')).toBe(true)
+    expect(saysWaiting("Tests started.\n\nI'll wait for the background job to finish.")).toBe(true)
+    expect(saysWaiting(WAITING)).toBe(true)
+  })
+  test('past tense, a bare wait, or wait mid-text under a summary is not', () => {
+    expect(saysWaiting('I waited for the tests to finish')).toBe(false)
+    expect(saysWaiting('wait, the gate failed')).toBe(false)
+    expect(saysWaiting('I will wait for the build to settle.\n\nSummary: the change is done and the gate failed on a.ts.')).toBe(false)
+  })
+  test('a usage-limit text is never a wait', () => {
+    expect(saysWaiting("You've hit your usage limit. Please wait for the background job; resets at 5pm.")).toBe(false)
   })
 })
 
@@ -89,6 +105,20 @@ describe('MOD-99: a waiting worker wakes the brain once per state', () => {
     await $.turn.complete(turnInput('agent-4', WAITING))
     await w.clock.advance(10 * MIN)
     expect(texts(w).filter(t => t.includes('T-4 stalled 10 min; resume or stop it'))).toHaveLength(1)
+  })
+
+  test('"I waited for the tests to finish" with no report still gets the no-report verdict row', { options: { ...OPTS } }, async ($, on) => {
+    const w = await setup($ as never, on as never)
+    await $.turn.complete(turnInput('agent-4', 'I waited for the tests to finish'))
+    expect(texts(w).some(t => t.includes('no-report'))).toBe(true)
+    expect(texts(w).some(t => t.includes('waiting on'))).toBe(false)
+  })
+
+  test('a usage-limit text containing wait is judged as before', { options: { ...OPTS } }, async ($, on) => {
+    const w = await setup($ as never, on as never)
+    await $.turn.complete(turnInput('agent-4', "You've hit your usage limit. Please wait for the background job; resets at 5pm."))
+    expect(texts(w).some(t => t.includes('no-report (rate limited'))).toBe(true)
+    expect(texts(w).some(t => t.includes('waiting on'))).toBe(false)
   })
 
   test('waitStallMin 0 turns the ceiling off', { options: { ...OPTS, waitStallMin: 0 } }, async ($, on) => {
