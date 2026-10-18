@@ -203,8 +203,10 @@ describe('tool.call on Agent: report capture and verify', () => {
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', REPORT('1234abcd')))
     const lines = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n')
-    expect(lines).toHaveLength(1)
-    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ task: 'T-4', subtask: 'main', attempt: 1, tier: 'standard', alias: 'sonnet', verdict: 'refuted', reportGate: 'pass', sessionId: 'sess-1' })
+    // MOD-94: the spawn's own row, then the verdict's
+    expect(lines).toHaveLength(2)
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ event: 'spawn', task: 'T-4', subtask: 'main', attempt: 1, sessionId: 'sess-1' })
+    expect(JSON.parse(lines[1] ?? '{}')).toMatchObject({ task: 'T-4', subtask: 'main', attempt: 1, tier: 'standard', alias: 'sonnet', verdict: 'refuted', reportGate: 'pass', sessionId: 'sess-1' })
   })
 
   test('MOD-56: a hand-back with the 429 text and no report is no-report (rate limited), and the record and ledger carry stop', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
@@ -214,7 +216,7 @@ describe('tool.call on Agent: report capture and verify', () => {
     expect(delivered(w)).toContain('verdict=no-report (rate limited, resets 3pm) task=T-4')
     expect(records(w, 'T-4')[0]).toMatchObject({ verdict: 'no-report', stop: 'rate_limited', resetsAt: '3pm' })
     const lines = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n')
-    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ task: 'T-4', verdict: 'no-report', stop: 'rate_limited', resetsAt: '3pm' })
+    expect(JSON.parse(lines[1] ?? '{}')).toMatchObject({ task: 'T-4', verdict: 'no-report', stop: 'rate_limited', resetsAt: '3pm' })
   })
 
   test('ledgerFile off: no ledger file', { options: { ...GM, ledgerFile: false } }, async ($, on) => {
@@ -1557,7 +1559,9 @@ describe('MOD-1: one proof of red per task, and --verify at the last attempt\'s 
   })
 
   // MOD-41: the brain resumes a worker after a consistent verdict (SendMessage, not advised by the mod)
-  const ledgerRows = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+  // (the verdict rows: MOD-94's spawn row is the spawn's, not a judged attempt's)
+  const ledgerRows = (w: { files: Map<string, string> }) =>
+    (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>).filter(r => r.event !== 'spawn')
 
   test('MOD-41: a hand-back at a new sha after a consistent verdict is attempt 2/3 and writes one ledger row; at the same sha again it writes nothing', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
     const gate = { v: 0 }
@@ -2175,6 +2179,17 @@ describe('GH-111: the card tool', () => {
     const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
     expect(out).toContain(`wrote ${ROOT}/agents/tasks/OPS-5-the-rom-reader-returns-the-header.md`)
     expect(w.files.get(`${ROOT}/.delegation/briefs/OPS-3.brief.md`)).toBe('old brief')
+  })
+
+  test('MOD-94: a spawn row on the ledger still marks its id as taken', async ($, on) => {
+    const ledger = JSON.stringify({ event: 'spawn', task: 'OPS-3', subtask: 'main', attempt: 1, lineage: 1, budget: 2, tier: 'standard', alias: 'sonnet', purpose: 'build', at: 1 }) + '\n'
+    world(on, {
+      files: { [`${ROOT}/.chassis-delegation.json`]: cfgFile, [`${ROOT}/.delegation/ledger.jsonl`]: ledger },
+      dirs: { [`${ROOT}/agents/tasks`]: ['README.md', 'OPS-1-a.md', 'OPS-2-b.md'] },
+      store: { 'delegation.agentTypes': ['general-purpose'] },
+    })
+    await $.session.start(sessionStart)
+    expect(resultText(await $.tool.call({ tool: TOOL, ...given } as never))).toContain(`wrote ${ROOT}/agents/tasks/OPS-4-the-rom-reader-returns-the-header.md`)
   })
 
   test('a refusal writes nothing and says what to change', async ($, on) => {
@@ -3935,8 +3950,9 @@ describe('MOD-19: the verdict says what it checked (verified became consistent; 
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
     const lines = ledgerOf(w)
     expect(lines.slice(0, 2)).toEqual(legacyLedger)
-    expect(lines).toHaveLength(3)
-    expect(lines[2]).toMatchObject({ task: 'T-4', verdict: 'consistent', next: 'accept' })
+    expect(lines).toHaveLength(4)
+    expect(lines[2]).toMatchObject({ event: 'spawn', task: 'T-4', attempt: 2 })
+    expect(lines[3]).toMatchObject({ task: 'T-4', verdict: 'consistent', next: 'accept' })
   })
 })
 
@@ -5299,6 +5315,8 @@ describe('MOD-35: a merged task is not woken for, an accept is on the ledger, a 
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
     await $.session.start(sessionStart)
+    // MOD-94: the spawn's own row is on the ledger too, and the accept reads past it
+    expect(ledgerOf(w).filter(r => r.event === 'spawn')).toHaveLength(1)
     await $.command.run(delegationCmd('accept T-4 looks right'))
     const accepts = () => ledgerOf(w).filter(r => r.kind === 'accept')
     expect(accepts()).toHaveLength(1)
