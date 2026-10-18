@@ -81,6 +81,22 @@ cases of tests/eval/classifier-cases.jsonl`.
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
 
+### From 0.9.16 to 0.9.17
+
+What the brain will see:
+
+- **A short red file with no failure marker is settled by the red test's own run at the head (MOD-102).** A small red file with no failure marker is no longer left unchecked by default: the verifier runs the brief's red test once at the worker's head. If that run passes and prints something other than the red file, the red claim holds; otherwise the claim stays unchecked, with a reason.
+- **An owed row retires when the work lands by cherry-pick on the current branch, and `/delegation accept` takes several ids or `--owed` (MOD-101).** A worker's commit that reaches the current branch by cherry-pick now retires its owed row, as does a card reading merged or landed in the working tree. `/delegation accept` takes several task ids, or `--owed` for every owed row of the session, and prints a line per id.
+- **A worker whose store record was refused still counts and still gets a verdict (MOD-94).** The hook remembers the briefed workers it saw start, so a refused store write no longer lets a worker start past `maxWorkers` or leaves the verdict tool saying no attempt recorded. Each briefed spawn also appends a line to `.delegation/ledger.jsonl`, and a verdict judged from memory or from the ledger says so on its row.
+- **A gate the verifier stopped at its time limit is advised as a re-verify, not a resume (MOD-96).** When every unchecked claim is a gate that hit the verifier's time limit, the advice is to time the gate by hand and re-run the verifier with `/dispatch <ID> --verify <sha>`, which spends no attempt.
+- **A cross-repo dispatch never reuses a brief written for another repo, and its brief carries the target repo's `briefExtra` (MOD-95).** Dispatch compares an existing brief's repo, worktree and card path with what it would write; if any differ and no attempt is open, the brief is rewritten. A brief for a card in another local repo takes `briefExtra` from that repo's `.chassis-delegation.json`.
+- **The card tool says why a gate was refused, takes a forbid with a space, and warns once about done-when paths (MOD-98).** A refused gate now comes with its reason, and a scope or forbid path holding a space is written whole. The forbid warnings for paths a done-when line only mentions collapse into one line.
+- **A waiting worker wakes the brain once per state, says what it waits on and says stalled past a ceiling (MOD-99).** A background worker waiting on its own job wakes the brain once, not on every repeat. The new option `waitStallMin` (default 20, 0 = off) says once when a worker has stalled that long, and the polling advice now names the move to make.
+- **The docs name the by-hand gate for a hand-back with no trustworthy verdict (MOD-100, #162).** `docs/review-and-merge.md` has a section for a verdict that is missing or unverified for a reason the worker cannot fix: re-run the verifier with `/dispatch <id> --verify <sha>` first, then the by-hand gate if that cannot judge it. The `ledgerFile` option text now says the ledger also holds spawn lines. No behaviour change.
+- **A card for another repo is counted, resumed and verified as a local one is (MOD-97).** Attempts of a task for another repo are kept apart from the bare id's, so each repo counts its own attempts and its verdict names them. A resumed worker keeps its brief, and a stale outside listing from another repo no longer leaves in-scope work unverified.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change.
+
 ### From 0.9.15 to 0.9.16
 
 What the brain will see:

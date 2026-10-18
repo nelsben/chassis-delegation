@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.17 — 2026-10-18
 
 - **A short red file with no failure marker is settled by the red test's own run at the head (MOD-102, #166, follow-up to #117).** A state-style red file (55 bytes of `count=3`) came back `unverified on red (no failure marker found…)` though the work was fine, and the brain checked it by hand. Now, for a red file of at most 2048 bytes with no marker, the verifier runs the brief's `red_test` command once at the worker's head, in the worker's tree, under the gate time limit. Exit 0 and trimmed output that differs from the red file: the red claim is held, `red=<path>, 55 bytes, no failure marker; the red test passes at the head and prints otherwise`. A run that fails, cannot run or prints the same leaves it unchecked with today's detail plus a reason (`; the red test at the head printed the same`), and the advice stays `check red by hand`. A larger file, a `red_test` that is `none` or names no command the allowlist takes (prose after the command is dropped), and a file with a marker behave as before; the one-proof-per-task and byte-identical checks still apply first. No new option.
 
