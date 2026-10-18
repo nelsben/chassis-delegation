@@ -36,6 +36,7 @@ import {
   ledgerHas,
   retireDue,
   retirePatch,
+  cardReadsMerged,
   verifyTarget,
   taskLabel,
   type AttemptRecord,
@@ -2288,26 +2289,54 @@ const splitLabel = (label: string): { task: string; subtask: string } => {
   return { task, subtask }
 }
 
-/** What two read-only git calls say of a task's last attempt: is its sha on origin/main, does its card there read merged. undefined: could not say. */
-async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string, cardOnly = false): Promise<{ ancestor?: boolean; card?: string }> {
+/**
+ * What read-only git calls say of a task's last attempt: is its sha on origin/main, is its patch already on the session's
+ * current branch (MOD-101, #158: work lands on a long-lived branch by cherry-pick, so its sha never reaches origin/main),
+ * does its card read merged or landed (on origin/main, else in the working tree). undefined: could not say.
+ */
+async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string, cardOnly = false): Promise<{ ancestor?: boolean; picked?: boolean; card?: string }> {
   const sessionHome = await $.session.root()
   // MOD-44: a task for another local repo is looked for in that repo's origin/main; its card is not read (it sits under a folder the allowlist does not name)
   const other = repo !== undefined && repo.replace(/\/+$/, '') !== sessionHome.replace(/\/+$/, '')
   const root = other ? (repo as string).replace(/\/+$/, '') : sessionHome
-  const out: { ancestor?: boolean; card?: string } = {}
+  const out: { ancestor?: boolean; picked?: boolean; card?: string } = {}
   if (!cardOnly && sha !== undefined && isSha(sha)) {
     const r = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, 'origin/main'], { cwd: root, timeoutMs: 10000 })
     if (r.ok && r.exitCode === 0) return { ancestor: true }
     if (r.ok && r.exitCode === 1) out.ancestor = false
+    // MOD-101: git cherry's answer, spelled as a log the allowlist knows: `=` marks a commit of the sha's side with a patch-equal commit on HEAD, `>` one without.
+    // Landed means at least one `=` and no `>`; an empty list proves nothing (and, for a consistent verdict only, as the ancestry check is)
+    // the session's own branch only: a task for another local repo is looked for in that repo's origin/main alone (MOD-97)
+    const c = other ? undefined : await run($, ['git', '-C', root, 'log', '--cherry-mark', '--right-only', '--no-merges', '--format=%m%H', `HEAD...${sha}`], { cwd: root, timeoutMs: 10000 })
+    if (c?.ok && c.exitCode === 0) {
+      const marks = c.stdout.split('\n').map(l => l.trim()[0]).filter(Boolean)
+      if (marks.includes('=') && !marks.includes('>')) return { ...out, picked: true }
+      if (marks.length > 0) out.picked = false
+    }
   }
   if (other) return out
   const dir = (cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')
   const listed = await run($, ['git', '-C', root, 'ls-tree', '--name-only', 'origin/main', `${dir}/`], { cwd: root, timeoutMs: 10000 })
-  if (!listed.ok || listed.exitCode !== 0) return out
-  const name = cardMatches(cardNamesFromLsTree(listed.stdout), task)[0]
-  if (name === undefined) return out
-  const shown = await run($, ['git', '-C', root, 'show', `origin/main:${dir}/${name}`], { cwd: root, timeoutMs: 10000 })
-  if (shown.ok && shown.exitCode === 0) out.card = shown.stdout
+  if (listed.ok && listed.exitCode === 0) {
+    const name = cardMatches(cardNamesFromLsTree(listed.stdout), task)[0]
+    if (name !== undefined) {
+      const shown = await run($, ['git', '-C', root, 'show', `origin/main:${dir}/${name}`], { cwd: root, timeoutMs: 10000 })
+      if (shown.ok && shown.exitCode === 0) out.card = shown.stdout
+    }
+  }
+  if (out.card !== undefined && cardReadsMerged(out.card)) return out
+  // MOD-101: the working tree's card, for a branch that carries the card commit itself
+  try {
+    const tree = `${root}/${dir}`
+    const wname = cardMatches((await $.fs.list(tree)).map(e => e.name), task).sort()[0]
+    if (wname !== undefined) {
+      const text = await $.fs.read(`${tree}/${wname}`)
+      if (cardReadsMerged(text)) out.card = text
+      else if (out.card === undefined) out.card = text
+    }
+  } catch {
+    // no working-tree card: the origin/main answer stands
+  }
   return out
 }
 
@@ -2339,19 +2368,47 @@ async function retireCheck($: Host, label: string, t: number, force = false, car
   }
 }
 
-/** `/delegation accept <id> [note]`: records it on the task's last attempt and retires its owed row. One line. */
-async function acceptTask($: Host, rest: string): Promise<string> {
-  const [id = '', ...words] = rest.split(/\s+/).filter(Boolean)
-  if (id === '') return 'usage: /delegation accept <id> [note]'
+/** MOD-101: a token shaped like an existing task id (PREFIX-N, with an optional /subtask). */
+const ACCEPT_ID = /^[A-Z][A-Z0-9]*-\d+[a-z]?(\/[A-Za-z0-9_-]+)?$/
+
+/** One id of `/delegation accept`: records it on the task's last attempt and retires its owed row. One line; changed says whether a row was retired. */
+async function acceptOne($: Host, id: string, note: string): Promise<{ line: string; changed: boolean }> {
   const { task, subtask } = splitLabel(id)
   const records = await loadAttempts($, task)
   const last = attemptsFor(records, subtask).at(-1)
-  if (!last) return `/delegation accept: no attempts recorded for ${id}; nothing changed`
-  const note = words.join(' ')
+  if (!last) return { line: `/delegation accept: no attempts recorded for ${id}; nothing changed`, changed: false }
+  if (last.retired) return { line: `/delegation accept: ${id} already retired (${last.retired}); nothing changed`, changed: false }
   const at = await now($)
   await saveAttempts($, task, patchRecord(await loadAttemptsRaw($, task), subtask, last.attempt, { retired: 'accepted', accepted: { ...(note ? { note } : {}), at } }))
   await appendLedger($, { ...acceptRow(last, 'accepted', at), sessionId: await sessionIdOf($) })
-  return `accepted ${id} by hand (attempt ${last.attempt})${note ? `: ${note}` : ''}; its owed row is retired`
+  return { line: `accepted ${id} by hand (attempt ${last.attempt})${note ? `: ${note}` : ''}; its owed row is retired`, changed: true }
+}
+
+/**
+ * `/delegation accept <id> [<id>…] [note]` or `accept --owed [note]` (MOD-101, #158). Leading tokens shaped like a task id are ids,
+ * the rest is the note; with no id-shaped first token the first word is the id, as before. One line per id; an unknown or
+ * already-retired id says so and the others still retire. `--owed` retires every owed row of the session and says how many.
+ */
+async function acceptTask($: Host, rest: string): Promise<string> {
+  const words = rest.split(/\s+/).filter(Boolean)
+  if (words.length === 0) return 'usage: /delegation accept <id> [<id>…] [note] | --owed [note]'
+  if (words[0] === '--owed') {
+    const note = words.slice(1).join(' ')
+    const sid = await sessionIdOf($)
+    const recent = sid ? readRecent($, (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []) : []
+    const live = await liveState($)
+    const busy = new Set([...live.workers.map(w => w.label), ...live.pending.map(p => p.task)])
+    const done: string[] = []
+    for (const r of owedRowsFrom(recent, busy)) if ((await acceptOne($, r.task, note)).changed) done.push(r.task)
+    return `/delegation accept --owed: retired ${done.length} owed row${done.length === 1 ? '' : 's'}${done.length ? ` (${done.join(', ')})` : ''}${note ? `: ${note}` : ''}`
+  }
+  let n = 0
+  while (n < words.length && ACCEPT_ID.test(words[n] as string)) n++
+  const ids = n === 0 ? [words[0] as string] : words.slice(0, n)
+  const note = words.slice(ids.length).join(' ')
+  const lines: string[] = []
+  for (const id of [...new Set(ids)]) lines.push((await acceptOne($, id, note)).line)
+  return lines.join('\n')
 }
 
 /**

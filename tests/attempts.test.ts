@@ -45,6 +45,9 @@ describe('MOD-4: an owed row retires when the work is on the default branch', ()
     expect(cardReadsMerged(card('merged'))).toBe(true)
     expect(cardReadsMerged(card('queued'))).toBe(false)
     expect(cardReadsMerged('## Why\nstatus: merged\n')).toBe(false)
+    expect(cardReadsMerged(card('landed'))).toBe(true) // MOD-101
+    expect(retirePatch({ ancestor: false, picked: true }, NOW)).toMatchObject({ retired: 'merged' }) // MOD-101: cherry-picked onto the current branch
+    expect(retirePatch({ ancestor: false, picked: false }, NOW).retired).toBeUndefined()
     expect(retirePatch({ ancestor: false, card: card('merged') }, NOW)).toMatchObject({ retired: 'merged' })
   })
   test('a fresh one stays: checked, not retired', () => {
