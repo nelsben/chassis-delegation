@@ -173,7 +173,8 @@ worktree and the spawn:
 
 Dispatch again with `--scope <globs>` (the tool's `scope`, which must be globs
 and replaces the card's scope in the header); the brief written the first time
-is reused. `--dry-run` behaves as before.
+is reused (a brief written for another repo, worktree or card path is rewritten instead, or refused while an
+attempt of the task is open; see the internals page). `--dry-run` behaves as before.
 
 A `budget` that is not `<n>-attempts`, such as a chassis `frontier-60m`, falls
 back to `defaultBudget`, and `/dispatch` says so once:
