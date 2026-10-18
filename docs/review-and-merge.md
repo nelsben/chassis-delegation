@@ -218,3 +218,15 @@ option, or more than one path, is refused).
 
 Outside a merge, every one of these is refused as before. While the merge runs, a push, `gh`,
 `curl`, `sf` or `wget` is refused ahead of every other rule.
+
+## A gate that hits the verifier's time limit
+
+The verifier stops a gate it re-runs after 9 minutes. When that is the only
+unchecked claim, the verdict is `unverified` and the row says
+`next=gate <id> hit the verifier's 9-minute limit: time it by hand in the worktree, then re-run the verifier with /dispatch <ID> --verify <sha> (no attempt spent)`,
+not a resume: a resume cannot make the gate faster, and the worker would only
+repeat its report. Run the gate by hand in the worker's worktree to see its real
+time, then run the `--verify` line on the same sha; no attempt is spent. When
+another claim is also unchecked the advice stays a resume, and its `prove:` list
+says of the gate that it timed out and need not be proved by the worker. A
+refuted verdict is advised as before.
