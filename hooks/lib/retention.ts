@@ -53,7 +53,7 @@ export function storeBytes(entries: readonly StoreEntry[]): number {
 }
 
 const P = 'delegation.'
-/** Per-task families keyed by the task id. */
+/** Per-task families keyed by the task id (MOD-97: `<ID>@<repo>` for a task of another repo). */
 const BY_TASK = ['classifier', 'effort', 'outside', 'taskRepo', 'mergePrep'].map(f => `${P}${f}.`)
 /** Per-attempt families keyed by the attempt key (`<label>[@replay…]:<lineage>:<attempt>`). */
 const BY_ATTEMPT = ['posted', 'postedRow'].map(f => `${P}${f}.`)
@@ -65,7 +65,7 @@ const AGENT = `${P}agent.`
 const NAME = `${P}agentName.`
 const COST = `${P}cost.`
 
-/** The task id of a task label or attempt key: `T-1/api`, `T-1@replay-ab12`, `T-1:1:2` are all T-1. */
+/** The task id of a task label or key: `T-1/api`, `T-1@replay-ab12`, `T-1:1:2`, `T-1@/other` are all T-1. */
 export const taskOfLabel = (label: string): string => label.split(/[/@:]/)[0] ?? label
 
 const taskOfBrief = (path: string): string | undefined => /([^/\\]+?)(?:\.replay)?\.brief\.md$/.exec(path)?.[1]
@@ -100,7 +100,9 @@ function metas(entries: readonly StoreEntry[]): Meta[] {
   for (const [k, v] of entries) {
     if (!k.startsWith(TASKS) || !Array.isArray(v)) continue
     const t = ownTs(v)
-    if (t !== undefined) taskTs.set(k.slice(TASKS.length), t)
+    // MOD-97: a task's records for another repo (`<ID>@<repo>`) are that task's too
+    const task = taskOfLabel(k.slice(TASKS.length))
+    if (t !== undefined) taskTs.set(task, Math.max(taskTs.get(task) ?? t, t))
     for (const r of v) {
       const rt = ownTs(r)
       if (rt === undefined || !r || typeof r !== 'object') continue
@@ -124,13 +126,13 @@ function metas(entries: readonly StoreEntry[]): Meta[] {
   return entries.map(([key, value]) => {
     const bytes = entryBytes(key, value)
     let m: { task?: string; ts?: number } = {}
-    if (key.startsWith(TASKS)) m = { task: key.slice(TASKS.length), ts: ownTs(value) }
+    if (key.startsWith(TASKS)) m = { task: taskOfLabel(key.slice(TASKS.length)), ts: ownTs(value) }
     else if (key.startsWith(SPAWN)) m = spawnMeta(key.slice(SPAWN.length))
     else if (key.startsWith(AGENT)) m = spawnMeta(typeof value === 'string' ? value : undefined)
     else if (key.startsWith(NAME)) m = spawnMeta(typeof value === 'string' ? str(AGENT + value) : undefined)
     else if (key.startsWith(COST)) m = spawnMeta(str(AGENT + key.slice(COST.length)))
     else if (BY_ATTEMPT.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
-    else if (BY_TASK.some(p => key.startsWith(p))) m = withTask(key.slice(key.indexOf('.', P.length) + 1), ownTs(value))
+    else if (BY_TASK.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_BRIEF.some(p => key.startsWith(p))) m = withTask(taskOfBrief(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else return { key, bytes } // session-level and global keys: never the plan's
     return { key, bytes, ...(m.task ? { task: m.task } : {}), ...(m.ts !== undefined ? { ts: m.ts } : {}) }
@@ -143,7 +145,7 @@ function openTasks(entries: readonly StoreEntry[], open: Iterable<string>, now: 
   for (const [k, v] of entries) {
     if (!k.startsWith(TASKS) || !Array.isArray(v)) continue
     const pending = v.some(r => r && typeof r === 'object' && (r as Record<string, unknown>).verdict === 'pending' && now - (ownTs(r) ?? -Infinity) <= RETAIN_MS)
-    if (pending) out.add(k.slice(TASKS.length))
+    if (pending) out.add(taskOfLabel(k.slice(TASKS.length)))
   }
   return out
 }

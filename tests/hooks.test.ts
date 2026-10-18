@@ -5544,8 +5544,9 @@ describe('MOD-44: the brain delegates into another local repo (repo set to an ab
     const row = delivered(w)
     expect(row).toContain('chassis-delegation: verdict=consistent task=T-1 attempt=1/2')
     expect(row).toContain('claim files: held — files= matches the sha delta exactly')
-    // the attempt record's root is that repo; the ledger row goes to the session
-    expect(records(w, 'T-1')[0]).toMatchObject({ task: 'T-1', attempt: 1, verdict: 'consistent', root: OTHER })
+    // the attempt record's root is that repo, under that repo's key (MOD-97); the ledger row goes to the session
+    expect(records(w, 'T-1')).toEqual([])
+    expect(records(w, `T-1@${OTHER}`)[0]).toMatchObject({ task: 'T-1', attempt: 1, verdict: 'consistent', root: OTHER })
     expect(w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').toContain('"task":"T-1"')
     expect(w.files.has(`${OTHER}/.delegation/ledger.jsonl`)).toBe(false)
   })
@@ -5576,7 +5577,7 @@ describe('MOD-44: the brain delegates into another local repo (repo set to an ab
     expect(after.filter(a => a[0] === 'git').filter(a => a[2] === ROOT)).toEqual([])
     expect(w.runs.slice(before).find(r => r.argv[0] === 'npm')?.cwd).toBe(WT)
     expect(w.spawns).toHaveLength(0)
-    expect(records(w, 'T-1').map(x => [x.attempt, x.kind, x.verdict, x.root])).toEqual([[1, 'verify', 'consistent', OTHER]])
+    expect(records(w, `T-1@${OTHER}`).map(x => [x.attempt, x.kind, x.verdict, x.root])).toEqual([[1, 'verify', 'consistent', OTHER]])
   })
 
   test('the git guard refuses a commit or a push on /other main exactly as on the session root', async ($, on) => {

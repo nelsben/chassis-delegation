@@ -169,10 +169,10 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
   once per spawn (its tool_use_id) and not at all with `ledgerFile` off.
 - **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`, with
   these keys:
-  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named, and `metrics`, the report's `metrics=` (MOD-22); a `work-present` attempt, kind `verify`, carries the branch head it found; a reviewer's attempt, kind `review` (MOD-21), carries the number of the attempt it reviewed, its verdict `reviewed` and the `review` counts, and is on no ladder);
+  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named, and `metrics`, the report's `metrics=` (MOD-22); a `work-present` attempt, kind `verify`, carries the branch head it found; a reviewer's attempt, kind `review` (MOD-21), carries the number of the attempt it reviewed, its verdict `reviewed` and the `review` counts, and is on no ladder); a task for another local repo keeps its attempts under `delegation.tasks.<ID>@<repo>` (MOD-97, below);
   - `delegation.recent.<session>`: the verdict lines;
   - `delegation.handoff.<brief>`: the folder `/dispatch` prepared for the brief's worker, which the spawn hook gives the brain's Agent call (MOD-12);
-  - `delegation.outside.<ID>`: the listing `/dispatch` took of a research card's absolute scope and forbid roots, the "before" of the outside delta (MOD-22); a re-dispatch of a reused brief keeps it;
+  - `delegation.outside.<ID>`: the listing `/dispatch` took of a research card's absolute scope and forbid roots, the "before" of the outside delta (MOD-22); a re-dispatch of a reused brief keeps it, a dispatch whose brief names no absolute root deletes it, and a task for another local repo has its own, `delegation.outside.<ID>@<repo>`;
   - `delegation.debrief.<session>`;
   - `delegation.friction.<session>`;
   - `delegation.evals`.
@@ -238,6 +238,27 @@ and an attempt is open: dispatch refuses with one line naming the brief file, wh
 writes nothing (no brief, no worktree). A point the brief does not name (a hand-written brief) is not compared; a replay
 brief is always reused. A brief rendered for a card in another local repo takes `briefExtra` from that repo's own
 `.chassis-delegation.json`, or empty with none, never the session repo's. The comparison is `hooks/lib/crossbrief.ts`.
+
+**A card for another local repo is counted, resumed and verified as a local one (MOD-97, #155, #163, #164).** One
+store serves every repo, so two repos can both have an `OPS-15`. The smallest change keys the attempt records by repo
+plus id: a task dispatched into another repo writes `delegation.tasks.<ID>@<repo>` (the repo's absolute path, no
+trailing slash), and the session repo's stay under the bare `delegation.tasks.<ID>`. Until a qualified key is first
+written, a read for that repo falls back to the bare key's records whose `root` is that repo. A bare-key read takes only
+the records whose `root` is the session repo, or that name no `root` (legacy records belong to any repo). A bare-key write
+keeps the other repos' records it holds. The doors that take only an id (the verdict tool, `/delegation accept`, the merge
+and retire checks, the owed rows) read the repo `/dispatch` remembered for the id (`delegation.taskRepo.<ID>`), else the
+session's. The outside listing, the attempt keys of `posted`/`postedRow` and the start row's `attempt n/m` follow the same
+key, so an `OPS-15` dispatched into B is attempt 1 whatever A's `OPS-15` did. Retention reads `<ID>@<repo>` as `<ID>`, so
+the per-task families prune together. The ledger stays one file per session repo; its rows already carry `repo`.
+
+The brief is read where the dispatch wrote it, the session's `briefDir`, whichever repo the card is for. A resumed worker
+keeps that brief: the engine raises a resume (SendMessage, MOD-41) as a fresh ad hoc `agent.spawn` with the same agent id,
+and the spawn hook no longer points the agent id at that ad hoc spawn when it already names a briefed one. The hand-back
+then finds the briefed spawn and, at a new sha, records the next attempt (kind `resume`, the brief's budget) and verifies it
+against the brief, in the background (`turn.complete`) and in the foreground (the Agent result) alike. This holds for a card
+of the session repo too. The delta is taken in the other repo's worktree against that repo's base (MOD-44). A path outside that repo and its worktree is part of the delta only when the scope names
+it as an absolute root, listed at that dispatch under that repo's key. In-scope work is `consistent`; a changed path inside
+the other repo that the scope does not name is still refuted on scope.
 
 The code is laid out like this:
 
