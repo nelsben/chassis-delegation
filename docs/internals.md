@@ -74,6 +74,16 @@ What differs from the engine's verdict:
   engine, but engine gates take no turns (the turn is held in the engine's
   store), so two workers verified at once can still time each other out.
 
+**The red claim and a state-style red file (MOD-102, #166).** `redClaim` in `hooks/lib/verify-native.ts` holds a
+red file that has a failure marker. A file with no marker and at most 2048 bytes (`RED_GREEN_MAX_BYTES`) is settled by
+the red test's own run: the verifier runs the brief's `red_test` command once at the worker's head (`redTestCommand`
+takes the words before any prose, and only a command the allowlist takes), in the worker's tree under the gate time
+limit, and passes the result to `redClaim` as `green`. Exit 0 with trimmed output different from the red file's trimmed
+text is held (`red=<path>, N bytes, no failure marker; the red test passes at the head and prints otherwise`). A failing,
+timed-out or unrunnable run, or the same output, stays unchecked with the old detail plus a reason, and the advice stays
+`check red by hand`. A larger file, `red_test` of `none` or no runnable command, and a file with a marker are unchanged,
+and the one-proof-per-task and byte-identical checks apply first.
+
 What exists only with the engine: tiering (the model picked from the card's
 tier, the effort setting), the queue and `maxWorkers`, the respawn ladder and
 attempt budgets, the spend ceilings, the dashboard and the delegation band, the

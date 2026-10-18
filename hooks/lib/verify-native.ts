@@ -39,7 +39,7 @@
 // stat'ed, a gate may name {outdir}, and metrics= are shown, never judged.
 // Pure apart from `io`: no `$`.
 import { effectiveList, parseAmends, parseHeader, type Report } from './brief'
-import { isEngineGate, resolveGateRuns, type GateResolution, type GateRun } from './gates'
+import { checkGateWords, isEngineGate, resolveGateRuns, splitCommand, type GateResolution, type GateRun } from './gates'
 import { artefactsCheck, isAbsolute, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
 import { isGitRef } from './repoconfig'
 
@@ -126,7 +126,32 @@ export type RedClaimInput = RedEvidence & {
   /** The worker's tree: a relative red= lies under it, an absolute one must. */
   repo: string
   priorHashes?: readonly RedPrior[]
+  /** MOD-102 (#166): the brief's red_test command run once at the worker's head; read only for a short red file with no marker. */
+  green?: RedGreen
 }
+
+/** MOD-102: what running the red test at the worker's head came to: it ran (exit code, trimmed output) or it could not. */
+export type RedGreen = { ran: true; exitCode: number; output: string } | { ran: false; why: string }
+
+/** MOD-102: a marker-less red file this size or smaller (bytes) is checked against the red test's own run at the head. */
+export const RED_GREEN_MAX_BYTES = 2048
+
+/**
+ * MOD-102: the command a brief's red_test= names, as argv, or undefined when it names none the verifier may run.
+ * Prose after the command (` (new tests fail on main)`) is dropped; the words must pass the gate shape rules and `allowed`.
+ */
+export function redTestCommand(redTest: string | undefined, allowed: (argv: readonly string[]) => boolean): string[] | undefined {
+  if (!briefWantsRed(redTest)) return undefined
+  const cmd = (redTest ?? '').replace(/\s+\(.*$/s, '').trim()
+  if (cmd === '' || cmd.includes(' && ') || cmd.includes(',')) return undefined
+  const words = splitCommand(cmd)
+  if (words.length < 2 || !checkGateWords(words).ok || !allowed(words)) return undefined
+  return words
+}
+
+/** MOD-102: true when redClaim would read a green run: a non-empty, short, marker-less red file. */
+export const redWantsGreen = (e: RedEvidence): boolean =>
+  e.exists && e.error === undefined && e.text !== undefined && e.text.trim() !== '' && (e.bytes ?? e.text.length) <= RED_GREEN_MAX_BYTES && !e.text.split(/\r?\n/).some(l => RED_MARKER.test(l))
 
 export type RedClaim = { status: 'held' | 'failed' | 'unchecked'; detail: string }
 
@@ -445,8 +470,19 @@ export function redClaim(i: RedClaimInput): RedClaim | undefined {
   const bytes = i.bytes ?? i.text.length
   if (bytes === 0 || i.text.trim() === '') return { status: 'failed', detail: `red=${path} is empty` }
   const markers = i.text.split(/\r?\n/).filter(l => RED_MARKER.test(l))
-  if (markers.length === 0) return { status: 'unchecked', detail: `no failure marker found in red=${path} (${bytes} bytes)${RED_NO_MARKER_HINT}` }
-  const line = quotedRedLine(markers)
+  const noMarker = markers.length === 0
+  const noMarkerDetail = `no failure marker found in red=${path} (${bytes} bytes)${RED_NO_MARKER_HINT}`
+  // MOD-102: a short marker-less file is settled by the red test's own run at the head: it passes and prints otherwise
+  let shortState = false
+  if (noMarker) {
+    if (bytes > RED_GREEN_MAX_BYTES || i.green === undefined) return { status: 'unchecked', detail: noMarkerDetail }
+    const g = i.green
+    if (!g.ran) return { status: 'unchecked', detail: `${noMarkerDetail}; the red test at the head did not run: ${g.why}` }
+    if (g.exitCode !== 0) return { status: 'unchecked', detail: `${noMarkerDetail}; the red test at the head failed (exit ${g.exitCode})` }
+    if (g.output.trim() === i.text.trim()) return { status: 'unchecked', detail: `${noMarkerDetail}; the red test at the head printed the same` }
+    shortState = true
+  }
+  const line = noMarker ? '' : quotedRedLine(markers)
   const priors = i.priorHashes ?? []
   if (i.hash !== undefined) {
     const sames = priors.filter(p => p.hash === i.hash).sort((a, b) => a.attempt - b.attempt)
@@ -458,6 +494,7 @@ export function redClaim(i: RedClaimInput): RedClaim | undefined {
   } else if (priors.length > 0) {
     return { status: 'unchecked', detail: `red=${path} could not be hashed, so whether it is this attempt's own is unknown` }
   }
+  if (shortState) return { status: 'held', detail: `${path}, ${bytes} bytes, no failure marker; the red test passes at the head and prints otherwise` }
   return { status: 'held', detail: `${path}, ${bytes} bytes, first failure line: ${line.trim().slice(0, RED_LINE_CAP)}` }
 }
 
@@ -827,7 +864,18 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       }
       if (ev.exists && ev.text !== undefined) red = { path: named, ...(ev.hash !== undefined ? { hash: ev.hash } : {}) }
     }
-    const c = redClaim({ ...ev, redTest: contract.redTest, path: named, repo, priorHashes: input.priorRed ?? [] })
+    // MOD-102 (#166): a short marker-less red file: run the red test once at the head, in the worker's tree, under the gate time limit
+    let green: RedGreen | undefined
+    const cmd = redTestCommand(contract.redTest, input.allowed ?? (() => false))
+    if (cmd && redWantsGreen(ev) && !(redTarget(named, repo) as { outside?: true }).outside) {
+      try {
+        const g = await io.exec(cmd, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS })
+        green = g.ok ? { ran: true, exitCode: g.exitCode, output: `${g.stdout.trim()}${g.stderr.trim() ? `\n${g.stderr.trim()}` : ''}` } : { ran: false, why: g.why }
+      } catch (err) {
+        green = { ran: false, why: String(err) }
+      }
+    }
+    const c = redClaim({ ...ev, redTest: contract.redTest, path: named, repo, priorHashes: input.priorRed ?? [], ...(green ? { green } : {}) })
     if (c) claim('red', c.status, c.detail)
     if (c?.status === 'held' && red) red = { ...red, held: true }
   }

@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { parseReport } from '../hooks/lib/brief'
-import { BASE_REFS, briefContract, filesClaim, ignoredLine, nameStatusDelta, NO_BRIEF_REASON, pathMatchesAny, porcelainPaths, prNumber, redClaim, subtractDelta, verifyCardless, verifyNative, type ExecOut, type RedEvidence } from '../hooks/lib/verify-native'
+import { BASE_REFS, briefContract, filesClaim, ignoredLine, nameStatusDelta, NO_BRIEF_REASON, pathMatchesAny, porcelainPaths, prNumber, redClaim, redTestCommand, RED_NO_MARKER_HINT, subtractDelta, verifyCardless, verifyNative, type ExecOut, type RedEvidence } from '../hooks/lib/verify-native'
 
 const REPO = '/w/repo-T-1'
 const FULL = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
@@ -311,6 +311,64 @@ describe('GH-20: redClaim, the red-test evidence a report names (red=)', () => {
     expect(redClaim({ ...ev, hash: 'h2', priorHashes: [{ attempt: 1, hash: 'h1' }] })?.status).toBe('held')
     // no hash while earlier attempts have one: freshness is unknown, so unchecked
     expect(redClaim({ ...ev, hash: undefined, priorHashes: [{ attempt: 1, hash: 'h1' }] })?.status).toBe('unchecked')
+  })
+})
+
+describe('MOD-102 (#166): a short marker-less red file is held when the red test passes at the head and prints otherwise', () => {
+  const STATE = 'count=3\n'
+  const ev = { redTest: 'npm test', path: RED_PATH, repo: REPO, exists: true, bytes: 8, text: STATE, hash: 'h1', priorHashes: [] as { attempt: number; hash: string; held?: boolean }[] }
+  const NO_MARKER = `no failure marker found in red=${RED_PATH} (8 bytes)`
+  test('the green run exits 0 and prints something else: held', () => {
+    expect(redClaim({ ...ev, green: { ran: true, exitCode: 0, output: 'count=4\n' } })).toEqual({ status: 'held', detail: `${RED_PATH}, 8 bytes, no failure marker; the red test passes at the head and prints otherwise` })
+  })
+  test('the same text (trimmed), a failing run, or a run that could not happen: unchecked, today\'s detail plus a reason', () => {
+    expect(redClaim({ ...ev, green: { ran: true, exitCode: 0, output: '  count=3  ' } })).toEqual({ status: 'unchecked', detail: `${NO_MARKER}${RED_NO_MARKER_HINT}; the red test at the head printed the same` })
+    expect(redClaim({ ...ev, green: { ran: true, exitCode: 2, output: 'boom' } })?.detail).toBe(`${NO_MARKER}${RED_NO_MARKER_HINT}; the red test at the head failed (exit 2)`)
+    expect(redClaim({ ...ev, green: { ran: false, why: 'timed out' } })?.detail).toBe(`${NO_MARKER}${RED_NO_MARKER_HINT}; the red test at the head did not run: timed out`)
+  })
+  test('over 2048 bytes, or no green result offered: exactly as today', () => {
+    const big = 'x'.repeat(2049)
+    expect(redClaim({ ...ev, text: big, bytes: 2049, green: { ran: true, exitCode: 0, output: 'other' } })?.detail).toBe(`no failure marker found in red=${RED_PATH} (2049 bytes)${RED_NO_MARKER_HINT}`)
+    expect(redClaim(ev)?.detail).toBe(`${NO_MARKER}${RED_NO_MARKER_HINT}`)
+  })
+  test('a red file with a marker ignores the green run; byte-identical checks apply first', () => {
+    expect(redClaim({ ...ev, text: RED_TEXT, bytes: 70, green: { ran: true, exitCode: 0, output: 'other' } })?.detail).toContain('first failure line')
+    expect(redClaim({ ...ev, priorHashes: [{ attempt: 1, hash: 'h1' }], green: { ran: true, exitCode: 0, output: 'count=4' } })?.status).toBe('failed')
+    expect(redClaim({ ...ev, priorHashes: [{ attempt: 1, hash: 'h1', held: true }], green: { ran: true, exitCode: 0, output: 'count=4' } })?.detail).toBe("attempt 1's proof, reused (one proof per task)")
+  })
+  test('redTestCommand: the command before any prose, if allowed; none for none, prose or a refused command', () => {
+    const allowed = (a: readonly string[]) => a.join(' ') === 'npm test'
+    expect(redTestCommand('npm test', allowed)).toEqual(['npm', 'test'])
+    expect(redTestCommand('npm test (new tests fail on main)', allowed)).toEqual(['npm', 'test'])
+    expect(redTestCommand('none', allowed)).toBeUndefined()
+    expect(redTestCommand('a pure test beside the others', allowed)).toBeUndefined()
+    expect(redTestCommand('npm run build && rm x', allowed)).toBeUndefined()
+    expect(redTestCommand(undefined, allowed)).toBeUndefined()
+  })
+  describe('through verifyNative', () => {
+    const files = { [`${REPO}/${RED_PATH}`]: STATE }
+    const state = (over: Table) => io(happy(over), files)
+    test('held: the red test is run once in the worker tree and the verdict is consistent', async () => {
+      const t = state({ 'npm test': ok('count=4\n') })
+      const r = await verifyNative(input(), t)
+      expect(r.lines).toContain(`claim red: held — ${RED_PATH}, 8 bytes, no failure marker; the red test passes at the head and prints otherwise`)
+      expect(r.verdict).toBe('consistent')
+      expect(r.red?.held).toBe(true)
+      // the gate and the red test are both `npm test` here: the red run is the second call
+      expect(t.calls.filter(c => c.argv.join(' ') === 'npm test')).toHaveLength(2)
+      expect(t.calls.every(c => c.argv[0] !== 'npm' || c.cwd === REPO)).toBe(true)
+    })
+    test('same text: unverified with the reason', async () => {
+      const r = await verifyNative(input(), state({ 'npm test': ok('count=3') }))
+      expect(r.verdict).toBe('unverified')
+      expect(r.lines.some(l => l.startsWith('claim red: unchecked') && l.endsWith('; the red test at the head printed the same'))).toBe(true)
+    })
+    test('a red_test that is not an allowed command runs nothing and reads as today', async () => {
+      const t = state({})
+      const r = await verifyNative(input({ briefText: BRIEF.replace('red_test="npm test"', 'red_test="a state check by hand"') }), t)
+      expect(r.lines.find(l => l.startsWith('claim red:'))).toBe(`claim red: unchecked — no failure marker found in red=${RED_PATH} (8 bytes)${RED_NO_MARKER_HINT}`)
+      expect(t.calls.filter(c => c.argv[0] === 'npm')).toHaveLength(1)
+    })
   })
 })
 
