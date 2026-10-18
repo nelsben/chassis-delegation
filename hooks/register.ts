@@ -46,6 +46,7 @@ import {
   isRetiredVerdict,
   supersededBy,
 } from './lib/attempts'
+import { briefDrift, briefNames, briefRewrittenLine, briefStaleRefusal, type BriefDrift } from './lib/crossbrief'
 import {
   amendNeedsApproval,
   amendScopeInsideForbid,
@@ -1028,6 +1029,8 @@ type Target = {
   cardDir: string
   spendByTier: Effective['spendByTier']
   baseRef: string
+  /** MOD-95: its own config's briefExtra (empty with no config), never the session's. */
+  briefExtra: string
 }
 
 /** `repo` as a checkout of another local repo: its normalised path, or why it is refused. */
@@ -1081,7 +1084,7 @@ async function loadTarget($: Host, path: string): Promise<Target> {
       detected = true
     }
   }
-  return { path, name: repoFolderName(path), hasConfig: text !== undefined, gateMap, detected, domains: eff.domains, cardDir: eff.cardDir, spendByTier: eff.spendByTier, baseRef: eff.baseRef }
+  return { path, name: repoFolderName(path), hasConfig: text !== undefined, gateMap, detected, domains: eff.domains, cardDir: eff.cardDir, spendByTier: eff.spendByTier, baseRef: eff.baseRef, briefExtra: eff.briefExtra }
 }
 
 /** Where a target's cards are: its own cardDir when it has a config, else the session's .delegation/cards/<its folder name>/. */
@@ -3467,6 +3470,12 @@ function readRecent($: Host, rows: readonly RecentVerdict[]): RecentVerdict[] {
   })
 }
 
+/** MOD-95: the number of an attempt of `task` that is running or awaiting its verdict (a non-replay record still pending), else undefined. */
+async function openAttemptOf($: Host, task: string): Promise<number | undefined> {
+  const records = await storeGet<AttemptRecord[]>($, K.tasks(task))
+  if (!Array.isArray(records)) return undefined
+  return records.findLast(r => r.verdict === 'pending' && r.replay !== true)?.attempt
+}
 /**
  * GH-16: the other repo=here cards in flight in `root`, from the store: a
  * task + subtask whose records (marked `here: root`) hold one without a
@@ -4789,6 +4798,26 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (refusal) return `/dispatch ${id}: ${refusal}${replay ? ` (read at ${base})` : ''}`
   // the repo the work is cut from and judged in: the target's, else the session's
   const repoRoot = target ? target.path : root
+  // MOD-95: an existing brief is the one to reuse only when it names this dispatch's repo, worktree and card; else it is
+  // rewritten, or (an attempt of the task open) dispatch refuses before it writes anything
+  const fileName = briefFileName(id, replay)
+  const existing = await existingBrief($, root, fileName)
+  const existingText = existing ? await readText($, existing) : undefined
+  let stale: BriefDrift | undefined
+  if (existing && existingText !== undefined && !replay) {
+    const freshHere = parsed.here === true || card.repo === 'here'
+    const freshNone = !freshHere && card.repo === 'none'
+    const drift = briefDrift(briefNames(existingText), {
+      repo: freshHere ? 'here' : freshNone ? 'none' : target ? target.path : '',
+      worktree: freshHere || freshNone ? root : worktreePath(repoRoot, id, false, target ? undefined : cfg.worktreeRoot),
+      card: `${tasksDir}/${name}`,
+    })
+    if (drift.points.length > 0) {
+      const open = await openAttemptOf($, id)
+      if (open !== undefined) return briefStaleRefusal(id, existing, drift, open)
+      stale = drift
+    }
+  }
   if (target) {
     await storeSet($, K.taskRepo(id), target.path)
     registerTaskRepo(id, target, card.gate)
@@ -4801,9 +4830,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const lessons = lessonsText !== undefined && lessonLineCount(lessonsText) > 0 ? { text: lessonsText, path: lessonsAt } : undefined
 
   // An existing brief is reused, never overwritten, and it decides the mode.
-  const fileName = briefFileName(id, replay)
-  const reuse = await existingBrief($, root, fileName)
-  const reusedText = reuse ? await readText($, reuse) : undefined
+  const reuse = stale ? undefined : existing
+  const reusedText = stale ? undefined : existingText
   const reusedHeader = reusedText !== undefined ? parseHeader(reusedText) : undefined
   const wantHere = !replay && (parsed.here === true || card.repo === 'here')
   // MOD-22: `repo: none` is the third mode (no worktree, no git); --here beats it, and a reused brief decides
@@ -4926,13 +4954,13 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     const reportExtra = outdir ? ' artefacts=<comma list of the files you delivered, relative to the output folder or absolute> metrics="<k=v,k=v>"' : ''
     // MOD-44: a worker in another repo is told the gate as that repo's command, not a bare id
     const briefCard: Card = target ? { ...card, gateText: card.gate.map(g => (target.gateMap[g] !== undefined ? `${g} (\`${target.gateMap[g]}\`)` : g)).join(', ') } : card
-    const rendered = renderBriefChecked(template, { card: briefCard, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
+    const rendered = renderBriefChecked(template, { card: briefCard, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: target ? target.briefExtra : cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
     // MOD-28: a brief with a marker left in it never reaches a worker; nothing is written, no worktree is made
     if (rendered.leftover !== undefined) return [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n')
     const written = await writeBrief($, root, fileName, `${header}\n\n${rendered.text}`)
     if ('error' in written) return [...out, `/dispatch ${id}: ${written.error}`].join('\n')
     briefPath = written.path
-    out.push(`2. brief ${briefPath} written (tier=${tier}, model=${alias}, budget=${budget}-attempts${here ? ', repo=here' : none ? ', repo=none' : ''})`)
+    out.push(stale ? briefRewrittenLine(briefPath, stale) : `2. brief ${briefPath} written (tier=${tier}, model=${alias}, budget=${budget}-attempts${here ? ', repo=here' : none ? ', repo=none' : ''})`)
   }
   if (lessons !== undefined) {
     const n = lessonLineCount(lessons.text)

@@ -222,12 +222,23 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
     node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs
                                              # the pure tests and the real-git suite, under plain node
 
+**When `/dispatch` reuses a brief (MOD-95, #154).** A brief already written for the task is compared with the one
+this dispatch would write, on three points only: the header's `repo=` (absent, `here`, `none` or an absolute path),
+the worktree the brief names and the card path it names. All three agree: the brief is reused as it is, so an amended
+scope or a hand edit is kept (`2. brief <path> exists — reused`). Any differs and no attempt of the task is running or
+awaiting its verdict: the brief is rendered fresh in its place and the dispatch says
+`2. brief <path> was written for <what it named>; rewritten for this card (<the points that differed>)`. Any differs
+and an attempt is open: dispatch refuses with one line naming the brief file, what differed and the open attempt, and
+writes nothing (no brief, no worktree). A point the brief does not name (a hand-written brief) is not compared; a replay
+brief is always reused. A brief rendered for a card in another local repo takes `briefExtra` from that repo's own
+`.chassis-delegation.json`, or empty with none, never the session repo's. The comparison is `hooks/lib/crossbrief.ts`.
+
 The code is laid out like this:
 
 - **`hooks/lib/*.ts`** are pure (no `$`):
   - `verify-native.ts` holds the verifier, `gates.ts` the gate commands and `allow.ts` the allowlist;
   - `repoconfig.ts` reads the repo file, `init.ts` scaffolds and `gitguard.ts` holds the guard;
-  - `dispatch.ts` covers the card, the brief and the worktree;
+  - `dispatch.ts` covers the card, the brief and the worktree, and `crossbrief.ts` whether an existing brief is the one to reuse;
   - `cleanstop.ts` decides the debrief and `evaltrigger.ts` the eval.
 - **`bin/chassis-hook.mjs`** is the settings.json fallback (see
   [Without the engine](#without-the-engine-two-settingsjson-hooks)): plain
