@@ -559,6 +559,16 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(await bench($, w)).toHaveLength(0)
   })
 
+  test('waitStallMin: 5 says a silent waiting worker stalled after five minutes (the built-in 20 does not)', async ($, on) => {
+    const w = world(on, { files: { [`${SCRATCH}/briefs/T-4.brief.md`]: '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]\nbody' }, agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await set($, 'waitStallMin', '5')
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${SCRATCH}/briefs/T-4.brief.md.` }))
+    await $.turn.complete(turnInput('agent-4', 'Waiting for the background job.'))
+    await w.clock.advance(5 * MIN)
+    expect(w.appended.filter(a => a.text.includes('T-4 stalled 5 min; resume or stop it'))).toHaveLength(1)
+  })
+
   test('freshSessionTokens: 100K suggests a fresh session at 150K (the built-in 400K does not)', async ($, on) => {
     const w = world(on, { model: FABLE })
     w.context = { window: 1_000_000, percent: 15 }

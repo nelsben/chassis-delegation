@@ -305,6 +305,12 @@
       "description": "A queued row the mod said ready: for that the brain has not spawned after this many minutes is started by the mod itself, but only a worktree brief (repo=here and repo=none always wait for the brain, and the ready line says how long). A mod-started worker runs outside the mod's hooks: no git guard, no effort setting, cost known only at the end. 0 = off",
       "default": 10
     },
+    "waitStallMin": {
+      "type": "number",
+      "title": "Wait stall minutes",
+      "description": "A briefed worker that is waiting without a hand-back wakes the brain once per state, saying what it waits on. Past this many minutes the mod says once that it is stalled, and to resume or stop it. 0 = off",
+      "default": 20
+    },
     "driveWarn": {
       "type": "boolean",
       "title": "Drive warn row",

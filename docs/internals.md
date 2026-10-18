@@ -83,6 +83,12 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
 
 ## Known issues
 
+- **A waiting worker's repeat wakes come from the mod's own rows only if it ends turns saying it waits.** The wake
+  source is the worker's `turn.complete` hook: a briefed background worker whose turn ends with no report and says
+  it is waiting is a wait, and the mod wakes the brain once per state (MOD-99, #161). A host notification the
+  hooks never see (a background job finishing and the host relaying it as a message) cannot be held by the mod;
+  only the mod's own rows are held.
+
 - **Function-hook plugins need the engine's rollout switch.** Where it serves
   off, the mod does not load. `claude plugin test` then refuses with "hooks
   modules are turned off in this process: the rollout switch served off".

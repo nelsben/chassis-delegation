@@ -91,13 +91,22 @@ export const emptyWatch = (): Watch => ({ commands: [], warned: false })
 /** True when `command` has already run in the watch (this turn). */
 export const ranBefore = (w: Watch, command: string): boolean => w.commands.includes(commandKey(command))
 
+/** MOD-99 (#165): the move the polling row names: card the resource it uses, wait with the verdict tool, else the guide section. */
+export function nudgeMove(command: string, resources: readonly string[] = [], waitingOnWorker = false): string {
+  const lower = command.toLowerCase()
+  const named = resources.find(r => r !== '' && lower.includes(r.toLowerCase()))
+  if (named !== undefined) return `Move: card it with resources: [${named}] so one worker drives it.`
+  if (waitingOnWorker) return 'Move: wait with the verdict tool (it returns when the worker hands back) instead of polling.'
+  return 'A standard card would drive this loop from a small context on a cheaper model; add resources for a one-client app so workers take turns (see docs/guide.md#one-client-resources).'
+}
+
 /**
  * One Bash command of the brain's turn. The row speaks when the context is at or above the threshold and the
  * command is the third to share its first 60 characters, or polls; at most once a turn.
  */
 export function driveStep(
   w: Watch,
-  i: { command: string; context: number; threshold: number; model?: string; enabled: boolean },
+  i: { command: string; context: number; threshold: number; model?: string; enabled: boolean; resources?: readonly string[]; waitingOnWorker?: boolean },
 ): { state: Watch; row?: string } {
   const key = commandKey(i.command)
   const count = w.commands.filter(c => c === key).length + 1
@@ -107,10 +116,7 @@ export function driveStep(
   const price = priceFor(i.model)
   const cost = price ? ` (about $${usdOf({ in: 0, out: 0, cacheRead: i.context, cacheWrite: 0 }, price).toFixed(2)} a call at that context on ${i.model})` : ''
   const what = poll && count < 3 ? `polled with "${key}"` : `ran "${key}" ${count} times this turn`
-  return {
-    state: { ...state, warned: true },
-    row: `chassis-delegation: the brain ${what} at ${tokText(i.context)} context${cost}. A standard card would drive this loop from a small context on a cheaper model; add resources for a one-client app so workers take turns.`,
-  }
+  return { state: { ...state, warned: true }, row: `chassis-delegation: the brain ${what} at ${tokText(i.context)} context${cost}. ${nudgeMove(i.command, i.resources, i.waitingOnWorker)}` }
 }
 
 // ---- the fresh-session row (MOD-53) ---------------------------------------------------

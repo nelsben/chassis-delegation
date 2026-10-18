@@ -14,6 +14,7 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { callKind, driveCall, driveLines, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
+import { saysWaiting, waitStep, WAIT_STALL_DEFAULT_MIN, type WaitState } from './lib/waitstate'
 import { bandTree } from './lib/band'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
 import { paneTree, type PaneTable } from './lib/pane'
@@ -561,6 +562,8 @@ type Config = {
   postFindings: PostMode
   /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
   readyFallbackMs: number
+  /** MOD-99: minutes a waiting worker may wait before the mod says it is stalled; 0 = off. */
+  waitStallMs: number
   /** MOD-48: the warn row for a command the brain keeps re-running or polling at a large context. */
   driveWarn: boolean
   /** MOD-48: the context, in tokens, from which that row speaks. */
@@ -644,6 +647,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       wakeOnVerdict: o.wakeOnVerdict === true,
       postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
+      waitStallMs: num('waitStallMin', WAIT_STALL_DEFAULT_MIN) * MIN_MS,
       driveWarn: o.driveWarn !== false,
       driveWarnTokens: num('driveWarnTokens', DRIVE_THRESHOLD_TOKENS),
       freshSessionTokens: num('freshSessionTokens', FRESH_SESSION_TOKENS),
@@ -747,6 +751,9 @@ const readySince = new Map<string, number>()
 /** MOD-15: ready rows the fallback has looked at past their timeout and will not start (repo=here, repo=none, an unreadable brief). */
 const fallbackSkipped = new Set<string>()
 let fallbackTimer: { cancel: () => void } | undefined
+/** MOD-99: a briefed worker that is waiting without a hand-back, by agent id, and the timer that calls it stalled. */
+const waitStates = new Map<string, WaitState>()
+const waitTimers = new Map<string, { cancel: () => void }>()
 let fallbackBusy = false
 // promptKey → what to record once the spawn hook sees the agent id of a debrief or eval runner the mod started
 const runnerStarted = new Map<string, (agentId: string) => Promise<void>>()
@@ -1324,7 +1331,10 @@ async function driveGuard($: Host, e: { tool: unknown; agentId?: string }): Prom
     if (command === '') return
     await loadRepoConfig($)
     const model = (await $.session.model().catch(() => undefined)) || undefined
-    const step = driveStep(driveWatch, { command, context: cfg.driveWarn ? await brainContextTokens($) : 0, threshold: cfg.driveWarnTokens, model, enabled: cfg.driveWarn })
+    // MOD-99 (#165): the resources a running card declares, and whether a worker is running for the brain to wait on
+    const running = cfg.driveWarn ? (await liveState($)).workers : []
+    const resources = [...new Set(running.flatMap(w => w.spawn.resources ?? []))]
+    const step = driveStep(driveWatch, { command, context: cfg.driveWarn ? await brainContextTokens($) : 0, threshold: cfg.driveWarnTokens, model, enabled: cfg.driveWarn, resources, waitingOnWorker: running.length > 0 })
     driveWatch = step.state
     if (step.row) await appendRow($, step.row)
   } catch (err) {
@@ -1909,6 +1919,64 @@ async function appendRow($: Host, row: string) {
     debug($, `row not appended: ${String(err)}`)
     $.ui.log(row)
     $.ui.toast(row.split('\n')[0] ?? row)
+  }
+}
+
+/** MOD-99: the worker is no longer waiting (it resumed or handed back): the next wait speaks again. */
+function clearWait(agentId: string | undefined): void {
+  if (!agentId) return
+  waitStates.delete(agentId)
+  waitTimers.get(agentId)?.cancel()
+  waitTimers.delete(agentId)
+}
+
+/** MOD-99: the resource a waiting worker's card names and another live worker holds, if any. */
+async function waitHeldBy($: Host, spawn: SpawnRecord, label: string): Promise<{ resource: string; holder: string } | undefined> {
+  const wants = spawn.resources ?? []
+  if (wants.length === 0) return undefined
+  try {
+    const live = await liveState($, spawn.agentId)
+    return resourceBlock(wants, heldResources(live.workers), label)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * MOD-99 (#161): one sighting of a briefed worker waiting without a hand-back. The first starts the state and wakes
+ * the brain with what it waits on; every repeat in that state is held (debug log only); past waitStallMin it says
+ * once that the worker is stalled. A timer calls the stall even when the worker goes silent.
+ */
+async function noteWait($: Host, spawn: SpawnRecord, agentId: string): Promise<void> {
+  const label = taskLabel(spawn.task, spawn.subtask)
+  const t = await now($)
+  const prev = waitStates.get(agentId)
+  const step = waitStep(prev, t, cfg.waitStallMs / MIN_MS, label, prev ? undefined : await waitHeldBy($, spawn, label))
+  waitStates.set(agentId, step.state)
+  if (step.say === undefined) {
+    debug($, `${label} still waiting: wake held`)
+    return
+  }
+  const row = `${PLUGIN}: ${step.say}`
+  await appendRow($, row)
+  await wakeBrain($, row)
+  if (!prev && cfg.waitStallMs > 0) {
+    try {
+      waitTimers.set(agentId, $.clock.after(cfg.waitStallMs, () => void stallCheck($, spawn, agentId)))
+    } catch (err) {
+      debug($, `${label}: stall timer not armed: ${String(err)}`)
+    }
+  }
+}
+
+/** MOD-99: the timer's look at a waiting worker: still waiting and past the ceiling, it is called stalled once. */
+async function stallCheck($: Host, spawn: SpawnRecord, agentId: string): Promise<void> {
+  waitTimers.delete(agentId)
+  if (!waitStates.has(agentId)) return
+  try {
+    await noteWait($, spawn, agentId)
+  } catch (err) {
+    debug($, `stall check failed: ${String(err)}`)
   }
 }
 
@@ -6647,7 +6715,13 @@ export const register: Register = (on, opts) => {
       let claimed = false
       // a foreground worker's Agent result carries its verdict and any ready line (the tool.call hook)
       const foreground = spawn !== undefined && waiting.has(spawn.key)
-      if (!warned && spawn && spawn.verdictAttempt !== spawn.attempt && (!spawn.adhoc || isCardless(spawn))) {
+      // MOD-99 (#161): a briefed background worker that ends a turn saying it waits, with no report, is waiting, not handing back
+      let waitedOnly = false
+      if (!warned && spawn && !spawn.adhoc && !spawn.review && !foreground && spawn.verdictAttempt !== spawn.attempt && saysWaiting(await saidOnce())) {
+        waitedOnly = true
+        await noteWait($, spawn, agentId)
+      }
+      if (!waitedOnly && !warned && spawn && spawn.verdictAttempt !== spawn.attempt && (!spawn.adhoc || isCardless(spawn))) {
         const text = await saidOnce()
         // A foreground worker's verdict lands in its Agent result's context; one
         // without a report there is left for the tool.call hook to judge.
@@ -6655,6 +6729,7 @@ export const register: Register = (on, opts) => {
         if (spawn.adhoc ? hasReport : !foreground || hasReport) {
           const tokens = e.usage ? e.usage.input_tokens + e.usage.output_tokens : undefined
           await postHandedBack($, spawn)
+          clearWait(agentId)
           const rendered = await finalize($, spawn, text, { tokens })
           handbacks.delete(e.agentId)
           if (!foreground && (await claimPost($, spawn))) {
@@ -6748,7 +6823,10 @@ export const register: Register = (on, opts) => {
     // MOD-57: every delivered message to an agent is noted (id and time), whether or not it records a new attempt
     const nx = async (x: typeof e) => {
       const out = await next(x)
-      if (out.isDelivered) messaged.set(agentId ?? address, { seq: ++wakeSeq, at: await now($) })
+      if (out.isDelivered) {
+        messaged.set(agentId ?? address, { seq: ++wakeSeq, at: await now($) })
+        clearWait(agentId ?? address) // MOD-99: a resumed worker's next wait speaks again
+      }
       return out
     }
     const spawn = await spawnByAgent($, agentId)

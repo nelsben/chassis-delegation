@@ -188,6 +188,8 @@ export function inEffect(field: string, values: Readonly<Record<string, unknown>
       return v === 0 ? '2' : undefined
     case 'freshSessionTokens':
       return v === 0 ? 'off' : undefined
+    case 'waitStallMin':
+      return v === 0 ? 'off' : undefined
     case 'readyFallbackMinutes':
       return v === 0 ? 'never (a waiting task waits for you)' : undefined
     case 'debriefMinEvents':
