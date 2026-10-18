@@ -18,6 +18,8 @@ import {
   scopeOverlap,
   setHeaderField,
 } from '../hooks/lib/brief'
+import { parseCard, renderHeader } from '../hooks/lib/dispatch'
+import { briefContract, pathMatchesAny } from '../hooks/lib/verify-native'
 
 const FE205 =
   '[[brief v=1 task=FE-205 subtask=main purpose=build tier=frontier model=opus scope=a/*,b/** forbid=c/**,d.json red_test=cd app/x && npx vitest run src/y.test.tsx gate=prettier budget=2-attempts report=chassis.report.v1]]\n\n# FE-205 body'
@@ -266,5 +268,51 @@ describe('MOD-2: setHeaderField sets or replaces one field in the brief header',
   })
   test('text with no header comes back unchanged', () => {
     expect(setHeaderField('no header', 'base', NEW)).toEqual({ text: 'no header' })
+  })
+})
+
+describe('MOD-98: a forbid entry with a space (#160)', () => {
+  const card = (scope: string[], forbid: string[]) => {
+    const c = parseCard(`---\nid: OPS-1\ntitle: t\ndomain: ops\ntier: standard\nstatus: queued\nscope: [${scope.join(', ')}]\nforbid: [${forbid.join(', ')}]\nred_test: none\ngate: test\n---\n## Why\n\nx\n`)
+    if ('error' in c) throw new Error(c.error)
+    return c
+  }
+
+  test('the header quotes a spaced entry and parseHeader reads it back whole', () => {
+    const header = renderHeader({ card: card(['src/**', 'My Docs/n.md'], ['Old Stuff/**', 'plain/**']), tier: 'standard', alias: 'sonnet', budget: 2 })
+    expect(header).toContain('forbid="Old Stuff/**",plain/**')
+    const h = parseHeader(header)
+    expect(h?.fields.forbid).toBe('Old Stuff/**,plain/**')
+    expect(h?.fields.scope).toBe('src/**,My Docs/n.md')
+    expect(h?.fields.gate).toBe('test')
+    expect(h?.fields.budget).toBe('2-attempts')
+  })
+
+  test('an entry with no space is written exactly as before', () => {
+    const header = renderHeader({ card: card(['a/**'], ['b/**', 'c.md']), tier: 'standard', alias: 'sonnet', budget: 2 })
+    expect(header).toContain(' scope=a/** forbid=b/**,c.md red_test=')
+  })
+
+  test('a quoted entry may hold something that looks like a field', () => {
+    const h = parseHeader('[[brief v=1 task=T scope=a/** forbid="odd gate=x/**",b/** gate=g budget=2-attempts]]')
+    expect(h?.fields.forbid).toBe('odd gate=x/**,b/**')
+    expect(h?.gate).toBe('g')
+  })
+
+  test('the verifier contract holds the spaced folder, and a path under it is a forbidden one', () => {
+    const header = renderHeader({ card: card(['src/**'], ['Old Stuff/**']), tier: 'standard', alias: 'sonnet', budget: 2 })
+    const c = briefContract(header)
+    if (!c.ok) throw new Error(c.line)
+    expect(c.forbid).toEqual(['Old Stuff/**'])
+    expect(pathMatchesAny('Old Stuff/deep/x.md', c.forbid)).toBe(true)
+    expect(pathMatchesAny('src/x.ts', c.forbid)).toBe(false)
+  })
+
+  test('a spaced scope entry does not turn the scope into prose', () => {
+    const header = renderHeader({ card: card(['My Docs/n.md'], []), tier: 'standard', alias: 'sonnet', budget: 2 })
+    const c = briefContract(header)
+    if (!c.ok) throw new Error(c.line)
+    expect(c.scope).toEqual(['My Docs/n.md'])
+    expect(c.scopeProse).toBeUndefined()
   })
 })

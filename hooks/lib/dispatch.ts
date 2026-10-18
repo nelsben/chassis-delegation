@@ -3,7 +3,7 @@
 // worker; the brain makes the Agent call the block names, and the spawn hook
 // shapes and records it like any other. Pure: no `$`.
 import { isBaseRef, isSha, isTaskId } from './allow'
-import { parseBudget } from './brief'
+import { isSpacedPath, listForHeader, parseBudget } from './brief'
 import { worktreePath as worktreePathOf } from './paths'
 import { DEFAULT_AGENT_TYPES, DEFAULT_DOMAINS } from './repoconfig'
 
@@ -201,7 +201,7 @@ export const budgetAttempts = (budget: string | undefined, fallback: number): nu
 export const PROSE_SCOPE_STOP = 'stopped: the card scope is prose; pass --scope <globs> (or scope on the tool) and dispatch again'
 
 /** True when a scope entry is prose, not a glob: the verifier leaves such a scope unchecked unless scope_globs= is added. */
-export const scopeLooksProse = (scope: readonly string[]): boolean => scope.some(s => /\s/.test(s))
+export const scopeLooksProse = (scope: readonly string[]): boolean => scope.some(s => /\s/.test(s) && !isSpacedPath(s))
 
 const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
 
@@ -241,7 +241,9 @@ export function renderHeader(input: {
     (c.resources.length > 0 ? ` resources=${c.resources.join(',')}` : '')
   return (
     `[[brief v=1 task=${c.id} subtask=main purpose=build tier=${input.tier} model=${input.alias}` +
-    ` scope=${scope.map(oneLine).join(',')} forbid=${forbid.map(oneLine).join(',')}` +
+    ` scope=${listForHeader(scope.map(oneLine))} forbid=${listForHeader(forbid.map(oneLine))}` +
+    // MOD-98: a spaced path in scope would read as prose to the verifier, so the same list is also given as globs
+    (scope.some(isSpacedPath) && scope.every(e => !/\s/.test(e) || isSpacedPath(e)) ? ` scope_globs=${listForHeader(scope.map(oneLine))}` : '') +
     ` red_test="${oneLine(c.redTest).replace(/"/g, "'")}" gate=${c.gate.join(',')}${here}` +
     (input.spend ? ` spend=${input.spend}` : '') +
     ` budget=${input.budget}-attempts report=chassis.report.v1]]`

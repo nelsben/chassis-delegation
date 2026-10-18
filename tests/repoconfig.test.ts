@@ -181,3 +181,24 @@ describe("MOD-18: issueRepo defaults to the mod's own tracker", () => {
     expect(resolveIssueRepo(mergeConfig({}, {}), undefined)).toEqual({ repo: '', own: false })
   })
 })
+
+describe('MOD-98: a refused gate keeps its reason (#160)', () => {
+  test('the loader drops the entry from gateMap and keeps why', () => {
+    const { config, errors } = parseRepoConfig(JSON.stringify({ gateMap: { test: 'npm test', bad: 'env FOO=1 npm test' } }))
+    expect(config.gateMap).toEqual({ test: 'npm test' })
+    expect(config.refusedGates).toEqual({ bad: 'a gate may not run env' })
+    expect(errors.join('\n')).toContain('gateMap.bad')
+  })
+
+  test('the effective config carries the refusals, and an id a later layer defines validly is no longer refused', () => {
+    const repo = parseRepoConfig(JSON.stringify({ gateMap: { bad: 'env X=1 make' } })).config
+    expect(mergeConfig(repo, {}).refusedGates).toEqual({ bad: 'a gate may not run env' })
+    expect(mergeConfig(repo, { gateMap: { bad: 'make' } }).refusedGates).toEqual({})
+    expect(mergeConfig({}, {}).refusedGates).toEqual({})
+  })
+
+  test('a refusal in the settings layer is kept too', () => {
+    const s = settingsLayer({ gateMap: JSON.stringify({ x: 'curl http://a' }) })
+    expect(s.config.refusedGates).toEqual({ x: 'a gate may not run curl' })
+  })
+})

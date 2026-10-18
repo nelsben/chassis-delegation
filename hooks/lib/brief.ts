@@ -42,6 +42,35 @@ export type AmendParse = { amends: Amend[]; malformed?: string }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+/** MOD-98: the header fields that hold a comma list of paths or globs, where an entry may be written in double quotes. */
+export const LIST_FIELDS = ['scope', 'forbid', 'scope_globs', 'forbid_globs', 'ignore'] as const
+
+/**
+ * MOD-98: a list entry that is a path or glob holding a space (`Old Stuff/**`, `My Docs/n.md`), as opposed to prose
+ * (`any copy text`): it names a folder (a slash), a glob (`* ? [`) or a file (an extension), and nothing else odd.
+ */
+export const isSpacedPath = (e: string): boolean =>
+  /\s/.test(e) && e === e.trim() && !/\s\s|\s\/|\/\s/.test(e) && /^[A-Za-z0-9_.@%+=:/~ *?[\]{}!^()&'-]+$/.test(e) && (e.includes('/') || /[*?[]/.test(e) || /\.[A-Za-z0-9]+$/.test(e))
+
+/** MOD-98: a header list as written: an entry that is a spaced path goes in double quotes, every other entry as it is. */
+export const listForHeader = (entries: readonly string[]): string => entries.map(e => (isSpacedPath(e) ? `"${e}"` : e)).join(',')
+
+/** MOD-98: the entries of a header list value, comma-separated outside double quotes, a quoted entry without its quotes. */
+function listEntries(value: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let inQuote = false
+  for (const c of value) {
+    if (c === '"') inQuote = !inQuote
+    else if (c === ',' && !inQuote) {
+      out.push(cur)
+      cur = ''
+    } else cur += c
+  }
+  out.push(cur)
+  return out
+}
+
 /**
  * Splits `k=v k2=v two words k3="quoted v"` into fields. A field starts at a
  * `key=` that follows whitespace (or the start); an unquoted value ends at the
@@ -60,8 +89,26 @@ export function parseFields(body: string, known: readonly string[]): Record<stri
     const key = m[1] as string
     let after = rest.slice(m[0].length)
     let value: string
-    const quoted = after.startsWith('"') ? /^"([\s\S]*?)"(?=\s|$)/.exec(after) : null
-    if (quoted) {
+    const isList = (LIST_FIELDS as readonly string[]).includes(key)
+    const quoted = after.startsWith('"') && !isList ? /^"([\s\S]*?)"(?=\s|$)/.exec(after) : null
+    if (isList) {
+      // MOD-98: a list runs to the next marker outside double quotes; its quoted entries are read whole
+      marker.lastIndex = 0
+      let cut = -1
+      let first = -1
+      for (let next = marker.exec(after); next; next = marker.exec(after)) {
+        if (first < 0) first = next.index
+        if (after.slice(0, next.index).split('"').length % 2 === 1) {
+          cut = next.index
+          break
+        }
+      }
+      // quotes that never balance (a stray one in prose) fall back to the first marker
+      if (cut < 0) cut = first < 0 ? after.length : first
+      const raw = after.slice(0, cut).trim()
+      value = raw.includes('"') ? listEntries(raw).map(e => e.trim()).join(',') : raw
+      after = after.slice(cut)
+    } else if (quoted) {
       value = quoted[1] as string
       after = after.slice(quoted[0].length)
     } else if (key === 'note') {

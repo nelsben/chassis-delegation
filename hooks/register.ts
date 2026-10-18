@@ -527,6 +527,8 @@ type Config = {
   guardBranches: string[]
   // defaults < .chassis-delegation.json < settings (5B)
   gateMap: Record<string, string>
+  /** MOD-98: gateMap entries the gate checker refused, id → why. */
+  refusedGates: Record<string, string>
   gateTemplates: string[][]
   agentTypes: Record<string, string>
   tierMap: Record<Tier, Alias>
@@ -620,6 +622,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       classifierSecondOpinion: o.classifierSecondOpinion !== false,
       guardBranches: parseGuardBranches(str('guardBranches')),
       gateMap: eff.gateMap,
+      refusedGates: eff.refusedGates,
       gateTemplates: gateTemplatesOf(eff.gateMap),
       agentTypes: eff.agentTypes,
       tierMap: eff.tierMap,
@@ -1023,6 +1026,8 @@ type Target = {
   hasConfig: boolean
   /** Its gate map: the config's, else `{ test: <detected command> }`; empty when it has neither. */
   gateMap: Record<string, string>
+  /** MOD-98: its config's gateMap entries the gate checker refused, id → why. */
+  refusedGates: Record<string, string>
   /** The gate map came from detection (no config, or a config with no gateMap). */
   detected: boolean
   domains: string[]
@@ -1084,7 +1089,7 @@ async function loadTarget($: Host, path: string): Promise<Target> {
       detected = true
     }
   }
-  return { path, name: repoFolderName(path), hasConfig: text !== undefined, gateMap, detected, domains: eff.domains, cardDir: eff.cardDir, spendByTier: eff.spendByTier, baseRef: eff.baseRef, briefExtra: eff.briefExtra }
+  return { path, name: repoFolderName(path), hasConfig: text !== undefined, gateMap, refusedGates: eff.refusedGates, detected, domains: eff.domains, cardDir: eff.cardDir, spendByTier: eff.spendByTier, baseRef: eff.baseRef, briefExtra: eff.briefExtra }
 }
 
 /** Where a target's cards are: its own cardDir when it has a config, else the session's .delegation/cards/<its folder name>/. */
@@ -5418,6 +5423,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   const made = cardsFromFields(input, {
     domains: target ? target.domains : cfg.domains,
     gateIds: Object.keys(target ? target.gateMap : cfg.gateMap),
+    refusedGates: target ? target.refusedGates : cfg.refusedGates,
     names,
     spendByTier: target ? target.spendByTier : cfg.spendByTier,
     here,
@@ -5632,7 +5638,7 @@ async function configView($: Host): Promise<CfgView> {
     values[f] = v
     sources[f] = locked.has(f) ? 'locked' : JSON.stringify(v) !== JSON.stringify(def) ? 'host' : 'default'
   }
-  return { plugin, fields, values, sources, rows: mine, specs, derived: { issueRepo: r.cfg.issueRepo, cardDir: r.cfg.cardDir } }
+  return { plugin, fields, values, sources, rows: mine, specs, derived: { issueRepo: r.cfg.issueRepo, cardDir: r.cfg.cardDir }, refusedGates: r.cfg.refusedGates }
 }
 
 /** A /config row the host has not got (it lists none for a folder-loaded mod): the set goes to the user options file instead. */
