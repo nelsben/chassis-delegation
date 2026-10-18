@@ -230,3 +230,23 @@ time, then run the `--verify` line on the same sha; no attempt is spent. When
 another claim is also unchecked the advice stays a resume, and its `prove:` list
 says of the gate that it timed out and need not be proved by the worker. A
 refuted verdict is advised as before.
+
+## When the verdict is missing or not trustworthy
+
+Use this when the verdict tool says `no attempt recorded`, or the verdict is
+`unverified` for a reason the worker cannot fix: no brief, or a gate that timed
+out. A worker resume does not help with either, so do not resume it.
+
+First, re-run the verifier on the same work with `/dispatch <id> --verify <sha>`.
+It spawns nothing and spends no attempt. Use the sha of the worker's head.
+
+Second, if that cannot judge it, check the work by hand:
+
+1. In a detached worktree at the worker's base, with the worker's test files
+   copied in, the red test fails.
+2. At the worker's head, the same test passes.
+3. Every changed path is inside the card's scope, and none is in forbid.
+4. The repo's full gate suite passes at the head.
+
+Then merge the card with a Review section that says it was verified by hand and
+why, for example that the verifier could not judge the work.
