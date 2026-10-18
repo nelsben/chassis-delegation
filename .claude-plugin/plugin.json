@@ -219,7 +219,7 @@
     "ledgerFile": {
       "type": "boolean",
       "title": "Ledger file",
-      "description": "Append one JSON line per judged attempt to <repo root>/.delegation/ledger.jsonl",
+      "description": "Append one JSON line per briefed spawn and one per judged attempt to <repo root>/.delegation/ledger.jsonl",
       "default": true
     },
     "gitGuard": {

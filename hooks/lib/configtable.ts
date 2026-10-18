@@ -32,7 +32,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['review', 'Checking the work', 'Have a second, read-only agent check what a worker says it did', 'choice', 'repo', 'off', ['off', 'on', 'on-frontier']],
   ['reviewTier', 'Checking the work', 'How capable the second checker is; empty means one level below the worker', 'tier', 'repo', ''],
   ['verdictVerbosity', 'Checking the work', 'How much detail shows when a worker\'s result is judged', 'choice', 'user', 'line', ['line', 'full', 'silent']],
-  ['ledgerFile', 'Checking the work', 'Keep a log of every judged attempt inside the repo', 'bool', 'user', true],
+  ['ledgerFile', 'Checking the work', 'Keep a log of every spawn and judged attempt inside the repo', 'bool', 'user', true],
   ['baseRef', 'Checking the work', 'The branch or commit that a worker\'s changes are compared against', 'text', 'repo', ''],
   ['ignore', 'Checking the work', 'Files and folders left out when checking a worker that shares your checkout', 'list', 'repo', ''],
   ['briefDir', 'Where things go', 'The folder where worker instructions are saved', 'text', 'user', ''],

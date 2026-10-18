@@ -100,7 +100,7 @@ User-scoped options (`/delegation config <field> <value>`, your options file, or
 | `defaultBudget` | `3` | attempts when the brief names no budget: spawn, resume, respawn |
 | `verdictVerbosity` | `line` | `line`: one row; `full`: the row plus every claim line; `silent`: a toast only |
 | `briefDir` | `""` | where briefs go; empty means `<root>/.delegation/briefs/`, and Claude Code's session scratchpad only when the root is not writable |
-| `ledgerFile` | `true` | append one JSON line per judged attempt to `<root>/.delegation/ledger.jsonl` |
+| `ledgerFile` | `true` | append one JSON line per briefed spawn and one per judged attempt to `<root>/.delegation/ledger.jsonl` |
 | `gitGuard` | `true` | the git guard on Bash |
 | `classifierSecondOpinion` | `true` | the card tool's dry run asks the classifier and prints its tier beside the card's; the answer is kept on the card's first attempt record as `classifierTier` |
 | `modelGlyphs` | `""` | the glyph that marks each model on the host's subagent row and every mod row: `alias=glyph` pairs (`sonnet=🟦`), `off` for none, empty for the built-in set (haiku 🟢, sonnet 🔵, opus 🟣, fable 🟠, other ⚪) |
