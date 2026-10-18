@@ -404,7 +404,7 @@ const LEDGER_FILE = '.delegation/ledger.jsonl'
  * boundary-only window ended at when the mod spawned nothing for it; the next window starts there (the mod never
  * writes the `.done` mark, so the record is what moves).
  */
-type DebriefRecord = { lastAt: number; watermark: number; lines: number; sessionId: string; mode?: 'breadcrumbs' | 'events'; builtIn?: boolean; agentId?: string; finishedAt?: number; path?: string; denied?: string; window?: DebriefWindow; prior?: DebriefRecord | null; skippedTo?: number }
+type DebriefRecord = { lastAt: number; watermark: number; lines: number; sessionId: string; mode?: 'breadcrumbs' | 'events'; builtIn?: boolean; agentId?: string; finishedAt?: number; path?: string; denied?: string; window?: DebriefWindow; prior?: DebriefRecord | null; skippedTo?: number; /** MOD-91 */ lastAttemptAt?: number; failedChecks?: { watermark: number; count: number } }
 /** `delegation.friction.<session>`: every friction event's count, and the last 100. */
 type FrictionRecord = { total: number; events: FrictionEvent[] }
 /** `delegation.eval.inflight`: the eval runner that is out (2D). */
@@ -2169,7 +2169,7 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   const ask = await storeGet<{ count: number; repo: string }>($, K.postAsk(sid))
   if (ask && ask.count > 0) s.postAsk = ask
   const debrief = await storeGet<DebriefRecord>($, K.debrief(sid))
-  if (debrief?.lastAt !== undefined) {
+  if (debrief?.lastAt !== undefined && debrief.lastAt > 0) {
     s.debrief = { at: debrief.lastAt, ...(debrief.agentId ? { agentId: debrief.agentId } : {}), ...(debrief.path ? { path: debrief.path } : {}), ...(debrief.finishedAt !== undefined ? { finishedAt: debrief.finishedAt } : {}) }
   }
   // MOD-33: the latest debrief's proposals with no record yet
@@ -2618,6 +2618,7 @@ function armIdle($: Host) {
  * refutes) since the last debrief. The instructions are the person's
  * `~/.claude/commands/debrief.md` when it exists, else hooks/templates/debrief.md.
  */
+const debriefStopSaid = new Set<string>()
 async function maybeDebrief($: Host) {
   if (debriefBusy || inTurn || !cfg.autoDebrief) return
   debriefBusy = true
@@ -2636,9 +2637,16 @@ async function maybeDebrief($: Host) {
       minNewLines: mode === 'breadcrumbs' ? cfg.debriefMinNewLines : cfg.debriefMinEvents,
       now: t,
       cooldownMs: cfg.debriefCooldownMs,
-      ...(prev ? { lastAt: prev.lastAt, ...(mode === 'breadcrumbs' && prev.mode !== 'events' ? { lastWatermark: prev.watermark } : {}) } : {}),
+      ...(prev ? { lastAt: prev.lastAt, ...(prev.lastAttemptAt !== undefined ? { lastAttemptAt: prev.lastAttemptAt } : {}), ...(prev.failedChecks ? { failedChecks: prev.failedChecks } : {}), ...(mode === 'breadcrumbs' && prev.mode !== 'events' ? { lastWatermark: prev.watermark } : {}) } : {}),
     })
-    if (!verdict.ok) return debug($, `no debrief: ${verdict.why}${mode === 'events' ? ' (friction events)' : ''}`)
+    if (!verdict.ok) {
+      // MOD-91: the two-failure stop is said once a session, as a row; the other reasons stay in the debug log
+      if (verdict.why.startsWith('debrief stopped:') && !debriefStopSaid.has(sid)) {
+        debriefStopSaid.add(sid)
+        await appendRow($, verdict.why)
+      }
+      return debug($, `no debrief: ${verdict.why}${mode === 'events' ? ' (friction events)' : ''}`)
+    }
     if (inTurn) return
     const res = await startDebrief($, basis, t, [])
     if (res.skipped !== undefined) return debug($, `no debrief: ${res.skipped}`)
@@ -2703,7 +2711,7 @@ async function startDebrief($: Host, basis: DebriefBasis, t: number, notes: stri
   // claimed before the spawn: never twice for this watermark, whatever the spawn does
   // MOD-10: the previous record is kept inside the claim; a debrief that fails its check puts it back
   const prior = prev ? ((({ prior: _p, window: _w, ...rest }) => rest)(prev) as DebriefRecord) : null
-  const record: DebriefRecord = { lastAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn, ...(window ? { window } : {}), prior }
+  const record: DebriefRecord = { lastAt: t, lastAttemptAt: t, watermark, lines, sessionId: sid, mode, builtIn: source.builtIn, ...(window ? { window } : {}), prior }
   await storeSet($, K.debrief(sid), record)
   // MOD-33: proposals the person already settled are named, so the agent does not propose them again
   const settled = await settledNotes($)
@@ -3169,11 +3177,30 @@ async function writeFindings($: Host, debriefPath: string, window: DebriefWindow
     }
     await appendRow($, check.lines.join('\n'))
     let body = text
-    if (check.strippedCount > 0 || check.evidenced > 0) {
+    // MOD-91: the file as the agent wrote it is kept before the check rewrites it; a check that is not clean keeps its lines beside the debrief
+    const stem = path.replace(/\.json$/, '')
+    const kept: string[] = []
+    const rewrites = check.strippedCount > 0 || check.evidenced > 0
+    if (rewrites) {
+      try {
+        await $.fs.write(`${stem}.orig.json`, text)
+        kept.push(`${stem}.orig.json`)
+      } catch (err) {
+        debug($, `debrief original not kept: ${String(err)}`)
+      }
+    }
+    if (rewrites) {
       body = JSON.stringify(check.debrief, null, 2) + '\n'
       await $.fs.write(path, body)
     }
     if (!check.clean) {
+      try {
+        await $.fs.write(`${stem}.check.txt`, check.lines.join('\n') + '\n')
+        kept.unshift(`${stem}.check.txt`)
+      } catch (err) {
+        debug($, `debrief check lines not kept: ${String(err)}`)
+      }
+      if (kept.length > 0) await appendRow($, `debrief check kept: ${kept.join(' · ')}`)
       await appendRow($, 'debrief record not moved: the previous record stands, so the next debrief covers this window again; the .done watermark was left as is (not to be marked)')
       return { moved: false, clean: false }
     }
@@ -3333,7 +3360,13 @@ async function onRunnerComplete($: Host, agentId: string, said: () => Promise<st
     if (moved) {
       const { prior: _prior, window: _window, ...rest } = debrief
       await storeSet($, K.debrief(sid), { ...rest, finishedAt: t, ...(path ? { path } : {}) })
-    } else await storeSet($, K.debrief(sid), debrief.prior ?? null)
+    } else {
+      // MOD-91: the prior record keeps its watermark and lastAt (coverage) but notes this attempt, and counts the failure on this start watermark
+      const base: DebriefRecord = debrief.prior ?? { lastAt: 0, watermark: -1, lines: 0, sessionId: sid }
+      const before = base.failedChecks
+      const count = before && before.watermark === debrief.watermark ? before.count + 1 : 1
+      await storeSet($, K.debrief(sid), { ...base, lastAttemptAt: debrief.lastAttemptAt ?? debrief.lastAt, failedChecks: { watermark: debrief.watermark, count } })
+    }
     $.ui.toast(moved ? debriefToast(answer) : 'debrief check failed: the debrief record was not moved')
     // MOD-32: the check prints after the agent handed back, so it is told, as autoEscalate resumes a worker, to mark its watermark
     if (written.clean) {
