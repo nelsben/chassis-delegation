@@ -81,6 +81,14 @@ cases of tests/eval/classifier-cases.jsonl`.
    file, checks the repo, and says what it would have set.
 5. **Read what changed** for your step below, so the brain expects it.
 
+### From 0.9.14 to 0.9.15
+
+What the brain will see:
+
+- **The store stays under the host's cap (MOD-89).** The host refuses a write once a mod's store passes 4 MiB, and the mod never deleted a record, so new workers were left with no verdict. The mod now deletes the records of tasks closed more than 7 days ago, and, over 3.5 MiB, older closed records until the store is under 3 MiB, never an open task's. The first session after the upgrade says `store: pruned <n> records (<x> MiB to <y> MiB of 4 MiB)`, a refused write now says `store write failed: …` once, and `/delegation` shows `store: <x> MiB of 4 MiB`.
+
+What to do: a window that loads the plugin from a folder named by `CLAUDE_CODE_PLUGIN_DIRS` needs a window reload to pick this up. A clone under `~/.claude/dev-mods` reloads at the end of the turn after `/delegation update`. Nothing in an existing repo's config needs to change.
+
 ### From 0.9.13 to 0.9.14
 
 What the brain will see:
