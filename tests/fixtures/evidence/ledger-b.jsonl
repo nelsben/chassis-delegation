@@ -1,0 +1,4 @@
+{"task":"BET-7","subtask":"main","attempt":1,"kind":"spawn","lineage":1,"tier":"standard","alias":"sonnet","verdict":"consistent","at":1790920800000,"verdictAt":1790921160000,"usd":0.75,"sessionId":"sess-bet-0002","sha":"fff9999"}
+{this is not json
+{"task":"BET-8","subtask":"main","attempt":1,"kind":"spawn","lineage":1,"tier":"standard","alias":"sonnet","verdict":"no-report","at":1790924400000,"verdictAt":1790924520000,"usd":0.25,"sessionId":"sess-bet-0002"}
+{"task":"BET-8","subtask":"main","attempt":2,"kind":"resume","lineage":1,"tier":"standard","alias":"sonnet","verdict":"refuted","at":1790928000000,"verdictAt":1790928480000,"usd":1,"sessionId":"sess-bet-0002"}
