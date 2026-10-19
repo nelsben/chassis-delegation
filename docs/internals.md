@@ -230,6 +230,15 @@ verdict waking the brain, `/delegation`, `dispatch` and the other tools,
 - **`$.state`** holds `chassis-delegation.workers`, `.status`, `.lastVerdict`
   and `.queue`, declared in `hooks/types/index.d.ts`.
 
+## Evidence
+
+`bin/evidence.mjs` reads the `.delegation/ledger.jsonl` files named on its command
+line and prints one JSON object: outcomes, cost and time, with repos labelled A, B, C
+in argument order. It reads only those files, writes nothing and needs only Node.
+It never emits a path, task id, sha, session id, agent id, brief path or free text,
+so its output is safe to commit. Run `node bin/evidence.mjs a/ledger.jsonl b/ledger.jsonl`.
+No arguments: usage on stderr, exit 2. A missing file: an error naming its position, exit 1.
+
 ## Developing
 
     claude plugin validate <this folder>     # the gate: manifest + what the module hooks and calls
