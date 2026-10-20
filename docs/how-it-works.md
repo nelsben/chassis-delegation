@@ -81,7 +81,7 @@ sequenceDiagram
 4. The sha must resolve and be reachable from the branch.
 5. The delta from base must equal files= exactly.
 6. Every changed path must sit inside scope and outside forbid.
-7. The red evidence file must exist and hold a failure marker.
+7. The red evidence file must exist and hold the failing run's marker, or be a short file with no marker (2048 bytes or less) that the red test's own run at the head confirms.
 8. The gate re-runs only when the tree is clean and HEAD is the sha.
 9. All claims held: consistent, and next=accept.
 10. Any claim failed: refuted, and next=resume agent=id.
@@ -108,7 +108,7 @@ sequenceDiagram
     else still failing, budget left
         B->>D: respawn with the same brief
     else budget spent
-        V-->>B: judged, next=check by hand
+        V-->>B: judged, next=stop, raise budget= in the brief
     end
     B->>D: /dispatch id --verify sha
     D->>V: judge the work already in the worktree
@@ -122,7 +122,7 @@ sequenceDiagram
 5. The verifier judges it against the same brief: same scope, forbid and gate.
 6. Consistent: the advice is accept.
 7. Still failing with budget left: the advice is a resume, later a respawn.
-8. The budget is spent: the attempt is still judged, but the advice is check by hand.
+8. The budget is spent: the attempt is still judged, but the advice is next=stop. Raise budget= in the brief and the ladder resumes from that attempt, with the brief re-read.
 9. For finished work or a missing verdict, `/dispatch <id> --verify <sha>` runs the verifier with no spawn.
 10. It re-judges the same attempt, and no attempt is spent.
 
@@ -134,13 +134,14 @@ sequenceDiagram
 sequenceDiagram
     participant P as Person
     participant B as Brain
+    participant C as Card tool
     participant D as Dispatch tool
     participant R as Other repo
     participant W as Worker
     participant V as Verifier
     P->>B: build it in the sibling repo
-    B->>D: card tool with repo=path
-    D-->>B: card and dry run naming the repo and its gate
+    B->>C: card tool with repo=path
+    C-->>B: card and dry run naming the repo and its gate
     B->>D: dispatch tool
     D->>R: git fetch origin main
     D->>R: cut the worktree from origin/main
@@ -152,8 +153,8 @@ sequenceDiagram
 ```
 
 1. The brain calls the card tool with repo set to the absolute path of the other checkout.
-2. The dry run names that repo, its config and the gate it will use.
-3. Dispatch fetches that repo's origin/main and cuts the worktree from it.
+2. The card tool's dry run names that repo, its config and the gate it will use.
+3. On the dispatch tool call, dispatch fetches that repo's origin/main and cuts the worktree from it.
 4. The brief stays in the session's briefDir, and its header carries repo=path.
 5. The worker runs in the other repo's worktree.
 6. The verifier takes the delta and runs the gate in that worktree.
