@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.18 — 2026-10-19
 
 - **docs/how-it-works.md shows the mod's flow in four sequence diagrams (MOD-105).** Card to merge, what the verifier checks, resume and the attempt budget, and a card for another repo. Each is a mermaid block with an italic alt line above it and a numbered plain-text walkthrough below, so the page reads without mermaid. Docs only; no behaviour change.
 
