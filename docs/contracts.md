@@ -33,12 +33,12 @@ Optional fields go after `gate=` and before `spend=`, in this order: `repo=`, `b
 | `forbid_globs` | globs | replaces a prose `forbid=` | none | checked in its place |
 | `red_test` | a command, `none`, empty | the test that fails before the fix | none | set: the red claim is checked; dispatch warns when a path in it is outside scope or inside forbid |
 | `gate` | gate ids | what must pass | required unless `repo=none` | each id runs from `gateMap` in the worker's tree |
-| `spend` | dollars | per-attempt ceiling | the card's `spend:`, else `spendByTier`; `0` writes none | rendered as the Rules' spend line ([Spend ceiling](spend.md#spend-ceiling)) |
+| `spend` | dollars | per-attempt ceiling | the card's `spend:`, else `spendByTier`; `0` writes none | rendered as the Rules' spend line ([Spend](spend.md)) |
 | `budget` | `<n>-attempts` | attempts for the task | `defaultBudget` | counts spawns, resumes and verify attempts, then denies the next spawn; another form falls back to the default with a warning |
 | `report` | `chassis.report.v1` | report grammar | that value | not checked |
 | `repo` | absent, `here`, `none`, an absolute path | where the tree is | absent: a worktree | see [repo=here](#repohere-the-main-checkout), [Research cards](#research-cards), [Delegating into another repo](#delegating-into-another-repo) |
-| `base` | branch, sha, `HEAD~2` | where the delta starts | `baseRef`, else `origin/main`, `main`, `origin/master`, `master` | cut point and diff base; written when `--base` is not `origin/main`; a value starting `-` or an `a..b` range refuses the brief |
-| `ignore` | globs | paths off a repo=here delta | config `ignore`, card folder, paths other in-flight repo=here cards claim | subtracted before scope and files |
+| `base` | branch, sha, `HEAD~2` | where the delta starts | `baseRef`, else the `origin/main` chain below | cut point and diff base; written when `--base` is not `origin/main`; a value starting `-` or an `a..b` range refuses the brief |
+| `ignore` | globs | paths off a repo=here delta | see [repo=here](#repohere-the-main-checkout) | subtracted before scope and files |
 | `outdir` | absolute folder | output folder outside the repo | the card's `outdir:`, else the folder of its first absolute scope entry | fills `{outdir}`; relative `artefacts=` read against it |
 | `scratch` | absolute folder | helper files | the card's `scratch:`, else `<system temp>/chassis-delegation/<ID>` | written with `outdir=`, `repo=here`, `repo=none`, or when the card names one |
 | `resources` | words of letters, digits, `.` `_` `:` `-` | exclusive resources held while the worker runs | none | a spawn while a running worker holds one is queued |
@@ -47,15 +47,15 @@ A dispatch naming a base against a reused brief sets or replaces `base=` alone a
 `reused, base= replaced <old> → <new>`. A reused brief keeps its amend blocks and hand edits; one written for another
 repo, worktree or card is rewritten ([Internals](internals.md#developing)). The repo file's `briefExtra` adds lines.
 
-The body comes from `hooks/templates/brief.md`. It tells the worker to work only in its worktree; to install first by
-the lockfile (`package-lock.json` `npm ci`, `pnpm-lock.yaml` `pnpm i --frozen-lockfile`, `yarn.lock`
-`yarn install --immutable`, `requirements.txt` `pip install -r requirements.txt`); to save the red test's failing
-output to `.delegation/<ID>/red-<attempt>.txt` before changing any source, a new file each attempt; to leave the gate
-green and the tree clean; never to set `CHASSIS_SESSION_ID`, `CHASSIS_TASK` or `CHASSIS_ATTEMPT`
-([A worker's identity](spend.md#a-workers-identity)); to commit and hold, never pushing or committing on main; and to
-end with the report line. Its sections pick the mode (`{{#worktree}}`, `{{#here}}`, `{{#none}}`); `{{#repo}}` holds
-the red-test lines; `{{#outdir}}` and `{{#scratch}}` render when the brief names the folder; `{{reportExtra}}` is the
-`artefacts=` and `metrics=` placeholders. A template without sections renders the same in every mode.
+The body, from `hooks/templates/brief.md`, tells the worker to work only in its worktree; install first by the
+lockfile (`package-lock.json` `npm ci`, `pnpm-lock.yaml` `pnpm i --frozen-lockfile`, `yarn.lock`
+`yarn install --immutable`, `requirements.txt` `pip install -r requirements.txt`); save the red test's failing output
+to `.delegation/<ID>/red-<attempt>.txt` before changing source, a new file each attempt; leave the gate green and the
+tree clean; never set `CHASSIS_SESSION_ID`, `CHASSIS_TASK` or `CHASSIS_ATTEMPT`
+([A worker's identity](spend.md#a-workers-identity)); commit and hold, never pushing or committing on main; and end
+with the report line. Sections pick the mode (`{{#worktree}}`, `{{#here}}`, `{{#none}}`); `{{#repo}}` holds the
+red-test lines; `{{#outdir}}` and `{{#scratch}}` render when named; `{{reportExtra}}` is the `artefacts=` and
+`metrics=` placeholders. A template without sections renders the same in every mode.
 
 **Inline header.** A header in the Agent prompt works as a brief when the prompt names no `….brief.md` and the header
 has `task=`, `scope=` or `scope_globs=`, and `gate=` or `repo=none`. The mod writes it and the rest of the prompt to
@@ -76,16 +76,15 @@ note: no brief file named in the prompt; the inline header lacks gate= (or repo=
       "prompt": "Your brief is the file <brief>. Read it whole, then follow it exactly." }
     ```
 
-Pass that JSON to the Agent tool verbatim. The mod's `agent.spawn` hook finds the brief, picks the model, runs the
-worker in the prepared folder (the worktree, or the root for repo=here), takes a slot and records the attempt
-(`source: brief`). Because the brain made the call, the git guard and the hand-back hooks see the worker; a subagent a
-plugin starts itself runs outside that plugin's hooks.
+Pass that JSON to the Agent tool verbatim. The `agent.spawn` hook finds the brief, picks the model, runs the worker
+in the prepared folder (the worktree, or the root for repo=here), takes a slot and records the attempt
+(`source: brief`). Because the brain made the call, the mod's hooks see the worker; a subagent a plugin starts itself
+runs outside that plugin's hooks.
 
 The hook refuses with the dispatch result's own line: a second spawn of a running attempt
 (`<ID> not spawned — already running as attempt 1 …`); a spawn past the budget or onto finished work
-([Look before you respawn](#look-before-you-respawn)); a spawn with every slot taken
-(`queued: <ID> — the mod will tell you when a slot frees …`); and a spawn of a resource a running worker holds, slot
-or not (`queued: <ID> — waiting for resource <name> (held by <ID>)`).
+([Look before you respawn](#look-before-you-respawn)); and a spawn with every slot taken, or
+of a resource a running worker holds, is queued (`queued: <ID> — …`).
 
 **The queue.** The queue is advice ([Known issues](internals.md#known-issues)). A hand-back that frees a slot says
 `ready: <ID> — run its spawn block (/dispatch <ID> prints it again)` once in its row, and "Delegation state" repeats
@@ -101,11 +100,11 @@ setting, cost known only at its end. A `repo=here` or `repo=none` row always wai
 ### Waking the brain
 
 A hand-back starts the brain's turn before the verifier finishes. **Call the `verdict` tool with `task=<id>` in that
-turn, before ending it.** The dispatch result and a posture line say so while a background worker runs.
+turn, before ending it.**
 
 The `verdict` tool (`mcp__chassis-delegation__verdict`) takes `task`, `subtask` (default `main`) and `waitSeconds`
 (default 600, at most 900). It returns the verdict row and any `ready:` lines once the latest attempt is judged,
-polling the mod's own records about every 5 seconds, else `<task>: still verifying after <n>s; call verdict again`.
+reading only its own records about every 5 seconds, else `<task>: still verifying after <n>s; call verdict again`.
 
 `wakeOnVerdict` (default `false`) also submits each background verdict as a turn of the brain's own, never as the
 person's words. A `--verify` or foreground verdict wakes nothing. A consistent wake for a merged or accepted task is
@@ -181,11 +180,13 @@ else `baseRef`, else the first of `origin/main`, `main`, `origin/master`, `maste
 | `scope` | every path in `merge-base(<base>, sha)..sha`, and the outside delta for absolute entries, matches scope and no forbid | **refuted**; **unverified** for a prose scope or malformed amend | `resume agent=<id> — amend: [[amend v=1 scope+=<path> reason=…]]` naming the first stray path (outside delta: `remove <path>, or amend: …`); respawn at the same tier |
 | `files` | `files=` equals that set: a moved file once at its new path; `dir/` and `dir/**` cover all changed under it, `dir/*` one level; an entry with nothing changed is invented | **refuted**, naming each missing or invented path | list the paths or revert the extras; respawn at the same tier |
 | `gate` | HEAD is the sha and `git status --porcelain` is empty, then each `gateMap` id runs: exit 0 holds under `gate=pass`; a red gate holds under `gate=fail` | **refuted** with the last 8 lines; **unverified** for a dirty tree, HEAD not the sha, an unmapped id, exit 126 or 127 | `resume agent=<id>`, then a respawn one tier up |
-| `red` | with `red_test` set: the file is in the tree, not empty, holds a failure marker; byte-identical (sha-256) to an earlier attempt's, that one held | **refuted** for outside the tree, missing, empty or an unproven reuse; **unverified** for no `red=` or no marker | `resume agent=<id>`, then a respawn one tier up |
+| `red` | with `red_test` set: the file is in the tree, not empty, holds a failure marker, or (at most 2048 bytes, no marker) the red test run once at the head exits 0 and prints otherwise; byte-identical (sha-256) to an earlier attempt's, that one held | **refuted** for outside the tree, missing, empty or an unproven reuse; **unverified** for no `red=`, or no marker when the file is larger or the run at the head failed, did not run or printed the same | `resume agent=<id>`, then a respawn one tier up |
 | `artefacts` | when reported: each exists and is not empty | **refuted**, naming the first; **unverified** if unreadable | `resume agent=<id>` |
 | `pr` | `pr=none`, or `gh pr view <n> --json state` finds it | **refuted** | `resume agent=<id>`, then a respawn at the same tier |
 | all held | | **consistent** | `accept`; with `review` on, `review` and a reviewer's spawn block ([Review](review-and-merge.md#review)) |
-| none failed, one unchecked | | **unverified** | `resume agent=<id> — prove: <claim> (<reason>)`, reasons cut to 160 characters, while the budget lasts; else `check by hand — unverified is not a pass` |
+| none failed, one unchecked | | **unverified** | `resume agent=<id> — prove: <claim> (<reason>)`, reasons cut to 160 characters, while the budget lasts; else `check by hand — unverified is not a pass`. Only a gate stopped at the verifier's time limit: time it by hand, then `/dispatch <ID> --verify <sha>` (no attempt spent). Only a red file with no marker, under `gate=pass`: `check red by hand — … if it shows the red state, accept`, plus a resume while the budget lasts |
+
+At the budget, a refuted, no-report or confirmed `gate=fail` verdict advises `stop — budget exhausted for <ID> (<n> attempts); raise budget= in <brief> to continue (the ladder resumes from attempt <n>, the brief is re-read)`.
 
 Failure markers, in any case: `fail`, `error`, `not ok`, `✗`, `exit code 1`-`9`, `exit 1`, `AssertionError`,
 `expected`. A held red claim shows the file's size and its first marker line with a failing word, else the first that
@@ -200,7 +201,7 @@ parsing rows, `verdict=` or `.delegation/ledger.jsonl`, accept both words.
 changed, runs once more: green, the claim says `gate green on rerun (first run: 2 timeouts in untouched tests)`; red,
 it is refuted on the second run with a `note:`. Output not readable as a list of failing tests is never rerun. Engine
 gates (`claude plugin test`) take turns within a session through the store lock `delegation.engineGate`, which expires
-after the 9-minute gate timeout; a wait shows as `waited 40 s for <ID>'s engine gate`.
+after the 9-minute gate timeout.
 
 The changed paths go to `<root>/.delegation/<ID>/files.txt` before the gate runs; a gate command takes `{files}`,
 `{worktree}` and `{outdir}` (`gateMap` in [Configuration](configuration.md#configuration)). Naming `{outdir}` with no
@@ -227,9 +228,8 @@ carries the spawn block for the brain to make. A refute on `sha`, `gate` or `red
 tier up; a first failed claim of `scope`, `files`, `branch` or `pr` holds the tier (`(held: a scope refute)`), and a
 no-report always stays. `autoEscalate` performs a resume, never a spawn.
 
-The brain may resume a worker judged consistent or unverified when the diff shows a problem. A hand-back at a new sha is
-the next attempt (kind `resume`, against `budget=`), judged as usual, past the budget too; at the same sha it changes
-nothing.
+The brain may resume a consistent or unverified worker when the diff shows a problem: a hand-back at a new sha is the
+next attempt (kind `resume`), judged even past the budget; at the same sha nothing changes.
 
 ### Look before you respawn
 
@@ -272,8 +272,7 @@ no `git worktree add`; the worker runs in the session root.
   resource queues instead.
 - `--here` and `--replay` do not mix.
 
-The body tells the worker it shares the checkout, to touch only its scope, not to commit unless the card says so, and
-to report `branch=<current>` and `sha=HEAD` or its commit.
+A repo=here worker reports `branch=<current>` and `sha=HEAD`, or the sha it committed.
 
 The claims change: `branch` holds when it is the current branch (another is unchecked); `sha` holds for `HEAD`, `none`
 or a sha that resolves; the gate runs on the tree as it stands, the clean-tree rule off. The delta is every path
@@ -297,7 +296,7 @@ Give `repo` as the absolute path of another git checkout (`~` expanded) on the `
 - **The config** is that repo's own; without one the gate is the one `/delegation setup` would detect, as id `test`, or
   a command written out on the card tool. The dry run prints `repo: <path> (config: its own | none, gate: <cmd>)`.
 - **The allowlist** takes the same git forms with `-C` set to that path, for that task only; the guard holds its
-  `main` and `master`. The board shows the folder name beside the task: `T-1 [notes-app]`.
+  `main` and `master`. Boards show the repo folder beside the task.
 
 A relative path, the session's own repo, a folder with no `.git` or unsafe characters are refused in one line.
 `--replay` is not supported here. `/delegation setup <path>` and `/delegation init <path>` (the tools' `path`) check
@@ -336,8 +335,7 @@ files=none`.
 **Resources.** A card may carry `resources: [live-app]`: free-form words, the same word meaning the same thing. A
 worker holds them from spawn to hand-back or run end. A card whose resource a running or starting worker holds is
 queued, slot free or not, with no spawn block, and keeps its place when asked again. Of several queued cards naming one
-resource only the first is made ready; a waiting row takes no slot. For repo=here cards a shared resource queues and
-never refuses.
+resource only the first is made ready; a waiting row takes no slot.
 
 **Fan-out.** The `card` tool takes `lanes: [{ title, scope, doneWhen? }]` beside the shared fields (`title` and
 `doneWhen` as the umbrella, `why`, `gate`, `tier`, `repo`, `redTest`, `budget`, `spend`, `resources`, `forbid`). It
