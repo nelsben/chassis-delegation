@@ -6,80 +6,80 @@
 
 1. **Update.** Between turns, with no worker running, type `/delegation update`. It runs `git fetch origin main` then `git merge --ff-only origin/main` in the loaded folder (the `loaded from` line of `/delegation`), prints the CHANGELOG sections newer than yours, and adds any missing default key to `.chassis-delegation.json`. A dirty tree, a non-fast-forward or a folder that is not a clone refuses and changes nothing.
 2. **By hand, if that fails.** Run `git -C <folder> pull --ff-only origin main`. On "unrelated histories" (a clone made before 2026-10-05), delete the folder and run `git clone https://github.com/nelsben/chassis-delegation.git <folder>`.
-3. **Reload.** A folder under `~/.claude/dev-mods` reloads when the turn ends; run the pull from inside that session. Any other folder (`--plugin-dir`, `CLAUDE_CODE_PLUGIN_DIRS`) needs the window reloaded (VS Code: Developer: Reload Window; terminal: restart `claude`).
+3. **Reload.** This applies at every version. A folder under `~/.claude/dev-mods` reloads when the turn ends; run the pull from inside that session. Any other folder (`--plugin-dir`, `CLAUDE_CODE_PLUGIN_DIRS`) needs the window reloaded (VS Code: Developer: Reload Window; terminal: restart `claude`).
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
 ### From 0.9.16 to 0.9.17
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`).
+Nothing to do.
 Use `/dispatch <ID> --verify <sha>` for a gate that hit the verifier's time limit, and `/delegation accept <ids>` or `--owed` for owed rows.
-Optional: set `waitStallMin` (default 20, 0 = off). Nothing in a repo's config has to change.
+Optional: set `waitStallMin` (default 20, 0 = off).
 Detail: [CHANGELOG 0.9.17](../CHANGELOG.md).
 
 ### From 0.9.15 to 0.9.16
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). If the debrief stops, run `/delegation debrief` by hand.
+What to do: if the debrief stops, run `/delegation debrief` by hand.
 Detail: [CHANGELOG 0.9.16](../CHANGELOG.md).
 
 ### From 0.9.14 to 0.9.15
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). Nothing in a repo's config has to change.
+Nothing to do.
 Detail: [CHANGELOG 0.9.15](../CHANGELOG.md).
 
 ### From 0.9.13 to 0.9.14
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). For an outside scope root, forbid the narrowest folder that matters.
+What to do: for an outside scope root, forbid the narrowest folder that matters.
 Detail: [CHANGELOG 0.9.14](../CHANGELOG.md).
 
 ### From 0.9.12 to 0.9.13
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). Move any bookmark to an old README anchor to the docs page of the same heading.
+What to do: move any bookmark to an old README anchor to the docs page of the same heading.
 Detail: [CHANGELOG 0.9.13](../CHANGELOG.md).
 
 ### From 0.9.11 to 0.9.12
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). Nothing in a repo's config has to change.
+Nothing to do.
 Detail: [CHANGELOG 0.9.12](../CHANGELOG.md).
 
 ### From 0.9.10 to 0.9.11
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). `/delegation config modelGlyphs off` turns the glyphs off; `alias=glyph` pairs such as `sonnet=🟦` change them.
+What to do: `/delegation config modelGlyphs off` turns the glyphs off; `alias=glyph` pairs such as `sonnet=🟦` change them.
 Detail: [CHANGELOG 0.9.11](../CHANGELOG.md).
 
 ### From 0.9.9 to 0.9.10
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). Merge a consistent card with `/delegation merge <ID>`, then run the printed block and `/delegation merge <ID> --finish`.
+What to do: merge a consistent card with `/delegation merge <ID>`, then run the printed block and `/delegation merge <ID> --finish`.
 Detail: [CHANGELOG 0.9.10](../CHANGELOG.md), [Merging a card](review-and-merge.md#merging-a-card).
 
 ### From 0.9.8 to 0.9.9
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). To set a personal option on the VS Code extension, run `/delegation config <field> <value>`; `modelGlyphs` changes the glyphs.
+What to do: to set a personal option on the VS Code extension, run `/delegation config <field> <value>`; `modelGlyphs` changes the glyphs.
 Detail: [CHANGELOG 0.9.9](../CHANGELOG.md).
 
 ### From 0.9.7 to 0.9.8
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). Nothing in a repo's config has to change.
+Nothing to do.
 Detail: [CHANGELOG 0.9.8](../CHANGELOG.md).
 
 ### From 0.9.6 to 0.9.7
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). Nothing in a repo's config has to change.
+Nothing to do.
 Detail: [CHANGELOG 0.9.7](../CHANGELOG.md).
 
 ### From 0.9.5 to 0.9.6
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). Set options with `/delegation config <field> <value>`.
+What to do: set options with `/delegation config <field> <value>`.
 Detail: [CHANGELOG 0.9.6](../CHANGELOG.md).
 
 ### From 0.9.4 to 0.9.5
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). To keep the old wakes, run `/delegation config wakeOnVerdict true` (or the `/config` menu in a terminal).
+What to do: to keep the old wakes, run `/delegation config wakeOnVerdict true` (or the `/config` menu in a terminal).
 Detail: [CHANGELOG 0.9.5](../CHANGELOG.md).
 
 ### From 0.9.3 to 0.9.4
 
-What to do: reload the window if `CLAUDE_CODE_PLUGIN_DIRS` loads the mod (a `~/.claude/dev-mods` clone reloads after `/delegation update`). Nothing in a repo's config has to change.
+Nothing to do.
 Detail: [CHANGELOG 0.9.4](../CHANGELOG.md).
 
 ### From 0.9.2 to 0.9.3
