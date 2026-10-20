@@ -13,7 +13,7 @@ card-to-merge flow is in [How it works](how-it-works.md).
    the card's path, a summary and the brief header:
 
        wrote …/agents/tasks/OPS-1-add-a-function-that-reads.md
-       OPS-1 · standard → sonnet · scope game_decompiler/**, tests/** · gate test · red: python3 -m unittest tests.test_rom · 2 attempts · $6 ceiling
+       OPS-1 · standard → sonnet · scope src/reader/**, tests/** · gate test · red: python3 -m unittest tests.test_reader · 2 attempts · $6 ceiling
        [[brief v=1 task=OPS-1 subtask=main purpose=build tier=standard model=sonnet …]]
 
 2. **Say go.** Claude calls the `dispatch` tool (or `card` again with
@@ -68,8 +68,8 @@ spec. The `card` tool writes it. `<ID>` is `<PREFIX>-<number>[letter]`, such as 
     budget: 2-attempts          # spawns + resumes before it comes back to you
     spend: 4                    # optional: dollars per attempt (else spendByTier; 0 = no ceiling)
     repo: here                  # optional: here (see repo=here) | none (see Research cards) | an absolute path (see Delegating into another repo)
-    outdir: /out/hair           # optional: output folder outside the repo; default the first absolute scope entry's folder
-    scratch: /tmp/hair-scratch  # optional: helper files; default <system temp>/chassis-delegation/<ID>
+    outdir: /out/results           # optional: output folder outside the repo; default the first absolute scope entry's folder
+    scratch: /tmp/scratch-dir  # optional: helper files; default <system temp>/chassis-delegation/<ID>
     resources: [blender-live]   # optional: exclusive resources held while it runs
     ---
     ## Why … ## Done when …
