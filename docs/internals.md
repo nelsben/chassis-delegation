@@ -2,22 +2,32 @@
 
 Running without the engine, known issues, the store and ledger, and developing the mod.
 
+## Parts
+
+| File or folder | What it does |
+| --- | --- |
+| `hooks/register.ts` | every `$` call, spelled `$.noun.method(...)` or passed on, never stored |
+| `hooks/lib/*.ts` | pure code, no `$` |
+| `hooks/lib/verify-native.ts` | the verifier: report and brief grammar, gate rules, `redClaim` |
+| `hooks/lib/gates.ts`, `hooks/lib/allow.ts` | the gate commands; the allowlist |
+| `hooks/lib/repoconfig.ts`, `hooks/lib/init.ts` | reads and scaffolds `.chassis-delegation.json` |
+| `hooks/lib/gitguard.ts` | the git guard |
+| `hooks/lib/dispatch.ts`, `hooks/lib/crossbrief.ts` | the card, brief and worktree; whether an existing brief is reused |
+| `hooks/lib/cleanstop.ts`, `hooks/lib/evaltrigger.ts` | decide the debrief; decide the eval |
+| `hooks/lib/retention.ts` | the store prune plan |
+| `hooks/types/index.d.ts` | declares `$.state` |
+| `bin/chassis-hook.mjs` | the settings.json fallback: plain node, no `$`; reads the pure libraries via `bin/ts-resolve.mjs` |
+| `bin/evidence.mjs` | the ledger summary (see Evidence) |
+| `tests/harness.ts` | answers every `$` call from memory |
+| `tests/node/bin.node.mjs` | pipes hook input into `node bin/chassis-hook.mjs` against repos under `tests/.tmp/`: consistent, refuted, no report, a commit on `main` (denied), one on `agent/x/y` (passes) |
+| `tests/node/verify-native.git.node.mjs` | builds git repos under `tests/.tmp/` for each verdict case |
+| `tests/selfcheck.sh` | prints the settings.json block below when the rollout switch is off |
+
 ## Without the engine: two settings.json hooks
 
-The mod is a function-hook plugin, so where the engine's rollout switch serves
-off, or a host cannot load a hooks module, none of it runs. The two parts most
-worth carrying are pure functions: the native verifier (the report and brief
-grammar, the gate rules) and the git guard. `bin/chassis-hook.mjs` exposes
-them through ordinary `settings.json` command hooks, with no engine behind
-them. It needs only a `node` on PATH that strips types by itself, **node 22.18
-or newer**, where that is on by default; nothing is installed or fetched. On an
-older node it prints that to stderr and exits 1, a hook error that blocks
-nothing.
+Where the rollout switch serves off, the mod does not load. `bin/chassis-hook.mjs` offers the native verifier and git guard as `settings.json` command hooks. It needs **node 22.18 or newer**; an older node exits 1, a hook error that blocks nothing.
 
-Merge this into the `"hooks"` block of `~/.claude/settings.json` (every
-project) or `.claude/settings.json` (one repo), with `<this folder>` the
-absolute path of your clone. `tests/selfcheck.sh` prints it with the path
-filled in when it finds the rollout switch off.
+Merge this into the `"hooks"` block of `~/.claude/settings.json` (every project) or `.claude/settings.json` (one repo), with `<this folder>` your clone's absolute path. Use it only where the mod does not load.
 
     {
       "hooks": {
@@ -30,205 +40,91 @@ filled in when it finds the rollout switch off.
       }
     }
 
-Use it where the mod does not load. With the mod loaded as well you would get
-two verdict rows and two guards for one worker.
+- **`post-agent`** takes the last `[[report …]]` of the result and prints nothing with none. It finds the brief (the `….brief.md` path, else an inline `[[brief …]]` header; none: git-only checks) and the worker's tree (the brief's `repo=`, the call's `cwd`, the report's branch worktree, the sibling `<repo>-<id>`), then prints the verdict row.
+- **`pre-bash`** runs the git guard over the command, following `cd` and `git -C`, and prints a deny. It guards `main` and `master`.
 
-- **`post-agent`** (PostToolUse on the Agent tool) reads the hook input on
-  stdin and takes the last `[[report …]]` of the result. With none it prints
-  nothing and exits 0. Otherwise it finds the brief the way the mod does: the
-  `….brief.md` path the prompt names, else an inline `[[brief …]]` header in
-  the prompt (a report with no brief is checked for what git alone can say, as
-  in a cardless hand-back, and is never consistent). It finds the worker's tree
-  (the brief's `repo=`, the call's `cwd`, the worktree that has the report's
-  branch checked out, the sibling `<repo>-<id>` worktree, else the repo the
-  hook runs in), runs the verifier there, and prints the verdict row as the
-  hook's additional context:
+Every command the wrapper runs passes `hooks/lib/allow.ts` with the gate map of `.chassis-delegation.json`; it never pushes or installs.
 
-      {"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"chassis-delegation: verdict=consistent task=T-1 via=settings-hook next=accept\nclaim branch: held — …"}}
+What differs from the engine:
 
-  The row is the mod's own: the verdict line, then one line per claim. The
-  gate can take minutes, hence the `timeout`.
-- **`pre-bash`** (PreToolUse on the Bash tool) runs the git guard over the
-  command, against the repo the command runs in (`cd` and `git -C` are
-  followed), and when it refuses prints the deny with the guard's own reason:
+- the row says `via=settings-hook` with no attempt count, so a red file reused from an earlier attempt is not caught;
+- a `repo=here` or `repo=none` brief is `unverified`, and `[[amend …]]` blocks are not applied;
+- gates take no turns, so two workers verified at once can time each other out.
 
-      {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"chassis-delegation: no commit on main; branch first (git checkout -b agent/<domain>/<id>)"}}
+**The red claim.** `redClaim` holds a red file that has a failure marker. A file with no marker and at most 2048 bytes (`RED_GREEN_MAX_BYTES`) is settled by the red test's own run:
 
-  Anything else prints nothing and exits 0. The guarded branches are `main`
-  and `master`.
+1. The verifier runs the brief's `red_test` once at the worker's head, under the gate time limit. `redTestCommand` takes the words before any prose, and only an allowlisted command.
+2. The result goes to `redClaim` as `green`.
+3. Exit 0 with output unlike the red file's is held.
+4. A failing, timed-out or unrunnable run, or the same output, stays unchecked; the advice is `check red by hand`.
+5. A larger file, `red_test` of `none` and a file with a marker are unchanged.
 
-Every command the wrapper runs itself (read-only git, and the repo's gate)
-first passes `hooks/lib/allow.ts` with the gate map of the repo's
-`.chassis-delegation.json`, as in the engine; it never pushes, installs or
-fetches. The gate map is read from that file alone (there is no `/config`
-without the engine).
-
-What differs from the engine's verdict:
-
-- the row has no attempt count (`via=settings-hook` in its place): nothing is
-  recorded, so a red file reused from an earlier attempt is not caught;
-- a `repo=here` or `repo=none` brief gets an `unverified` row saying so;
-- the hand-back's `[[amend …]]` blocks are not applied (a note says so), so the
-  worker is judged against the brief as written;
-- a gate red only on timeouts in untouched tests is run once more, as in the
-  engine, but engine gates take no turns (the turn is held in the engine's
-  store), so two workers verified at once can still time each other out.
-
-**The red claim and a state-style red file (MOD-102, #166).** `redClaim` in `hooks/lib/verify-native.ts` holds a
-red file that has a failure marker. A file with no marker and at most 2048 bytes (`RED_GREEN_MAX_BYTES`) is settled by
-the red test's own run: the verifier runs the brief's `red_test` command once at the worker's head (`redTestCommand`
-takes the words before any prose, and only a command the allowlist takes), in the worker's tree under the gate time
-limit, and passes the result to `redClaim` as `green`. Exit 0 with trimmed output different from the red file's trimmed
-text is held (`red=<path>, N bytes, no failure marker; the red test passes at the head and prints otherwise`). A failing,
-timed-out or unrunnable run, or the same output, stays unchecked with the old detail plus a reason, and the advice stays
-`check red by hand`. A larger file, `red_test` of `none` or no runnable command, and a file with a marker are unchanged,
-and the one-proof-per-task and byte-identical checks apply first.
-
-What exists only with the engine: tiering (the model picked from the card's
-tier, the effort setting), the queue and `maxWorkers`, the respawn ladder and
-attempt budgets, the spend ceilings, the dashboard and the delegation band, the
-debrief, the eval runner, the "Delegation state" section the brain reads, the
-verdict waking the brain, `/delegation`, `dispatch` and the other tools,
-`readyFallbackMinutes`, and `delegateOnly`.
+Only the engine has tiering, the queue, `maxWorkers`, the respawn ladder, spend ceilings, the dashboard, the debrief, the eval runner, "Delegation state", `/delegation`, `dispatch`, `readyFallbackMinutes` and `delegateOnly`.
 
 ## Known issues
 
-- **A waiting worker's repeat wakes come from the mod's own rows only if it ends turns saying it waits.** The wake
-  source is the worker's `turn.complete` hook: a briefed background worker whose turn ends with no report and says
-  it is waiting is a wait, and the mod wakes the brain once per state (MOD-99, #161). A host notification the
-  hooks never see (a background job finishing and the host relaying it as a message) cannot be held by the mod;
-  only the mod's own rows are held.
-
-- **Function-hook plugins need the engine's rollout switch.** Where it serves
-  off, the mod does not load. `claude plugin test` then refuses with "hooks
-  modules are turned off in this process: the rollout switch served off".
-  `tests/selfcheck.sh` says so instead of failing. The pure tests also run
-  under plain node (see Developing).
-- **A gate runs in the worker's worktree, as the worker left it.** If a tool
-  the gate needs is missing there, the gate exits 127, which reads as
-  unchecked, not refuted. The brief tells the worker to install first.
-- **`usd` is approximate when marked `~`.** It is then the session delta; see the cost formula.
-- **Concurrent workers can starve the machine.** `maxWorkers` (2) caps briefed
-  workers. It does not count ad hoc agents. A briefed spawn past the cap waits
-  in a queue that holds one row per task and subtask: the dispatch result and
-  the spawn hook's refusal read
-  `queued: BE-314 — the mod will tell you when a slot frees (1 live: BE-310; 1 queued: BE-314)`,
-  and a second dispatch of a queued task answers `…; already queued since
-  14:02 (position 1)` and prints no spawn block. The queue is advice (MOD-12):
-  the brain starts a queued task, and only a ready worktree row left unclaimed
-  for `readyFallbackMinutes` is started by the mod itself (MOD-15; that worker
-  runs outside the mod's hooks). When a hand-back frees a slot, its verdict
-  row says `ready: BE-314 — run its spawn block (/dispatch BE-314 prints it
-  again)` once, and the "Delegation state" section says it while the slot
-  stays free; the brain's spawn of the task takes its queued place and toasts
-  `started queued <task> (waited <m> min)`. Only live agents and other tasks'
-  starting spawns hold slots, never queue rows. A queued row leaves the queue
-  only once its spawn succeeds: a spawn the engine refuses leaves it at the head.
-  A refusal retrying cannot cure (budget exhausted, work present in the
-  worktree) removes the row. A resource (`resources=`, MOD-23) queues a spawn
-  too, slot or no slot: `queued: BE-314 — waiting for resource blender-live
-  (held by BE-310)`. Only a running or starting worker holds a resource; a
-  worker that has handed back holds none, even while its verdict is still out.
-- **Several Agent calls in one message are decided one at a time (MOD-92,
-  #168).** The spawn hook decides each spawn in the order the calls came, and
-  each decision sees the records, slots, queue and attempt numbers the earlier
-  ones wrote. The host gives a hook 10 s of its own time, and time spent waiting
-  behind another decision counts. So a decision that has not started its
-  subagent with 2.5 s of budget left is refused with
-  `<id>: the spawn decision ran out of time; make the Agent call again`. An
-  aborted hook stops at its next step, starting and recording nothing. The
-  status-line refresh runs after the next decision is let go.
-- **A killed hooks worker takes the mod's tools with it until a restart.** If
-  the host kills the hooks worker (a hook that runs on after its abort twice in
-  a row), it also disconnects the chassis-delegation MCP server, so `card`,
-  `dispatch` and `verdict` are gone for the rest of the session. That is how
-  the host behaves, not the mod. Restarting Claude Code brings the tools back.
-- **The git guard reads the command text.** It cannot see a commit made inside
-  a script, or a folder named through a variable.
-- **The background runners act on the session's permissions.** The built-in
-  debrief is told to write only under `<root>/.delegation/`; your own
-  `~/.claude/commands/debrief.md` writes where it says. The eval is off until
-  you set `evalCommand`.
-- **The dashboard shows run-end numbers for workers.** See [Dashboard](guide.md#dashboard):
-  a worker's tokens and cost update when its run ends, not per step. "Across
-  sessions" draws this session from the store's attempt records, so its
-  sparklines hold one point until a history of earlier sessions is kept.
+- **Rollout switch.** Where it serves off, `claude plugin test` refuses; the pure tests run under plain node.
+- **A gate runs in the worker's worktree as left.** A missing tool exits 127: unchecked, not refuted.
+- **`usd` marked `~`** is the session delta, approximate.
+- **Waiting workers.** The mod wakes the brain once per state from `turn.complete`. A host notification the hooks never see cannot be held.
+- **Queue.** `maxWorkers` (2) caps briefed workers, not ad hoc agents. A spawn past the cap waits in a queue of one row per task and subtask.
+  - The queue is advice: the brain starts a queued task; the mod starts only a ready worktree row unclaimed for `readyFallbackMinutes`.
+  - `resources=` queues a spawn too; only a running or starting worker holds one.
+- **Several Agent calls in one message** are decided one at a time within the host's 10 s; a decision with under 2.5 s left is refused, so repeat the call.
+- **A killed hooks worker** disconnects the MCP server: `card`, `dispatch` and `verdict` are gone until Claude Code restarts.
+- **The git guard reads command text:** not a commit inside a script, nor a folder named by a variable.
+- **Background runners use the session's permissions.** The built-in debrief writes under `<root>/.delegation/`; `~/.claude/commands/debrief.md` writes where it says. The eval is off until you set `evalCommand`.
+- **Worker numbers update at run end** (see [Dashboard](guide.md#dashboard)).
 
 ## Store and ledger
 
-- **`<root>/.delegation/ledger.jsonl`** gets one JSON line per judged attempt,
-  holding the attempt fields plus `verdict`, `next` and `sessionId`. A reviewer's
-  line (MOD-21) has `kind: review`, `verdict: reviewed` and
-  `review: {confirmed, refuted, unverifiable}`. A line
-  written before the `consistent` rename says `verified` and is never
-  rewritten (see the deprecation note under [How a report is verified](contracts.md#how-a-report-is-verified)).
-  Each verdict line is written once (MOD-35): a line with the same task, subtask,
-  attempt, sha and verdict as one already in the file is not appended, so a hand-back
-  that arrives twice (as a tool result and as a notification) leaves one line.
-  An accept line records a closed outcome: `{kind: accept, task, subtask, attempt,
-  sha, at, how, sessionId}` with `how: merged` (the retire check found the sha on the
-  default branch, or the git guard saw the brain run `gh pr merge` naming the task's
-  branch or PR, or `git merge agent/<domain>/<id>`) or `how: accepted`
-  (`/delegation accept <id>`). One accept line per task attempt, never two.
-  A spawn line (MOD-94) is written when a briefed spawn starts (not an ad hoc one, not a reviewer):
-  `{event: spawn, task, subtask, attempt, lineage, budget, tier, alias, purpose, at, agentId, toolUseId,
-  briefPath, cwd, repo, sessionId}`, the optional fields only when known, plus `replay` and `base` for a
-  replay. It is marked by `event`, never `kind` (a verdict line takes `kind` from its attempt record), and
-  carries no `verdict`, so every reader of judged lines (the merge command's latest verdict, the accept
-  and verdict write guards) reads past it; the card tool still counts its task id as taken. It is written
-  once per spawn (its tool_use_id) and not at all with `ledgerFile` off.
-- **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`, with
-  these keys:
-  - `delegation.tasks.<ID>`: every attempt (a repo=here attempt also carries `here`, the root it shares, and `files`, what its hand-back claimed; a cardless one carries `adhoc: true`; one where fable was asked for and opus spawned carries `requestedAlias: fable`; a judged one carries `sha`, the sha its report named, and `metrics`, the report's `metrics=` (MOD-22); a `work-present` attempt, kind `verify`, carries the branch head it found; a reviewer's attempt, kind `review` (MOD-21), carries the number of the attempt it reviewed, its verdict `reviewed` and the `review` counts, and is on no ladder); a task for another local repo keeps its attempts under `delegation.tasks.<ID>@<repo>` (MOD-97, below);
-  - `delegation.recent.<session>`: the verdict lines;
-  - `delegation.handoff.<brief>`: the folder `/dispatch` prepared for the brief's worker, which the spawn hook gives the brain's Agent call (MOD-12);
-  - `delegation.outside.<ID>`: the listing `/dispatch` took of a research card's absolute scope and forbid roots, the "before" of the outside delta (MOD-22); a re-dispatch of a reused brief keeps it, a dispatch whose brief names no absolute root deletes it, and a task for another local repo has its own, `delegation.outside.<ID>@<repo>`;
-  - `delegation.debrief.<session>`;
-  - `delegation.friction.<session>`;
-  - `delegation.evals`.
+**`<root>/.delegation/ledger.jsonl`** gets one line per judged attempt: the attempt fields plus `verdict`, `next` and `sessionId`.
 
-  The host refuses a `$.store.set` once the store passes **4 MiB** of JSON text in all (MOD-89, #157). So the
-  mod prunes it at session start and after each verdict, through `$.store.delete` only (never the file), with
-  the plan in `hooks/lib/retention.ts`:
-  - a per-task record (`delegation.spawn`, `.agent`, `.agentName`, `.cost`, `.tasks`, `.handoff`, `.replay`,
-    `.classifier`, `.effort`, `.posted`, `.postedRow`, `.outside`, `.taskRepo`, `.mergePrep`) is deleted when its
-    newest timestamp is more than **7 days** old and its task is not open. A record with no timestamp of its own
-    takes that of the record it hangs off (an agent pointer its spawn's, a cost its agent's, an effort its task's
-    attempts), and a spawn counts its task's attempts too. A record with no timestamp at all is left alone;
-  - an open task is never touched, whatever its age: a running worker, a pending verdict, a queued spawn, and
-    (a worker of another session) a task with a pending attempt younger than 7 days;
-  - when the store is over **3.5 MiB**, closed records younger than 7 days go too, oldest first, until it is
-    under **3 MiB**;
-  - session-level and global keys (`delegation.recent`, `.debrief`, `.friction`, `.brain`, `.adhoc`, `.evals`
-    and the like) are never deleted; the lists among them are capped where they are written (`recent` 50
-    lines, `friction` 100 events, `adhoc` 200 attempts, `evals` 100 rows).
+- A reviewer's line has `kind: review`, `verdict: reviewed` and `review: {confirmed, refuted, unverifiable}`.
+- An older line says `verified` and is never rewritten (see [How a report is verified](contracts.md#how-a-report-is-verified)).
+- A repeat of task, subtask, attempt, sha and verdict is not appended.
+- An accept line, `{kind: accept, task, subtask, attempt, sha, at, how, sessionId}`, has `how: merged` (the sha is on the default branch, or the guard saw `gh pr merge` or `git merge agent/<domain>/<id>`) or `how: accepted` (`/delegation accept <id>`).
+- A spawn line, `{event: spawn, task, subtask, attempt, lineage, budget, tier, alias, purpose, at, agentId, toolUseId, briefPath, cwd, repo, sessionId}`, is written once per briefed spawn, not with `ledgerFile` off. It has `event`, not `kind`, and no `verdict`, so readers of judged lines skip it.
 
-  A prune that deleted anything writes one debug line, and at session start one row:
-  `store: pruned <n> records (<x> MiB to <y> MiB of 4 MiB)`. A spawn record keeps no prompt text (MOD-89).
-  A refused write is said out loud: the first in a session is a toast and the row
-  `store write failed: <key> (<reason>); new workers may have no verdict until the store is pruned`; later
-  ones are counted. `/delegation` shows `store: <x> MiB of 4 MiB`, and
-  `store: <n> writes refused this session (last <key>)` when any were.
+**The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`:
 
-  A worker whose spawn record was refused still counts and still gets a verdict (MOD-94, #157, #159):
-  - **The live count** reads an agent's spawn record from the store, else from the hook's own memory of the
-    briefed workers it saw start in this process (every spawn record it writes, kept whether or not the
-    write landed). So claimSlot, the resource hold, the status line, the git guard and `/delegation` count a
-    running worker of this process even when its record never landed. A worker leaves the count when it
-    stops running or its verdict lands. A worker started in an earlier process counts only through the store.
-  - **The verdict** of a hand-back (the turn's end, or a foreground Agent result) is judged on the store's
-    spawn record, else on the hook's memory, else on the newest ledger spawn line for that agent (or that
-    spawn) plus the brief it names, unless a verdict line already judged that attempt. The attempt is judged
-    as if its record were there: the verdict row is posted, the verdict line appended, the owed list moves.
-  - **The verdict tool**, for a task with no attempt record, answers from the hook's memory, then from the
-    task's newest ledger spawn line: judged there already, that verdict; its worker still running, it waits;
-    else it runs the verifier on the line and the brief and returns the row. Only with none of the three does
-    it say no attempt is recorded.
-  - A verdict reached either way says so once in the debug log
-    (`<task> attempt <n>: judged from the hook's memory; the store had no record`) and on its row's tail:
-    `(from memory: the store had no record)` or `(from the ledger: the store had no record)`.
-- **`$.state`** holds `chassis-delegation.workers`, `.status`, `.lastVerdict`
-  and `.queue`, declared in `hooks/types/index.d.ts`.
+| Key | Holds |
+| --- | --- |
+| `delegation.tasks.<ID>` | every attempt, with `here` and `files` for repo=here, `adhoc: true` for a cardless one, `requestedAlias: fable` when opus spawned, `sha` and `metrics` (the report's `metrics=`) once judged, a reviewer's `review` counts; a `work-present` attempt is kind `verify` |
+| `delegation.tasks.<ID>@<repo>` | the same for a task of another local repo |
+| `delegation.recent.<session>` | the verdict lines |
+| `delegation.handoff.<brief>` | the folder `/dispatch` prepared for the Agent call |
+| `delegation.outside.<ID>` | the listing of a research card's absolute roots, the "before" of the outside delta; `delegation.outside.<ID>@<repo>` for another repo |
+| `delegation.taskRepo.<ID>` | the repo `/dispatch` remembered for the id |
+| `delegation.debrief.<session>`, `delegation.friction.<session>`, `delegation.evals` | debrief, friction and eval records |
+| `$.state` | `chassis-delegation.workers`, `.status`, `.lastVerdict`, `.queue` |
+
+**Pruning.** The host refuses a `$.store.set` past **4 MiB**. The mod prunes at session start and after each verdict via `$.store.delete`, per `hooks/lib/retention.ts`:
+
+- a per-task record (`delegation.spawn`, `.agent`, `.agentName`, `.cost`, `.tasks`, `.handoff`, `.replay`, `.classifier`, `.effort`, `.posted`, `.postedRow`, `.outside`, `.taskRepo`, `.mergePrep`) goes when its newest timestamp is over **7 days** old and its task is not open.
+- an open task is never touched;
+- over **3.5 MiB**, closed records go too, oldest first, until under **3 MiB**;
+- session-level keys (`delegation.recent`, `.debrief`, `.friction`, `.brain`, `.adhoc`, `.evals`) are kept and capped where written (`recent` 50 lines, `friction` 100, `adhoc` 200, `evals` 100).
+
+A prune writes `store: pruned <n> records (<x> MiB to <y> MiB of 4 MiB)` at session start. `/delegation` shows `store: <x> MiB of 4 MiB`.
+
+**A worker whose spawn record was refused** still counts and gets a verdict. The spawn comes from the store, else the hook's memory of this process, else the newest ledger spawn line plus its brief; the verdict tool uses that order. The row then ends with `(from memory: the store had no record)` or `(from the ledger: the store had no record)`.
+
+**A card for another local repo.** Two repos can each have an `OPS-15`, so records are keyed by repo plus id:
+
+- A task dispatched into another repo writes `delegation.tasks.<ID>@<repo>` (absolute path, no trailing slash); the session repo's stay under the bare key.
+- A bare-key read takes records whose `root` is the session repo or absent. Until a qualified key exists, a read falls back to bare records whose `root` is that repo.
+- Doors that take only an id (the verdict tool, `/delegation accept`, merge and retire checks) read `delegation.taskRepo.<ID>`, else the session repo.
+- `posted`, `postedRow` and the start row's `attempt n/m` use the same key. The ledger is one file per session repo, rows carrying `repo`.
+- The brief is read from the session's `briefDir`. A resume (SendMessage) arrives as an ad hoc `agent.spawn` with the same agent id; the spawn hook keeps the id on its briefed spawn, so the hand-back records the next attempt (kind `resume`).
+- The delta is taken in that repo's worktree. A path outside it counts only when the scope names it as an absolute root.
+
+**Brief reuse.** `/dispatch` compares an existing brief with the one it would write on three points: the header's `repo=`, the worktree and the card path (`hooks/lib/crossbrief.ts`).
+
+- All agree: reused as is, keeping hand edits.
+- One differs, no attempt open: rewritten.
+- One differs, an attempt open: refused, nothing written.
+- A point the brief does not name is not compared; a replay brief is always reused. Another repo's card takes `briefExtra` from that repo's `.chassis-delegation.json`.
 
 ## Evidence
 
@@ -247,62 +143,4 @@ No arguments: usage on stderr, exit 2. A missing file: an error naming its posit
     node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs
                                              # the pure tests and the real-git suite, under plain node
 
-**When `/dispatch` reuses a brief (MOD-95, #154).** A brief already written for the task is compared with the one
-this dispatch would write, on three points only: the header's `repo=` (absent, `here`, `none` or an absolute path),
-the worktree the brief names and the card path it names. All three agree: the brief is reused as it is, so an amended
-scope or a hand edit is kept (`2. brief <path> exists — reused`). Any differs and no attempt of the task is running or
-awaiting its verdict: the brief is rendered fresh in its place and the dispatch says
-`2. brief <path> was written for <what it named>; rewritten for this card (<the points that differed>)`. Any differs
-and an attempt is open: dispatch refuses with one line naming the brief file, what differed and the open attempt, and
-writes nothing (no brief, no worktree). A point the brief does not name (a hand-written brief) is not compared; a replay
-brief is always reused. A brief rendered for a card in another local repo takes `briefExtra` from that repo's own
-`.chassis-delegation.json`, or empty with none, never the session repo's. The comparison is `hooks/lib/crossbrief.ts`.
-
-**A card for another local repo is counted, resumed and verified as a local one (MOD-97, #155, #163, #164).** One
-store serves every repo, so two repos can both have an `OPS-15`. The smallest change keys the attempt records by repo
-plus id: a task dispatched into another repo writes `delegation.tasks.<ID>@<repo>` (the repo's absolute path, no
-trailing slash), and the session repo's stay under the bare `delegation.tasks.<ID>`. Until a qualified key is first
-written, a read for that repo falls back to the bare key's records whose `root` is that repo. A bare-key read takes only
-the records whose `root` is the session repo, or that name no `root` (legacy records belong to any repo). A bare-key write
-keeps the other repos' records it holds. The doors that take only an id (the verdict tool, `/delegation accept`, the merge
-and retire checks, the owed rows) read the repo `/dispatch` remembered for the id (`delegation.taskRepo.<ID>`), else the
-session's. The outside listing, the attempt keys of `posted`/`postedRow` and the start row's `attempt n/m` follow the same
-key, so an `OPS-15` dispatched into B is attempt 1 whatever A's `OPS-15` did. Retention reads `<ID>@<repo>` as `<ID>`, so
-the per-task families prune together. The ledger stays one file per session repo; its rows already carry `repo`.
-
-The brief is read where the dispatch wrote it, the session's `briefDir`, whichever repo the card is for. A resumed worker
-keeps that brief: the engine raises a resume (SendMessage, MOD-41) as a fresh ad hoc `agent.spawn` with the same agent id,
-and the spawn hook no longer points the agent id at that ad hoc spawn when it already names a briefed one. The hand-back
-then finds the briefed spawn and, at a new sha, records the next attempt (kind `resume`, the brief's budget) and verifies it
-against the brief, in the background (`turn.complete`) and in the foreground (the Agent result) alike. This holds for a card
-of the session repo too. The delta is taken in the other repo's worktree against that repo's base (MOD-44). A path outside that repo and its worktree is part of the delta only when the scope names
-it as an absolute root, listed at that dispatch under that repo's key. In-scope work is `consistent`; a changed path inside
-the other repo that the scope does not name is still refuted on scope.
-
-The code is laid out like this:
-
-- **`hooks/lib/*.ts`** are pure (no `$`):
-  - `verify-native.ts` holds the verifier, `gates.ts` the gate commands and `allow.ts` the allowlist;
-  - `repoconfig.ts` reads the repo file, `init.ts` scaffolds and `gitguard.ts` holds the guard;
-  - `dispatch.ts` covers the card, the brief and the worktree, and `crossbrief.ts` whether an existing brief is the one to reuse;
-  - `cleanstop.ts` decides the debrief and `evaltrigger.ts` the eval.
-- **`bin/chassis-hook.mjs`** is the settings.json fallback (see
-  [Without the engine](#without-the-engine-two-settingsjson-hooks)): plain
-  node, no `$`. It reads the pure libraries above through `bin/ts-resolve.mjs`.
-- **`hooks/register.ts`** holds every `$` call. `$` is only ever spelled
-  `$.noun.method(...)` or passed to a function, never stored.
-- **`tests/harness.ts`** answers every `$` call from memory. No test spawns,
-  dispatches or runs anything real.
-- **`tests/node/bin.node.mjs`** pipes hook input JSON into
-  `node bin/chassis-hook.mjs` against real repositories under `tests/.tmp/`:
-  a matching report (consistent), a file outside the delta (refuted), no report
-  (nothing printed), a commit on `main` (denied) and on `agent/x/y` (passes).
-- **`tests/node/verify-native.git.node.mjs`** builds temporary git
-  repositories under `tests/.tmp/`. It checks these cases: consistent, a sha off
-  the branch, a sha that does not exist, a dirty tree, a files mismatch, a red
-  gate, a red file in the worktree (held, then refuted when named again), and a
-  dirty repo=here checkout shared with another worker.
-
-If `claude plugin test` refuses with the rollout-switch message, wait a minute
-and retry. If it still refuses, the node runner covers every pure test, and
-the hook tests are owed until the switch is on.
+If `claude plugin test` refuses on the rollout switch, retry after a minute. Still refused: the node runner covers the pure tests, and the hook tests are owed.

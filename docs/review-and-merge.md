@@ -4,249 +4,99 @@ Reviewing a hand-back and landing it.
 
 ## Review
 
-`consistent` says the report matches git. It does not say the work is right:
-nothing in that check reads the diff. With the `review` option on, a consistent
-verdict is followed by one more agent that does (MOD-21; the second half of
-public issue #1). It changed the outcome on roughly one hand-back in three for
-the two adopters who first built it by hand.
+A `consistent` verdict says the report matches git, not that the work is right. `review` adds a diff reader.
 
 | `review` | What gets a reviewer |
 | --- | --- |
-| `off` (default) | nothing: every row, record and ledger line is as it was |
+| `off` (default) | nothing |
 | `on` | every consistent verdict |
-| `on-frontier` | a consistent verdict of a frontier or premium attempt only |
+| `on-frontier` | a frontier or premium attempt's consistent verdict |
 
-Set it in the repo file (`"review": "on"`) or with `/delegation config review on` (or the `/config` menu in a terminal); the setting wins,
-and `off` there means "not set here", so the repo file speaks.
+Set it in the repo file (`"review": "on"`), by `/delegation config review on` or in `/config`; `off` there is "not set here". `reviewTier` pins the reviewer's tier; unpinned, it is one below the worker's, economy at the floor. `tierMap` makes the alias; fable is never spawned.
 
-**What it checks.** A fresh agent reads the brief, the worker's report and
-hand-back, and the diff at the report's sha. It writes one row per factual
-claim of the hand-back (what was built, what the tests and the gate show, what
-was left alone), each labelled `confirmed`, `refuted` or `unverifiable` and
-naming the command it ran or the file and line that decides it, and ends with a
-count block:
+### What the review must check
 
-    confirmed: a/x.ts gains the parser — a/x.ts:12
-    refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1
-    unverifiable: CI is green — no network from here
-    [[review v=1 task=T-4 confirmed=1 refuted=1 unverifiable=1]]
+The prompt is `hooks/templates/review.md`. It reads the brief, the hand-back (cut at 6000 characters) and the diff at the report's sha. Each claim gets one row: `confirmed`, `refuted` or `unverifiable`, with the deciding command or file and line.
 
-The prompt comes from `hooks/templates/review.md`. The report's own fields
-(branch, sha, files, scope, gate, red) were matched against git already; the
-reviewer is asked to spend itself on what they cannot say.
+| Claim | Check |
+| --- | --- |
+| What was built | the diff holds it, at a file and line |
+| What the tests and gate show | a read-only command it ran |
+| What was left alone | no path changed outside the claim |
+| CI or the runtime | usually `unverifiable` |
 
-**How it runs.** The reviewer is one more Agent call, and the brain makes every
-spawn (MOD-12), so the verdict row asks for it the way a respawn does: the row
-says `next=review` and ends with a spawn block.
+It ends `[[review v=1 task=T-4 confirmed=1 refuted=1 unverifiable=1]]`. It never re-runs the gate or fixes anything.
 
-    chassis-delegation: T-4 attempt 1/3 consistent · sonnet · $0.41 · next=review
-    spawn: Agent
-    ```json
-    { "subagent_type": "general-purpose", "model": "haiku", "description": "T-4 review economy haiku", "prompt": "[[review-of v=1 task=T-4 subtask=main attempt=1 worker=<agent> sha=<sha>]]\n…" }
-    ```
-    The reviewer starts when you make this Agent call: pass the JSON above as its input, verbatim. …
+### How it runs
 
-The first line of the prompt is a marker; it is how the spawn hook knows a
-spawn is a reviewer's, whatever else the prompt names. The hook records the
-reviewer as an attempt of `kind: review` (`source: review`) in the task's
-records, and runs it in the worktree the worker used. A reviewer is on no
-ladder:
+1. The row says `next=review` and ends with a spawn block; the brain makes that Agent call.
+2. The spawn hook records `kind: review` (`source: review`) and runs it in the worker's worktree.
+3. It is on no ladder and never counts against `budget=` or `maxWorkers`.
+4. The `tool.call` hook refuses its Edit, Write, MultiEdit and NotebookEdit calls and any Bash write the `delegateOnly` lexer counts (a redirection, `tee`, `sed -i`, the destination of `cp` or `mv`, a `git commit`): a tripwire, not a sandbox.
 
-- it never counts against `budget=`, and takes no worker slot (`maxWorkers`),
-  and the next worker attempt is numbered as if it had not run;
-- it is not a worker on the dashboard; while it runs its task is `pending
-  verdict`, and the review is no longer owed;
-- it steps at the engine's default effort and keeps the Bash environment it
-  inherits (it has no attempt identity).
-
-**What it never does.** It edits nothing. While it runs, the `tool.call` hook
-refuses its Edit, Write, MultiEdit and NotebookEdit calls, and any Bash command
-the `delegateOnly` lexer counts as a write (a redirection, `tee`, `sed -i`, the
-destination of `cp` or `mv`, a `git commit`), read against the worktree it works
-in and against the session root. The refusal is one line:
-
-    chassis-delegation: a reviewer never edits (T-4 review): Write refused. Label each claim confirmed, refuted or unverifiable, naming the command or file:line that decides it, and hand back.
-
-That lexer is an accident tripwire, not a sandbox, and the template tells the
-reviewer the same rules. The reviewer does not re-run the gate, does not change
-the worker's verdict, and does not fix what it finds: it labels, and the worker
-fixes.
-
-**At its hand-back** the mod reads the last well-formed `[[review]]` block:
-
-| The block | The row's `next=` | The row says |
+| The last `[[review]]` block | `next=` | The row says |
 | --- | --- | --- |
 | `refuted=0` | `accept` | `review: 3 confirmed, 1 unverifiable` |
-| `refuted>0` | `resume agent=<the worker>` (while the budget lasts; else `check by hand`) | `review: 3 confirmed, 1 refuted, 0 unverifiable`, and each refuted row quoted under it |
-| missing, malformed, or for another task | `accept` | `review: no review block` |
+| `refuted>0` | `resume agent=<the worker>` while the budget lasts, else `check by hand` | `review: 3 confirmed, 1 refuted, 0 unverifiable`, rows quoted |
+| missing, malformed, other task | `accept` | `review: no review block` |
 
-A review never blocks on its own failure: a reviewer that dies, or hands back
-without a block, is `next=accept` with the note. With a refuted row the worker is
-owed a resume: the brain sends it the refuted rows (`SendMessage`), or, with
-`autoEscalate` on, the mod does; that message is the worker's next attempt and
-spends `budget=` like any resume. The worker's new hand-back is checked, and if
-it is consistent it is reviewed again. The one-line row for a review reads
+A failed review never blocks. Refuted rows go to the worker with `SendMessage` (the mod does it with `autoEscalate` on); that resume spends `budget=` and is reviewed again.
 
-    chassis-delegation: T-4 attempt 1/3 reviewed · haiku · $0.05 · review: 3 confirmed, 1 unverifiable · next=accept
+With `verdictVerbosity: full` the row is `chassis-delegation: review task=T-4 attempt=1/3 confirmed=3 refuted=0 unverifiable=1 usd=… model=… next=accept`. The ledger keeps `review: {confirmed, refuted, unverifiable}`, verdict `reviewed`.
 
-and the long form (`verdictVerbosity: full`) is
-`chassis-delegation: review task=T-4 attempt=1/3 confirmed=3 refuted=0 unverifiable=1 usd=… model=… next=accept`.
-The reviewer's attempt keeps the counts (`review: {confirmed, refuted,
-unverifiable}`, verdict `reviewed`), and so does its ledger line.
-
-**The reviewer's tier.** One tier below the worker's: a standard worker is
-reviewed by a haiku, a frontier worker by a sonnet, a premium worker by an opus
-(economy is the floor, so an economy worker is reviewed by a haiku too). The
-`tierMap` turns the tier into an alias as for any spawn, and fable is never
-spawned. `reviewTier` (repo file or `/config`) pins the tier instead: `"reviewTier":
-"frontier"` reviews every hand-back on an opus.
-
-**Cost.** One more agent per reviewed hand-back. The reviewer reads the
-hand-back (quoted in its prompt, cut at 6000 characters), the brief and the diff,
-and runs a few read-only commands; one tier below the worker keeps it a fraction
-of the worker's own cost, and `on-frontier` spends on the cards where a missed
-error costs most. Its cost is on its row and ledger line and in the session
-total; the dashboard's "workers" dollars count worker attempts only. A refuted
-row costs a resume of the worker and, once it hands back again, another review.
-
-**Not reviewed.** A hand-back that is not consistent (refuted, unverified,
-`gate=fail`, no-report); a `repo=none` brief (there is no diff); a `--replay`
-run; and a cardless hand-back. `/dispatch <ID> --verify <sha>` is reviewed like
-a hand-back when its verdict is consistent. A reviewer is a model: `confirmed`
-is its reading of the diff, not a proof, and a claim about CI or the runtime is
-usually `unverifiable`.
+Not reviewed: a hand-back that is not consistent (`gate=fail` included), a `repo=none` brief, a `--replay` run, a cardless hand-back. A consistent `/dispatch <ID> --verify <sha>` is.
 
 ## Merging a card
 
-After a consistent verdict with next=accept, `/delegation merge <ID>` (or the `merge` tool with
-`task: <ID>`) does the local half of the merge. It prints the remote half as one block for the
-brain to run verbatim, the way dispatch prints the Agent call.
+After a consistent verdict with next=accept, run `/delegation merge <ID>` (or the `merge` tool with `task: <ID>`). It does the local half; the brain runs the printed lines verbatim.
 
-**What it refuses.** Each refusal is one line, and nothing runs after it:
+It refuses in one line, running nothing, when:
 
-- the task's latest ledger row is not consistent with next=accept:
-  `<ID>: last verdict is <verdict> · next=<next>; merge needs consistent/accept`;
-- the task has no worktree on `agent/<domain>/<ID>`, or the worktree is not clean (the line
-  names the dirty files);
-- the main checkout is not on its default branch, or has tracked changes (untracked files are
-  fine; the root card is expected to be one).
+- the latest ledger row is not consistent/accept: `<ID>: last verdict is <verdict> · next=<next>; merge needs consistent/accept`;
+- the task has no clean worktree on `agent/<domain>/<ID>`, or the main checkout is off its default branch or has tracked changes.
 
-**What it does**, by argv, with no shell:
+Checklist, in print order:
 
-1. In the worktree: `git fetch origin`, then `git rebase origin/main` (the configured
-   `baseRef`). On a conflict it runs `git rebase --abort` and answers
-   `<ID>: rebase onto origin/main conflicts in <files>; resolve by hand`.
-2. It copies the root card `<cardDir>/<ID>-*.md` into the worktree with `status: merged`, with a
-   `## Review` section from `--review <text>` or `--review-file <abs path>`. It commits that as
-   `cards: <ID> merged`, with a `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer
-   when the host's model id names a model. A worktree that already carries the merged card is
-   not committed again.
-3. It runs the card's gates in the worktree through the gate map, the same runner verification
-   uses. The output goes to `.delegation/<ID>/merge-gates.txt`. A failing gate answers
-   `<ID>: gate <id> failed at <sha>; not pushed` with its last 20 lines, and the command stops.
-4. It writes `.delegation/<ID>/pr.md`: the card's Done-when as a checklist, the verdict line,
-   the gate results and the Claude Code line. It holds no absolute path and no home folder.
+1. **Review.** Pass `--review <text>` or `--review-file <abs path>`. In the worktree it runs `git fetch origin` and `git rebase origin/main` (the `baseRef`). On a conflict it runs `git rebase --abort`: `<ID>: rebase onto origin/main conflicts in <files>; resolve by hand`.
+2. It copies `<cardDir>/<ID>-*.md` into the worktree with `status: merged` and the Review section, and commits `cards: <ID> merged` with a `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer. 
+3. It runs the card's gates into `.delegation/<ID>/merge-gates.txt`. A failure stops: `<ID>: gate <id> failed at <sha>; not pushed`.
+4. **Leak check.** Read `.delegation/<ID>/pr.md` (Done-when, verdict, gates). Remove any product, customer or machine name.
+5. **Push:** `git -C <worktree> push -u origin agent/<domain>/<ID>`.
+6. **PR create:** `gh pr create --repo <owner/repo> --base main --head agent/<domain>/<ID> --title '<card title>' --body-file <root>/.delegation/<ID>/pr.md`.
+7. **PR merge:** `gh pr merge --repo <owner/repo> agent/<domain>/<ID> --rebase`.
+8. **Finish:** `/delegation merge <ID> --finish`.
+   - It runs `git fetch origin`, refusing with `<ID>: <branch> is not in origin/main yet` unless the head, or its rebased twin, is there.
+   - It compares the merged card on origin with the root card, status aside. A match removes the root card; else it names the differing lines.
+   - It runs `git pull --ff-only`, `git worktree remove` and `git branch -D`, writes `{kind: 'merged', task, sha, pr?}`, and lists the task under `merged:` instead of `running:`.
+9. **Delete the branch:** `git push origin --delete agent/<domain>/<ID>`. The answer ends `<ID> merged at <sha>`.
+10. **Release extras**, only when `hooks/lib/version.ts` changed: `git tag -a v<version> -m v<version>`, `git push origin v<version>`, and `git -C <loaded clone> pull --ff-only` when the mod loads from another checkout. The last line is `release v<version>: run the block above, then reload the window`.
 
-**The first block**, printed when the gates are green:
+A card folder in `.git/info/exclude` or `.gitignore` merges the same way, uncommitted. The tool checks `git -C <root> check-ignore -q -- <card path>`; when ignored:
 
-```sh
-git -C <worktree> push -u origin agent/<domain>/<ID>
-gh pr create --repo <owner/repo> --base main --head agent/<domain>/<ID> --title '<card title>' --body-file <root>/.delegation/<ID>/pr.md
-gh pr merge --repo <owner/repo> agent/<domain>/<ID> --rebase
-/delegation merge <ID> --finish
-```
+- it marks the root card `status: merged` in place, runs no `git add`, and prints `card kept local (git-ignored): <root card path> marked merged` instead of `card committed as merged`;
+- `--finish` keeps the card (the only copy) and confirms the head or its rebased twin is on origin/main, else refuses.
 
-**`--finish`**, once the PR has landed, does the following:
+### The allowlist rule
 
-1. It runs `git fetch origin` in the main checkout. It refuses with
-   `<ID>: <branch> is not in origin/main yet` unless the worktree's head, or its rebased twin
-   (same tree, same subject), is in origin/main.
-2. It compares the merged card on origin with the root card, with the status line aside (the
-   Review section may be extra).
-   - When they match, it removes the root card.
-   - Otherwise it names the lines that differ and stops there.
-3. It runs `git pull --ff-only` in the main checkout, then `git worktree remove` and
-   `git branch -D` for the task.
-4. It marks the task record `merged` with the sha and writes a ledger row
-   `{kind: 'merged', task, sha, pr?}`.
-5. `/delegation` lists the task under `merged:` for the rest of the session, and `running:`
-   no longer shows it.
+The merge never pushes, calls `gh` or uses the network. Every argv goes through `run()` and `hooks/lib/allow.ts`. While it runs, `AllowConfig.merge` holds the task's paths, branch and id, and permits:
 
-**A git-ignored card folder (MOD-86).** A repo that keeps its cards local through
-`.git/info/exclude` or `.gitignore` merges the same way, with the card never committed. The merge asks
-git `git -C <root> check-ignore -q -- <card path>` (exit 0 = ignored) and, when it is:
+| Where | Allowed |
+| --- | --- |
+| worktree | `fetch origin`, `rebase <baseRef>`, `rebase --abort`, `add -- <card>`, `commit -q -m 'cards: <ID> merged'` with an optional `Co-Authored-By` trailer |
+| main checkout | `fetch origin`, `remote get-url origin`, `pull --ff-only`, `clean -q -f -- <card>`, `worktree remove <worktree>`, `branch -D <branch>` |
+| always (read) | `git -C <dir> check-ignore -q -- <one path>` |
 
-- prepare rewrites the root card (the main checkout's) in place with `status: merged`, plus the
-  Review section when one is given, runs no `git add` of the card and makes no card commit. The rest
-  runs as before: the rebase, the gates in the worktree, the PR body from the card text and the push
-  block. The first line says `card kept local (git-ignored): <root card path> marked merged` in place
-  of `card committed as merged`.
-- `--finish` does not look for the card on origin and does not remove the root card: it is the only
-  copy, and it already reads merged. It confirms the merge by the worktree head being on
-  origin/main or having a rebased twin there; when neither, it refuses naming the head and changes
-  nothing. Then it pulls, removes the worktree and branch, writes the merged ledger row and prints
-  the remote cleanup lines as usual.
-
-A tracked card behaves exactly as described above.
-
-**The second block** comes next:
-
-```sh
-git push origin --delete agent/<domain>/<ID>
-git tag -a v<version> -m v<version>        # only when hooks/lib/version.ts changed
-git push origin v<version>                 # likewise
-git -C <loaded clone> pull --ff-only       # likewise, when the mod loads from another git checkout
-```
-
-The answer ends with `<ID> merged at <sha>`. When the version moved, a last line follows:
-`release v<version>: run the block above, then reload the window`.
-
-**The allowlist rule.** The merge never pushes, never calls `gh` and never touches the network.
-Every remote step is in the two blocks, and the brain runs them. Every argv the merge runs goes
-through the one path to the host, `run()`, and the one allowlist, `hooks/lib/allow.ts`. The
-local writes the merge needs are exact shapes in that allowlist. They are on only while the
-merge command runs: the command sets `AllowConfig.merge` to the one task's root, worktree, branch,
-base ref, card path and id, and clears it when it ends. The shapes are:
-
-- in the worktree: `fetch origin`, `rebase <baseRef>`, `rebase --abort`, `add -- <card>` and
-  `commit -q -m 'cards: <ID> merged'`, with an optional `Co-Authored-By` trailer;
-- in the main checkout: `fetch origin`, `remote get-url origin`, `pull --ff-only`,
-  `clean -q -f -- <card>`, `worktree remove <worktree>` and `branch -D <branch>`.
-
-`git -C <dir> check-ignore -q -- <one path>` is a read shape that passes at any time (any other
-option, or more than one path, is refused).
-
-Outside a merge, every one of these is refused as before. While the merge runs, a push, `gh`,
-`curl`, `sf` or `wget` is refused ahead of every other rule.
-
-## A gate that hits the verifier's time limit
-
-The verifier stops a gate it re-runs after 9 minutes. When that is the only
-unchecked claim, the verdict is `unverified` and the row says
-`next=gate <id> hit the verifier's 9-minute limit: time it by hand in the worktree, then re-run the verifier with /dispatch <ID> --verify <sha> (no attempt spent)`,
-not a resume: a resume cannot make the gate faster, and the worker would only
-repeat its report. Run the gate by hand in the worker's worktree to see its real
-time, then run the `--verify` line on the same sha; no attempt is spent. When
-another claim is also unchecked the advice stays a resume, and its `prove:` list
-says of the gate that it timed out and need not be proved by the worker. A
-refuted verdict is advised as before.
+Outside a merge these are refused; during one, a push, `gh`, `curl`, `sf` or `wget` is refused first.
 
 ## When the verdict is missing or not trustworthy
 
-Use this when the verdict tool says `no attempt recorded`, or the verdict is
-`unverified` for a reason the worker cannot fix: no brief, or a gate that timed
-out. A worker resume does not help with either, so do not resume it.
+Use this when the verdict tool says `no attempt recorded`, or `unverified` for a reason the worker cannot fix (no brief, a gate past the 9-minute limit). Do not resume.
 
-First, re-run the verifier on the same work with `/dispatch <id> --verify <sha>`.
-It spawns nothing and spends no attempt. Use the sha of the worker's head.
-
-Second, if that cannot judge it, check the work by hand:
-
-1. In a detached worktree at the worker's base, with the worker's test files
-   copied in, the red test fails.
-2. At the worker's head, the same test passes.
-3. Every changed path is inside the card's scope, and none is in forbid.
-4. The repo's full gate suite passes at the head.
-
-Then merge the card with a Review section that says it was verified by hand and
-why, for example that the verifier could not judge the work.
+1. Run `/dispatch <id> --verify <sha>` on the worker's head: no spawn, no attempt spent.
+2. A timed-out gate reads `next=gate <id> hit the verifier's 9-minute limit: time it by hand in the worktree, then re-run the verifier with /dispatch <ID> --verify <sha> (no attempt spent)`.
+3. With another claim unchecked too, the advice stays a resume; its `prove:` list excludes the gate.
+4. If it still cannot judge, check by hand:
+   - the red test fails at the worker's base (its tests copied in) and passes at its head;
+   - every changed path is in scope, none in forbid;
+   - the full gate suite passes at the head.
+5. Merge with a Review section saying it was checked by hand, and why.
