@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320" role="img">
+  <title>Cost and time per tier</title>
+  <desc>Mean cost per attempt rises from $1.30 at haiku to $7.17 at opus, and median time from 3 to 18 minutes.</desc>
+  <style>
+    text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; fill: #1f2328; }
+    .h { font-size: 14px; font-weight: 600; }
+    .m { fill: #59636e; }
+    .ax { stroke: #59636e; stroke-width: 1; fill: none; }
+    .mk { stroke: #59636e; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .b0 { fill: #0969da; } .b1 { fill: #bf8700; } .b2 { fill: #cf222e; } .b3 { fill: #6e7781; } .b4 { fill: #8250df; }
+    .b0, .b1, .b2, .b3, .b4 { stroke: #1f2328; stroke-width: 1; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #e6edf3; }
+      .m { fill: #9198a1; }
+      .ax, .mk { stroke: #9198a1; }
+      .b0 { fill: #58a6ff; } .b1 { fill: #d29922; } .b2 { fill: #ff7b72; } .b3 { fill: #9198a1; } .b4 { fill: #bc8cff; }
+      .b0, .b1, .b2, .b3, .b4 { stroke: #e6edf3; }
+    }
+  </style>
+  <text x="10" y="24" class="h">Mean cost per attempt (USD)</text>
+  <text x="152" y="64" text-anchor="end">Haiku (n=129)</text>
+  <rect x="160" y="50" width="74.3" height="20" class="b0"/>
+  <text x="240.33751743375174" y="64">$1.30</text>
+  <text x="152" y="94" text-anchor="end">Sonnet (n=564)</text>
+  <rect x="160" y="80" width="200.1" height="20" class="b0"/>
+  <text x="366.139470013947" y="94">$3.50</text>
+  <text x="152" y="124" text-anchor="end">Opus (n=75)</text>
+  <rect x="160" y="110" width="410.0" height="20" class="b0"/>
+  <text x="576" y="124">$7.17</text>
+  <line x1="160" y1="46" x2="160" y2="134" class="ax"/>
+  <text x="10" y="198" class="h">Median time per attempt (minutes)</text>
+  <text x="152" y="230" text-anchor="end">Haiku (n=129)</text>
+  <rect x="160" y="216" width="68.3" height="20" class="b1"/>
+  <text x="234.33333333333331" y="230">3 min</text>
+  <text x="152" y="260" text-anchor="end">Sonnet (n=564)</text>
+  <rect x="160" y="246" width="136.7" height="20" class="b1"/>
+  <text x="302.66666666666663" y="260">6 min</text>
+  <text x="152" y="290" text-anchor="end">Opus (n=75)</text>
+  <rect x="160" y="276" width="410.0" height="20" class="b1"/>
+  <text x="576" y="290">18 min</text>
+  <line x1="160" y1="212" x2="160" y2="300" class="ax"/>
+</svg>

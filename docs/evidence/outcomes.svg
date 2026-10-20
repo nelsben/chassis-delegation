@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="214" viewBox="0 0 720 214" role="img">
+  <title>Final verdict per task</title>
+  <desc>356 of 689 tasks (52%) ended with a consistent verdict; the rest were unverified, refuted, had no report or were refused.</desc>
+  <style>
+    text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; fill: #1f2328; }
+    .h { font-size: 14px; font-weight: 600; }
+    .m { fill: #59636e; }
+    .ax { stroke: #59636e; stroke-width: 1; fill: none; }
+    .mk { stroke: #59636e; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .b0 { fill: #0969da; } .b1 { fill: #bf8700; } .b2 { fill: #cf222e; } .b3 { fill: #6e7781; } .b4 { fill: #8250df; }
+    .b0, .b1, .b2, .b3, .b4 { stroke: #1f2328; stroke-width: 1; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #e6edf3; }
+      .m { fill: #9198a1; }
+      .ax, .mk { stroke: #9198a1; }
+      .b0 { fill: #58a6ff; } .b1 { fill: #d29922; } .b2 { fill: #ff7b72; } .b3 { fill: #9198a1; } .b4 { fill: #bc8cff; }
+      .b0, .b1, .b2, .b3, .b4 { stroke: #e6edf3; }
+    }
+  </style>
+  <text x="10" y="24" class="h">Final verdict per task (689 tasks)</text>
+  <text x="132" y="64" text-anchor="end">consistent</text>
+  <rect x="140" y="50" width="430.0" height="20" class="b0"/>
+  <text x="576" y="64">356 (52%)</text>
+  <text x="132" y="94" text-anchor="end">unverified</text>
+  <rect x="140" y="80" width="225.9" height="20" class="b1"/>
+  <text x="371.87078651685397" y="94">187 (27%)</text>
+  <text x="132" y="124" text-anchor="end">refuted</text>
+  <rect x="140" y="110" width="101.5" height="20" class="b2"/>
+  <text x="247.46067415730337" y="124">84 (12%)</text>
+  <text x="132" y="154" text-anchor="end">no report</text>
+  <rect x="140" y="140" width="65.2" height="20" class="b3"/>
+  <text x="211.22471910112358" y="154">54 (8%)</text>
+  <text x="132" y="184" text-anchor="end">refused</text>
+  <rect x="140" y="170" width="9.7" height="20" class="b4"/>
+  <text x="155.6629213483146" y="184">8 (1%)</text>
+  <line x1="140" y1="46" x2="140" y2="194" class="ax"/>
+</svg>

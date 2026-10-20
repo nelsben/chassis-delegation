@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="254" viewBox="0 0 720 254" role="img">
+  <title>Cost per card, by hand and through the mod</title>
+  <desc>The same three cards cost $3.93 through the mod against $25.76 by hand.</desc>
+  <style>
+    text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; fill: #1f2328; }
+    .h { font-size: 14px; font-weight: 600; }
+    .m { fill: #59636e; }
+    .ax { stroke: #59636e; stroke-width: 1; fill: none; }
+    .mk { stroke: #59636e; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .b0 { fill: #0969da; } .b1 { fill: #bf8700; } .b2 { fill: #cf222e; } .b3 { fill: #6e7781; } .b4 { fill: #8250df; }
+    .b0, .b1, .b2, .b3, .b4 { stroke: #1f2328; stroke-width: 1; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #e6edf3; }
+      .m { fill: #9198a1; }
+      .ax, .mk { stroke: #9198a1; }
+      .b0 { fill: #58a6ff; } .b1 { fill: #d29922; } .b2 { fill: #ff7b72; } .b3 { fill: #9198a1; } .b4 { fill: #bc8cff; }
+      .b0, .b1, .b2, .b3, .b4 { stroke: #e6edf3; }
+    }
+  </style>
+  <text x="10" y="24" class="h">Worker cost per card (USD, same token method both arms)</text>
+  <text x="10" y="80" class="h">Card 1</text>
+  <text x="124" y="67" class="m" text-anchor="end">by hand</text>
+  <rect x="130" y="52" width="333.2" height="20" class="b3"/>
+  <text x="469.1788693234477" y="67">$7.19</text>
+  <text x="124" y="93" class="m" text-anchor="end">through the mod</text>
+  <rect x="130" y="78" width="42.2" height="20" class="b0"/>
+  <text x="178.1686746987952" y="93">$0.91</text>
+  <text x="10" y="146" class="h">Card 2</text>
+  <text x="124" y="133" class="m" text-anchor="end">by hand</text>
+  <rect x="130" y="118" width="500.0" height="20" class="b3"/>
+  <text x="636" y="133">$10.79</text>
+  <text x="124" y="159" class="m" text-anchor="end">through the mod</text>
+  <rect x="130" y="144" width="81.1" height="20" class="b0"/>
+  <text x="217.09360518999074" y="159">$1.75</text>
+  <text x="10" y="212" class="h">Card 3</text>
+  <text x="124" y="199" class="m" text-anchor="end">by hand</text>
+  <rect x="130" y="184" width="360.5" height="20" class="b3"/>
+  <text x="496.518999073216" y="199">$7.78</text>
+  <text x="124" y="225" class="m" text-anchor="end">through the mod</text>
+  <rect x="130" y="210" width="58.9" height="20" class="b0"/>
+  <text x="194.85078776645042" y="225">$1.27</text>
+  <line x1="130" y1="44" x2="130" y2="240" class="ax"/>
+</svg>
