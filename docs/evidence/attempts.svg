@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="154" viewBox="0 0 720 154" role="img">
+  <title>Tasks by attempts to settle</title>
+  <desc>608 of 689 tasks (88%) settled in a single attempt.</desc>
+  <style>
+    text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; fill: #1f2328; }
+    .h { font-size: 14px; font-weight: 600; }
+    .m { fill: #59636e; }
+    .ax { stroke: #59636e; stroke-width: 1; fill: none; }
+    .mk { stroke: #59636e; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .b0 { fill: #0969da; } .b1 { fill: #bf8700; } .b2 { fill: #cf222e; } .b3 { fill: #6e7781; } .b4 { fill: #8250df; }
+    .b0, .b1, .b2, .b3, .b4 { stroke: #1f2328; stroke-width: 1; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #e6edf3; }
+      .m { fill: #9198a1; }
+      .ax, .mk { stroke: #9198a1; }
+      .b0 { fill: #58a6ff; } .b1 { fill: #d29922; } .b2 { fill: #ff7b72; } .b3 { fill: #9198a1; } .b4 { fill: #bc8cff; }
+      .b0, .b1, .b2, .b3, .b4 { stroke: #e6edf3; }
+    }
+  </style>
+  <text x="10" y="24" class="h">Tasks by number of attempts to settle (689 tasks)</text>
+  <text x="132" y="64" text-anchor="end">1 attempt</text>
+  <rect x="140" y="50" width="430.0" height="20" class="b0"/>
+  <text x="576" y="64">608 (88%)</text>
+  <text x="132" y="94" text-anchor="end">2 attempts</text>
+  <rect x="140" y="80" width="51.6" height="20" class="b0"/>
+  <text x="197.62828947368422" y="94">73 (11%)</text>
+  <text x="132" y="124" text-anchor="end">3 attempts</text>
+  <rect x="140" y="110" width="5.7" height="20" class="b0"/>
+  <text x="151.6578947368421" y="124">8 (1%)</text>
+  <line x1="140" y1="46" x2="140" y2="134" class="ax"/>
+</svg>

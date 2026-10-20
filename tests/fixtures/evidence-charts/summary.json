@@ -1,0 +1,23 @@
+{
+  "window": { "first": "2026-10-03", "last": "2026-10-08" },
+  "totals": { "tasks": 20, "judged": 24, "usd": 61, "accepted": 9, "merged": 2 },
+  "verdicts": { "consistent": 11, "no-report": 2, "refused": 1, "refuted": 3, "unverified": 3 },
+  "attempts": { "1": 16, "2": 3, "3": 1 },
+  "firstAttempt": { "consistent": 9, "judged": 20 },
+  "tiers": {
+    "haiku": { "n": 5, "meanUsd": 1.25, "medianMin": 3, "p90Min": 9, "consistent": 4 },
+    "opus": { "n": 3, "meanUsd": 7.5, "medianMin": 17, "p90Min": 60, "consistent": 2 },
+    "sonnet": { "n": 16, "meanUsd": 3.4, "medianMin": 6, "p90Min": 30, "consistent": 5 }
+  },
+  "days": {
+    "2026-10-03": { "judged": 5, "refuted": 1, "usd": 12.5 },
+    "2026-10-05": { "judged": 12, "refuted": 2, "usd": 40.25 },
+    "2026-10-06": { "judged": 7, "refuted": 0, "usd": 8.2 },
+    "2026-10-08": { "judged": 2, "refuted": 0, "usd": 5 }
+  },
+  "repos": {
+    "A": { "tasks": 8, "judged": 10, "verdicts": { "consistent": 8, "refuted": 1, "unverified": 1 }, "usd": 20, "first": "2026-10-03", "last": "2026-10-08" },
+    "B": { "tasks": 12, "judged": 14, "verdicts": { "consistent": 3, "no-report": 2, "refused": 1, "refuted": 2, "unverified": 2 }, "usd": 41, "first": "2026-10-03", "last": "2026-10-05" }
+  },
+  "skippedLines": 0
+}

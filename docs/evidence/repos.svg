@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="306" viewBox="0 0 720 306" role="img">
+  <title>Verdict mix per repo</title>
+  <desc>Consistent verdicts range from 0% of tasks in repo F to 96% in repo B.</desc>
+  <style>
+    text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13px; fill: #1f2328; }
+    .h { font-size: 14px; font-weight: 600; }
+    .m { fill: #59636e; }
+    .ax { stroke: #59636e; stroke-width: 1; fill: none; }
+    .mk { stroke: #59636e; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .b0 { fill: #0969da; } .b1 { fill: #bf8700; } .b2 { fill: #cf222e; } .b3 { fill: #6e7781; } .b4 { fill: #8250df; }
+    .b0, .b1, .b2, .b3, .b4 { stroke: #1f2328; stroke-width: 1; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #e6edf3; }
+      .m { fill: #9198a1; }
+      .ax, .mk { stroke: #9198a1; }
+      .b0 { fill: #58a6ff; } .b1 { fill: #d29922; } .b2 { fill: #ff7b72; } .b3 { fill: #9198a1; } .b4 { fill: #bc8cff; }
+      .b0, .b1, .b2, .b3, .b4 { stroke: #e6edf3; }
+    }
+  </style>
+  <text x="10" y="24" class="h">Final verdict mix per repo (share of tasks)</text>
+  <rect x="10" y="38" width="12.0" height="12" class="b0"/>
+  <text x="28" y="49">1 consistent</text>
+  <rect x="136" y="38" width="12.0" height="12" class="b1"/>
+  <text x="154" y="49">2 unverified</text>
+  <rect x="262" y="38" width="12.0" height="12" class="b2"/>
+  <text x="280" y="49">3 refuted</text>
+  <rect x="366.4" y="38" width="12.0" height="12" class="b3"/>
+  <text x="384.4" y="49">4 no report</text>
+  <rect x="485.2" y="38" width="12.0" height="12" class="b4"/>
+  <text x="503.2" y="49">5 refused</text>
+  <text x="10" y="76" class="m">Bars run in the legend order, left to right; the figures after each bar are task counts.</text>
+  <text x="10" y="107" class="h">A</text>
+  <rect x="40.0" y="92" width="268.2" height="22" class="b0"/>
+  <rect x="308.2" y="92" width="4.4" height="22" class="b1"/>
+  <rect x="312.6" y="92" width="8.7" height="22" class="b2"/>
+  <rect x="321.3" y="92" width="8.7" height="22" class="b3"/>
+  <text x="340" y="107">1=123  2=2  3=4  4=4  of 133 tasks</text>
+  <text x="10" y="141" class="h">B</text>
+  <rect x="40.0" y="126" width="277.4" height="22" class="b0"/>
+  <rect x="317.4" y="126" width="7.2" height="22" class="b1"/>
+  <rect x="324.6" y="126" width="3.6" height="22" class="b2"/>
+  <rect x="328.2" y="126" width="1.8" height="22" class="b3"/>
+  <text x="340" y="141">1=154  2=4  3=2  4=1  of 161 tasks</text>
+  <text x="10" y="175" class="h">C</text>
+  <rect x="40.0" y="160" width="35.0" height="22" class="b0"/>
+  <rect x="75.0" y="160" width="205.5" height="22" class="b1"/>
+  <rect x="280.5" y="160" width="42.3" height="22" class="b2"/>
+  <rect x="322.7" y="160" width="7.3" height="22" class="b3"/>
+  <text x="340" y="175">1=24  2=141  3=29  4=5  of 199 tasks</text>
+  <text x="10" y="209" class="h">D</text>
+  <rect x="40.0" y="194" width="37.2" height="22" class="b0"/>
+  <rect x="77.2" y="194" width="44.6" height="22" class="b1"/>
+  <rect x="121.8" y="194" width="89.2" height="22" class="b2"/>
+  <rect x="211.0" y="194" width="99.1" height="22" class="b3"/>
+  <rect x="310.2" y="194" width="19.8" height="22" class="b4"/>
+  <text x="340" y="209">1=15  2=18  3=36  4=40  5=8  of 117 tasks</text>
+  <text x="10" y="243" class="h">E</text>
+  <rect x="40.0" y="228" width="210.9" height="22" class="b0"/>
+  <rect x="250.9" y="228" width="73.8" height="22" class="b1"/>
+  <rect x="324.7" y="228" width="5.3" height="22" class="b2"/>
+  <text x="340" y="243">1=40  2=14  3=1  of 55 tasks</text>
+  <text x="10" y="277" class="h">F</text>
+  <rect x="40.0" y="262" width="96.7" height="22" class="b1"/>
+  <rect x="136.7" y="262" width="145.0" height="22" class="b2"/>
+  <rect x="281.7" y="262" width="48.3" height="22" class="b3"/>
+  <text x="340" y="277">2=8  3=12  4=4  of 24 tasks</text>
+</svg>

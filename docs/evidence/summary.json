@@ -1,0 +1,214 @@
+{
+  "window": {
+    "first": "2026-10-03",
+    "last": "2026-10-20"
+  },
+  "totals": {
+    "tasks": 689,
+    "judged": 768,
+    "usd": 2677,
+    "accepted": 276,
+    "merged": 29
+  },
+  "verdicts": {
+    "consistent": 356,
+    "no-report": 54,
+    "refused": 8,
+    "refuted": 84,
+    "unverified": 187
+  },
+  "attempts": {
+    "1": 608,
+    "2": 73,
+    "3": 8
+  },
+  "firstAttempt": {
+    "consistent": 350,
+    "judged": 680
+  },
+  "tiers": {
+    "haiku": {
+      "n": 129,
+      "meanUsd": 1.3,
+      "medianMin": 3,
+      "p90Min": 11,
+      "consistent": 88
+    },
+    "opus": {
+      "n": 75,
+      "meanUsd": 7.17,
+      "medianMin": 18,
+      "p90Min": 74,
+      "consistent": 44
+    },
+    "sonnet": {
+      "n": 564,
+      "meanUsd": 3.5,
+      "medianMin": 6,
+      "p90Min": 33,
+      "consistent": 244
+    }
+  },
+  "days": {
+    "2026-10-03": {
+      "judged": 3,
+      "refuted": 1,
+      "usd": 21.83
+    },
+    "2026-10-04": {
+      "judged": 31,
+      "refuted": 2,
+      "usd": 110.77
+    },
+    "2026-10-06": {
+      "judged": 15,
+      "refuted": 2,
+      "usd": 26.55
+    },
+    "2026-10-07": {
+      "judged": 106,
+      "refuted": 39,
+      "usd": 1789.98
+    },
+    "2026-10-08": {
+      "judged": 5,
+      "refuted": 1,
+      "usd": 10.71
+    },
+    "2026-10-10": {
+      "judged": 51,
+      "refuted": 9,
+      "usd": 82.1
+    },
+    "2026-10-11": {
+      "judged": 100,
+      "refuted": 3,
+      "usd": 130.13
+    },
+    "2026-10-12": {
+      "judged": 77,
+      "refuted": 3,
+      "usd": 53.64
+    },
+    "2026-10-13": {
+      "judged": 82,
+      "refuted": 10,
+      "usd": 46.78
+    },
+    "2026-10-14": {
+      "judged": 70,
+      "refuted": 8,
+      "usd": 30.99
+    },
+    "2026-10-15": {
+      "judged": 101,
+      "refuted": 20,
+      "usd": 101.58
+    },
+    "2026-10-16": {
+      "judged": 11,
+      "refuted": 2,
+      "usd": 12.92
+    },
+    "2026-10-17": {
+      "judged": 54,
+      "refuted": 2,
+      "usd": 81.06
+    },
+    "2026-10-18": {
+      "judged": 33,
+      "refuted": 0,
+      "usd": 67.44
+    },
+    "2026-10-19": {
+      "judged": 27,
+      "refuted": 4,
+      "usd": 109.97
+    },
+    "2026-10-20": {
+      "judged": 2,
+      "refuted": 0,
+      "usd": 0.83
+    }
+  },
+  "repos": {
+    "A": {
+      "tasks": 133,
+      "judged": 151,
+      "verdicts": {
+        "consistent": 123,
+        "no-report": 4,
+        "refuted": 4,
+        "unverified": 2
+      },
+      "usd": 278.8,
+      "first": "2026-10-04",
+      "last": "2026-10-20"
+    },
+    "B": {
+      "tasks": 161,
+      "judged": 169,
+      "verdicts": {
+        "consistent": 154,
+        "no-report": 1,
+        "refuted": 2,
+        "unverified": 4
+      },
+      "usd": 95.38,
+      "first": "2026-10-10",
+      "last": "2026-10-18"
+    },
+    "C": {
+      "tasks": 199,
+      "judged": 209,
+      "verdicts": {
+        "consistent": 24,
+        "no-report": 5,
+        "refuted": 29,
+        "unverified": 141
+      },
+      "usd": 270.25,
+      "first": "2026-10-11",
+      "last": "2026-10-19"
+    },
+    "D": {
+      "tasks": 117,
+      "judged": 151,
+      "verdicts": {
+        "consistent": 15,
+        "no-report": 40,
+        "refused": 8,
+        "refuted": 36,
+        "unverified": 18
+      },
+      "usd": 1873.51,
+      "first": "2026-10-03",
+      "last": "2026-10-10"
+    },
+    "E": {
+      "tasks": 55,
+      "judged": 60,
+      "verdicts": {
+        "consistent": 40,
+        "refuted": 1,
+        "unverified": 14
+      },
+      "usd": 109.25,
+      "first": "2026-10-11",
+      "last": "2026-10-19"
+    },
+    "F": {
+      "tasks": 24,
+      "judged": 28,
+      "verdicts": {
+        "no-report": 4,
+        "refuted": 12,
+        "unverified": 8
+      },
+      "usd": 50.07,
+      "first": "2026-10-14",
+      "last": "2026-10-15"
+    }
+  },
+  "skippedLines": 0
+}
