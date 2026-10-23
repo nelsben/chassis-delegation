@@ -13,7 +13,7 @@
 import { DEFAULT_SPEND_BY_TIER } from './cost'
 import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
 import { DEFAULT_EFFORT_BY_TIER, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
-import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, type EffortNudge } from './nudge'
+import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, nudgeCardsFor, type EffortNudge } from './nudge'
 
 export const REPO_CONFIG_FILE = '.chassis-delegation.json'
 
@@ -399,6 +399,10 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     (settings[k] ?? user[k] ?? repo[k] ?? fallback) as NonNullable<RepoConfig[K]>
   const gateMap = { ...repo.gateMap, ...user.gateMap, ...settings.gateMap }
   const refusedGates = Object.fromEntries(Object.entries({ ...repo.refusedGates, ...user.refusedGates, ...settings.refusedGates }).filter(([id]) => !(id in gateMap)))
+  const cardDir = pick('cardDir', DEFAULT_CARD_DIR)
+  const effortNudge = { ...DEFAULT_EFFORT_NUDGE, ...repo.effortNudge, ...user.effortNudge, ...settings.effortNudge }
+  // MOD-121: no layer set `cards` -> the card folder as resolved; an explicit glob wins and "" turns the nudge off
+  if (settings.effortNudge?.cards === undefined && user.effortNudge?.cards === undefined && repo.effortNudge?.cards === undefined) effortNudge.cards = nudgeCardsFor(cardDir)
   return {
     gateMap,
     refusedGates,
@@ -411,13 +415,13 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     maxWorkers: pick('maxWorkers', DEFAULT_MAX_WORKERS),
     domains: [...pick('domains', [...DEFAULT_DOMAINS])],
     worktreeRoot: pick('worktreeRoot', ''),
-    cardDir: pick('cardDir', DEFAULT_CARD_DIR),
+    cardDir,
     autoEval: settings.autoEval === true || (user.autoEval ?? repo.autoEval) === true,
     baseRef: pick('baseRef', ''),
     ignore: [...pick('ignore', [...DEFAULT_IGNORE])],
     spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...user.spendByTier, ...settings.spendByTier },
     effortByTier: { ...DEFAULT_EFFORT_BY_TIER, ...repo.effortByTier, ...user.effortByTier, ...settings.effortByTier },
-    effortNudge: { ...DEFAULT_EFFORT_NUDGE, ...repo.effortNudge, ...user.effortNudge, ...settings.effortNudge },
+    effortNudge,
     delegateOnly: pick('delegateOnly', 'off'),
     issueRepo: pick('issueRepo', ''),
     review: pick('review', 'off'),

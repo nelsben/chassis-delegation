@@ -261,3 +261,15 @@ describe('MOD-20: text inside quotes inside a command substitution is quoted', (
     expect(w('echo "a > b" "$(date)" > hooks/a.ts').paths).toEqual(['/repo/hooks/a.ts'])
   })
 })
+
+describe('MOD-121: effortNudge.cards unset means the card folder', () => {
+  test('default cardDir -> agents/tasks/**; cardDir set -> follows it; explicit cards wins; "" is off; up and down merge key by key', () => {
+    expect(mergeConfig({}, {}).effortNudge).toEqual({ cards: 'agents/tasks/**', up: 'high', down: 'medium' })
+    expect(mergeConfig({ cardDir: 'work/cards' }, {}).effortNudge.cards).toBe('work/cards/**')
+    expect(mergeConfig({ cardDir: 'work/cards', effortNudge: { up: 'max' } }, {}).effortNudge).toEqual({ cards: 'work/cards/**', up: 'max', down: 'medium' })
+    expect(mergeConfig({ cardDir: 'work/cards', effortNudge: { cards: 'renders/**' } }, {}).effortNudge.cards).toBe('renders/**')
+    expect(mergeConfig({ effortNudge: { cards: '' } }, {}).effortNudge.cards).toBe('')
+    expect(mergeConfig({ effortNudge: { cards: '' } }, { effortNudge: { up: 'low' } }).effortNudge).toEqual({ cards: '', up: 'low', down: 'medium' })
+    expect(mergeConfig({}, { cardDir: 'c' }, { effortNudge: { cards: 'x/**' } }).effortNudge.cards).toBe('x/**')
+  })
+})

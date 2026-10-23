@@ -7,8 +7,14 @@
 /** Config `effortNudge`: the artefact glob that marks a hand-back as judgment, and the two effort words the rows name. */
 export type EffortNudge = { cards: string; up: string; down: string }
 
-/** Config `effortNudge` default: a hand-back naming an artefact under a `cards/` folder nudges up to high; the way back is medium. */
-export const DEFAULT_EFFORT_NUDGE: Readonly<EffortNudge> = { cards: 'cards/**', up: 'high', down: 'medium' }
+/**
+ * Config `effortNudge` default: a hand-back naming an artefact in the card folder nudges up to high; the way back is medium.
+ * `cards` here is the glob for the built-in card folder; a layer that does not set `cards` gets `<cardDir>/**` (see `nudgeCardsFor`).
+ */
+export const DEFAULT_EFFORT_NUDGE: Readonly<EffortNudge> = { cards: 'agents/tasks/**', up: 'high', down: 'medium' }
+
+/** The glob a layer-less `effortNudge.cards` means: the card folder as resolved. */
+export const nudgeCardsFor = (cardDir: string): string => `${cardDir.replace(/^\/+|\/+$/g, '')}/**`
 
 export const NUDGE_KEYS: readonly (keyof EffortNudge)[] = ['cards', 'up', 'down']
 
@@ -53,5 +59,5 @@ export const nudgeUp = (n: Readonly<EffortNudge>): string => `lead: judgment nex
 /** The clause on a later accept or started row: `lead: back to medium`. */
 export const nudgeDown = (n: Readonly<EffortNudge>): string => `lead: back to ${n.down}`
 
-/** The `/delegation` line: `effort nudge: cards/** · up high · down medium`, or `effort nudge: off`. */
+/** The `/delegation` line: `effort nudge: agents/tasks/** · up high · down medium`, or `effort nudge: off`. */
 export const nudgeText = (n: Readonly<EffortNudge>): string => (n.cards.trim() === '' ? 'effort nudge: off' : `effort nudge: ${n.cards} · up ${n.up} · down ${n.down}`)
