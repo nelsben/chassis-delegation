@@ -320,7 +320,8 @@ import { configPlan, fieldAnswer, manifestFields, rowsByField, viewFields, type 
 import { CONFIG_TABLE } from './lib/configtable'
 import { parseUserOptions, repoFileWith, resolveOptions, userFileWith, userOptionsPath, type Resolved } from './lib/configeff'
 import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
-import { gitConfigValue, parseRedactList, type RedactRules } from './lib/redact'
+import { dropLocalQuotes, gitConfigValue, parseRedactList, redact, type RedactRules } from './lib/redact'
+import { allowClause, allowOf, missingBlocks, missingBlockRefusal, noLocalRefusal, renderLocal, trackedRefusal, unreadableRefusal } from './lib/brieflocal'
 import { abortedDeny, budgetDelay, decisionId, isStopped, outOfTimeDeny, stopper, turns, type Stopper } from './lib/serial'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
@@ -553,6 +554,8 @@ type Config = {
   evalLiveCommand: string
   briefTemplate: string
   briefExtra: string
+  /** MOD-124 (#188): the gitignored rules file copied into every brief. */
+  briefLocal: string
   maxWorkers: number
   domains: string[]
   worktreeRoot: string
@@ -651,6 +654,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       evalLiveCommand: eff.evalLiveCommand,
       briefTemplate: eff.briefTemplate,
       briefExtra: eff.briefExtra,
+      briefLocal: eff.briefLocal,
       maxWorkers: eff.maxWorkers,
       domains: eff.domains,
       worktreeRoot: eff.worktreeRoot,
@@ -1063,6 +1067,8 @@ type Target = {
   baseRef: string
   /** MOD-95: its own config's briefExtra (empty with no config), never the session's. */
   briefExtra: string
+  /** MOD-124: its own config's briefLocal. */
+  briefLocal: string
 }
 
 /** `repo` as a checkout of another local repo: its normalised path, or why it is refused. */
@@ -1116,7 +1122,7 @@ async function loadTarget($: Host, path: string): Promise<Target> {
       detected = true
     }
   }
-  return { path, name: repoFolderName(path), hasConfig: text !== undefined, gateMap, refusedGates: eff.refusedGates, detected, domains: eff.domains, cardDir: eff.cardDir, spendByTier: eff.spendByTier, baseRef: eff.baseRef, briefExtra: eff.briefExtra }
+  return { path, name: repoFolderName(path), hasConfig: text !== undefined, gateMap, refusedGates: eff.refusedGates, detected, domains: eff.domains, cardDir: eff.cardDir, spendByTier: eff.spendByTier, baseRef: eff.baseRef, briefExtra: eff.briefExtra, briefLocal: eff.briefLocal }
 }
 
 /** Where a target's cards are: its own cardDir when it has a config, else the session's .delegation/cards/<its folder name>/. */
@@ -2497,6 +2503,32 @@ async function cardNameIn($: Host, dir: string, id: string): Promise<string | un
   }
 }
 
+/** MOD-124: the briefLocal path as an absolute one: relative to the repo root unless it starts with /. */
+const localAbs = (root: string, path: string): string => (path.startsWith('/') ? path : `${root.replace(/\/+$/, '')}/${path}`)
+
+/** MOD-124: the allow= clause the verdict row carries, from the brief header; empty with none. */
+async function allowClauseOf($: Host, spawn: { briefPath?: string }): Promise<string> {
+  if (!spawn.briefPath) return ''
+  const text = await readText($, spawn.briefPath)
+  return text === undefined ? '' : allowClause(allowOf(parseHeader(text)))
+}
+
+/** MOD-124: the text of every brief that carries a local section, as written and as scrubbed, for the debrief to avoid quoting. */
+async function localBriefTexts($: Host, rules: RedactRules): Promise<string[]> {
+  const out: string[] = []
+  try {
+    const dir = briefDirFor((await $.session.root()).replace(/\/+$/, ''), cfg.briefDir)
+    for (const e of await $.fs.list(dir)) {
+      if (!e.name.endsWith('.brief.md')) continue
+      const t = await readText($, `${dir}/${e.name}`)
+      if (t !== undefined && (t.includes('## Local rules (not for debrief)') || t.includes('## Exception for this card:'))) out.push(t, redact(t, rules))
+    }
+  } catch {
+    // no brief folder: nothing local to keep out
+  }
+  return out
+}
+
 /** MOD-86: is this repo-relative path git-ignored in `dir`? `git -C <dir> check-ignore -q -- <path>`: exit 0 = ignored, 1 = not; anything else reads as not. */
 async function isIgnored($: Host, dir: string, rel: string): Promise<boolean> {
   const r = await run($, ['git', '-C', dir, 'check-ignore', '-q', '--', rel], { cwd: dir, timeoutMs: 15000 })
@@ -3385,7 +3417,10 @@ async function writeFindings($: Host, debriefPath: string, window: DebriefWindow
       await appendRow($, 'debrief record not moved: the previous record stands, so the next debrief covers this window again; the .done watermark was left as is (not to be marked)')
       return { moved: false, clean: false }
     }
-    const findings = scrubbedFindings(body, await redactRules($))
+    const debriefRules = await redactRules($)
+    // MOD-124: a finding that quotes a brief's local rules or exception text is dropped whole
+    const scrubbed = scrubbedFindings(body, debriefRules)
+    const findings = scrubbed === undefined ? undefined : dropLocalQuotes(scrubbed, await localBriefTexts($, debriefRules))
     if (findings === undefined) return { moved: true, clean: true }
     const { mod, host } = splitModFindings(findings)
     // MOD-18: after the findings lines, the agent's own proposals; they stay in the debrief file and are never posted
@@ -4505,13 +4540,15 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const downClause = down ? ` · ${down}` : ''
   // GH-104: work present rides under the verdict line in both forms
   const workLine = work ? workPresentLine(work) : undefined
-  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }) + downClause, workLine ? [workLine, ...lines] : lines)
+  // MOD-124: the exceptions the brief allowed ride on the row
+  const allowText = spawn.adhoc ? '' : await allowClauseOf($, spawn)
+  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }) + allowText + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
   const tail = from ? fallbackTail(from) : undefined
   if (from) debug($, fallbackLog(shownLabel, shownAttempt, from))
   const full = withTailIf(spawnText ? `${verdictRows}\n${spawnText}` : verdictRows, tail)
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines }) + downClause
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines }) + allowText + downClause
   const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
@@ -5268,7 +5305,26 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     const gateFilesAt = scratch ? `${scratch.replace(/\/+$/, '')}/files.txt` : filesPathFor(scratchFor(`${briefDirFor(root, cfg.briefDir)}/${fileName}`), id)
     const gateLine = gateLineText(card.gate, target ? target.gateMap : cfg.gateMap, { worktree, ...(outdir ? { outdir } : {}), filesPath: gateFilesAt, base: base !== 'origin/main' ? base : (target ? target.baseRef : cfg.baseRef) || 'origin/main' })
     const briefCard: Card = { ...card, gateText: gateLine.gate }
-    const rendered = renderBriefChecked(template, { card: briefCard, gateNote: gateLine.note, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: target ? target.briefExtra : cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
+    // MOD-124 (#188): the gitignored rules file, copied under its own heading; the card's allow: blocks after it
+    const localPath = (target ? target.briefLocal : cfg.briefLocal).trim()
+    let localText: string | undefined
+    if (localPath === '' && card.allow.length > 0) return [...out, noLocalRefusal(id, card.allow)].join('\n')
+    if (localPath !== '' && (await exists($, localAbs(repoRoot, localPath)))) {
+      const at = localAbs(repoRoot, localPath)
+      const tracked = await run($, ['git', '-C', repoRoot, 'ls-files', '--error-unmatch', '--', at], { cwd: repoRoot, timeoutMs: 15000 })
+      if (tracked.ok && tracked.exitCode === 0) return [...out, trackedRefusal(id, localPath)].join('\n')
+      try {
+        localText = await $.fs.read(at)
+      } catch (err) {
+        return [...out, unreadableRefusal(id, localPath, String(err))].join('\n')
+      }
+    }
+    if (card.allow.length > 0) {
+      const missing = missingBlocks(localText ?? '', card.allow)[0]
+      if (missing !== undefined) return [...out, missingBlockRefusal(id, missing, localPath)].join('\n')
+    }
+    const briefExtraText = renderLocal(target ? target.briefExtra : cfg.briefExtra, localText, card.allow)
+    const rendered = renderBriefChecked(template, { card: briefCard, gateNote: gateLine.note, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: briefExtraText, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
     // MOD-28: a brief with a marker left in it never reaches a worker; nothing is written, no worktree is made
     if (rendered.leftover !== undefined) return [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n')
     const written = await writeBrief($, root, fileName, `${header}\n\n${rendered.text}`)

@@ -52,6 +52,8 @@ export type NewCard = {
   repo: CardRepo | string
   /** MOD-23: the exclusive resources the card holds while it runs. */
   resources: string[]
+  /** MOD-124 (#188): the exception blocks the brief pulls from the briefLocal file. */
+  allow: string[]
 }
 
 export const CARD_TOOL = {
@@ -73,6 +75,7 @@ export const CARD_TOOL = {
       gate: { type: 'string', description: 'Gate id(s) from gateMap, comma-separated (default: the first); for a repo given as a path also one command (words only, no comma), e.g. "npm run build"' },
       budget: { type: 'number', description: 'Attempts before the task is handed back (default 2)' },
       spend: { type: 'number', description: "Dollars one attempt may spend; 0 = no ceiling (default: the tier's)" },
+      allow: { type: 'array', items: { type: 'string' }, description: 'Named exceptions to the repo\'s local rules, e.g. ["live-reads"]: one plain word each. Each must have a "### allow: <id>" block in the file the repo config names as briefLocal; the block is copied into the brief and the id shows on the verdict row' },
       resources: { type: 'array', items: { type: 'string' }, description: 'Exclusive resources the worker holds while it runs, e.g. ["blender-live"] (one live app with one open file): one plain word each. A card that names a resource a running worker holds waits in the queue until that worker hands back' },
       lanes: {
         type: 'array',
@@ -136,14 +139,14 @@ function globs(key: 'scope' | 'forbid', v: unknown, required: boolean): string[]
   return list
 }
 
-/** MOD-23: the card's `resources`: a list of plain words, each once; none when absent. */
-function resourceNames(v: unknown): string[] | { error: string } {
+/** MOD-23: the card's `resources`: a list of plain words, each once; none when absent. MOD-124: and `allow`, the same rule. */
+function resourceNames(v: unknown, key = 'resources', example = 'blender-live'): string[] | { error: string } {
   if (v === undefined) return []
-  if (!Array.isArray(v) || v.some(x => typeof x !== 'string')) return { error: 'resources must be a list of names, e.g. ["blender-live"]' }
+  if (!Array.isArray(v) || v.some(x => typeof x !== 'string')) return { error: `${key} must be a list of names, e.g. ["${example}"]` }
   const out: string[] = []
   for (const raw of v as string[]) {
     const name = raw.trim()
-    if (!RESOURCE_NAME.test(name)) return { error: `resources entry "${raw}" must be one plain word (letters, digits, . _ : -), e.g. blender-live` }
+    if (!RESOURCE_NAME.test(name)) return { error: `${key} entry "${raw}" must be one plain word (letters, digits, . _ : -), e.g. ${example}` }
     if (!out.includes(name)) out.push(name)
   }
   return out
@@ -167,6 +170,8 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   if ('error' in forbid) return forbid
   const resources = resourceNames(input.resources)
   if ('error' in resources) return resources
+  const allow = resourceNames(input.allow, 'allow', 'live-reads')
+  if ('error' in allow) return allow
 
   // MOD-22: no repo given keeps the old rule (a repo with no origin/main works in the checkout)
   // MOD-44: a path was resolved by the caller (ctx.repoPath); one that was not is refused here
@@ -226,7 +231,7 @@ tier: ${tier}
 status: queued
 ${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
 forbid: [${forbid.map(inList).join(', ')}]
-${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
+${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
 gate: ${gate.join(', ')}
 budget: ${budget}-attempts
 spend: ${spend}
@@ -239,7 +244,7 @@ ${why}
 
 ${done.map(d => `- ${d}`).join('\n')}
 `
-  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources }
+  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow }
 }
 
 /**
@@ -291,8 +296,8 @@ export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): N
 }
 
 /** `OPS-1 · standard → sonnet · scope a, b · gate test · red: cmd · 2 attempts · $6 ceiling`; a card that is not a worktree card names its repo after the scope (`… · repo none · gate test …`). */
-export const cardSummary = (c: Pick<NewCard, 'id' | 'tier' | 'scope' | 'gate' | 'redTest' | 'budget' | 'spend'> & { repo?: CardRepo | string; resources?: readonly string[] }, alias: string): string =>
-  [c.id, `${c.tier} → ${alias}`, `scope ${c.scope.join(', ')}`, ...(c.repo && c.repo !== 'worktree' ? [`repo ${c.repo}`] : []), ...(c.resources && c.resources.length > 0 ? [`resources ${c.resources.join(', ')}`] : []), `gate ${c.gate.join(', ')}`, `red: ${c.redTest}`, `${c.budget} attempts`, c.spend > 0 ? `${dollars(c.spend)} ceiling` : 'no ceiling'].join(' · ')
+export const cardSummary = (c: Pick<NewCard, 'id' | 'tier' | 'scope' | 'gate' | 'redTest' | 'budget' | 'spend'> & { repo?: CardRepo | string; resources?: readonly string[]; allow?: readonly string[] }, alias: string): string =>
+  [c.id, `${c.tier} → ${alias}`, `scope ${c.scope.join(', ')}`, ...(c.repo && c.repo !== 'worktree' ? [`repo ${c.repo}`] : []), ...(c.resources && c.resources.length > 0 ? [`resources ${c.resources.join(', ')}`] : []), ...(c.allow && c.allow.length > 0 ? [`allow ${c.allow.join(', ')}`] : []), `gate ${c.gate.join(', ')}`, `red: ${c.redTest}`, `${c.budget} attempts`, c.spend > 0 ? `${dollars(c.spend)} ceiling` : 'no ceiling'].join(' · ')
 
 /** The closing line of the dry-run answer; MOD-23: with lanes, every id. */
 export const sayGo = (ids: string | readonly string[]): string => `Say go and Claude dispatches ${typeof ids === 'string' ? ids : ids.join(', ')}.`

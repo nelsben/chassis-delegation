@@ -79,6 +79,8 @@ export type RepoConfig = {
   evalLiveCommand?: string
   briefTemplate?: string
   briefExtra?: string
+  /** MOD-124 (#188): a gitignored rules file (repo-relative or absolute) copied into every brief under a section the debrief drops. */
+  briefLocal?: string
   maxWorkers?: number
   domains?: string[]
   worktreeRoot?: string
@@ -105,7 +107,7 @@ export type RepoConfig = {
   reviewTier?: Tier
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
+export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -118,6 +120,7 @@ export type Effective = {
   evalLiveCommand: string
   briefTemplate: string
   briefExtra: string
+  briefLocal: string
   maxWorkers: number
   domains: string[]
   worktreeRoot: string
@@ -282,6 +285,7 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
       case 'evalLiveCommand':
       case 'briefTemplate':
       case 'briefExtra':
+      case 'briefLocal':
       case 'worktreeRoot':
         if (typeof v !== 'string') errors.push(`${key}${where}: not a string (ignored)`)
         else if (v.trim() !== '') config[key] = key === 'worktreeRoot' ? v.trim().replace(/\/+$/, '') : v
@@ -423,6 +427,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     evalLiveCommand: pick('evalLiveCommand', ''),
     briefTemplate: pick('briefTemplate', ''),
     briefExtra: pick('briefExtra', ''),
+    briefLocal: pick('briefLocal', ''),
     maxWorkers: pick('maxWorkers', DEFAULT_MAX_WORKERS),
     domains: [...pick('domains', [...DEFAULT_DOMAINS])],
     worktreeRoot: pick('worktreeRoot', ''),

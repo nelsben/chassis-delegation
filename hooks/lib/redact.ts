@@ -83,3 +83,34 @@ export function gitConfigValue(text: string, section: string, key: string): stri
   }
   return found === '' ? undefined : found
 }
+
+// ---- MOD-124 (#188): the local rules a brief carries are never quoted by the debrief ----
+
+/** A line shorter than this is too common to count as a quote. */
+const QUOTE_MIN = 12
+
+const normSpace = (s: string): string => s.replace(/\s+/g, ' ').trim()
+
+/** The lines of every section headed `## Local rules (not for debrief)` or `## Exception for this card:` in a brief's text, up to the next `## ` heading. */
+export function localSectionLines(briefText: string): string[] {
+  const out: string[] = []
+  let inside = false
+  for (const line of briefText.replace(/\r\n/g, '\n').split('\n')) {
+    if (/^## /.test(line)) inside = line.startsWith('## Local rules (not for debrief)') || line.startsWith('## Exception for this card:')
+    else if (inside) {
+      const t = normSpace(line)
+      if (t.length >= QUOTE_MIN && !t.startsWith('### ')) out.push(t)
+    }
+  }
+  return out
+}
+
+/** The findings that quote no line of a brief's local sections; a finding that does is dropped whole. */
+export function dropLocalQuotes<T extends { title: string; body?: string; evidence?: readonly string[]; surface?: string }>(findings: readonly T[], briefTexts: readonly string[]): T[] {
+  const lines = briefTexts.flatMap(localSectionLines)
+  if (lines.length === 0) return [...findings]
+  return findings.filter(f => {
+    const hay = normSpace([f.title, f.body ?? '', f.surface ?? '', ...(f.evidence ?? [])].join('\n'))
+    return !lines.some(l => hay.includes(l))
+  })
+}

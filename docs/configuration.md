@@ -54,6 +54,7 @@ Shows the options in force and where each value came from; works in VS Code.
 | `cardDir` | repo | `agents/tasks` | card folder relative to the root (no leading `/`, no `..`). `--replay` stays on `agents/tasks/`. |
 | `briefTemplate` | repo | `hooks/templates/brief.md` | brief template file. |
 | `briefExtra` | repo | `""` | lines added to every brief. |
+| `briefLocal` | repo | `""` | a gitignored rules file, relative to the repo root or absolute. Its text up to the first `### allow:` heading is copied into every brief after `briefExtra`, under `## Local rules (not for debrief)`; a missing file renders nothing; a tracked or unreadable file refuses the dispatch. The file is free text, then optional `### allow: <id>` blocks (each to the next `###` heading): a card with `allow: [<id>]` gets that block as `## Exception for this card: <id>`, and the brief header and the verdict row carry `allow=<id>`. An id with no block, or `allow:` with no `briefLocal`, refuses the dispatch. The debrief skips both sections and drops any finding that quotes them. |
 | `evalCommand` | repo | `""` | what the T1 eval runs; empty = no eval. |
 | `evalLiveCommand` | repo | `""` | what the T2 (live, paid) runner runs. |
 | `autoEval` | repo | `false` | run `evalCommand` once per new `origin/main` sha while idle. Needs `evalCommand`. |

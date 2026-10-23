@@ -127,6 +127,8 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
     briefTemplate: '',
     _briefExtra: 'Repo-specific lines added to every brief (setup steps, conventions, things never to do).',
     briefExtra: '',
+    _briefLocal: 'A gitignored rules file (repo-relative or absolute) copied into every brief under a section the debrief drops; free text, then "### allow: <id>" blocks a card pulls in with allow: [<id>]. Empty = none. A tracked file is refused.',
+    briefLocal: '',
     _evalCommand: 'What a background eval runner runs once per new origin/main sha when the session is idle; empty = no eval. Needs autoEval true here or set with /delegation config autoEval true.',
     evalCommand: '',
     evalLiveCommand: '',

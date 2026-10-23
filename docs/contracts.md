@@ -17,7 +17,7 @@ space is written in double quotes.
 ```
 
 Optional fields go after `gate=` and before `spend=`, in this order: `repo=`, `base=`, `ignore=`, `outdir=`,
-`scratch=`, `resources=`.
+`scratch=`, `resources=`, `allow=`.
 
 | Field | Values | Meaning | Default | What the mod does with it |
 | --- | --- | --- | --- | --- |
@@ -42,6 +42,7 @@ Optional fields go after `gate=` and before `spend=`, in this order: `repo=`, `b
 | `outdir` | absolute folder | output folder outside the repo | the card's `outdir:`, else the folder of its first absolute scope entry | fills `{outdir}`; relative `artefacts=` read against it |
 | `scratch` | absolute folder | helper files | the card's `scratch:`, else `<system temp>/chassis-delegation/<ID>` | written with `outdir=`, `repo=here`, `repo=none`, or when the card names one |
 | `resources` | words of letters, digits, `.` `_` `:` `-` | exclusive resources held while the worker runs | none | a spawn while a running worker holds one is queued |
+| `allow` | words of letters, digits, `.` `_` `:` `-` | named exceptions, from the card's `allow: [<id>]` | none | each id's `### allow: <id>` block in the repo's `briefLocal` file is rendered into the brief as `## Exception for this card: <id>`; the verdict row ends ` allow=<a,b>` when the header names any. An id with no block, or `allow:` with no `briefLocal`, refuses the dispatch |
 
 A dispatch naming a base against a reused brief sets or replaces `base=` alone and says `reused, base= set to <sha>` or
 `reused, base= replaced <old> → <new>`. A reused brief keeps its amend blocks and hand edits; one written for another

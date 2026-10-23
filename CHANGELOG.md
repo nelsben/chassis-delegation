@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`briefLocal` copies a gitignored rules file into every brief, and a card's `allow:` pulls a named exception into it (MOD-124, #188).** A loop that drives one shared live app could not become a card: its rules lived in an untracked file a worktree never sees, and `briefExtra` forbade the one thing the loop must do. Now the repo key `briefLocal` (string, default empty; a path relative to the repo root or absolute) names such a file. Its text up to the first `### allow:` heading is rendered after `briefExtra` under `## Local rules (not for debrief)`; a missing file renders nothing, and a git-tracked or unreadable one refuses the dispatch in one line. A card key `allow: [id]` (plain words, like `resources`; the card tool takes `allow` too) renders the `### allow: <id>` block of that file as `## Exception for this card: <id>`, writes `allow=<id>` on the brief header after `resources=`, and ends the verdict row with ` allow=<id>`; an id with no block, or `allow:` with no `briefLocal`, refuses. The debrief template skips both sections and the findings scrub drops a finding that quotes them. `git ls-files --error-unmatch -- <path>` joins the allowlist. `briefExtra` stays a string; unset, a brief is byte-identical to before.
+
 ## 0.9.20 — 2026-10-23
 
 - **`effortNudge.cards` unset means the card folder, so a repo on defaults gets the up nudge (MOD-121).** The built-in glob was `cards/**` while the built-in `cardDir` is `agents/tasks`, so a repo left on defaults never saw the nudge when a worker handed back cards (the 0.9.19 note had people set the glob by hand). Now, when no layer sets `effortNudge.cards`, the glob is `<cardDir>/**` (`agents/tasks/**` on defaults, and it follows `cardDir`); a layer that sets `cards` wins, `cards: ""` still turns the nudge off, and `up` and `down` merge key by key as before. `/delegation` prints the resolved glob: `effort nudge: agents/tasks/** · up high · down medium`.
