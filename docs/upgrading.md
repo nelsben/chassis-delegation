@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.19 to 0.9.20
+
+Nothing to do, unless two repos on this machine reuse card ids: the store splits per-task keys by repo on the first session start; check that `/delegation` shows attempt 1/N on a fresh card.
+Optional: the effort nudge now reads your card folder by default, so an `effortNudge.cards` set only to match `cardDir` can go.
+Optional: `gateMap._empty` names a gate id to run when a hand-back changes no files.
+Detail: [CHANGELOG 0.9.20](../CHANGELOG.md).
+
 ### From 0.9.18 to 0.9.19
 
 Nothing to do.
