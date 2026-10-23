@@ -192,7 +192,7 @@ import {
   shouldEval,
   type EvalTier,
 } from './lib/evaltrigger'
-import { engineLockDecision, gateCommandTemplates, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
+import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
@@ -2634,7 +2634,10 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
       debug($, `${id}: merge-gates.txt not written: ${String(err)}`)
     }
   }
-  for (const gid of card.gate) {
+  // MOD-122: a branch that changes no file runs gateMap._empty instead of the card's gates
+  const emptyGate = gateForDelta(card.gate.join(','), cfg.gateMap, names.trim() === '' ? [] : names.trim().split('\n'))
+  if (emptyGate.line) log.push(emptyGate.line)
+  for (const gid of emptyGate.line && emptyGate.gate ? [emptyGate.gate] : card.gate) {
     const res = resolveGateRuns(gid, cfg.gateMap, allowed, filesPath, wt.path)
     const skipped = res.notRerun[0]
     if (skipped) {
@@ -5167,7 +5170,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (replay && (card.repo === 'here' || card.repo === 'none')) out.push(`   note: the card says repo: ${card.repo}; a replay works in its own worktree at the base`)
   if (target) {
     out.push(`   ${repoLine(target, card.gate)}`)
-    for (const g of card.gate) if (target.gateMap[g] === undefined && !/\s/.test(g)) out.push(`   warning: gate ${g} is not in ${target.name}'s gate map (${Object.keys(target.gateMap).join(', ') || 'empty'}); the verifier will not re-run it`)
+    for (const g of card.gate) if (target.gateMap[g] === undefined && !/\s/.test(g)) out.push(`   warning: gate ${g} is not in ${target.name}'s gate map (${Object.keys(target.gateMap).filter(k => k !== EMPTY_GATE_KEY).join(', ') || 'empty'}); the verifier will not re-run it`)
   }
 
   // GH-16: the other repo=here cards in flight in this checkout; a scope overlapping theirs is refused.
@@ -5730,7 +5733,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   const here = target ? false : !(originMain?.ok && originMain.exitCode === 0)
   const made = cardsFromFields(input, {
     domains: target ? target.domains : cfg.domains,
-    gateIds: Object.keys(target ? target.gateMap : cfg.gateMap),
+    gateIds: Object.keys(target ? target.gateMap : cfg.gateMap).filter(k => k !== EMPTY_GATE_KEY),
     refusedGates: target ? target.refusedGates : cfg.refusedGates,
     names,
     spendByTier: target ? target.spendByTier : cfg.spendByTier,

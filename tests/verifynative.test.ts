@@ -216,6 +216,22 @@ describe('5A: verifyNative against a repo answered from a table', () => {
     expect(r.verdict).toBe('unverified')
     expect(r.lines.some(l => l.startsWith("claim gate: unchecked — UNVERIFIABLE — environment not established: gate 'npm test' exited 127"))).toBe(true)
   })
+  test('MOD-122: a hand-back that changes no file runs the _empty gate, not the card gate, and says so', async () => {
+    const empty = happy({ [git('diff', '--name-status', '-M', MB, FULL)]: ok(''), 'npm test': exit(1, '', 'full suite ran'), 'npm run fast': ok('smoke green\n') })
+    const gateMap = { test: 'npm test', fast: 'npm run fast', _empty: 'fast' }
+    const allowed = (argv: readonly string[]) => ['npm test', 'npm run fast'].includes(argv.join(' '))
+    const t = io(empty, {})
+    const r = await verifyNative(input({ gateMap, allowed, report: report({ files: 'none', red: '' }), briefText: BRIEF.replace(' red_test="npm test"', '') }), t)
+    expect(r.verdict).toBe('consistent')
+    expect(r.lines).toContain('gate: test → _empty fast (no changed files)')
+    expect(t.calls.some(c => c.argv.join(' ') === 'npm run fast')).toBe(true)
+    expect(t.calls.some(c => c.argv.join(' ') === 'npm test')).toBe(false)
+    // a non-empty delta still runs the card's gate
+    const full = io(happy({ 'npm run fast': ok('smoke green\n') }))
+    const r2 = await verifyNative(input({ gateMap, allowed }), full)
+    expect(r2.lines.some(l => l.startsWith('gate: '))).toBe(false)
+    expect(full.calls.some(c => c.argv.join(' ') === 'npm test')).toBe(true)
+  })
   test('a gate id the map lacks is named, never run raw', async () => {
     const t = io(happy())
     const r = await verifyNative(input({ gateMap: {} }), t)

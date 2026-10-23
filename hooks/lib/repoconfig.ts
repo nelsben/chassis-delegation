@@ -12,6 +12,7 @@
 // repo's autoEval off.
 import { DEFAULT_SPEND_BY_TIER } from './cost'
 import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
+import { EMPTY_GATE_KEY } from './gates'
 import { DEFAULT_EFFORT_BY_TIER, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
 import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, nudgeCardsFor, type EffortNudge } from './nudge'
 
@@ -153,8 +154,9 @@ function stringMap(key: string, v: unknown, errors: string[], where: string, ref
   }
   const out: Record<string, string> = {}
   for (const [k, x] of Object.entries(v)) {
-    if (k.startsWith('_')) continue
+    if (k.startsWith('_') && !(key === 'gateMap' && k === EMPTY_GATE_KEY)) continue
     if (typeof x !== 'string') errors.push(`${key}.${k}${where}: not a string (ignored)`)
+    else if (key === 'gateMap' && k === EMPTY_GATE_KEY) out[k] = x // MOD-122: a gate id, checked below against the map
     else {
       // GH-11: a gate command the allowlist would refuse at verify time is refused now
       const c = key === 'gateMap' ? checkGateEntry(x) : undefined
@@ -162,6 +164,15 @@ function stringMap(key: string, v: unknown, errors: string[], where: string, ref
         errors.push(`${key}.${k}${where}: ${c.reason} (ignored)`)
         if (refused) refused[k] = c.reason
       } else out[k] = x
+    }
+  }
+  // MOD-122: _empty names a gate id the same map has (not a command)
+  if (key === 'gateMap' && EMPTY_GATE_KEY in out) {
+    const id = (out[EMPTY_GATE_KEY] as string).trim()
+    if (id !== EMPTY_GATE_KEY && Object.prototype.hasOwnProperty.call(out, id)) out[EMPTY_GATE_KEY] = id
+    else {
+      errors.push(`gateMap.${EMPTY_GATE_KEY}${where}: ${JSON.stringify(id)} names no gate id in the map (ignored)`)
+      delete out[EMPTY_GATE_KEY]
     }
   }
   return Object.keys(out).length > 0 ? out : undefined

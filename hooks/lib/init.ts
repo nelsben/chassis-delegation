@@ -109,7 +109,7 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
     _comment:
       'chassis-delegation per-repo config. Every key is optional. Precedence: built-in defaults < this file < the mod options (/delegation config <field> <value>; maps merge per key). Keys starting with _ are comments and are ignored.',
     _gateMap:
-      "Brief gate= id -> the command the verifier re-runs in the worker's own worktree, by argv (no shell). {files} is the changed-files list (one path a line); chain with ' && '. Example: {\"test\": \"npm test\", \"lint\": \"npx eslint --max-warnings 0 {files}\"}. An id the map lacks is reported 'gate not re-run' (unverified), never run raw.",
+      "Brief gate= id -> the command the verifier re-runs in the worker's own worktree, by argv (no shell). {files} is the changed-files list (one path a line); chain with ' && '. Example: {\"test\": \"npm test\", \"lint\": \"npx eslint --max-warnings 0 {files}\"}. An id the map lacks is reported 'gate not re-run' (unverified), never run raw. The key _empty names a gate id of this map (not a command): a hand-back that changes no file runs that gate instead of the card's, e.g. {\"test\": \"npm test\", \"smoke\": \"npm run lint\", \"_empty\": \"smoke\"}.",
     gateMap: {},
     _agentTypes: 'Card domain -> the subagent type of the Agent call /dispatch prepares for the brain to make (the Agent tool subagent_type). A domain not named here runs on a subagent type of its own name when the session offers one, else general-purpose. Example: {"ops": "general-purpose", "web": "frontend"}.',
     agentTypes: { ...DEFAULT_AGENT_TYPES },
