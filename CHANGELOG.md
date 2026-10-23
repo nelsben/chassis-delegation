@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.22 — 2026-10-23
 
 - **The verdict row keeps `next=` last: `allow` rides inside it, and `/delegation config` names `briefLocal`'s default (MOD-126, follow-up to MOD-124).** The `allow` clause was appended after `next=`, so a reader scanning for `next=` met it mid-row. Now the quiet line carries `allow <a,b>` after the amend clauses and before `next=`, and the full verdict line carries ` · allow=<a,b>` before ` · next=`; with no allow ids both rows are byte-identical to before. The config view shows `none: no local rules` for an empty `briefLocal`, as `briefTemplate` shows its default. A test pins that a repo with neither `briefLocal` nor a card `allow:` renders the same brief as one whose `briefLocal` names a missing file. No new option.
 
