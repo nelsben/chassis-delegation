@@ -165,6 +165,19 @@ export const defaultBranchOf = (baseRef: string): string => {
   return b.startsWith('origin/') ? b.slice('origin/'.length) : b
 }
 
+/**
+ * MOD-118 (#186): the branch merge targets. `baseRef` is the repo config's value ('' = unset), `isBranch` says
+ * whether origin has a branch of that name. A baseRef that names a branch (with or without `origin/`) is the
+ * target; unset, a sha, or a tag keeps the default branch, and `note` says so for the set-but-not-a-branch cases.
+ */
+export function mergeTarget(baseRef: string, isBranch: boolean): { baseRef: string; def: string; note?: string } {
+  const raw = baseRef.trim()
+  if (!raw) return { baseRef: 'origin/main', def: 'main' }
+  const name = defaultBranchOf(raw)
+  if (isBranch) return { baseRef: `origin/${name}`, def: name }
+  return { baseRef: 'origin/main', def: 'main', note: `baseRef ${raw} is not a branch; merging onto main` }
+}
+
 /** `owner/repo` from origin's url (GitHub ssh or https); undefined for anything else. */
 export function ownerRepoOf(url: string): string | undefined {
   const u = url.trim()
