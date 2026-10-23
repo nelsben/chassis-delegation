@@ -127,6 +127,7 @@ import {
   agentTypeFor,
   branchName,
   briefDirFor,
+  gateLineText,
   briefFileName,
   budgetAttempts,
   cardMatches,
@@ -5203,8 +5204,11 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     // MOD-22: the report line gains artefacts= and metrics= for a card that has an output folder
     const reportExtra = outdir ? ' artefacts=<comma list of the files you delivered, relative to the output folder or absolute> metrics="<k=v,k=v>"' : ''
     // MOD-44: a worker in another repo is told the gate as that repo's command, not a bare id
-    const briefCard: Card = target ? { ...card, gateText: card.gate.map(g => (target.gateMap[g] !== undefined ? `${g} (\`${target.gateMap[g]}\`)` : g)).join(', ') } : card
-    const rendered = renderBriefChecked(template, { card: briefCard, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: target ? target.briefExtra : cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
+    // MOD-120 (#199): and every brief shows the command as it will run: {worktree}, {outdir} and {files} filled, with the line to write the listing
+    const gateFilesAt = scratch ? `${scratch.replace(/\/+$/, '')}/files.txt` : filesPathFor(scratchFor(`${briefDirFor(root, cfg.briefDir)}/${fileName}`), id)
+    const gateLine = gateLineText(card.gate, target ? target.gateMap : cfg.gateMap, { worktree, ...(outdir ? { outdir } : {}), filesPath: gateFilesAt, base: base !== 'origin/main' ? base : (target ? target.baseRef : cfg.baseRef) || 'origin/main' })
+    const briefCard: Card = { ...card, gateText: gateLine.gate }
+    const rendered = renderBriefChecked(template, { card: briefCard, gateNote: gateLine.note, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: target ? target.briefExtra : cfg.briefExtra, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
     // MOD-28: a brief with a marker left in it never reaches a worker; nothing is written, no worktree is made
     if (rendered.leftover !== undefined) return [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n')
     const written = await writeBrief($, root, fileName, `${header}\n\n${rendered.text}`)

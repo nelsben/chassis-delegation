@@ -129,7 +129,7 @@ message (a background worker's from its transcript):
 | `pr` | `none`, a number, a URL | a PR opened | `none` | the pr claim |
 | `sha` | a sha, `HEAD`, `none` | the commit handed back | required | the sha claim; the gate runs at it |
 | `gate` | `pass`, `fail` | the worker's gate result | required | `pass` needs a green gate; `fail` is an honest stop, never accepted |
-| `red` | a tree-relative path, `none` | the red test's failing output | none | the red claim, when `red_test` is set |
+| `red` | a tree-relative path, an absolute path under the brief's `scratch=`, `none` | the red test's failing output | none | the red claim, when `red_test` is set; any other absolute path is refused, the line naming `scratch=` as the allowed place (#199) |
 | `files` | paths, `none` | every path changed since the base | required | must equal the delta |
 | `artefacts` | paths, relative to `outdir=` or absolute | files delivered outside the repo | none | each must exist, not empty |
 | `metrics` | `"k=v,k=v"` | numbers or words worth keeping | none | recorded, shown as `metrics: k=v, k=v`, never judged |
@@ -205,7 +205,10 @@ after the 9-minute gate timeout.
 
 The changed paths go to `<root>/.delegation/<ID>/files.txt` before the gate runs; a gate command takes `{files}`,
 `{worktree}` and `{outdir}` (`gateMap` in [Configuration](configuration.md#configuration)). Naming `{outdir}` with no
-`outdir=` is "gate not re-run".
+`outdir=` is "gate not re-run". The brief's gate line shows each gate id's command with `{worktree}` as the worktree
+path, `{outdir}` as the card's output folder and `{files}` as `<scratch>/files.txt`, and says to write that file with
+`git diff --name-only <base>` (one path a line) before running the gate, so the worker can run the command it is judged
+by (#199). A `repo=here` or `repo=none` brief fills the same placeholders by the same rules.
 
 **repo=none** checks only that every `files=` path exists in scope and outside forbid, that the gate (a map id or an
 allowlisted command) exits 0, and, with an output folder, the outside delta and `artefacts=`. The row says `(no repo)`.
