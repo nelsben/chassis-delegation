@@ -180,7 +180,7 @@ describe('MOD-13: effort by tier', () => {
 
 describe('MOD-114: effortNudge', () => {
   test('merges key by key: the default, the repo file, then /config (JSON string); a bad entry is named', () => {
-    expect(mergeConfig({}, {}).effortNudge).toEqual({ cards: 'cards/**', up: 'high', down: 'medium' })
+    expect(mergeConfig({}, {}).effortNudge).toEqual({ cards: 'agents/tasks/**', up: 'high', down: 'medium' })
     const repo = parseRepoConfig('{"effortNudge":{"cards":"renders/**","bogus":"x","up":""}}')
     expect(repo.errors.join()).toContain('effortNudge.bogus')
     expect(repo.errors.join()).toContain('effortNudge.up')

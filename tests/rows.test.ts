@@ -134,7 +134,7 @@ describe('MOD-114: the rows (pure)', () => {
     expect(errors).toEqual(['effortNudge.bogus (settings): not a key (cards, up, down) (ignored)', 'effortNudge.up (settings): needs a string (ignored)', 'effortNudge.down (settings): needs an effort word (ignored)'])
     expect(effortNudgeOf('high', errors, '')).toBeUndefined()
     expect(errors.at(-1)).toBe('effortNudge: not an object (ignored)')
-    expect(nudgeText(DEFAULT_EFFORT_NUDGE)).toBe('effort nudge: cards/** · up high · down medium')
+    expect(nudgeText(DEFAULT_EFFORT_NUDGE)).toBe('effort nudge: agents/tasks/** · up high · down medium')
     expect(nudgeText({ ...DEFAULT_EFFORT_NUDGE, cards: '' })).toBe('effort nudge: off')
   })
 })
@@ -145,7 +145,7 @@ describe('MOD-114: the nudge on the rows (engine)', () => {
   const NAMES = ['OPS-8-plain.md', 'OPS-9-cards.md']
   const OPTIONS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'line' as const, gateMap: '{"check":"checker {outdir}"}' }
   const REPORT = (id: string, extra: string) => `[[report v=1 task=${id} subtask=main branch=none pr=none sha=none gate=pass red=none files=none ${extra}]]`
-  const setup = (on: Parameters<typeof world>[0], extra: Record<string, string> = {}) =>
+  const setup = (on: Parameters<typeof world>[0], extra: Record<string, unknown> = { effortNudge: { cards: 'cards/**' } }) =>
     world(on, {
       files: { [`${ROOT}/agents/tasks/OPS-8-plain.md`]: card('OPS-8'), [`${ROOT}/agents/tasks/OPS-9-cards.md`]: card('OPS-9', 'effort: xhigh'), [`${ROOT}/.chassis-delegation.json`]: JSON.stringify(extra) },
       dirs: { [`${ROOT}/agents/tasks`]: NAMES },
@@ -196,7 +196,7 @@ describe('MOD-114: the nudge on the rows (engine)', () => {
   test('a resumed started row carries no down nudge, and the next fresh start of another task does', { options: OPTIONS }, async ($, on) => {
     let gateOk = false
     const w = world(on, {
-      files: { [`${ROOT}/agents/tasks/OPS-8-plain.md`]: card('OPS-8'), [`${ROOT}/agents/tasks/OPS-9-cards.md`]: card('OPS-9', 'effort: xhigh'), [`${ROOT}/.chassis-delegation.json`]: '{}' },
+      files: { [`${ROOT}/agents/tasks/OPS-8-plain.md`]: card('OPS-8'), [`${ROOT}/agents/tasks/OPS-9-cards.md`]: card('OPS-9', 'effort: xhigh'), [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ effortNudge: { cards: 'cards/**' } }) },
       dirs: { [`${ROOT}/agents/tasks`]: NAMES },
       trees: ['/out/hair'],
       run: argv => (argv[0] === 'checker' ? (gateOk ? { exitCode: 0, stdout: 'checked\n' } : { exitCode: 1, stdout: 'failed\n' }) : undefined),
@@ -231,6 +231,21 @@ describe('MOD-114: the nudge on the rows (engine)', () => {
     await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text))
     expect(rows(w).find(l => l.includes('OPS-8 started'))).toContain('· lead: back to low')
     expect(String((await $.command.run(status)).text)).toContain('effort nudge: renders/** · up max · down low')
+  })
+
+  test('MOD-121: on defaults, a hand-back naming a file in the card folder ends its row with the up nudge', { options: OPTIONS }, async ($, on) => {
+    const w = world(on, {
+      files: { [`${ROOT}/agents/tasks/OPS-9-cards.md`]: card('OPS-9'), [`${ROOT}/.chassis-delegation.json`]: '{}' },
+      dirs: { [`${ROOT}/agents/tasks`]: ['OPS-9-cards.md'] },
+      trees: ['/out/hair'],
+      run: argv => (argv[0] === 'checker' ? { exitCode: 0, stdout: 'checked\n' } : undefined),
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    await $.turn.complete(turnInput('agent-1', `Done.\n${REPORT('OPS-9', 'artefacts=agents/tasks/X.md')}`))
+    expect(rows(w).find(l => l.includes('OPS-9 handed back'))).toMatch(/· lead: judgment next, raise to high$/)
+    expect(String((await $.command.run(status)).text)).toContain('effort nudge: agents/tasks/** · up high · down medium')
   })
 
   test('effortNudge cards "" posts no nudge at all', { options: OPTIONS }, async ($, on) => {
