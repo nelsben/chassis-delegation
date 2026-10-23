@@ -82,14 +82,54 @@ export function driveLines(r: DriveRecord | undefined): string[] {
 
 // ---- the warn row ---------------------------------------------------------------------
 
-/** The first 60 characters of a command, whitespace squeezed: what "the same command" means. */
-export const commandKey = (command: string): string => command.trim().replace(/\s+/g, ' ').slice(0, 60)
+/** A key longer than this is cut and hashed, so the store stays small. */
+const KEY_MAX = 120
 
-export type Watch = { commands: string[]; warned: boolean }
-export const emptyWatch = (): Watch => ({ commands: [], warned: false })
+const hashOf = (text: string): string => {
+  let h = 5381
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0
+  return h.toString(36)
+}
+
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s*(?:;|&&)?\s*/
+const CD = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*/
+
+/**
+ * MOD-119 (#187): what "the same command" means. Leading NAME=value assignments (each optionally followed by `;` or
+ * `&&`) and a leading `cd <dir> &&` are dropped, whitespace is squeezed, and the whole remainder is the key (hashed
+ * when long). A command that is nothing but an assignment keeps its own text.
+ */
+export function commandKey(command: string): string {
+  const whole = command.trim().replace(/\s+/g, ' ')
+  let rest = whole
+  for (;;) {
+    const next = rest.replace(ASSIGNMENT, '').replace(CD, '')
+    if (next === rest) break
+    rest = next
+  }
+  const key = rest === '' ? whole : rest
+  return key.length > KEY_MAX ? `${key.slice(0, 80)}~${hashOf(key)}` : key
+}
+
+/** `runs`: per key, the runs that count toward the row and the hash of the last known output. */
+export type Watch = { commands: string[]; warned: boolean; runs?: Record<string, { count: number; out?: string }> }
+export const emptyWatch = (): Watch => ({ commands: [], warned: false, runs: {} })
 
 /** True when `command` has already run in the watch (this turn). */
 export const ranBefore = (w: Watch, command: string): boolean => w.commands.includes(commandKey(command))
+
+/**
+ * MOD-119: the output of a Bash call that has finished. A repeat whose output differs from the last same-key call is
+ * a command making progress, so it starts the count again; an unchanged output keeps counting.
+ */
+export function driveOutput(w: Watch, command: string, output: string): Watch {
+  const key = commandKey(command)
+  const runs = { ...(w.runs ?? {}) }
+  const prev = runs[key] ?? { count: w.commands.filter(c => c === key).length }
+  const out = hashOf(output)
+  runs[key] = { count: prev.out !== undefined && prev.out !== out ? 1 : prev.count, out }
+  return { ...w, runs }
+}
 
 /** MOD-99 (#165): the move the polling row names: card the resource it uses, wait with the verdict tool, else the guide section. */
 export function nudgeMove(command: string, resources: readonly string[] = [], waitingOnWorker = false): string {
@@ -102,15 +142,16 @@ export function nudgeMove(command: string, resources: readonly string[] = [], wa
 
 /**
  * One Bash command of the brain's turn. The row speaks when the context is at or above the threshold and the
- * command is the third to share its first 60 characters, or polls; at most once a turn.
+ * command is the third run of the same command (see commandKey) whose output did not change, or polls; at most once a turn.
  */
 export function driveStep(
   w: Watch,
   i: { command: string; context: number; threshold: number; model?: string; enabled: boolean; resources?: readonly string[]; waitingOnWorker?: boolean },
 ): { state: Watch; row?: string } {
   const key = commandKey(i.command)
-  const count = w.commands.filter(c => c === key).length + 1
-  const state: Watch = { commands: [...w.commands, key], warned: w.warned }
+  const prev = w.runs?.[key]
+  const count = (prev ? prev.count : w.commands.filter(c => c === key).length) + 1
+  const state: Watch = { commands: [...w.commands, key], warned: w.warned, runs: { ...(w.runs ?? {}), [key]: { count, ...(prev?.out !== undefined ? { out: prev.out } : {}) } } }
   const poll = isPoll(i.command)
   if (!i.enabled || w.warned || i.context < i.threshold || !(count >= 3 || poll)) return { state }
   const price = priceFor(i.model)

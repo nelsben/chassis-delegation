@@ -13,7 +13,7 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { blocksFor, openItemLines } from './lib/dashboard'
-import { callKind, driveCall, driveLines, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
+import { callKind, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
 import { saysWaiting, waitStep, WAIT_STALL_DEFAULT_MIN, type WaitState } from './lib/waitstate'
 import { bandTree } from './lib/band'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
@@ -6756,6 +6756,11 @@ export const register: Register = (on, opts) => {
       if (typeof message === 'string') handbacks.set(e.agentId, message)
     }
     const out = await next(e)
+    // MOD-119: a Bash call's output tells a command that repeats from one that makes progress
+    if (!e.agentId && String(e.tool) === 'Bash' && out.deny === undefined && typeof e.command === 'string') {
+      const r = out.result as { stdout?: unknown; stderr?: unknown } | undefined
+      if (r && typeof r.stdout === 'string') driveWatch = driveOutput(driveWatch, e.command, `${r.stdout}\n${typeof r.stderr === 'string' ? r.stderr : ''}`)
+    }
     const why = out.deny ?? (out.isError === true && typeof out.text === 'string' && /\b(denied|permission)\b/i.test(out.text) ? out.text : undefined)
     if (why !== undefined) void noteFriction($, { kind: 'denial', detail: `${String(e.tool)}: ${why.slice(0, 160)}`, at: await now($) })
     return out

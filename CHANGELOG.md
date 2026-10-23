@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The polling row keys a command by its command word and counts only a repeat that gets nowhere (MOD-119, #187).** Three Bash calls that began with the same `NAME=value` assignment, or three distinct probes to one tool while diagnosing, were counted as one command run three times, and the row advised a card for an investigation. Now `commandKey` drops leading `NAME=value` assignments (each optionally followed by `;` or `&&`) and a leading `cd <dir> &&`, and keys on the whole remainder (hashed when long), not its first 60 characters. A run counts toward the row only when the same key repeats, and a repeat whose output changed since the last same-key call does not count. The row's wording and the `driveWarn` and `driveWarnTokens` options are unchanged.
+
 ## 0.9.19 — 2026-10-23
 
 - **The rows nudge the brain's own effort, and the started row names the worker's (MOD-114, #201).** The brain's effort is the user's `/model` setting, which the mod never changes; the user's rule was high for judgment turns and medium for the rest, and the way back down relied on memory. Now a hand-back whose report's `artefacts=` names a file under `cards/**` ends its handed-back row `· lead: judgment next, raise to high`, and once no such hand-back awaits its verdict, the first accept row of another task, or the next started row that is not a resume, ends `· lead: back to medium`, once. The started row also names the effort the worker's steps run at (`· effort high`, from `effortByTier` or the card's `effort:`). New repo option `effortNudge` `{cards, up, down}`: the glob and the two words; `cards: ""` turns the nudge off. `/delegation` prints `effort nudge: cards/** · up high · down medium`.
