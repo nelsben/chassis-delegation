@@ -39,7 +39,7 @@
 // stat'ed, a gate may name {outdir}, and metrics= are shown, never judged.
 // Pure apart from `io`: no `$`.
 import { effectiveList, parseAmends, parseHeader, type Report } from './brief'
-import { checkGateWords, isEngineGate, resolveGateRuns, splitCommand, type GateResolution, type GateRun } from './gates'
+import { checkGateWords, gateForDelta, isEngineGate, resolveGateRuns, splitCommand, type GateResolution, type GateRun } from './gates'
 import { artefactsCheck, isAbsolute, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
 import { isGitRef } from './repoconfig'
 
@@ -784,7 +784,9 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
 
   // 5. the gate, re-run in the worker's own worktree at the sha (an honest gate=fail is never punished);
   //    repo=here: in the shared checkout as it stands, uncommitted changes and all
-  const gates: GateResolution = cardless ? { runs: [], notRerun: [] } : resolveGateRuns(contract.gate, input.gateMap, input.allowed ?? (() => false), input.filesPath, input.repo, contract.outdir)
+  const emptyGate = cardless ? { gate: contract.gate } : gateForDelta(contract.gate, input.gateMap, delta)
+  if (emptyGate.line) lines.push(emptyGate.line)
+  const gates: GateResolution = cardless ? { runs: [], notRerun: [] } : resolveGateRuns(emptyGate.gate, input.gateMap, input.allowed ?? (() => false), input.filesPath, input.repo, contract.outdir)
   if (cardless) claim('gate', 'unchecked', NO_BRIEF_REASON)
   else if (gates.none) claim('gate', 'unchecked', 'no gate command available (the brief has no gate=)')
   for (const n of gates.notRerun) claim('gate', 'unchecked', `gate not re-run: ${n.id} (${n.why})`)

@@ -32,6 +32,21 @@ const ABS_PATH = /^\/[A-Za-z0-9._@%+=:,/-]*$/
 export type GateCheck = { ok: true } | { ok: false; reason: string }
 export type GateRun = { label: string; argv: string[] }
 
+/** MOD-122: the gateMap key naming (by gate id, not command) the gate a hand-back with no changed files runs. */
+export const EMPTY_GATE_KEY = '_empty'
+
+/**
+ * MOD-122 (#199 item 2): the gate ids to run for a changed-files listing. An empty listing with
+ * `_empty` set in the map runs that gate id instead of the card's, with the verdict line saying so;
+ * an unknown listing, a non-empty one, or no `_empty` runs the card's gates as before.
+ */
+export function gateForDelta(gate: string | undefined, map: Readonly<Record<string, string>>, delta: readonly string[] | undefined): { gate: string | undefined; line?: string } {
+  const id = Object.prototype.hasOwnProperty.call(map, EMPTY_GATE_KEY) ? map[EMPTY_GATE_KEY] : undefined
+  if (!gate || !gate.trim() || delta === undefined || delta.length > 0 || id === undefined || id === '' || id === EMPTY_GATE_KEY || !Object.prototype.hasOwnProperty.call(map, id)) return { gate }
+  const card = gate.split(',').map(s => s.trim()).filter(Boolean).join(', ')
+  return { gate: id, line: `gate: ${card} \u2192 ${EMPTY_GATE_KEY} ${id} (no changed files)` }
+}
+
 export const splitCommand = (cmd: string): string[] => cmd.trim().split(/\s+/).filter(Boolean)
 
 const base = (word: string): string => word.slice(word.lastIndexOf('/') + 1)
@@ -66,7 +81,8 @@ export function gateCommandTemplates(cmd: string): { templates: string[][] } | {
 /** Every valid template of a gate map (the allowlist accepts these, `{files}` filled). */
 export function gateTemplatesOf(map: Readonly<Record<string, string>>): string[][] {
   const out: string[][] = []
-  for (const cmd of Object.values(map)) {
+  for (const [id, cmd] of Object.entries(map)) {
+    if (id === EMPTY_GATE_KEY) continue
     const t = gateCommandTemplates(cmd)
     if ('templates' in t) for (const words of t.templates) if (!out.some(o => o.join(' ') === words.join(' '))) out.push(words)
   }

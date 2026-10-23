@@ -202,3 +202,16 @@ describe('MOD-98: a refused gate keeps its reason (#160)', () => {
     expect(s.config.refusedGates).toEqual({ x: 'a gate may not run curl' })
   })
 })
+
+describe('MOD-122: gateMap._empty', () => {
+  test('is kept when it names an id of the same map; other _ keys stay comments', () => {
+    const { config, errors } = parseRepoConfig(JSON.stringify({ gateMap: { _comment: 'x', test: 'npm test', fast: 'npm run lint', _empty: 'fast' } }))
+    expect(config.gateMap).toEqual({ test: 'npm test', fast: 'npm run lint', _empty: 'fast' })
+    expect(errors).toEqual([])
+  })
+  test('a value naming no id in the map is named in the errors and ignored', () => {
+    const { config, errors } = parseRepoConfig(JSON.stringify({ gateMap: { test: 'npm test', _empty: 'nope' } }))
+    expect(config.gateMap).toEqual({ test: 'npm test' })
+    expect(errors.join('\n')).toContain('gateMap._empty')
+  })
+})

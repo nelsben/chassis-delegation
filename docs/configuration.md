@@ -42,7 +42,7 @@ Shows the options in force and where each value came from; works in VS Code.
 
 | Key | Scope | Default | What it does (values) |
 | --- | --- | --- | --- |
-| `gateMap` | repo | `{}` | gate id → command, run by argv with no shell. `{files}`, `{worktree}`, `{outdir}` are filled in; chain with ` && `. Refused commands are dropped and named. An id not in the map is "gate not re-run". |
+| `gateMap` | repo | `{}` | gate id → command, run by argv with no shell. `{files}`, `{worktree}`, `{outdir}` are filled in; chain with ` && `. Refused commands are dropped and named. An id not in the map is "gate not re-run". The key `_empty` (unlike other `_` keys, which are comments) names a gate id of the same map: when a hand-back changes no file, the verifier and `/delegation merge` run that gate instead of the card's, and the verdict says `gate: <card ids> → _empty <id> (no changed files)`. A value naming no id in the map is named in the config errors and ignored. |
 | `agentTypes` | repo | `{}` | card domain → subagent type. Unnamed: same-named type, else `general-purpose`. |
 | `tierMap` | repo | `{economy: haiku, standard: sonnet, frontier: opus}` | tier → alias. `fable` is never spawned: it becomes opus. |
 | `domains` | repo | `frontend, backend, ops, dispatcher, cross, shared` | domains a card may name. |
