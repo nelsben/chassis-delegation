@@ -10,6 +10,12 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.20 to 0.9.21
+
+Nothing to do.
+Optional: rules a worker needs but the repo must not hold go in a gitignored file named by `briefLocal`; a card's `allow: [id]` pulls that file's `### allow: <id>` block in as an exception, shown on the verdict row.
+Detail: [CHANGELOG 0.9.21](../CHANGELOG.md).
+
 ### From 0.9.19 to 0.9.20
 
 Nothing to do, unless two repos on this machine reuse card ids: the store splits per-task keys by repo on the first session start; check that `/delegation` shows attempt 1/N on a fresh card.
