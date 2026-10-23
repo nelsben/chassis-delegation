@@ -289,6 +289,7 @@ import {
   lastLines,
   latestVerdictRow,
   mainBranchLine,
+  mergeTarget,
   mainDirtyLine,
   markMerged,
   MERGE_TOOL,
@@ -2504,8 +2505,11 @@ async function mergeCommand($: Host, parsed: MergeArgs): Promise<string> {
   await loadRepoConfig($)
   const root = (await $.session.root()).replace(/\/+$/, '')
   const id = parsed.id
-  const baseRef = cfg.baseRef && cfg.baseRef.startsWith('origin/') ? cfg.baseRef : 'origin/main'
-  const def = defaultBranchOf(baseRef)
+  // MOD-118 (#186): a baseRef naming an origin branch is the target; a sha, a tag or nothing keeps the default branch
+  const want = (cfg.baseRef ?? '').trim()
+  const wantName = defaultBranchOf(want)
+  const probe = want && !isSha(wantName) ? await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${wantName}`], { cwd: root, timeoutMs: 15000 }) : undefined
+  const { baseRef, def, note: targetNote } = mergeTarget(want, !!probe && probe.ok && probe.exitCode === 0)
   const cardDir = (cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')
   if (!parsed.finish) {
     // PREPARE 1: the latest verdict must be consistent with next=accept (the ledger; the task record when the ledger has no row)
@@ -2517,7 +2521,8 @@ async function mergeCommand($: Host, parsed: MergeArgs): Promise<string> {
     }
     const refused = verdictRefusal(id, row)
     if (refused) return refused
-    return mergePrepare($, parsed, { root, id, baseRef, def, cardDir, row: row as VerdictRow })
+    const prepared = await mergePrepare($, parsed, { root, id, baseRef, def, cardDir, row: row as VerdictRow })
+    return targetNote ? `${id}: ${targetNote}\n${prepared}` : prepared
   }
   return mergeFinish($, { root, id, def, cardDir })
 }

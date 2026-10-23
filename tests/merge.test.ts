@@ -385,6 +385,72 @@ describe('MOD-86: a git-ignored card folder', () => {
   })
 })
 
+describe('MOD-118 (#186): merge targets the configured base', () => {
+  const repoWith = (baseRef: string) => ({ ...files(), [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ gateMap: GATES, domains: ['mod'], cardDir: 'docs/cards', baseRef }) })
+  /** The checkout is on `branch`; `remote` names the origin branches that exist. */
+  const onBranch = (branch: string, remote: string[]): Answers => argv => {
+    if (is(argv, 'git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD')) return { exitCode: 0, stdout: `${branch}\n` }
+    const m = /^refs\/remotes\/origin\/(.+)$/.exec(argv[argv.length - 1] ?? '')
+    if (argv.includes('--verify') && m) return { exitCode: remote.includes(m[1] as string) ? 0 : 1, stdout: '' }
+    return undefined
+  }
+
+  test('red: baseRef names a branch and the checkout is on it: rebase, PR --base and the card all use that branch', async ($, on) => {
+    const w = world(on, { files: repoWith('work'), dirs, store, run: happy(onBranch('work', ['main', 'work'])) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    expect(out).not.toContain('is on work, not main')
+    const ran = w.runs.map(r => r.argv.join(' '))
+    expect(ran).toContain(`git -C ${WT} rebase origin/work`)
+    expect(blockOf(out)[1]).toContain('--base work --head')
+    expect(out).toContain(`${ID}: rebased onto origin/work;`)
+    expect(out).not.toContain('is not a branch')
+  })
+
+  test('an origin/-prefixed branch works the same', async ($, on) => {
+    const w = world(on, { files: repoWith('origin/work'), dirs, store, run: happy(onBranch('work', ['work'])) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    expect(w.runs.map(r => r.argv.join(' '))).toContain(`git -C ${WT} rebase origin/work`)
+    expect(blockOf(out)[1]).toContain('--base work --head')
+  })
+
+  test('the checkout on the default branch is refused, naming the baseRef branch', async ($, on) => {
+    const w = world(on, { files: repoWith('origin/work'), dirs, store, run: happy(onBranch('main', ['main', 'work'])) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    expect(out).toBe(`${ID}: the main checkout ${ROOT} is on main, not work; switch it to work first`)
+    expect(w.runs.some(r => r.argv.includes('fetch') || r.argv.includes('rebase'))).toBe(false)
+  })
+
+  test('a sha baseRef is not a branch: the default branch as today, and the output says so', async ($, on) => {
+    const sha = 'abc1234abc1234abc1234abc1234abc1234abc12'
+    const w = world(on, { files: repoWith(sha), dirs, store, run: happy() })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    expect(w.runs.map(r => r.argv.join(' '))).toContain(`git -C ${WT} rebase origin/main`)
+    expect(blockOf(out)[1]).toContain('--base main --head')
+    expect(out).toContain(`${ID}: baseRef ${sha} is not a branch; merging onto main`)
+  })
+
+  test('a tag baseRef (no such origin branch) is not a branch either', async ($, on) => {
+    const w = world(on, { files: repoWith('origin/v1.2'), dirs, store, run: happy(onBranch('main', ['main'])) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    expect(w.runs.map(r => r.argv.join(' '))).toContain(`git -C ${WT} rebase origin/main`)
+    expect(out).toContain('is not a branch; merging onto main')
+  })
+
+  test('unset baseRef: unchanged, no branch probe, no note', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store, run: happy() })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    expect(w.runs.some(r => r.argv.includes('--verify'))).toBe(false)
+    expect(out).not.toContain('is not a branch')
+    expect(blockOf(out)[1]).toContain('--base main --head')
+  })
+})
+
 describe('MOD-75: the merge command\'s pure parts (the allowlist shapes are in tests/allow.test.ts)', () => {
   test('arguments: an id, --finish, --review text or --review-file, and nothing else', () => {
     expect(parseMergeArgs(' MOD-1')).toEqual({ id: 'MOD-1', finish: false })

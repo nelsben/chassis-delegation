@@ -53,7 +53,9 @@ After a consistent verdict with next=accept, run `/delegation merge <ID>` (or th
 It refuses in one line, running nothing, when:
 
 - the latest ledger row is not consistent/accept: `<ID>: last verdict is <verdict> · next=<next>; merge needs consistent/accept`;
-- the task has no clean worktree on `agent/<domain>/<ID>`, or the main checkout is off its default branch or has tracked changes.
+- the task has no clean worktree on `agent/<domain>/<ID>`, or the main checkout is off the target branch or has tracked changes.
+
+The target branch is the one `baseRef` names (`work` or `origin/work`, when origin has that branch), else the default branch (`main`). A `baseRef` that is a sha or a tag is not a branch: merge targets the default branch and prints one line saying so. Below, `origin/main` and `main` mean that target.
 
 Checklist, in print order:
 
