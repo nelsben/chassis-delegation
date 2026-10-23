@@ -343,8 +343,27 @@ export type BriefVars = {
   outdir?: string
   scratch?: string
   reportExtra?: string
+  /** MOD-120 (#199): the sentence after the gate line that tells the worker to write the {files} listing; '' when no gate command names it. */
+  gateNote?: string
   /** MOD-34: the domain's lessons file (its text and the path it was read from); the brief carries it under `## Lessons (<domain>)`, capped. */
   lessons?: { text: string; path: string }
+}
+
+/**
+ * MOD-120 (#199 items 1): the brief's gate line as the worker can run it. Each gate id the map has reads
+ * `id (`command`)` with {worktree}, {outdir} (when the card has one) and {files} filled; an id the map lacks stays
+ * a bare id. `note` (leading space, empty when no command names {files}) tells the worker to write that listing first.
+ */
+export function gateLineText(ids: readonly string[], map: Readonly<Record<string, string>>, at: { worktree: string; outdir?: string; filesPath: string; base?: string }): { gate: string; note: string } {
+  let usesFiles = false
+  const fill = (cmd: string): string => {
+    if (cmd.includes('{files}')) usesFiles = true
+    const withOut = at.outdir === undefined ? cmd : cmd.split('{outdir}').join(at.outdir)
+    return withOut.split('{worktree}').join(at.worktree).split('{files}').join(at.filesPath)
+  }
+  const gate = ids.map(g => (map[g] !== undefined ? `${g} (\`${fill(map[g] as string)}\`)` : g)).join(', ')
+  const note = usesFiles ? ` Write the file list ${at.filesPath} yourself before you run the gate: \`git diff --name-only ${at.base ?? 'origin/main'}\` into it, one path a line (make its folder first); the verifier writes its own when it re-runs the gate.` : ''
+  return { gate, note }
 }
 
 /** MOD-34: the most lines of a domain's lessons file a brief carries. */
@@ -387,6 +406,7 @@ function stageBrief(template: string, v: BriefVars): { staged: string; values: R
     outdir: v.outdir ?? '',
     scratch: v.scratch ?? '',
     reportExtra: v.reportExtra ?? '',
+    gateNote: v.gateNote ?? '',
     id: v.card.id,
     title: v.card.title,
     domain: v.card.domain,

@@ -273,7 +273,7 @@ describe('GH-20: redClaim, the red-test evidence a report names (red=)', () => {
     }
   })
   test('a path outside the worker tree (absolute elsewhere, or ..) fails; an absolute or ./ path inside it holds', () => {
-    expect(redClaim({ ...ev, path: '/etc/red.txt' })).toEqual({ status: 'failed', detail: `red=/etc/red.txt lies outside the worker's tree ${REPO}` })
+    expect(redClaim({ ...ev, path: '/etc/red.txt' })).toEqual({ status: 'failed', detail: `red=/etc/red.txt lies outside the worker's tree ${REPO}; an absolute red= is accepted only under the brief's scratch=` })
     expect(redClaim({ ...ev, path: '../repo-T-0/.delegation/T-1/red-1.txt' })?.status).toBe('failed')
     expect(redClaim({ ...ev, path: '.delegation/../../x.txt' })?.status).toBe('failed')
     expect(redClaim({ ...ev, path: `${REPO}-other/red.txt` })?.status).toBe('failed')
@@ -649,5 +649,34 @@ describe('MOD-27: a folder glob in files=, and the red line a claim quotes', () 
       expect(red('getHeadline_returnsFriendlyErrorNeverAnException Pass\n')?.status).toBe('held')
       expect(red('x Error handled\nx Error again\n')).toEqual({ status: 'held', detail: `${RED_PATH}, 30 bytes, first failure line: x Error handled` })
     })
+  })
+})
+
+describe('MOD-120 (#199 item 3): a red log under the brief\'s scratch= is read like one in the worktree', () => {
+  const SCRATCH = '/s/T-1'
+  const ev = { redTest: 'npm test', path: RED_PATH, repo: REPO, exists: true, bytes: 70, text: RED_TEXT, hash: 'h1', priorHashes: [] as { attempt: number; hash: string }[] }
+  test('red path rule: worktree-relative accepted, under scratch accepted, any other absolute refused', () => {
+    expect(redClaim({ ...ev, scratch: SCRATCH })?.status).toBe('held')
+    expect(redClaim({ ...ev, scratch: SCRATCH, path: `${SCRATCH}/red-1.txt` })?.status).toBe('held')
+    expect(redClaim({ ...ev, path: `${SCRATCH}/red-1.txt` })?.status).toBe('failed')
+    const other = redClaim({ ...ev, scratch: SCRATCH, path: '/etc/red.txt' })
+    expect(other?.status).toBe('failed')
+    expect(other?.detail).toContain('scratch=')
+    expect(redClaim({ ...ev, scratch: SCRATCH, path: `${SCRATCH}-other/red.txt` })?.status).toBe('failed')
+    expect(redClaim({ ...ev, scratch: SCRATCH, path: `${SCRATCH}/../x/red.txt` })?.status).toBe('failed')
+    expect(redClaim({ ...ev, scratch: 'rel/scratch', path: 'rel/scratch/red.txt' })?.status).toBe('held')
+  })
+  test('a hand-back whose red= is under scratch= and whose red test fails at base is not refuted on red', async () => {
+    const scratchBrief = `${HEADER.replace(' gate=test', ' gate=test scratch=/s/T-1')}\n\nbody\n`
+    const path = `${SCRATCH}/red-1.txt`
+    const t = io(happy(), { [path]: RED_TEXT })
+    const r = await verifyNative(input({ briefText: scratchBrief, report: report({ red: path }) }), t)
+    expect(r.verdict).toBe('consistent')
+    expect(r.lines).toContain(`claim red: held — ${path}, 70 bytes, first failure line: (fail) sums > adds two numbers`)
+    expect(t.reads).toEqual([path])
+    // without scratch= in the brief the same path is refused
+    const refused = await verifyNative(input({ report: report({ red: path }) }), io(happy(), { [path]: RED_TEXT }))
+    expect(refused.verdict).toBe('refuted')
+    expect(refused.lines.find(l => l.startsWith('claim red:'))).toContain('scratch=')
   })
 })

@@ -38,14 +38,14 @@ You were started by the brain's own Agent call: the mod that dispatched you reco
 - Scratch: {{scratch}} (scratch= in the header; make the folder). Helper files, test inputs, intermediate output and logs go there, never in the repo and never in the output folder.
 {{/scratch}}
 {{#worktree}}
-- Gate: {{gate}} green in the worktree before you report. Leave the worktree clean (everything committed): the verifier re-runs the gate there, at your sha.
+- Gate: {{gate}} green in the worktree before you report. Leave the worktree clean (everything committed): the verifier re-runs the gate there, at your sha.{{gateNote}}
 - Commit and HOLD: never push, never open a PR, never merge, never commit on main or master.
 {{/worktree}}
 {{#none}}
-- Gate: {{gate}} runs after your hand-back (a gate command may name {outdir}, the output folder); get it green before you report.
+- Gate: {{gate}} runs after your hand-back (a gate command may name {outdir}, the output folder); get it green before you report.{{gateNote}}
 {{/none}}
 {{#here}}
-- Gate: {{gate}} green in this checkout before you report. The verifier re-runs it here on the tree as it stands (uncommitted changes included) and checks files= against `git status`, less the brief's ignore= and the files other in-flight cards claimed.
+- Gate: {{gate}} green in this checkout before you report. The verifier re-runs it here on the tree as it stands (uncommitted changes included) and checks files= against `git status`, less the brief's ignore= and the files other in-flight cards claimed.{{gateNote}}
 - Do not commit unless the card says so; never push, never open a PR, never merge.
 {{/here}}
 {{#spend}}

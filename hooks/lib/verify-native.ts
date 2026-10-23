@@ -123,8 +123,10 @@ export type RedClaimInput = RedEvidence & {
   redTest?: string
   /** The report's red=, as written. */
   path?: string
-  /** The worker's tree: a relative red= lies under it, an absolute one must. */
+  /** The worker's tree: a relative red= lies under it, an absolute one must (or lie under `scratch`). */
   repo: string
+  /** MOD-120 (#199): the brief's scratch=; an absolute red= under it is read like one in the tree. */
+  scratch?: string
   priorHashes?: readonly RedPrior[]
   /** MOD-102 (#166): the brief's red_test command run once at the worker's head; read only for a short red file with no marker. */
   green?: RedGreen
@@ -194,7 +196,7 @@ export function globMatches(path: string, glob: string): boolean {
 export const pathMatchesAny = (path: string, globs: readonly string[]): boolean => globs.some(g => g !== '' && globMatches(path, g))
 
 export type BriefContract =
-  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; base?: string; gate?: string; redTest?: string; /** MOD-22: the brief's outdir=. */ outdir?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
+  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; base?: string; gate?: string; redTest?: string; /** MOD-22: the brief's outdir=. */ outdir?: string; /** MOD-120: the brief's scratch=, the one absolute place a red= may lie outside the tree. */ scratch?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
   | { ok: false; line: string }
 
 /** True when a scope= reads as prose: two or more words and no entry shaped like a path or glob. */
@@ -231,6 +233,8 @@ export function briefContract(briefText: string): BriefContract {
   const redTest = f.red_test !== undefined ? { redTest: f.red_test } : {}
   const outdirField = (f.outdir ?? '').trim()
   const outdir = outdirField !== '' ? { outdir: outdirField } : {}
+  const scratchField = (f.scratch ?? '').trim()
+  const scratch = scratchField !== '' ? { scratch: scratchField } : {}
   const amends = parseAmends(briefText)
   if (amends.malformed !== undefined) {
     return {
@@ -243,6 +247,7 @@ export function briefContract(briefText: string): BriefContract {
       ...(gate ? { gate } : {}),
       ...redTest,
       ...outdir,
+      ...scratch,
       amendments: 0,
       amendBad: true,
       amendWhy: amends.malformed,
@@ -259,6 +264,7 @@ export function briefContract(briefText: string): BriefContract {
     ...(gate ? { gate } : {}),
     ...redTest,
     ...outdir,
+    ...scratch,
     amendments: amends.amends.length,
     lines: amends.amends.map((a, i) => `amendment: #${i + 1} ${a.ops.join(' ')} — reason: ${a.reason}`),
   }
@@ -416,13 +422,18 @@ const redUnnamed = (path: string | undefined): boolean => {
 /**
  * Where a red= path lands: inside the worker's tree (`abs`), or outside it. A
  * relative path lies under the tree; an absolute one must lie in it; a `..`
- * segment is outside either way.
+ * segment is outside either way. MOD-120 (#199): an absolute path under the
+ * brief's absolute scratch= is also accepted (a repo that forbids .delegation/**
+ * keeps its red logs there); nothing else outside the tree is.
  */
-export function redTarget(path: string, repo: string): { abs: string } | { outside: true } {
+export function redTarget(path: string, repo: string, scratch?: string): { abs: string } | { outside: true } {
   const p = path.trim()
   const root = repo.replace(/\/+$/, '')
   if (p.split('/').includes('..')) return { outside: true }
-  if (p.startsWith('/')) return p.startsWith(`${root}/`) ? { abs: p } : { outside: true }
+  if (p.startsWith('/')) {
+    const pad = (scratch ?? '').trim().replace(/\/+$/, '')
+    return p.startsWith(`${root}/`) || (pad.startsWith('/') && pad !== '' && p.startsWith(`${pad}/`)) ? { abs: p } : { outside: true }
+  }
   return { abs: `${root}/${p.replace(/^(\.\/)+/, '')}` }
 }
 
@@ -464,7 +475,7 @@ export function redClaim(i: RedClaimInput): RedClaim | undefined {
   if (!briefWantsRed(i.redTest)) return undefined
   if (redUnnamed(i.path)) return { status: 'unchecked', detail: "no red= evidence named; the brief asks for the red test's failing output" }
   const path = (i.path ?? '').trim()
-  if ('outside' in redTarget(path, i.repo)) return { status: 'failed', detail: `red=${path} lies outside the worker's tree ${i.repo}` }
+  if ('outside' in redTarget(path, i.repo, i.scratch)) return { status: 'failed', detail: `red=${path} lies outside the worker's tree ${i.repo}; an absolute red= is accepted only under the brief's scratch=` }
   if (!i.exists) return { status: 'failed', detail: `red=${path} does not exist in the worker's tree` }
   if (i.error !== undefined || i.text === undefined) return { status: 'unchecked', detail: `red=${path} could not be read: ${i.error ?? 'no text came back'}` }
   const bytes = i.bytes ?? i.text.length
@@ -852,7 +863,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   else if (briefWantsRed(contract.redTest)) {
     const named = (report.red ?? '').trim()
     let ev: RedEvidence = { exists: false }
-    const target = redUnnamed(named) ? undefined : redTarget(named, repo)
+    const target = redUnnamed(named) ? undefined : redTarget(named, repo, contract.scratch)
     if (target && 'abs' in target) {
       if (!io.readRed) ev = { exists: true, error: 'the verifier has no file reader' }
       else {
@@ -867,7 +878,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     // MOD-102 (#166): a short marker-less red file: run the red test once at the head, in the worker's tree, under the gate time limit
     let green: RedGreen | undefined
     const cmd = redTestCommand(contract.redTest, input.allowed ?? (() => false))
-    if (cmd && redWantsGreen(ev) && !(redTarget(named, repo) as { outside?: true }).outside) {
+    if (cmd && redWantsGreen(ev) && !(redTarget(named, repo, contract.scratch) as { outside?: true }).outside) {
       try {
         const g = await io.exec(cmd, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS })
         green = g.ok ? { ran: true, exitCode: g.exitCode, output: `${g.stdout.trim()}${g.stderr.trim() ? `\n${g.stderr.trim()}` : ''}` } : { ran: false, why: g.why }
@@ -875,7 +886,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         green = { ran: false, why: String(err) }
       }
     }
-    const c = redClaim({ ...ev, redTest: contract.redTest, path: named, repo, priorHashes: input.priorRed ?? [], ...(green ? { green } : {}) })
+    const c = redClaim({ ...ev, redTest: contract.redTest, path: named, repo, ...(contract.scratch ? { scratch: contract.scratch } : {}), priorHashes: input.priorRed ?? [], ...(green ? { green } : {}) })
     if (c) claim('red', c.status, c.detail)
     if (c?.status === 'held' && red) red = { ...red, held: true }
   }

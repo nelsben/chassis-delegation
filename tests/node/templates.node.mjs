@@ -179,3 +179,27 @@ describe('MOD-28: what the mod loads is what it ships', () => {
     expect(read('hooks/templates/debrief.md').includes('{{')).toBe(false)
   })
 })
+
+describe('MOD-120 (#199 item 1): the brief shows the gate as the command it is judged by', () => {
+  test('{worktree}, {outdir} and {files} are filled, with one line to write the file; no {files} no line', async () => {
+    const { renderBrief, parseCard, gateLineText } = await import('../../hooks/lib/dispatch.ts')
+    const t = read('hooks/templates/brief.md')
+    const map = { test: 'node run.mjs {files}', pack: 'bash pack.sh {worktree} {outdir}', plain: 'claude plugin validate {worktree}' }
+    const g = gateLineText(['test', 'pack', 'nomap'], map, { worktree: '/w/T-1', outdir: '/out/a', filesPath: '/s/T-1/files.txt', base: 'origin/main' })
+    expect(g.gate).toBe('test (`node run.mjs /s/T-1/files.txt`), pack (`bash pack.sh /w/T-1 /out/a`), nomap')
+    expect(g.note.startsWith(' ')).toBe(true)
+    expect(g.note).toContain('git diff --name-only origin/main')
+    expect(g.note).toContain('/s/T-1/files.txt')
+    expect(g.note).toContain('one path a line')
+    expect(gateLineText(['plain'], map, { worktree: '/w/T-1', filesPath: '/s/T-1/files.txt' })).toEqual({ gate: 'plain (`claude plugin validate /w/T-1`)', note: '' })
+    const card = parseCard('---\nid: OPS-9\ntitle: T\ndomain: ops\nscope: [a/**]\nred_test: x\ngate: test\n---\nB\n')
+    const base = { card: { ...card, gateText: g.gate }, worktree: '/w/T-1', branch: 'agent/ops/OPS-9', cardPath: '/c.md', gateNote: g.note }
+    for (const mode of ['worktree', 'here', 'none']) {
+      const out = renderBrief(t, { ...base, mode })
+      expect(out.includes('node run.mjs /s/T-1/files.txt')).toBe(true)
+      expect(out.includes('git diff --name-only origin/main')).toBe(true)
+      expect(out.includes('{{')).toBe(false)
+    }
+    expect(renderBrief(t, { ...base, mode: 'worktree', gateNote: '' }).includes('git diff --name-only')).toBe(false)
+  })
+})
