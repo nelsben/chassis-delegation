@@ -10,6 +10,12 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.18 to 0.9.19
+
+Nothing to do.
+Optional: the effort nudge reads `cards/**` by default; if your cards live elsewhere (the default `cardDir` is `agents/tasks`), set `effortNudge` in `.chassis-delegation.json`, e.g. `{"effortNudge": {"cards": "agents/tasks/**"}}`; `"cards": ""` turns it off.
+Detail: [CHANGELOG 0.9.19](../CHANGELOG.md).
+
 ### From 0.9.17 to 0.9.18
 
 Nothing to do.
