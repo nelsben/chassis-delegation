@@ -80,6 +80,12 @@
       "description": "How hard a worker thinks at each step, per tier, e.g. {\"standard\":\"high\"}; built in: economy low, standard medium, frontier high; low, medium, high, xhigh or max, and 0 or empty leaves the engine's default. A card's own effort: wins. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
       "default": ""
     },
+    "effortNudge": {
+      "type": "string",
+      "title": "Effort nudge for you (JSON)",
+      "description": "When a worker's report names an artefact under this glob (built in: cards/**), its handed-back row ends 'lead: judgment next, raise to high'; the verdict row that accepts a later task, or the next worker's started row, ends 'lead: back to medium'. Keys: cards (the glob; \"\" turns the nudge off), up and down (the effort words your model menu uses), e.g. {\"cards\":\"renders/**\",\"up\":\"xhigh\"}. The mod never changes your model or effort. Empty = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "default": ""
+    },
     "domains": {
       "type": "string",
       "title": "Domains",

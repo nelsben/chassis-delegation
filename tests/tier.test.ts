@@ -177,3 +177,15 @@ describe('MOD-13: effort by tier', () => {
     expect(mergeConfig(repo.config, settings.config).effortByTier).toEqual({ economy: 'medium', standard: 'high', frontier: 0 })
   })
 })
+
+describe('MOD-114: effortNudge', () => {
+  test('merges key by key: the default, the repo file, then /config (JSON string); a bad entry is named', () => {
+    expect(mergeConfig({}, {}).effortNudge).toEqual({ cards: 'cards/**', up: 'high', down: 'medium' })
+    const repo = parseRepoConfig('{"effortNudge":{"cards":"renders/**","bogus":"x","up":""}}')
+    expect(repo.errors.join()).toContain('effortNudge.bogus')
+    expect(repo.errors.join()).toContain('effortNudge.up')
+    const settings = settingsLayer({ effortNudge: '{"down":"low"}' })
+    expect(mergeConfig(repo.config, settings.config).effortNudge).toEqual({ cards: 'renders/**', up: 'high', down: 'low' })
+    expect(settingsLayer({ effortNudge: '{bad' }).errors).toEqual(['effortNudge (settings): not valid JSON (ignored)'])
+  })
+})

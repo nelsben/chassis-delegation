@@ -15,7 +15,7 @@ Four layers, lowest first; the higher one wins:
 | yours | `~/.claude/chassis-delegation/options.json`, `{ "<field>": <value> }` for any option; reread when it changes. |
 | host | A `/config` row, or `pluginConfigs["chassis-delegation"].options` in `settings.json`. An unset row (`""`, `0`, `false`) counts as absent. A locked row always wins. |
 
-Maps (`gateMap`, `agentTypes`, `tierMap`, `spendByTier`, `effortByTier`) merge key by key; other options are replaced whole.
+Maps (`gateMap`, `agentTypes`, `tierMap`, `spendByTier`, `effortByTier`, `effortNudge`) merge key by key; other options are replaced whole.
 A bad key or value is ignored and named in a toast.
 
 ### /delegation config
@@ -48,6 +48,7 @@ Shows the options in force and where each value came from; works in VS Code.
 | `domains` | repo | `frontend, backend, ops, dispatcher, cross, shared` | domains a card may name. |
 | `spendByTier` | repo | `{economy: 3, standard: 10, frontier: 25}` | dollars per attempt by tier; `0` = no ceiling. Written as `spend=` unless the card sets `spend:`. |
 | `effortByTier` | repo | `{economy: low, standard: medium, frontier: high}` | effort by tier: `low`, `medium`, `high`, `xhigh`, `max`; `0` or empty = engine default. A card's `effort:` wins. |
+| `effortNudge` | repo | `{cards: "cards/**", up: high, down: medium}` | the brain's own effort, said on rows (never set): a hand-back whose report names an artefact the `cards` glob takes ends `lead: judgment next, raise to <up>`; the next accept of another task, or the next started row, ends `lead: back to <down>`. `cards: ""` turns it off. |
 | `maxWorkers` | repo | `2` | briefed workers at once; the rest queue (`ready:` when a slot frees). |
 | `worktreeRoot` | repo | `""` (siblings `<root>-<id>`) | worktrees go to `<worktreeRoot>/<repo name>-<id>`. |
 | `cardDir` | repo | `agents/tasks` | card folder relative to the root (no leading `/`, no `..`). `--replay` stays on `agents/tasks/`. |

@@ -103,3 +103,117 @@ describe('MOD-74: the running: section of /delegation status', () => {
     expect(runningSection([], undefined)).toEqual(['running: none · brain: unknown'])
   })
 })
+
+// MOD-114 (#201): the brain's effort nudge on the rows, and the worker's effort on the started row. Pure first.
+import { cardsHandedBack, effortNudgeOf, nudgeText, DEFAULT_EFFORT_NUDGE } from '../hooks/lib/nudge'
+import { commandInput, brainSpawn, ROOT, SCRATCH } from './harness'
+
+describe('MOD-114: the rows (pure)', () => {
+  test('the started row names the effort, then the nudge, last; neither when absent', () => {
+    const base = { label: 'T-1', alias: 'opus', tier: 'frontier', attempt: 1, budget: 2, kind: 'started' as const, glyph: '🟣' }
+    expect(startedRow(base)).toBe('chassis-delegation: T-1 started · 🟣 opus (frontier) · attempt 1/2')
+    expect(startedRow({ ...base, effort: 'high' })).toBe('chassis-delegation: T-1 started · 🟣 opus (frontier) · attempt 1/2 · effort high')
+    expect(startedRow({ ...base, effort: 'high', nudge: 'lead: back to medium' })).toBe('chassis-delegation: T-1 started · 🟣 opus (frontier) · attempt 1/2 · effort high · lead: back to medium')
+  })
+  test('the handed-back row ends with the up nudge when given', () => {
+    expect(handedBackRow({ label: 'T-1', alias: 'opus', minutes: 3, usd: 1.2, nudge: 'lead: judgment next, raise to high' })).toBe('chassis-delegation: T-1 handed back · opus · 3 min · $1.20 · verifying · lead: judgment next, raise to high')
+  })
+  test('cardsHandedBack: the glob is anchored at any folder; "" is off; `none` artefacts are nothing', () => {
+    expect(cardsHandedBack(['cards/H10.jpg'], 'cards/**')).toBe(true)
+    expect(cardsHandedBack(['/out/loop/138/hair10/cards/H10.jpg', 'notes.md'], 'cards/**')).toBe(true)
+    expect(cardsHandedBack(['notes.md', 'tables/stand.json', 'mycards/x.jpg'], 'cards/**')).toBe(false)
+    expect(cardsHandedBack(['cards/H1.jpg'], '')).toBe(false)
+    expect(cardsHandedBack([], 'cards/**')).toBe(false)
+    expect(cardsHandedBack(['renders/a.png'], 'renders/*.png')).toBe(true)
+    expect(cardsHandedBack(['renders/a.jpg'], 'renders/*.png')).toBe(false)
+  })
+  test('effortNudgeOf: keys cards, up, down as strings; a bad key or value is named and dropped; cards may be ""', () => {
+    const errors: string[] = []
+    expect(effortNudgeOf({ cards: 'renders/**', up: ' xhigh ', down: 'low', _note: 'x' }, errors, '')).toEqual({ cards: 'renders/**', up: 'xhigh', down: 'low' })
+    expect(effortNudgeOf({ cards: '', bogus: 1, up: 3, down: ' ' }, errors, ' (settings)')).toEqual({ cards: '' })
+    expect(errors).toEqual(['effortNudge.bogus (settings): not a key (cards, up, down) (ignored)', 'effortNudge.up (settings): needs a string (ignored)', 'effortNudge.down (settings): needs an effort word (ignored)'])
+    expect(effortNudgeOf('high', errors, '')).toBeUndefined()
+    expect(errors.at(-1)).toBe('effortNudge: not an object (ignored)')
+    expect(nudgeText(DEFAULT_EFFORT_NUDGE)).toBe('effort nudge: cards/** · up high · down medium')
+    expect(nudgeText({ ...DEFAULT_EFFORT_NUDGE, cards: '' })).toBe('effort nudge: off')
+  })
+})
+
+describe('MOD-114: the nudge on the rows (engine)', () => {
+  const card = (id: string, extra = '') =>
+    ['---', `id: ${id}`, `title: ${id}`, 'domain: ops', 'tier: frontier', 'status: queued', 'repo: none', 'scope: [/out/hair/**]', 'forbid: []', 'red_test: none', 'gate: check', 'budget: 2-attempts', ...(extra ? [extra] : []), '---', '## Why', '', 'Outside the repo.', ''].join('\n')
+  const NAMES = ['OPS-8-plain.md', 'OPS-9-cards.md']
+  const OPTIONS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'line' as const, gateMap: '{"check":"checker {outdir}"}' }
+  const REPORT = (id: string, extra: string) => `[[report v=1 task=${id} subtask=main branch=none pr=none sha=none gate=pass red=none files=none ${extra}]]`
+  const setup = (on: Parameters<typeof world>[0], extra: Record<string, string> = {}) =>
+    world(on, {
+      files: { [`${ROOT}/agents/tasks/OPS-8-plain.md`]: card('OPS-8'), [`${ROOT}/agents/tasks/OPS-9-cards.md`]: card('OPS-9', 'effort: xhigh'), [`${ROOT}/.chassis-delegation.json`]: JSON.stringify(extra) },
+      dirs: { [`${ROOT}/agents/tasks`]: NAMES },
+      trees: ['/out/hair'],
+      run: argv => (argv[0] === 'checker' ? { exitCode: 0, stdout: 'checked\n' } : undefined),
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+  const rows = (w: { appended: { text: string }[]; logs: string[] }) => delivered(w).split('\n').filter(l => l.startsWith('chassis-delegation: OPS-'))
+  // the world numbers agents by spawn order; the spawn record says which task an agent runs
+  const agentOf = (w: { store: Map<string, unknown> }, task: string): string => {
+    for (const [k, v] of w.store) if (k.startsWith('delegation.spawn.') && (v as { task?: string }).task === task) return String((v as { agentId?: string }).agentId)
+    throw new Error(`no spawn record for ${task}`)
+  }
+
+  test('a hand-back naming a cards artefact nudges up; its own accept row does not nudge down; the accept of another task does, once; the started row names the effort', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text), { tool_use_id: 'toolu_B0000008' })
+    expect(rows(w).find(l => l.includes('OPS-9 started'))).toBe('chassis-delegation: OPS-9 started · 🟣 opus (frontier) · attempt 1/2 · effort xhigh')
+    expect(rows(w).find(l => l.includes('OPS-8 started'))).toBe('chassis-delegation: OPS-8 started · 🟣 opus (frontier) · attempt 1/2 · effort high')
+    w.files.set('/out/hair/cards/H1.jpg', 'jpeg-bytes')
+    w.files.set('/out/hair/model.glb', 'glb-bytes')
+    await $.turn.complete(turnInput(agentOf(w, 'OPS-9'), `Done.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg')}`))
+    const afterNine = rows(w)
+    expect(afterNine.find(l => l.includes('OPS-9 handed back'))).toMatch(/OPS-9 handed back · 🟣 opus · \d+ min · \$[\d?.]+ · verifying · lead: judgment next, raise to high$/)
+    expect(afterNine.find(l => l.includes('OPS-9 attempt 1/2'))).toMatch(/consistent \(no repo\) · 🟣 opus · .*next=accept$/)
+    await $.turn.complete(turnInput(agentOf(w, 'OPS-8'), `Done.\n${REPORT('OPS-8', 'artefacts=model.glb')}`))
+    const eight = rows(w).find(l => l.includes('OPS-8 attempt 1/2'))
+    expect(eight).toMatch(/consistent \(no repo\) · 🟣 opus · .*next=accept · lead: back to medium$/)
+    expect(rows(w).find(l => l.includes('OPS-8 handed back'))).not.toContain('lead:')
+    // the nudge is closed: the next started row says nothing
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text), { tool_use_id: 'toolu_C0000008' })
+    expect(rows(w).filter(l => l.includes('OPS-8 started')).at(-1)).not.toContain('lead:')
+  })
+
+  test('with no other task in flight, the next started row carries the down nudge', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set('/out/hair/cards/H1.jpg', 'jpeg-bytes')
+    await $.turn.complete(turnInput('agent-1', `Done.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg')}`))
+    expect(rows(w).find(l => l.includes('OPS-9 handed back'))).toContain('· lead: judgment next, raise to high')
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text))
+    expect(rows(w).find(l => l.includes('OPS-8 started'))).toBe('chassis-delegation: OPS-8 started · 🟣 opus (frontier) · attempt 1/2 · effort high · lead: back to medium')
+  })
+
+  test('effortNudge in the repo file: the glob and the words; cards "" turns the nudge off', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on, { effortNudge: { cards: 'renders/**', up: 'max', down: 'low' } })
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set('/out/hair/cards/H1.jpg', 'jpeg-bytes')
+    w.files.set('/out/hair/renders/a.png', 'png-bytes')
+    await $.turn.complete(turnInput('agent-1', `Done.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg,renders/a.png')}`))
+    expect(rows(w).find(l => l.includes('OPS-9 handed back'))).toContain('· lead: judgment next, raise to max')
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text))
+    expect(rows(w).find(l => l.includes('OPS-8 started'))).toContain('· lead: back to low')
+    expect(String((await $.command.run(status)).text)).toContain('effort nudge: renders/** · up max · down low')
+  })
+
+  test('effortNudge cards "" posts no nudge at all', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on, { effortNudge: { cards: '' } })
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set('/out/hair/cards/H1.jpg', 'jpeg-bytes')
+    await $.turn.complete(turnInput('agent-1', `Done.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg')}`))
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text))
+    expect(rows(w).some(l => l.includes('lead:'))).toBe(false)
+    expect(String((await $.command.run(status)).text)).toContain('effort nudge: off')
+  })
+})

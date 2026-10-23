@@ -13,6 +13,7 @@
 import { DEFAULT_SPEND_BY_TIER } from './cost'
 import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
 import { DEFAULT_EFFORT_BY_TIER, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
+import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, type EffortNudge } from './nudge'
 
 export const REPO_CONFIG_FILE = '.chassis-delegation.json'
 
@@ -91,6 +92,8 @@ export type RepoConfig = {
   spendByTier?: Partial<Record<SpendTier, number>>
   /** MOD-13: the effort a worker steps at, per tier. */
   effortByTier?: Partial<Record<SpendTier, EffortSetting>>
+  /** MOD-114: the brain's effort nudge: the cards glob ("" = off) and the up and down words. */
+  effortNudge?: Partial<EffortNudge>
   /** GH-113: the brain on opus or fable may not edit source (warn: a row; deny: refused); default off. */
   delegateOnly?: DelegateOnly
   /** MOD-7: owner/name of the repo /delegation debrief post files issues in. MOD-18: unset = the mod's own repository (the manifest's); "" = posting is off. */
@@ -101,7 +104,7 @@ export type RepoConfig = {
   reviewTier?: Tier
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
+export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -123,6 +126,7 @@ export type Effective = {
   ignore: string[]
   spendByTier: Record<SpendTier, number>
   effortByTier: Record<SpendTier, EffortSetting>
+  effortNudge: EffortNudge
   delegateOnly: DelegateOnly
   issueRepo: string
   review: ReviewMode
@@ -293,6 +297,11 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         if (m) config.effortByTier = m
         break
       }
+      case 'effortNudge': {
+        const m = effortNudgeOf(v, errors, where)
+        if (m) config.effortNudge = m
+        break
+      }
       case 'delegateOnly':
         if (typeof v !== 'string' || !DELEGATE_ONLY.includes(v.trim())) errors.push(`delegateOnly${where}: needs off, warn or deny (ignored)`)
         // in /config "off" is the manifest default: unset, so the repo file's value shows through
@@ -368,7 +377,7 @@ export function settingsLayer(options: Readonly<Record<string, unknown>>): Parse
   for (const key of REPO_KEYS) {
     const v = options[key]
     if (v === undefined || v === '' || v === 0 || v === false) continue
-    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'effortByTier') && typeof v === 'string') {
+    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'effortByTier' || key === 'effortNudge') && typeof v === 'string') {
       try {
         obj[key] = JSON.parse(v)
       } catch {
@@ -408,6 +417,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     ignore: [...pick('ignore', [...DEFAULT_IGNORE])],
     spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...user.spendByTier, ...settings.spendByTier },
     effortByTier: { ...DEFAULT_EFFORT_BY_TIER, ...repo.effortByTier, ...user.effortByTier, ...settings.effortByTier },
+    effortNudge: { ...DEFAULT_EFFORT_NUDGE, ...repo.effortNudge, ...user.effortNudge, ...settings.effortNudge },
     delegateOnly: pick('delegateOnly', 'off'),
     issueRepo: pick('issueRepo', ''),
     review: pick('review', 'off'),
