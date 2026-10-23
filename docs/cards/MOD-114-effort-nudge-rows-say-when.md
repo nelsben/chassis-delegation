@@ -3,7 +3,7 @@ id: MOD-114
 title: The rows nudge the brain's own effort (raise on a hand-back with cards, back down once the judgment is over) and the started row names the worker's effort
 domain: mod
 tier: frontier
-status: done
+status: merged
 scope: [hooks/lib/nudge.ts, hooks/lib/rows.ts, hooks/lib/repoconfig.ts, hooks/lib/configtable.ts, hooks/lib/configeff.ts, hooks/register.ts, .claude-plugin/plugin.json, tests/rows.test.ts, tests/tier.test.ts, tests/options.test.ts, tests/configcmd.test.ts, docs/configuration.md, docs/spend.md, CHANGELOG.md]
 forbid: [bin/**]
 red_test: none
