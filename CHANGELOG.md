@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The rows nudge the brain's own effort, and the started row names the worker's (MOD-114, #201).** The brain's effort is the user's `/model` setting, which the mod never changes; the user's rule was high for judgment turns and medium for the rest, and the way back down relied on memory. Now a hand-back whose report's `artefacts=` names a file under `cards/**` ends its handed-back row `· lead: judgment next, raise to high`, and once no such hand-back awaits its verdict, the first accept row of another task, or the next started row, ends `· lead: back to medium`, once. The started row also names the effort the worker's steps run at (`· effort high`, from `effortByTier` or the card's `effort:`). New repo option `effortNudge` `{cards, up, down}`: the glob and the two words; `cards: ""` turns the nudge off. `/delegation` prints `effort nudge: cards/** · up high · down medium`.
+
 ## 0.9.18 — 2026-10-19
 
 - **docs/how-it-works.md shows the mod's flow in four sequence diagrams (MOD-105).** Card to merge, what the verifier checks, resume and the attempt budget, and a card for another repo. Each is a mermaid block with an italic alt line above it and a numbered plain-text walkthrough below, so the page reads without mermaid. Docs only; no behaviour change.

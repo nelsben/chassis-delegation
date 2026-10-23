@@ -61,6 +61,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['delegateOnly', 'Guards and nudges for the brain', 'Stop the main assistant doing a worker\'s job: off, warn, or deny', 'choice', 'repo', 'off', ['off', 'warn', 'deny']],
   ['driveWarn', 'Guards and nudges for the brain', 'Warn when the main assistant repeats or polls the same thing in a big session', 'bool', 'user', true],
   ['driveWarnTokens', 'Guards and nudges for the brain', 'How big the session must be, in tokens, before that warning shows', 'tokens', 'user', 200000],
+  ['effortNudge', 'Guards and nudges for the brain', 'Say on a row when a worker hands back cards to judge, and when that is over', 'map', 'repo', ''],
   ['freshSessionTokens', 'Guards and nudges for the brain', 'Suggest a fresh session once this many tokens are in use; 0 turns it off', 'tokens', 'user', 400000],
   ['wakeOnVerdict', 'Guards and nudges for the brain', 'Start a new turn on its own when a worker\'s result has been judged', 'bool', 'user', false],
   ['readyFallbackMinutes', 'Guards and nudges for the brain', 'Minutes before a waiting task is started for you if you have not started it', 'minutes', 'user', 10],

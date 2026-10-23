@@ -126,6 +126,18 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.steps).toEqual([{ agentId: 'agent-4', effort: 'max' }])
   })
 
+  test('effortNudge: cards="" posts no nudge on a hand-back that names a cards artefact', async ($, on) => {
+    const w = world(on, { agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await set($, 'effortNudge', '{"cards":""}')
+    expect(await status($)).toContain('effort nudge: off')
+    await $.agent.spawn(spawnInput({ prompt: brief('T-14') }))
+    await $.turn.complete(turnInput('agent-4', '[[report v=1 task=T-14 subtask=main branch=b pr=none sha=abc1234 gate=pass files=a artefacts=cards/H1.jpg]]'))
+    const row = rowsOf(w).find(l => l.includes('T-14 handed back'))
+    expect(row).toBeDefined()
+    expect(row).not.toContain('lead:')
+  })
+
   test('defaultBudget: 5 gives a brief with no budget= five attempts (the built-in 3)', async ($, on) => {
     const w = world(on)
     await $.session.start(sessionStart)

@@ -204,6 +204,7 @@ import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from '
 import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
 import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLine, spawnRow, verdictAfter, withTail, type Fallback, type RowQuery } from './lib/storeloss'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
+import { cardsHandedBack, nudgeDown, nudgeText, nudgeUp, type EffortNudge } from './lib/nudge'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
@@ -553,6 +554,8 @@ type Config = {
   spendByTier: Record<'economy' | 'standard' | 'frontier', number>
   /** MOD-13: the effort a worker steps at, per tier; 0 or empty leaves the engine's default. */
   effortByTier: Record<'economy' | 'standard' | 'frontier', EffortSetting>
+  /** MOD-114: the brain's effort nudge: the cards glob ('' = off) and the up and down words. */
+  effortNudge: EffortNudge
   /** GH-113: what an opus or fable brain may do itself. */
   delegateOnly: 'off' | 'warn' | 'deny'
   /** MOD-7: owner/name /delegation debrief post files issues in; '' = posting is off. */
@@ -644,6 +647,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       ignore: eff.ignore,
       spendByTier: eff.spendByTier,
       effortByTier: eff.effortByTier,
+      effortNudge: eff.effortNudge,
       delegateOnly: eff.delegateOnly,
       issueRepo: issues.repo,
       issueRepoOwn: issues.own,
@@ -4429,15 +4433,19 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   }
 
   const shownVerdict = rateLimit ? rateLimitedVerdict(rateLimit) : noRepo ? `${verdict} (no repo)` : verdict
+  // MOD-114: this attempt's hand-back is judged now; the accept of another task, with no cards hand-back waiting, says the judgment work is over
+  const wasNudged = nudgedUp.delete(attemptKey(spawn))
+  const down = !wasNudged && !spawn.adhoc && advice.kind === 'accept' ? nudgeDownNow() : undefined
+  const downClause = down ? ` · ${down}` : ''
   // GH-104: work present rides under the verdict line in both forms
   const workLine = work ? workPresentLine(work) : undefined
-  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }), workLine ? [workLine, ...lines] : lines)
+  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }) + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
   const tail = from ? fallbackTail(from) : undefined
   if (from) debug($, fallbackLog(shownLabel, shownAttempt, from))
   const full = withTailIf(spawnText ? `${verdictRows}\n${spawnText}` : verdictRows, tail)
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines })
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines }) + downClause
   const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
@@ -4605,10 +4613,28 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
   }
 }
 
-/** MOD-74: the row for a briefed worker that has started (or resumed); verdictVerbosity=silent posts none. */
-async function postStarted($: Host, i: { label: string; alias: string; tier: string; attempt: number; budget: number; kind: StartKind }) {
+// ---- MOD-114: the brain's effort nudge ------------------------------------------------
+// The mod never touches the brain's effort (the user's /model setting). A hand-back whose
+// report names a cards artefact ends its row `lead: judgment next, raise to high`; the key
+// stays here until that attempt's verdict. Once no such hand-back waits, the first accept
+// row of another task, or the next started row, ends `lead: back to medium`, once.
+const nudgedUp = new Set<string>() // attempt keys whose hand-back nudged up, until their verdict
+let nudgeOpen = false // an up nudge was posted and no down has followed
+
+/** The down clause when the judgment work is over, else undefined; posting it closes the nudge. */
+function nudgeDownNow(): string | undefined {
+  if (!nudgeOpen || nudgedUp.size > 0 || cfg.effortNudge.cards.trim() === '') return undefined
+  nudgeOpen = false
+  return nudgeDown(cfg.effortNudge)
+}
+
+/** MOD-74: the row for a briefed worker that has started (or resumed); verdictVerbosity=silent posts none. MOD-114: with its effort and, when due, the down nudge. */
+async function postStarted($: Host, i: { label: string; task: string; alias: string; tier: Tier; attempt: number; budget: number; kind: StartKind }) {
   if (!postsRows(cfg.verbosity)) return
-  await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias) }))
+  const effort = effortFor(i.tier, await storeGet<string>($, K.effort(i.task)), cfg.effortByTier)
+  // a resume of a nudged task is not the end of its judgment: no down nudge on it
+  const nudge = i.kind === 'resumed' ? undefined : nudgeDownNow()
+  await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias), ...(effort ? { effort } : {}), ...(nudge ? { nudge } : {}) }))
 }
 
 /** MOD-74: a worker's spend this attempt as the verdict row computes it (its own turns, else the session's growth), undefined while unknown. */
@@ -4620,15 +4646,21 @@ async function attemptUsd($: Host, spawn: SpawnRecord): Promise<number | undefin
 }
 
 const handedBackPosted = new Set<string>()
-/** MOD-74: one row when a briefed worker hands back, before its verification starts; silent posts none. */
-async function postHandedBack($: Host, spawn: SpawnRecord) {
+/** MOD-74: one row when a briefed worker hands back, before its verification starts; silent posts none. MOD-114: `text` is the hand-back, read for a cards artefact. */
+async function postHandedBack($: Host, spawn: SpawnRecord, text = '') {
   if (spawn.adhoc || spawn.review || !postsRows(cfg.verbosity)) return
   const key = attemptKey(spawn)
   if (handedBackPosted.has(key)) return
   handedBackPosted.add(key)
   const t = await now($)
   const usd = await attemptUsd($, spawn)
-  await appendRow($, handedBackRow({ label: taskLabel(spawn.task, spawn.subtask), alias: spawn.alias, glyph: glyphOf(spawn.alias), minutes: waitedMinutes(spawn.at ?? t, t), ...(usd !== undefined ? { usd } : {}) }))
+  const block = extractReport(text)
+  const up = cardsHandedBack(reportArtefacts(block ? parseReport(block).artefacts : undefined), cfg.effortNudge.cards)
+  if (up) {
+    nudgedUp.add(key)
+    nudgeOpen = true
+  }
+  await appendRow($, handedBackRow({ label: taskLabel(spawn.task, spawn.subtask), alias: spawn.alias, glyph: glyphOf(spawn.alias), minutes: waitedMinutes(spawn.at ?? t, t), ...(usd !== undefined ? { usd } : {}), ...(up ? { nudge: nudgeUp(cfg.effortNudge) } : {}) }))
 }
 
 /** Hands a verdict to the brain per verdictVerbosity: the row it returns, plus the log and toast (2B). */
@@ -4701,7 +4733,7 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   const next: SpawnRecord = { ...spawn, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
   await storeSet($, K.spawn(spawn.key), next)
   await setWorkers($, list => [...list, { task: spawn.task, subtask: spawn.subtask, attempt, kind: 'resume', tier: spawn.tier, alias: spawn.alias, agentId, verdict: 'pending', at: t }])
-  if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed' })
+  if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), task: spawn.task, alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed' })
   return next
 }
 
@@ -5759,6 +5791,7 @@ async function statusReport($: Host): Promise<string> {
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
     `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${cfg.maxWorkers} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
     effortText(cfg.effortByTier),
+    nudgeText(cfg.effortNudge),
     ...(cfg.review !== 'off' ? [`review: ${cfg.review} · ${cfg.reviewTier ? `reviewer at ${cfg.reviewTier}` : "reviewer one tier below the worker's"}`] : []),
     ...aliasLines(Object.fromEntries((await Promise.all(['haiku', 'sonnet', 'opus'].map(async a => [a, await storeGet<unknown>($, K.alias(a))] as const))).filter(([, v]) => v !== undefined)), await now($)),
     `base: ${cfg.baseRef || 'origin/main → main → origin/master → master'} · repo=here ignore: ${ignoreWithCards(cfg.ignore, cfg.cardDir).join(', ') || '(none)'}`,
@@ -6357,7 +6390,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
 
     await setWorkers($, list => [...list, { task, subtask, attempt, kind: 'spawn', tier, alias, ...(res.agentId ? { agentId: res.agentId } : {}), verdict: 'pending', at: t }])
     // MOD-74: a briefed worker's model is said where the person looks, once it has started
-    if (!adhoc) await postStarted($, { label, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started' })
+    if (!adhoc) await postStarted($, { label, task, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started' })
     // MOD-92: the status line walks every agent's records and need not decide the spawn: the hook refreshes it once the next decision may run
     if (!s) await refreshStatus($)
     return res
@@ -6831,7 +6864,7 @@ export const register: Register = (on, opts) => {
       description: e.description,
       subagentType: e.subagent_type ?? 'general-purpose',
     }
-    if (spawn && isOpen(spawn)) await postHandedBack($, spawn)
+    if (spawn && isOpen(spawn)) await postHandedBack($, spawn, text)
     const rendered = await finalize($, base, text, { tokens, model })
     // a cardless report is judged like any other (GH-1 item 2); an ad hoc no-report stays quiet
     const row = sideEffects($, rendered, base.adhoc && !(isCardless(base) && extractReport(text) !== undefined))
@@ -6881,7 +6914,7 @@ export const register: Register = (on, opts) => {
         const hasReport = extractReport(text) !== undefined
         if (spawn.adhoc ? hasReport : !foreground || hasReport) {
           const tokens = e.usage ? e.usage.input_tokens + e.usage.output_tokens : undefined
-          await postHandedBack($, spawn)
+          await postHandedBack($, spawn, text)
           clearWait(agentId)
           const rendered = await finalize($, spawn, text, { tokens })
           handbacks.delete(e.agentId)
