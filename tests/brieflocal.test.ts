@@ -5,6 +5,7 @@ import { test, expect, describe } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 import { world, commandInput, sessionStart, spawnInput, turnInput, ROOT, SCRATCH, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
+import { parseCard, renderBriefChecked, type Card } from '../hooks/lib/dispatch'
 
 type Tester = Parameters<TestBody>[0]
 const REPO_FILE = `${ROOT}/.chassis-delegation.json`
@@ -50,7 +51,23 @@ describe('MOD-124: briefLocal and allow:', () => {
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${path}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'))
     const row = [...w.appended.map(a => a.text), ...w.logs].find(l => l.includes('T-4 attempt')) ?? ''
-    expect(row).toContain(' allow=live-reads')
+    expect(row).toContain(' · allow live-reads · next=')
+  })
+
+  test('allow rides inside the row: the quiet line and the full line both end with next=, the allow clause before it', async ($, on) => {
+    const header = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier allow=live-reads budget=3-attempts report=chassis.report.v1]]'
+    const path = `${SCRATCH}/briefs/T-4.brief.md`
+    const w = world(on as never, { files: { [path]: header + '\nbody', [REPO_FILE]: JSON.stringify({ gateMap: { prettier: 'npx prettier --check {files}' } }) }, agentId: 'agent-4' })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${path}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'))
+    const all = [...w.appended.map(a => a.text), ...w.logs].flatMap(t => t.split('\n'))
+    const quiet = all.find(l => l.startsWith('chassis-delegation: T-4 attempt ')) ?? ''
+    // the fixture's sha is not in the repo, so the verdict is a refusal with a resume; a consistent one ends next=accept (pinned in tests/node/allowrow.node.mjs)
+    expect(quiet).toMatch(/ · allow live-reads · next=[^·]+$/)
+    expect(quiet.indexOf('next=')).toBe(quiet.lastIndexOf('next='))
+    const full = all.find(l => l.startsWith('chassis-delegation: verdict=')) ?? ''
+    expect(full).toMatch(/ · allow=live-reads · next=[^·]+$/)
   })
 
   test('a card naming an id the file has no block for is refused, naming the id and the file', async ($, on) => {
@@ -84,5 +101,23 @@ describe('MOD-124: briefLocal and allow:', () => {
     const withMissing = w.files.get(BRIEF) ?? ''
     expect(withMissing).not.toContain('Local rules')
     expect(withMissing.split('\n')[0]).not.toContain('allow=')
+  })
+
+  test('a repo with neither briefLocal nor allow: gets the same brief as one pointing briefLocal at a missing file, and as the plain render', async ($, on) => {
+    const plain = 'PLAIN EXTRA'
+    const w = make(on, { config: { briefExtra: plain }, local: null })
+    await $.session.start(sessionStart)
+    await dispatch($)
+    const noLocal = w.files.get(BRIEF) ?? ''
+    w.files.set(REPO_FILE, JSON.stringify({ briefTemplate: '/tpl/brief.md', briefExtra: plain, briefLocal: '.delegation/absent.md' }))
+    w.files.delete(BRIEF)
+    await dispatch($)
+    const withMissing = w.files.get(BRIEF) ?? ''
+    expect(noLocal).not.toBe('')
+    expect(withMissing).toBe(noLocal)
+    // the stored expectation: the header, a blank line, then the template rendered with the plain briefExtra and nothing local
+    const card = parseCard(FIXTURE_CARD) as Card
+    const expected = renderBriefChecked('Rules.\n{{extra}}\n\n## The card\n\n{{body}}\n', { card, worktree: '', branch: '', cardPath: '', extra: plain }).text
+    expect(noLocal.endsWith(`\n\n${expected}`)).toBe(true)
   })
 })

@@ -321,7 +321,7 @@ import { CONFIG_TABLE } from './lib/configtable'
 import { parseUserOptions, repoFileWith, resolveOptions, userFileWith, userOptionsPath, type Resolved } from './lib/configeff'
 import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
 import { dropLocalQuotes, gitConfigValue, parseRedactList, redact, type RedactRules } from './lib/redact'
-import { allowClause, allowOf, missingBlocks, missingBlockRefusal, noLocalRefusal, renderLocal, trackedRefusal, unreadableRefusal } from './lib/brieflocal'
+import { allowOf, missingBlocks, missingBlockRefusal, noLocalRefusal, renderLocal, trackedRefusal, unreadableRefusal } from './lib/brieflocal'
 import { abortedDeny, budgetDelay, decisionId, isStopped, outOfTimeDeny, stopper, turns, type Stopper } from './lib/serial'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
@@ -2506,11 +2506,11 @@ async function cardNameIn($: Host, dir: string, id: string): Promise<string | un
 /** MOD-124: the briefLocal path as an absolute one: relative to the repo root unless it starts with /. */
 const localAbs = (root: string, path: string): string => (path.startsWith('/') ? path : `${root.replace(/\/+$/, '')}/${path}`)
 
-/** MOD-124: the allow= clause the verdict row carries, from the brief header; empty with none. */
-async function allowClauseOf($: Host, spawn: { briefPath?: string }): Promise<string> {
-  if (!spawn.briefPath) return ''
+/** MOD-124: the allow ids the verdict row carries, from the brief header; none with no brief. */
+async function allowIdsOf($: Host, spawn: { briefPath?: string }): Promise<string[]> {
+  if (!spawn.briefPath) return []
   const text = await readText($, spawn.briefPath)
-  return text === undefined ? '' : allowClause(allowOf(parseHeader(text)))
+  return text === undefined ? [] : allowOf(parseHeader(text))
 }
 
 /** MOD-124: the text of every brief that carries a local section, as written and as scrubbed, for the debrief to avoid quoting. */
@@ -4541,14 +4541,14 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   // GH-104: work present rides under the verdict line in both forms
   const workLine = work ? workPresentLine(work) : undefined
   // MOD-124: the exceptions the brief allowed ride on the row
-  const allowText = spawn.adhoc ? '' : await allowClauseOf($, spawn)
-  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next }) + allowText + downClause, workLine ? [workLine, ...lines] : lines)
+  const allow = spawn.adhoc ? [] : await allowIdsOf($, spawn)
+  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next, allow }) + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
   const tail = from ? fallbackTail(from) : undefined
   if (from) debug($, fallbackLog(shownLabel, shownAttempt, from))
   const full = withTailIf(spawnText ? `${verdictRows}\n${spawnText}` : verdictRows, tail)
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines }) + allowText + downClause
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + downClause
   const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })

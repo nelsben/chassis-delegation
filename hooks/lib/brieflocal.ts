@@ -53,9 +53,6 @@ export const missingBlocks = (localText: string, ids: readonly string[]): string
   return ids.filter(id => !Object.hasOwn(blocks, id))
 }
 
-/** ` allow=a,b` for the verdict row; empty with none. */
-export const allowClause = (ids: readonly string[]): string => (ids.length > 0 ? ` allow=${ids.join(',')}` : '')
-
 /** The ids a brief header's `allow=` names, each once. */
 export function allowOf(h: { fields: Record<string, string> } | undefined): string[] {
   const out: string[] = []
