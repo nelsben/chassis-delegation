@@ -17,7 +17,7 @@ import {
 } from '../hooks/lib/dashboard'
 import { emptyMetrics } from '../hooks/lib/metrics'
 import { bandSummary, type LiveView } from '../hooks/lib/live'
-import { world, NOW as WORLD_NOW } from './harness'
+import { world, NOW as WORLD_NOW, ROOT } from './harness'
 
 const NOW = 10_000_000
 
@@ -205,7 +205,7 @@ const worker = (w: ReturnType<typeof world>) => {
   w.agents.push({ id: 'ag1', type: 'general-purpose', description: 'T-1', status: 'running' })
   w.store.set('delegation.agent.ag1', 'k1')
   w.store.set('delegation.spawn.k1', { key: 'k1', task: 'T-1', subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 3, purpose: 'build', prompt: '', description: '', subagentType: 'general-purpose', agentId: 'ag1', at: WORLD_NOW - 60_000 })
-  w.store.set('delegation.tasks.T-1', [{ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', resolvedModel: 'claude-sonnet-5-5', verdict: 'pending', at: WORLD_NOW - 60_000, sessionId: 'sess-1' }])
+  w.store.set(`delegation.tasks.T-1@${ROOT}`, [{ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', resolvedModel: 'claude-sonnet-5-5', verdict: 'pending', at: WORLD_NOW - 60_000, sessionId: 'sess-1' }])
 }
 const drawnBand = async ($: any) => {
   try {
@@ -289,8 +289,10 @@ describe('GH-112: the band and the pane', () => {
     expect(w.storeKeyReads).toBe(1)
     // the mod writes a task's records (a spawn): the next redraw reads them
     await $.agent.spawn({ tool_use_id: 'toolu_C0000003', prompt: '[[brief v=1 task=T-7 subtask=main tier=standard]]\nDo it.', description: 'T-7', subagentType: 'general-purpose', provider: { kind: 'model' }, parentModel: 'claude-opus-5-5', background: true, fork: false } as never)
+    // MOD-117: the spawn's first per-task read in a process that saw no session start lists the keys once (the bare-key move)
+    const spawned = w.storeKeyReads
     await drawnBand($)
-    expect(w.storeKeyReads).toBe(2)
+    expect(w.storeKeyReads).toBe(spawned + 1)
     // another session's write shows once the copy is 15 s old
     await w.clock.advance(16_000)
     await drawnBand($)

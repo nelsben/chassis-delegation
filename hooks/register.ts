@@ -203,6 +203,7 @@ import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbso
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
+import { migratedLine, migrationPlan, scopedId, trimRepo } from './lib/taskkeys'
 import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLine, spawnRow, verdictAfter, withTail, type Fallback, type RowQuery } from './lib/storeloss'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { cardsHandedBack, nudgeDown, nudgeText, nudgeUp, type EffortNudge } from './lib/nudge'
@@ -338,10 +339,14 @@ const UPDATE_CHECK_MS = 10 * 60 * 1000
 /** GH-112: the pane `/delegation dashboard` and the band's `[ details ]` open. */
 const DASH_PANE = 'delegation-dash'
 
+/**
+ * MOD-117 (#185, #184): every key below that takes a card id takes the card's repo too, `<id>@<repo>` (MOD-97's form for
+ * a card of another local repo, now for the session's own cards as well): card ids restart in each repo and the store
+ * is one per machine. The bare id is a session with no root. `taskRepo` and `mergePrep` are the session root's.
+ */
 const K = {
-  tasks: (task: string) => `delegation.tasks.${task}`,
-  /** MOD-97 (#163): a task's records in one repo's key space: the bare key for the session's repo, `<id>@<repo>` for another local repo. */
-  tasksIn: (task: string, repo: string) => `delegation.tasks.${task}${repo ? `@${repo}` : ''}`,
+  /** A task's attempt records in its card's repo. */
+  tasks: (task: string, repo = '') => `delegation.tasks.${scopedId(task, repo)}`,
   adhoc: 'delegation.adhoc',
   /** MOD-47: the brain's record for the conversation that started at `since`. */
   brain: (since: number) => `delegation.brain.${since}`,
@@ -350,7 +355,7 @@ const K = {
   name: (name: string) => `delegation.agentName.${name}`,
   alias: (alias: string) => `delegation.alias.${alias}`,
   /** GH-114: the classifier's tier for a card, from its dry run. */
-  classifier: (task: string) => `delegation.classifier.${task}`,
+  classifier: (task: string, repo = '') => `delegation.classifier.${scopedId(task, repo)}`,
   /** MOD-12: where /dispatch prepared a brief's worker (its worktree, or the root for repo=here); the brain's Agent call names no folder. */
   handoff: (briefPath: string) => `delegation.handoff.${briefPath}`,
   agentTypes: 'delegation.agentTypes',
@@ -359,7 +364,7 @@ const K = {
   /** A worker's own spend this attempt, from its turn usage (GH-106). */
   cost: (agentId: string) => `delegation.cost.${agentId}`,
   /** MOD-13: the card's own `effort:`, written at /dispatch; it wins over effortByTier. */
-  effort: (task: string) => `delegation.effort.${task}`,
+  effort: (task: string, repo = '') => `delegation.effort.${scopedId(task, repo)}`,
   /** Set once an attempt's verdict row is posted to the conversation. */
   posted: (attemptKey: string) => `delegation.posted.${attemptKey}`,
   /** MOD-64: the text appended for an attempt's verdict (the row and any ready: lines), which the verdict tool returns. */
@@ -385,13 +390,13 @@ const K = {
   /** MOD-20: whose engine-suite gate (`claude plugin test`) is running; verifiers take turns on it. */
   engineGate: 'delegation.engineGate',
   /** MOD-22: the listing of a research card's absolute scope and forbid roots, taken at /dispatch. */
-  outside: (task: string, repo = '') => `delegation.outside.${task}${repo ? `@${trimRepo(repo)}` : ''}`,
-  /** MOD-44: the other local repo a task is for (its absolute path), so the id alone finds its card, brief and tree. */
-  taskRepo: (task: string) => `delegation.taskRepo.${task}`,
+  outside: (task: string, repo = '') => `delegation.outside.${scopedId(task, repo)}`,
+  /** MOD-44: the other local repo a task is for (its absolute path), so the id alone finds its card, brief and tree; MOD-117: in the session root's key space. */
+  taskRepo: (task: string, root = '') => `delegation.taskRepo.${scopedId(task, root)}`,
   /** MOD-75: the tasks `/delegation merge --finish` merged in a session (task, sha, version), for the `merged:` lines. */
   merged: (sessionId: string) => `delegation.merged.${sessionId}`,
   /** MOD-75: what `/delegation merge <ID>` prepared (the head it pushed, the version it bumps), read again by --finish. */
-  mergePrep: (task: string) => `delegation.mergePrep.${task}`,
+  mergePrep: (task: string, root = '') => `delegation.mergePrep.${scopedId(task, root)}`,
 }
 
 const PROBE_EVERY_MS = 24 * 60 * 60 * 1000
@@ -495,9 +500,14 @@ type SpawnRecord = {
 const laneOf = (s: { replay?: boolean; base?: string }): Lane | undefined =>
   s.replay ? { replay: true, ...(s.base ? { base: s.base } : {}) } : undefined
 
-/** `<task>:<lineage>:<attempt>` (the subtask, a replay lane and (MOD-97) another repo folded into the task) — one verdict per key. */
-const attemptKey = (s: SpawnRecord): string =>
-  `${taskLabel(s.task, s.subtask)}${s.repo ? `@${trimRepo(s.repo)}` : ''}${s.replay ? `@replay${s.base ? `-${s.base}` : ''}` : ''}:${s.review ? `review-${s.key}` : s.lineage}:${s.attempt}`
+/**
+ * `<task>:<lineage>:<attempt>` (the subtask, a replay lane and (MOD-97) another repo folded into the task) — one verdict per key.
+ * MOD-117: the card's repo is always folded in: another repo's (`s.repo`), else the session root given.
+ */
+const attemptKeyIn = (s: SpawnRecord, root: string): string =>
+  `${scopedId(taskLabel(s.task, s.subtask), s.repo || root)}${s.replay ? `@replay${s.base ? `-${s.base}` : ''}` : ''}:${s.review ? `review-${s.key}` : s.lineage}:${s.attempt}`
+/** MOD-117: an attempt's key, in its card's repo. */
+const attemptKey = async ($: Host, s: SpawnRecord): Promise<string> => attemptKeyIn(s, await sessionRootOf($))
 
 type Config = {
   autoEscalate: boolean
@@ -1682,7 +1692,8 @@ async function liveState($: Host, exclude?: string): Promise<Live> {
     } else if (a.status === 'completed' && !spawn.adhoc && isOpen(spawn)) out.pending.push({ task: label, agentId: a.id, ...(spawn.repo ? { repo: spawn.repo } : {}) })
   }
   for (const key of finalizing.keys()) {
-    const label = key.split(':')[0] ?? key
+    // MOD-117: the key names the card's repo (`<label>@<repo>…`); the pending row is the label's
+    const label = (key.split(':')[0] ?? key).replace(/@\/[^@]*/, '')
     if (!out.pending.some(p => p.task === label)) out.pending.push({ task: label })
   }
   out.queued = (await readQueue($)).length
@@ -2174,7 +2185,7 @@ async function stepEffort($: Host, agentId: string): Promise<Effort | undefined>
   const spawn = await spawnByAgent($, agentId)
   // MOD-21: a reviewer steps at the engine's default; the card's effort belongs to its worker
   if (!spawn || spawn.adhoc || spawn.review) return undefined
-  const effort = effortFor(spawn.tier, await storeGet<string>($, K.effort(spawn.task)), cfg.effortByTier)
+  const effort = effortFor(spawn.tier, await storeGet<string>($, K.effort(spawn.task, await cardRepo($, spawn.repo))), cfg.effortByTier)
   stepEfforts.set(agentId, effort ?? null)
   if (effort) {
     const lane = laneOf(spawn)
@@ -2604,7 +2615,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   // what the branch changes against the base: the {files} list, and whether the version moved
   const names = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', `${baseRef}...HEAD`], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
   const version = touchesVersion(names) ? versionOf(await readText($, `${wt.path}/${VERSION_FILE}`)) : undefined
-  await storeSet($, K.mergePrep(id), { head, ...(version ? { version } : {}), at: await now($) } satisfies MergePrep)
+  await storeSet($, K.mergePrep(id, await cardRepo($)), { head, ...(version ? { version } : {}), at: await now($) } satisfies MergePrep)
   // GATES: the card's gates, by the verifier's runner, in the worktree at the new head
   const outDir = `${root}/.delegation/${id}`
   const filesPath = `${outDir}/merge-files.txt`
@@ -2703,7 +2714,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
     if (!cleaned.ok || cleaned.exitCode !== 0) return `${id}: the root card ${cardRel} was not removed: ${whyOf(cleaned)}`
   }
   // the version this merge releases: what the prepare saw, else the branch against origin
-  const prep = await storeGet<MergePrep>($, K.mergePrep(id))
+  const prep = await storeGet<MergePrep>($, K.mergePrep(id, await cardRepo($)))
   let version = prep && prep.head === head ? prep.version : undefined
   if (!prep || prep.head !== head) {
     const names = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', `origin/${def}...HEAD`], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
@@ -2736,7 +2747,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
     await storeSet($, K.merged(sid), [...list, { task: id, sha, ...(version ? { version } : {}), at: t }])
   }
   try {
-    await $.store.delete(K.mergePrep(id))
+    await $.store.delete(K.mergePrep(id, await cardRepo($)))
   } catch {
     // it expires with nothing reading it
   }
@@ -3594,51 +3605,95 @@ async function replayBase($: Host, briefPath: string): Promise<{ base?: string }
  * tool, accept, merge, the owed rows), is the repo /dispatch remembered for it (MOD-44), else the session's.
  */
 type TaskRef = string | { task: string; repo?: string | undefined }
-const trimRepo = (path: string): string => path.replace(/\/+$/, '') || '/'
 
-/** The task id of a ref and the other repo it is for ('' for the session's own repo). */
-async function refOf($: Host, ref: TaskRef): Promise<{ task: string; repo: string; root: string }> {
-  const task = typeof ref === 'string' ? ref : ref.task
-  const named = typeof ref === 'string' ? await storeGet<string>($, K.taskRepo(ref)) : ref.repo
-  const root = trimRepo(await sessionRootOf($))
-  const repo = typeof named === 'string' && named !== '' ? trimRepo(named) : ''
-  return { task, repo: repo === root ? '' : repo, root }
+/** MOD-117: the session root as a key part ('' with no root). */
+async function rootKey($: Host): Promise<string> {
+  const root = await sessionRootOf($)
+  return root ? trimRepo(root) : ''
 }
-
-/** A record of the bare key belongs to the repo its `root` names (a record with none: to any repo); `repo` '' is the session's. */
-const belongsTo = (r: AttemptRecord, repo: string, root: string): boolean => {
-  if (!r.root) return true
-  const own = trimRepo(r.root)
-  return repo ? own === repo : root === '/' || own === root
+/** MOD-117: the repo a card's per-task keys are in: the other local repo it is for, else the session root ('' with none). The bare keys are moved first. */
+async function cardRepo($: Host, repo?: string): Promise<string> {
+  await migrateTaskKeys($)
+  return repo ? trimRepo(repo) : rootKey($)
 }
 
 /**
- * The task's records as stored: a write patches these, so a record written before the rename keeps its word.
- * MOD-97: a task for another repo has a key of its own (`<id>@<repo>`); until it is written, the bare key's
- * records that belong to that repo stand for it. The bare key reads only the session repo's (and legacy ones).
+ * The task id of a ref, the other repo it is for ('' for the session's own repo), and `keyRepo`, the repo its
+ * keys are in (MOD-117: the session root for its own cards). The bare keys are moved first (once per root).
  */
+async function refOf($: Host, ref: TaskRef): Promise<{ task: string; repo: string; root: string; keyRepo: string }> {
+  await migrateTaskKeys($)
+  const task = typeof ref === 'string' ? ref : ref.task
+  const root = await rootKey($)
+  const named = typeof ref === 'string' ? await storeGet<string>($, K.taskRepo(ref, root)) : ref.repo
+  const repo = typeof named === 'string' && named !== '' ? trimRepo(named) : ''
+  const other = repo === root ? '' : repo
+  return { task, repo: other, root, keyRepo: other || root }
+}
+
+/** The task's records as stored: a write patches these, so a record written before the rename keeps its word. MOD-117: under its card's repo's key. */
 async function loadAttemptsRaw($: Host, ref: TaskRef): Promise<AttemptRecord[]> {
-  const { task, repo, root } = await refOf($, ref)
-  if (repo) {
-    const own = await storeGet<AttemptRecord[]>($, K.tasksIn(task, repo))
-    if (Array.isArray(own)) return own
-  }
-  const bare = (await storeGet<AttemptRecord[]>($, K.tasks(task))) ?? []
-  return Array.isArray(bare) ? bare.filter(r => belongsTo(r, repo, root)) : []
+  const { task, keyRepo } = await refOf($, ref)
+  const own = await storeGet<AttemptRecord[]>($, K.tasks(task, keyRepo))
+  return Array.isArray(own) ? own : []
 }
 
 async function loadAttempts($: Host, ref: TaskRef): Promise<AttemptRecord[]> {
-  const { task, repo } = await refOf($, ref)
-  return readRetired($, K.tasksIn(task, repo), await loadAttemptsRaw($, ref))
+  const { task, keyRepo } = await refOf($, ref)
+  return readRetired($, K.tasks(task, keyRepo), await loadAttemptsRaw($, ref))
 }
 
-/** MOD-97: writes a task's records under its repo's key; a bare-key write keeps the records there that belong to other repos. */
+/** MOD-97, MOD-117: writes a task's records under its card's repo's key. */
 async function saveAttempts($: Host, ref: TaskRef, records: readonly AttemptRecord[]): Promise<void> {
-  const { task, repo, root } = await refOf($, ref)
-  if (repo) return storeSet($, K.tasksIn(task, repo), records)
-  const stored = await storeGet<AttemptRecord[]>($, K.tasks(task))
-  const foreign = Array.isArray(stored) ? stored.filter(r => !belongsTo(r, '', root)) : []
-  await storeSet($, K.tasks(task), [...foreign, ...records])
+  const { task, keyRepo } = await refOf($, ref)
+  await storeSet($, K.tasks(task, keyRepo), records)
+}
+
+/**
+ * MOD-117 (#185, #184): moves every bare per-task key to its repo's key (hooks/lib/taskkeys.ts): an attempt ledger's
+ * rows to the root (or repo) each names, else the session root's; anything else to the session root's. Run at
+ * session.start, and before the first per-task read of a root this process has not migrated (a reload mid-session).
+ * Idempotent: a store with no bare key moves nothing. One debug line says how many keys moved.
+ */
+let migrated: { root: string; done: Promise<void> } | undefined
+function migrateTaskKeys($: Host, again = false): Promise<void> {
+  return (async () => {
+    const root = await rootKey($)
+    if (!root) return
+    if (!again && migrated?.root === root) return migrated.done
+    const done = migrateOnce($, root)
+    migrated = { root, done }
+    return done
+  })()
+}
+async function migrateOnce($: Host, root: string): Promise<void> {
+  try {
+    const plan = migrationPlan(await storeEntries($), root)
+    if (plan.delete.length === 0) return
+    for (const [key, value] of plan.set) {
+      try {
+        await $.store.set(key, value)
+      } catch (err) {
+        // a bare key is never deleted before its rows are written elsewhere: the next session start tries again
+        debug($, `per-task keys not moved: store.set ${key} failed: ${String(err)}`)
+        await storeRefused($, key, err)
+        return
+      }
+    }
+    let n = 0
+    for (const key of plan.delete) {
+      try {
+        await $.store.delete(key)
+        n += 1
+      } catch (err) {
+        debug($, `store.delete ${key} failed: ${String(err)}`)
+      }
+    }
+    recordsCache = undefined
+    debug($, migratedLine(n))
+  } catch (err) {
+    debug($, `per-task keys not moved: ${String(err)}`)
+  }
 }
 
 /** MOD-19 (0.8.0): a stored record that still holds the retired verdict word reads as consistent; each one is logged at debug. */
@@ -3968,7 +4023,8 @@ async function statArtefact($: Host, path: string): Promise<ArtefactStat> {
 async function outsideFor($: Host, task: string | undefined, repo?: string): Promise<OutsideInput | undefined> {
   if (!task) return undefined
   // MOD-97 (#164): the listing is the card's repo's: another repo's task of the same id never lends it one
-  const saved = await storeGet<{ roots?: RootListing[] }>($, K.outside(task, repo))
+  // MOD-117 (#185): and a same-id card of another repo the session started in never lends one either
+  const saved = await storeGet<{ roots?: RootListing[] }>($, K.outside(task, await cardRepo($, repo)))
   return Array.isArray(saved?.roots) ? { before: saved.roots, list: (root, since) => listRoot($, root, since) } : undefined
 }
 
@@ -3991,21 +4047,22 @@ async function recordOutside($: Host, task: string, briefPath: string, reused: b
   const contract = text !== undefined ? briefContract(text) : undefined
   if (!contract || !contract.ok) return undefined
   const roots = outsideRoots(contract.scope.filter(isAbsolute), contract.forbid.filter(isAbsolute))
+  const key = K.outside(task, await cardRepo($, repo))
   // MOD-97 (#164): a brief that names no outside root leaves no listing behind for its verifier to read
   if (roots.length === 0) {
-    if ((await storeGet<unknown>($, K.outside(task, repo))) != null) {
+    if ((await storeGet<unknown>($, key)) != null) {
       try {
-        await $.store.delete(K.outside(task, repo))
+        await $.store.delete(key)
       } catch (err) {
-        debug($, `store.delete ${K.outside(task, repo)} failed: ${String(err)}`)
+        debug($, `store.delete ${key} failed: ${String(err)}`)
       }
     }
     return undefined
   }
-  if (reused && (await storeGet<unknown>($, K.outside(task, repo))) != null) return `outside: the listing of ${roots.join(', ')} taken at the first dispatch stands`
+  if (reused && (await storeGet<unknown>($, key)) != null) return `outside: the listing of ${roots.join(', ')} taken at the first dispatch stands`
   const listed: RootListing[] = []
   for (const root of roots) listed.push(await listRoot($, root))
-  await storeSet($, K.outside(task, repo), { at: await now($), briefPath, roots: listed })
+  await storeSet($, key, { at: await now($), briefPath, roots: listed })
   const files = listed.reduce((n, l) => n + ('entries' in l ? l.entries.length : 0), 0)
   const bad = listed.filter((l): l is { root: string; error: string } => 'error' in l)
   const marks = listed.filter((l): l is { root: string; since: number; files: number } => 'since' in l)
@@ -4196,7 +4253,7 @@ async function runCardless($: Host, spawn: SpawnRecord, report: ReturnType<typeo
  * result) share one verify: the second waits on the first and gets its block.
  */
 async function finalize($: Host, spawnIn: SpawnRecord, text: string, measured: Measured = {}): Promise<Rendered> {
-  const key = attemptKey(spawnIn)
+  const key = await attemptKey($, spawnIn)
   const running = finalizing.get(key)
   if (running) return running
   const job = finalizeOnce($, spawnIn, text, measured)
@@ -4440,7 +4497,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
 
   const shownVerdict = rateLimit ? rateLimitedVerdict(rateLimit) : noRepo ? `${verdict} (no repo)` : verdict
   // MOD-114: this attempt's hand-back is judged now; the accept of another task, with no cards hand-back waiting, says the judgment work is over
-  const wasNudged = nudgedUp.delete(attemptKey(spawn))
+  const wasNudged = nudgedUp.delete(await attemptKey($, spawn))
   const down = !wasNudged && !spawn.adhoc && advice.kind === 'accept' ? nudgeDownNow() : undefined
   const downClause = down ? ` · ${down}` : ''
   // GH-104: work present rides under the verdict line in both forms
@@ -4560,7 +4617,7 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<Verdi
 
 /** A judged attempt's row as the verdict tool returns it: the row posted, else the rendered verdict. */
 async function postedOf($: Host, spawn: SpawnRecord, verdictAt: number | undefined): Promise<VerdictNow> {
-  const key = attemptKey(spawn)
+  const key = await attemptKey($, spawn)
   const sent = await storeGet<string>($, K.postedRow(key))
   if (sent !== undefined && sent !== '') return { kind: 'judged', text: sent }
   // claimed and not yet appended: the row is about to be stored (a row posted before postedRow was kept is never waited on)
@@ -4586,7 +4643,7 @@ async function verdictFromLedger($: Host, task: string, subtask: string): Promis
   const rendered = await finalize($, spawn, spawn.agentId ? await workerText($, spawn.agentId, '') : '', {})
   const shown = deliveryFor(cfg.verbosity, rendered).row ?? rendered.line
   // the tool's answer is the row: a later hand-back of the same attempt posts no second one
-  if (await claimPost($, spawn)) await storeSet($, K.postedRow(attemptKey(spawn)), shown)
+  if (await claimPost($, spawn)) await storeSet($, K.postedRow(await attemptKey($, spawn)), shown)
   await refreshStatus($)
   return { kind: 'judged', text: shown }
 }
@@ -4635,9 +4692,9 @@ function nudgeDownNow(): string | undefined {
 }
 
 /** MOD-74: the row for a briefed worker that has started (or resumed); verdictVerbosity=silent posts none. MOD-114: with its effort and, when due, the down nudge. */
-async function postStarted($: Host, i: { label: string; task: string; alias: string; tier: Tier; attempt: number; budget: number; kind: StartKind }) {
+async function postStarted($: Host, i: { label: string; task: string; repo?: string | undefined; alias: string; tier: Tier; attempt: number; budget: number; kind: StartKind }) {
   if (!postsRows(cfg.verbosity)) return
-  const effort = effortFor(i.tier, await storeGet<string>($, K.effort(i.task)), cfg.effortByTier)
+  const effort = effortFor(i.tier, await storeGet<string>($, K.effort(i.task, await cardRepo($, i.repo))), cfg.effortByTier)
   // a resume of a nudged task is not the end of its judgment: no down nudge on it
   const nudge = i.kind === 'resumed' ? undefined : nudgeDownNow()
   await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias), ...(effort ? { effort } : {}), ...(nudge ? { nudge } : {}) }))
@@ -4655,7 +4712,7 @@ const handedBackPosted = new Set<string>()
 /** MOD-74: one row when a briefed worker hands back, before its verification starts; silent posts none. MOD-114: `text` is the hand-back, read for a cards artefact. */
 async function postHandedBack($: Host, spawn: SpawnRecord, text = '') {
   if (spawn.adhoc || spawn.review || !postsRows(cfg.verbosity)) return
-  const key = attemptKey(spawn)
+  const key = await attemptKey($, spawn)
   if (handedBackPosted.has(key)) return
   handedBackPosted.add(key)
   const t = await now($)
@@ -4684,7 +4741,7 @@ function sideEffects($: Host, r: Rendered, adhoc: boolean): string | undefined {
  * remembers it across a reload. A repeat is skipped and logged to debug.
  */
 async function claimPost($: Host, spawn: SpawnRecord): Promise<boolean> {
-  const key = attemptKey(spawn)
+  const key = await attemptKey($, spawn)
   if (posted.has(key)) {
     debug($, `verdict row for ${key} already posted; repeat skipped`)
     return false
@@ -4739,7 +4796,7 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   const next: SpawnRecord = { ...spawn, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
   await storeSet($, K.spawn(spawn.key), next)
   await setWorkers($, list => [...list, { task: spawn.task, subtask: spawn.subtask, attempt, kind: 'resume', tier: spawn.tier, alias: spawn.alias, agentId, verdict: 'pending', at: t }])
-  if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), task: spawn.task, alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed' })
+  if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), task: spawn.task, repo: spawn.repo, alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed' })
   return next
 }
 
@@ -4882,7 +4939,7 @@ async function locateTask($: Host, id: string, repoArg: string | undefined, root
     if ('error' in r) return `/dispatch ${id}: refused repo ${repoArg}: ${r.error}`
     target = await loadTarget($, r.path)
   } else if (!replay) {
-    const saved = await storeGet<string>($, K.taskRepo(id))
+    const saved = await storeGet<string>($, K.taskRepo(id, await cardRepo($)))
     if (saved) {
       const r = await resolveRepo($, saved, root)
       if ('path' in r) target = await loadTarget($, r.path)
@@ -5070,7 +5127,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     }
   }
   if (target) {
-    await storeSet($, K.taskRepo(id), target.path)
+    await storeSet($, K.taskRepo(id, await cardRepo($)), target.path)
     registerTaskRepo(id, target, card.gate)
   }
 
@@ -5256,7 +5313,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (heldNames.length > 0) out.push(`   resources: ${heldNames.join(', ')} (held while the worker runs; another card naming one waits in the queue)`)
   if (dryRun) return [...out, '', shown].join('\n')
   // MOD-13: the card's own effort: (it wins over effortByTier for this task's workers); cleared when the card has none
-  await storeSet($, K.effort(id), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
+  await storeSet($, K.effort(id, await cardRepo($, target?.path)), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
 
   // GH-103: a prose scope with no globs is caught here, before the worktree and the spawn
   const shownScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
@@ -5696,7 +5753,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     }
     wrote.push(`wrote ${path}`)
     // MOD-44: the id alone finds a card for another repo
-    if (target) await storeSet($, K.taskRepo(c.id), target.path)
+    if (target) await storeSet($, K.taskRepo(c.id, await cardRepo($)), target.path)
   }
   // MOD-22: dispatch reads the mode from the card (`repo:`); here is passed only when the card says repo: here
   const dispatchArgs = (c: NewCard, dryRun: boolean): DispatchArgs => ({ id: c.id, dryRun, base: 'origin/main', ...(c.repo === 'here' ? { here: true as const } : {}), ...(target ? { repo: target.path } : {}) })
@@ -5725,7 +5782,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       try {
         const said = await $.model.classify(classifierText(c.text), CLASSIFIER_LABELS)
         if ((CLASSIFIER_LABELS as readonly string[]).includes(said ?? '')) {
-          await storeSet($, K.classifier(c.id), { card: c.tier, classifier: said })
+          await storeSet($, K.classifier(c.id, await cardRepo($, target?.path)), { card: c.tier, classifier: said })
           second = said === c.tier ? `card says ${c.tier} · classifier agrees` : `card says ${c.tier} · classifier says ${said}`
         }
       } catch (err) {
@@ -6307,7 +6364,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       }
     }
 
-    const classifierTier = !adhoc && attempt === 1 ? (await storeGet<{ classifier?: Tier }>($, K.classifier(task)))?.classifier : undefined
+    const classifierTier = !adhoc && attempt === 1 ? (await storeGet<{ classifier?: Tier }>($, K.classifier(task, await cardRepo($, other?.path ?? p.repo))))?.classifier : undefined
     const rec: HereRecord = {
       ...(await ownerFields($, other?.path)),
       task,
@@ -6399,7 +6456,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
 
     await setWorkers($, list => [...list, { task, subtask, attempt, kind: 'spawn', tier, alias, ...(res.agentId ? { agentId: res.agentId } : {}), verdict: 'pending', at: t }])
     // MOD-74: a briefed worker's model is said where the person looks, once it has started
-    if (!adhoc) await postStarted($, { label, task, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started' })
+    if (!adhoc) await postStarted($, { label, task, repo: other?.path, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started' })
     // MOD-92: the status line walks every agent's records and need not decide the spawn: the hook refreshes it once the next decision may run
     if (!s) await refreshStatus($)
     return res
@@ -6943,7 +7000,7 @@ export const register: Register = (on, opts) => {
       // MOD-12: a worker's slot may be free now (2F): the row says which queued task is ready; the brain spawns it
       const ready = foreground ? [] : await readyRows($, agentId)
       // MOD-64: what is appended is what the verdict tool returns; an empty text (silent) is still recorded, so the tool does not wait on it
-      if (claimed && spawn) await storeSet($, K.postedRow(attemptKey(spawn)), [...(row !== undefined ? [row] : []), ...ready].join('\n'))
+      if (claimed && spawn) await storeSet($, K.postedRow(await attemptKey($, spawn)), [...(row !== undefined ? [row] : []), ...ready].join('\n'))
       if (row !== undefined || ready.length > 0) {
         const text = [...(row !== undefined ? [row] : []), ...ready].join('\n')
         await appendRow($, text)
@@ -7100,6 +7157,8 @@ export const register: Register = (on, opts) => {
     await loadedTemplates($)
     // MOD-89: a new session counts its own refused writes, and starts with the store pruned
     refusedWrites = { count: 0, last: '' }
+    // MOD-117: the bare per-task keys move to their repo's key before the prune walks them
+    await migrateTaskKeys($, true)
     await pruneStore($, 'start')
     await loadRepoConfig($)
     void sampleSpend($)

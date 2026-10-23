@@ -52,7 +52,8 @@ describe('MOD-95: a brief written for another repo is not reused', () => {
     const w = setup(on as never)
     await $.session.start(sessionStart)
     await dispatch($, 'T-1 --dry-run')
-    w.store.set('delegation.tasks.T-1', [{ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', tier: 'standard', alias: 'sonnet', verdict: 'pending', at: 1 }])
+    // MOD-117: the open attempt is the other repo's, under its key
+    w.store.set(`delegation.tasks.T-1@${OTHER}`, [{ task: 'T-1', subtask: 'main', attempt: 1, kind: 'spawn', tier: 'standard', alias: 'sonnet', verdict: 'pending', at: 1 }])
     const before = w.files.get(BRIEF)
     const files0 = new Map(w.files)
     const out = await dispatch($, `T-1 --repo ${OTHER}`)

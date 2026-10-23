@@ -25,7 +25,8 @@ const set = async ($: Tester, field: string, value: string) => {
 }
 const status = async ($: Tester) => String((await $.command.run({ command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)).text)
 const brief = (task: string, over = '') => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard${over}]]\nDo it.`
-const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task}`) ?? []) as Record<string, unknown>[]
+// MOD-117: a local card's records sit under its repo's key
+const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task.includes('@') ? task : `${task}@${ROOT}`}`) ?? []) as Record<string, unknown>[]
 const argvs = (w: { runs: { argv: string[] }[] }) => w.runs.map(r => r.argv)
 const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
 const rowsOf = (w: { appended: { type: string; text: string }[]; logs: string[]; debugLogs: string[] }) => {
@@ -635,6 +636,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(out).toContain('wrote ')
     expect(out).not.toContain('classifier')
     expect(w.store.has('delegation.classifier.OPS-1')).toBe(false)
+    expect(w.store.has(`delegation.classifier.OPS-1@${ROOT}`)).toBe(false)
   })
 
   // ---- Display ----

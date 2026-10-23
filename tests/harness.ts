@@ -85,6 +85,8 @@ export type World = {
    * read as the person's own words.
    */
   submitted: { text: string; origin?: unknown }[]
+  /** MOD-117: what `$.session.root()` and `$.session.cwd()` answer (default ROOT); a test moves it to run a second repo against the same store. */
+  root: string
 }
 
 export type WorldOptions = {
@@ -177,6 +179,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     spawnedBy: new Map(),
     steps: [],
     submitted: [],
+    root: ROOT,
   }
   const dirs = new Map(Object.entries(options.dirs ?? {}))
   let spawnCount = 0
@@ -194,8 +197,8 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('store.set', (e: { key: string; value: unknown }) => (w.store.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }))
   hook('store.delete', (e: { key: string }) => (w.store.delete(e.key), { value: undefined }))
   hook('store.keys', () => ((w.storeKeyReads += 1), { value: [...w.store.keys()] }))
-  hook('session.root', () => ({ value: ROOT }))
-  hook('session.cwd', () => ({ value: ROOT }))
+  hook('session.root', () => ({ value: w.root }))
+  hook('session.cwd', () => ({ value: w.root }))
   hook('session.model', () => ({ value: w.model }))
   hook('session.id', () => ({ value: options.sessionId ?? 'sess-1' }))
   hook('session.usage', () => ({ value: { startedAt: 0, context: w.context, rateLimits: [], cost: { usd: w.usd } } }))

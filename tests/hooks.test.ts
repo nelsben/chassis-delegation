@@ -6,7 +6,8 @@ import { MOD_VERSION } from '../hooks/lib/version'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
 const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=25 budget=')
 
-const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task}`) ?? []) as Record<string, unknown>[]
+// MOD-117: a local card's records sit under its repo's key
+const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task.includes('@') ? task : `${task}@${ROOT}`}`) ?? []) as Record<string, unknown>[]
 const argvs = (w: { runs: { argv: string[] }[] }) => w.runs.map(r => r.argv)
 // What reached the brain or Ben for a background verdict: the appended row, or
 // (the kit cannot answer a plugin's own session.append) the transcript log line.
@@ -348,7 +349,7 @@ describe('tool.call on Agent: report capture and verify', () => {
     await $.turn.complete(turnInput('agent-4', REPORT('1234abcd'))) // a late third fire
     expect(rows(w)).toHaveLength(1)
     expect(verifyStarts(w)).toHaveLength(1)
-    expect(w.store.get('delegation.posted.T-4:1:1')).toBe(true)
+    expect(w.store.get(`delegation.posted.T-4@${ROOT}:1:1`)).toBe(true)
   })
 
   test('a row already posted for the attempt (the store remembers it across a reload) is not posted again', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
@@ -1220,7 +1221,7 @@ describe('/dispatch', () => {
     await $.session.start(sessionStart)
     await brainSpawn($, String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text))
     // meanwhile GH-19 handed back: its record now claims src/b.ts
-    w.store.set('delegation.tasks.GH-19', [{ ...records(w, 'GH-19')[0], files: ['src/b.ts'] }])
+    w.store.set(`delegation.tasks.GH-19@${ROOT}`, [{ ...records(w, 'GH-19')[0], files: ['src/b.ts'] }])
     const AMEND = '[[amend v=1 ignore+=src/** reason=hide it]]'
     const REPORT = `[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=app/billing/RateA.ts]]`
     await $.turn.complete(turnInput('agent-h', `Done.\n${AMEND}\n${REPORT}`))
@@ -1792,7 +1793,7 @@ describe('GH-104: spend guards', () => {
   test('MOD-101: /delegation accept A B C [note] retires each named id, one line per id; an unknown id says so and the rest retire', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
     const w = await owedWith($, on, cherryRun(`>${HEAD}\n`))
     const t4 = records(w, 'T-4')
-    w.store.set('delegation.tasks.T-5', t4.map(r => ({ ...r, task: 'T-5' })))
+    w.store.set(`delegation.tasks.T-5@${ROOT}`, t4.map(r => ({ ...r, task: 'T-5' })))
     const out = String((await $.command.run(delegationCmd('accept T-4 NOPE-9 T-5 landed by hand'))).text).split('\n')
     expect(out).toHaveLength(3)
     expect(out[0]).toContain('T-4')
@@ -1810,7 +1811,7 @@ describe('GH-104: spend guards', () => {
     const w = await owedWith($, on, cherryRun(`>${HEAD}\n`))
     const recentKey = [...w.store.keys()].find(k => k.startsWith('delegation.recent'))
     expect(recentKey).toBeDefined()
-    w.store.set('delegation.tasks.T-5', records(w, 'T-4').map(r => ({ ...r, task: 'T-5' })))
+    w.store.set(`delegation.tasks.T-5@${ROOT}`, records(w, 'T-4').map(r => ({ ...r, task: 'T-5' })))
     w.store.set(recentKey as string, [...((w.store.get(recentKey as string) ?? []) as object[]), { task: 'T-5', attempt: 1, verdict: 'work-present', line: 'x', at: Date.now(), owed: 'T-5: verify sha=abc' }])
     const out = String((await $.command.run(delegationCmd('accept --owed swept'))).text)
     expect(out).toContain('retired 2')
@@ -1821,7 +1822,7 @@ describe('GH-104: spend guards', () => {
 
   test('MOD-101: /delegation accept OPS-1 landed by hand is still one id with the note', { options: { autoEscalate: true, ...GM } }, async ($, on) => {
     const w = await owedWith($, on, cherryRun(`>${HEAD}\n`))
-    w.store.set('delegation.tasks.OPS-1', records(w, 'T-4').map(r => ({ ...r, task: 'OPS-1' })))
+    w.store.set(`delegation.tasks.OPS-1@${ROOT}`, records(w, 'T-4').map(r => ({ ...r, task: 'OPS-1' })))
     const out = String((await $.command.run(delegationCmd('accept OPS-1 landed by hand'))).text)
     expect(out.split('\n')).toHaveLength(1)
     expect(records(w, 'OPS-1').at(-1)).toMatchObject({ retired: 'accepted', accepted: { note: 'landed by hand' } })
@@ -1968,7 +1969,7 @@ describe('GH-107 (MOD-12): a ready task the brain spawns, refused, keeps its pla
     const b = { prompt: brief('T-9'), description: 'task', subagentType: 'general-purpose', task: 'T-9', subtask: 'main', at: 2000 }
     w.state.set('chassis-delegation.queue', [a, b])
     // T-4 already had an attempt: its worktree holds finished work
-    w.store.set('delegation.tasks.T-4', [{ attempt: 1, subtask: 'main', kind: 'spawn', tier: 'standard', alias: 'sonnet', verdict: 'no-report', source: 'brief', purpose: 'build', briefPath: BRIEF }])
+    w.store.set(`delegation.tasks.T-4@${ROOT}`, [{ attempt: 1, subtask: 'main', kind: 'spawn', tier: 'standard', alias: 'sonnet', verdict: 'no-report', source: 'brief', purpose: 'build', briefPath: BRIEF }])
     await $.turn.complete(turnInput('agent-1', report('T-1')))
     expect(w.appended.map(x => x.text).join('\n')).toContain('ready: T-4 — run its spawn block')
     const refused = await $.agent.spawn(spawnInput({ prompt: PROMPT, tool_use_id: 'toolu_E0000004' }))
@@ -2308,7 +2309,7 @@ describe('GH-111: the card tool', () => {
     expect(out).toContain('card says standard · classifier says economy')
     expect(out.indexOf('card says standard')).toBeGreaterThan(out.indexOf('OPS-1 · standard'))
     expect(out.indexOf('card says standard')).toBeLessThan(out.indexOf('```'))
-    expect(w.store.get('delegation.classifier.OPS-1')).toEqual({ card: 'standard', classifier: 'economy' })
+    expect(w.store.get(`delegation.classifier.OPS-1@${ROOT}`)).toEqual({ card: 'standard', classifier: 'economy' })
   })
 
   test('GH-114: the classifier agrees, is not asked on dispatch, and is off with classifierSecondOpinion false; the first attempt record carries it', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
@@ -2332,6 +2333,7 @@ describe('GH-111: the card tool', () => {
     const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
     expect(out).not.toContain('classifier')
     expect(w.store.has('delegation.classifier.OPS-1')).toBe(false)
+    expect(w.store.has(`delegation.classifier.OPS-1@${ROOT}`)).toBe(false)
   })
 
   test('GH-114: /delegation names what each alias resolves to and when it moved', async ($, on) => {
@@ -3368,7 +3370,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(w.spawns).toHaveLength(0)
     await brainSpawn($, out)
     expect(w.spawns[0]).toMatchObject({ cwd: ROOT, model: 'opus' })
-    w.store.set('delegation.tasks.GH-19', [{ ...records(w, 'GH-19')[0], files: ['src/b.ts'] }])
+    w.store.set(`delegation.tasks.GH-19@${ROOT}`, [{ ...records(w, 'GH-19')[0], files: ['src/b.ts'] }])
     const AMEND = '[[amend v=1 ignore+=src/** reason=hide it]]'
     const REPORT = `[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=app/billing/RateA.ts]]`
     await $.turn.complete(turnInput('agent-h', `Done.\n${AMEND}\n${REPORT}`))
@@ -3554,7 +3556,7 @@ describe('MOD-13: workers under the mod hooks', () => {
 
   test('effort: the card effort: written at /dispatch wins over the tier entry', { options: { ...GM } }, async ($, on) => {
     const w = await boot($, on, 'T-6', HEAD('T-6'), 'agent-6', nativeRun())
-    w.store.set('delegation.effort.T-6', 'xhigh')
+    w.store.set(`delegation.effort.T-6@${ROOT}`, 'xhigh')
     await runStep($, stepInput('agent-6', 'low'))
     expect(w.steps).toEqual([{ agentId: 'agent-6', effort: 'xhigh' }])
   })
@@ -4581,7 +4583,7 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     expect(brief).toContain(`repo=none in ${ROOT}`)
     expect(brief).toContain('Output folder: /out/hair')
     expect(brief).toContain('Scratch: /tmp/td/chassis-delegation/OPS-9 (never in the repo)')
-    expect(w.store.get('delegation.outside.OPS-9')).toMatchObject({
+    expect(w.store.get(`delegation.outside.OPS-9@${ROOT}`)).toMatchObject({
       roots: [
         { root: '/out/hair', entries: [{ path: 'old.txt', size: 1, mtimeMs: 0 }] },
         { root: '/out/notes', entries: [] },
@@ -4659,7 +4661,7 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
       await $.session.start(sessionStart)
       const out = String((await $.command.run(commandInput('OPS-9'))).text)
       expect(out).toContain('/big holds more than 10000 files, so changes there will be found by modification time')
-      const saved = w.store.get('delegation.outside.OPS-9') as { roots: Record<string, unknown>[] }
+      const saved = w.store.get(`delegation.outside.OPS-9@${ROOT}`) as { roots: Record<string, unknown>[] }
       expect(saved.roots.find(r => r.root === '/big')).toEqual({ root: '/big', since: 1_000_000, files: 10001 })
       await brainSpawn($, out)
       w.files.set('/out/hair/model.glb', 'glTF')
@@ -5689,12 +5691,14 @@ describe('MOD-89 (#157, #159): the store stays under the host cap', () => {
     })
     w.agents.push({ id: 'ag-k-run', type: 'general-purpose', description: 'T-RUN', status: 'running' })
     await $.session.start(sessionStart)
+    // MOD-117: the seeded bare keys moved to this root's key at the start, and the prune walked those
     expect(w.store.has('delegation.tasks.T-OLD')).toBe(false)
+    expect(w.store.has(`delegation.tasks.T-OLD@${ROOT}`)).toBe(false)
     expect(w.store.has('delegation.spawn.k-old')).toBe(false)
     expect(w.store.has('delegation.agent.ag-k-old')).toBe(false)
     expect(w.store.has('delegation.spawn.k-run')).toBe(true)
-    expect(w.store.has('delegation.tasks.T-RUN')).toBe(true)
-    expect(w.store.has('delegation.tasks.T-NEW')).toBe(true)
+    expect(w.store.has(`delegation.tasks.T-RUN@${ROOT}`)).toBe(true)
+    expect(w.store.has(`delegation.tasks.T-NEW@${ROOT}`)).toBe(true)
     expect(w.store.has('delegation.recent.sess-0')).toBe(true)
     const line = /store: pruned 3 records \(\d+\.\d\d MiB to \d+\.\d\d MiB of 4 MiB\)/
     expect(delivered(w)).toMatch(line)
