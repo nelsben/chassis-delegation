@@ -10,7 +10,7 @@ import { globMatches } from './verify-native'
 
 export const BRIEF_FIELDS = [
   'v', 'task', 'subtask', 'purpose', 'tier', 'model', 'scope', 'forbid', 'scope_globs', 'forbid_globs',
-  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'outdir', 'scratch', 'resources', 'context', 'note',
+  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'outdir', 'scratch', 'resources', 'allow', 'context', 'note',
 ] as const
 
 /**

@@ -325,6 +325,14 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.files.get(DEFAULT_BRIEF) ?? '').toContain('Run make check before you report.')
   })
 
+  test('briefLocal: the rules in a private file are in every brief, under their own heading', async ($, on) => {
+    const w = dispatchWorld(on, { files: { '/tpl/brief.md': 'Rules.\n{{extra}}\n', [REPO_FILE]: '{"briefTemplate":"/tpl/brief.md"}', [`${ROOT}/local.md`]: 'Keep the shared app closed.\n' }, run: argv => (argv.includes('ls-files') ? { exitCode: 1, stdout: '' } : undefined) })
+    await $.session.start(sessionStart)
+    await set($, 'briefLocal', 'local.md')
+    await dispatch($, 'BE-101 --dry-run')
+    expect(w.files.get(DEFAULT_BRIEF) ?? '').toContain('## Local rules (not for debrief)\n\nKeep the shared app closed.')
+  })
+
   test('worktreeRoot: /trees is where the worker\'s copy of the repo is made', async ($, on) => {
     const w = dispatchWorld(on)
     await $.session.start(sessionStart)

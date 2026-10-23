@@ -38,6 +38,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['briefDir', 'Where things go', 'The folder where worker instructions are saved', 'text', 'user', ''],
   ['briefTemplate', 'Where things go', 'A file to use as the layout for worker instructions', 'text', 'repo', ''],
   ['briefExtra', 'Where things go', 'Extra lines added to every worker\'s instructions, such as a test command', 'text', 'repo', ''],
+  ['briefLocal', 'Where things go', 'A private, untracked file of rules copied into every worker\'s instructions', 'text', 'repo', ''],
   ['worktreeRoot', 'Where things go', 'The folder where each worker\'s separate copy of the repo is made', 'text', 'repo', ''],
   ['cardDir', 'Where things go', 'The folder, inside the repo, that holds your task cards', 'text', 'repo', ''],
   ['autoDebrief', 'Debriefs', 'When you stop for a while, write a short write-up of what went wrong or right', 'bool', 'user', true],

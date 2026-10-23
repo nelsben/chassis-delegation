@@ -12,6 +12,10 @@ denied, and every verdict a worker's report got. You cannot see the conversation
 itself. Ground every line in those facts; when they do not say, leave the field
 empty rather than guess.
 
+A worker's instructions may hold a section headed `## Local rules (not for debrief)` or
+`## Exception for this card:`. Those are private to the repo: skip them, and never quote
+or paraphrase their text in any finding. The mod drops a finding that quotes one.
+
 ## What to write
 
 One JSON file, `<root>/.delegation/debriefs/YYYY-MM-DD-<slug>.json` (the slug is

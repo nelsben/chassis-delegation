@@ -34,6 +34,8 @@ export type Card = {
   scratch?: string
   /** MOD-23: the exclusive resources the card holds while it runs (`resources: [blender-live]`); another card naming one waits. */
   resources: string[]
+  /** MOD-124 (#188): the named exception blocks (`allow: [live-reads]`) the brief pulls from the briefLocal file. */
+  allow: string[]
   /** The card's markdown below the frontmatter, verbatim. */
   body: string
   fields: Record<string, FieldValue>
@@ -177,6 +179,7 @@ export function parseCard(text: string): Card | { error: string } {
     outdir: asText(f.outdir).trim() || undefined,
     scratch: asText(f.scratch).trim() || undefined,
     resources: asList(f.resources),
+    allow: asList(f.allow),
     body: fm.body,
     fields: f,
   }
@@ -238,7 +241,9 @@ export function renderHeader(input: {
     (input.ignore && input.ignore.length > 0 ? ` ignore=${input.ignore.join(',')}` : '') +
     (input.outdir ? ` outdir=${input.outdir}` : '') +
     (input.scratch ? ` scratch=${input.scratch}` : '') +
-    (c.resources.length > 0 ? ` resources=${c.resources.join(',')}` : '')
+    (c.resources.length > 0 ? ` resources=${c.resources.join(',')}` : '') +
+    // MOD-124: and `allow=<a,b>` after those
+    (c.allow.length > 0 ? ` allow=${c.allow.join(',')}` : '')
   return (
     `[[brief v=1 task=${c.id} subtask=main purpose=build tier=${input.tier} model=${input.alias}` +
     ` scope=${listForHeader(scope.map(oneLine))} forbid=${listForHeader(forbid.map(oneLine))}` +

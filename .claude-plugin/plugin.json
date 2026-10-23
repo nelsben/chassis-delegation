@@ -50,6 +50,12 @@
       "description": "Where /dispatch writes <TASK-ID>.brief.md; empty = <repo root>/.delegation/briefs/ (the session scratchpad briefs/ only when the root is not writable)",
       "default": ""
     },
+    "briefLocal": {
+      "type": "string",
+      "title": "Local rules file",
+      "description": "A gitignored file of rules (path relative to the repo root, or absolute) copied into every brief under a section the debrief drops; empty = the repo file's briefLocal, else none",
+      "default": ""
+    },
     "briefTemplate": {
       "type": "string",
       "title": "Brief template",

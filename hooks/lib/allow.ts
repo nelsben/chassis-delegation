@@ -8,6 +8,7 @@
 //   git [-C <dir>] fetch [-q] origin main                    (exact)
 //   git -C <plugin root> merge --ff-only origin/main        (exact; <plugin root> is the loaded folder only; /delegation update)
 //   git -C <dir> check-ignore -q -- <one path>               (MOD-86: is the card git-ignored; exit 0 = ignored)
+//   git -C <dir> ls-files --error-unmatch -- <one path>       (MOD-124: is the briefLocal file tracked; exit 0 = tracked)
 //   git -C <root> worktree add -q -b agent/<domain>/<id>[-replay] <worktree> <origin/main|7-40 hex sha>
 //                                       (<domain>: the configured domains, by default
 //                                        frontend|backend|ops|dispatcher|cross|shared;
@@ -105,6 +106,12 @@ function checkGit(args: readonly string[], allow: AllowConfig): Check {
     const [q, dd, path, ...more] = tail
     const exact = dirs.length === 1 && q === '-q' && dd === '--' && more.length === 0 && path !== undefined && path !== '' && !path.startsWith('-')
     return exact ? ok : refuse(`git check-ignore ${tail.join(' ')} is not the exact shape (-C <dir> check-ignore -q -- <path>)`)
+  }
+  if (sub === 'ls-files') {
+    // MOD-124: is this path tracked? Exactly `-C <dir> ls-files --error-unmatch -- <one path>`; exit 0 = tracked.
+    const [flag, dd, path, ...more] = tail
+    const exact = dirs.length === 1 && flag === '--error-unmatch' && dd === '--' && more.length === 0 && path !== undefined && path !== '' && !path.startsWith('-')
+    return exact ? ok : refuse(`git ls-files ${tail.join(' ')} is not the exact shape (-C <dir> ls-files --error-unmatch -- <path>)`)
   }
   if (sub === 'ls-tree') {
     const [flag, sha, path, ...more] = tail
