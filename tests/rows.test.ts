@@ -193,6 +193,33 @@ describe('MOD-114: the nudge on the rows (engine)', () => {
     expect(rows(w).find(l => l.includes('OPS-8 started'))).toBe('chassis-delegation: OPS-8 started · 🟣 opus (frontier) · attempt 1/2 · effort high · lead: back to medium')
   })
 
+  test('a resumed started row carries no down nudge, and the next fresh start of another task does', { options: OPTIONS }, async ($, on) => {
+    let gateOk = false
+    const w = world(on, {
+      files: { [`${ROOT}/agents/tasks/OPS-8-plain.md`]: card('OPS-8'), [`${ROOT}/agents/tasks/OPS-9-cards.md`]: card('OPS-9', 'effort: xhigh'), [`${ROOT}/.chassis-delegation.json`]: '{}' },
+      dirs: { [`${ROOT}/agents/tasks`]: NAMES },
+      trees: ['/out/hair'],
+      run: argv => (argv[0] === 'checker' ? (gateOk ? { exitCode: 0, stdout: 'checked\n' } : { exitCode: 1, stdout: 'failed\n' }) : undefined),
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set('/out/hair/cards/H1.jpg', 'jpeg-bytes')
+    await $.turn.complete(turnInput(agentOf(w, 'OPS-9'), `Done.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg')}`))
+    expect(rows(w).find(l => l.includes('OPS-9 handed back'))).toContain('· lead: judgment next, raise to high')
+    expect(rows(w).find(l => l.includes('OPS-9 attempt 1/2'))).toContain('next=resume')
+    // the brain resumes the worker: the judgment is not over, so its started row has no down nudge
+    gateOk = true
+    await $.agent.spawn(spawnInput({ tool_use_id: 'toolu_R0000009', prompt: 'Fix the gate, then report again.', description: 'OPS-9 resume', subagentType: 'ops' }))
+    await $.turn.complete(turnInput(agentOf(w, 'OPS-9'), `Fixed.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg')}`))
+    const resumed = rows(w).find(l => l.includes('OPS-9 resumed'))
+    expect(resumed).toBeDefined()
+    expect(resumed).not.toContain('lead: back to')
+    // a later fresh start of another task still closes the nudge
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text), { tool_use_id: 'toolu_B0000008' })
+    expect(rows(w).find(l => l.includes('OPS-8 started'))).toMatch(/ · lead: back to medium$/)
+  })
+
   test('effortNudge in the repo file: the glob and the words; cards "" turns the nudge off', { options: OPTIONS }, async ($, on) => {
     const w = setup(on, { effortNudge: { cards: 'renders/**', up: 'max', down: 'low' } })
     await $.session.start(sessionStart)
