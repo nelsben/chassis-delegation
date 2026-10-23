@@ -8,7 +8,8 @@ import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 const TOOL = 'mcp__chassis-delegation__dispatch'
 const MIN = 60_000
 const H = 60 * MIN
-const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task}`) ?? []) as Record<string, unknown>[]
+// MOD-117: a local card's records sit under its repo's key
+const records = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task.includes('@') ? task : `${task}@${ROOT}`}`) ?? []) as Record<string, unknown>[]
 const argvs = (w: { runs: { argv: string[] }[] }) => w.runs.map(r => r.argv)
 const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
 const userRows = (w: { appended: { type: string; text: string }[] }) => w.appended.filter(a => a.type === 'user').map(a => a.text)

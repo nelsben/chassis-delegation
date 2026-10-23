@@ -255,7 +255,7 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(blockOf(out)).toEqual([`git push origin --delete ${BRANCH}`])
     expect(out.split('\n').at(-1)).toBe(`${ID} merged at ${TWIN}`)
     expect(out).not.toContain('release v')
-    const recs = w.store.get(`delegation.tasks.${ID}`) as Record<string, unknown>[]
+    const recs = w.store.get(`delegation.tasks.${ID}@${ROOT}`) as Record<string, unknown>[]
     expect(recs[0]).toMatchObject({ retired: 'merged', mergedSha: TWIN })
     const rows = (w.files.get(LEDGER) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
     expect(rows.at(-1)).toMatchObject({ kind: 'merged', task: ID, sha: TWIN })

@@ -90,12 +90,13 @@ Only the engine has tiering, the queue, `maxWorkers`, the respawn ladder, spend 
 
 | Key | Holds |
 | --- | --- |
-| `delegation.tasks.<ID>` | every attempt, with `here` and `files` for repo=here, `adhoc: true` for a cardless one, `requestedAlias: fable` when opus spawned, `sha` and `metrics` (the report's `metrics=`) once judged, a reviewer's `review` counts; a `work-present` attempt is kind `verify` |
-| `delegation.tasks.<ID>@<repo>` | the same for a task of another local repo |
+| `delegation.tasks.<ID>@<repo>` | every attempt, with `here` and `files` for repo=here, `adhoc: true` for a cardless one, `requestedAlias: fable` when opus spawned, `sha` and `metrics` (the report's `metrics=`) once judged, a reviewer's `review` counts; a `work-present` attempt is kind `verify` |
 | `delegation.recent.<session>` | the verdict lines |
 | `delegation.handoff.<brief>` | the folder `/dispatch` prepared for the Agent call |
-| `delegation.outside.<ID>` | the listing of a research card's absolute roots, the "before" of the outside delta; `delegation.outside.<ID>@<repo>` for another repo |
-| `delegation.taskRepo.<ID>` | the repo `/dispatch` remembered for the id |
+| `delegation.outside.<ID>@<repo>` | the listing of a research card's absolute roots, the "before" of the outside delta |
+| `delegation.taskRepo.<ID>@<session repo>` | the repo `/dispatch` remembered for the id |
+| `delegation.effort.<ID>@<repo>`, `.classifier.<ID>@<repo>`, `.mergePrep.<ID>@<repo>` | the card's effort, the classifier's call, the merge preparation |
+| `delegation.posted.<ID>@<repo>:<lineage>:<attempt>`, `.postedRow.…` | the attempt's verdict row, posted once |
 | `delegation.debrief.<session>`, `delegation.friction.<session>`, `delegation.evals` | debrief, friction and eval records |
 | `$.state` | `chassis-delegation.workers`, `.status`, `.lastVerdict`, `.queue` |
 
@@ -112,9 +113,9 @@ A prune writes `store: pruned <n> records (<x> MiB to <y> MiB of 4 MiB)` at sess
 
 **A card for another local repo.** Two repos can each have an `OPS-15`, so records are keyed by repo plus id:
 
-- A task dispatched into another repo writes `delegation.tasks.<ID>@<repo>` (absolute path, no trailing slash); the session repo's stay under the bare key.
-- A bare-key read takes records whose `root` is the session repo or absent. Until a qualified key exists, a read falls back to bare records whose `root` is that repo.
-- Doors that take only an id (the verdict tool, `/delegation accept`, merge and retire checks) read `delegation.taskRepo.<ID>`, else the session repo.
+- Every per-task key names the card's repo, `<ID>@<repo>` (absolute path, no trailing slash), the session repo's own cards too (MOD-117): the store is one per machine and ids restart in each repo.
+- At session start, once, a bare key from an older version moves: a `tasks` row goes to the key of the `root` (or `repo`) it names, else the session repo's; any other family goes to the session repo's key (or the repo its value names), and an attempt key gets the session repo after its label. The bare key is deleted and the debug log says `store: moved <n> per-task keys to their repo's key (MOD-117)`. Retention groups the scoped keys by id.
+- Doors that take only an id (the verdict tool, `/delegation accept`, merge and retire checks) read `delegation.taskRepo.<ID>@<session repo>`, else the session repo.
 - `posted`, `postedRow` and the start row's `attempt n/m` use the same key. The ledger is one file per session repo, rows carrying `repo`.
 - The brief is read from the session's `briefDir`. A resume (SendMessage) arrives as an ad hoc `agent.spawn` with the same agent id; the spawn hook keeps the id on its briefed spawn, so the hand-back records the next attempt (kind `resume`).
 - The delta is taken in that repo's worktree. A path outside it counts only when the scope names it as an absolute root.
