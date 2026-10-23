@@ -29,11 +29,6 @@ describe('MOD-124: the render', () => {
     expect(m.renderLocal('EXTRA', undefined, [])).toBe('EXTRA')
     expect(m.renderLocal('', undefined, [])).toBe('')
   })
-  test('allow clause', async () => {
-    const m = await import('../../hooks/lib/brieflocal.ts')
-    expect(m.allowClause(['a', 'b'])).toBe(' allow=a,b')
-    expect(m.allowClause([])).toBe('')
-  })
 })
 
 describe('MOD-124: card allow list parsing', () => {

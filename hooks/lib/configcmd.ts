@@ -224,6 +224,8 @@ export function inEffect(field: string, values: Readonly<Record<string, unknown>
       return empty(v) ? '<repo>/.delegation/briefs' : undefined
     case 'briefTemplate':
       return empty(v) ? "the mod's own hooks/templates/brief.md" : undefined
+    case 'briefLocal':
+      return empty(v) ? 'none: no local rules' : undefined
     case 'ignore': {
       const card = `${(derived.cardDir ?? '').replace(/^\/+|\/+$/g, '') || 'agents/tasks'}/**`
       const l = items(v)

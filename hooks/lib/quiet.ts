@@ -108,6 +108,8 @@ export type QuietInput = {
   usd?: number
   /** GH-106: `usd` is the session delta, not the worker's own cost: shown `~$x`. */
   usdApprox?: boolean
+  /** MOD-126: the brief's allow ids, one `allow <a,b>` clause before `next=`. */
+  allow?: readonly string[]
   next: string
   lines: readonly string[]
 }
@@ -115,7 +117,7 @@ export type QuietInput = {
 /**
  * `chassis-delegation: OPS-232 attempt 2/3 consistent · sonnet · $2.26 · next=accept`,
  * or `… refuted on scope (out-of-scope path: x) · sonnet · next=resume agent=<id>`.
- * Amends ride in one clause each; `next=` stays last.
+ * Amends ride in one clause each, then `allow <ids>` when the brief allowed any; `next=` stays last.
  */
 export function quietLine(v: QuietInput): string {
   const reason = verdictReason(v.verdict, v.lines)
@@ -125,6 +127,7 @@ export function quietLine(v: QuietInput): string {
   if (v.alias) parts.push(`${v.glyph ? `${v.glyph} ` : ''}${v.alias}`)
   if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
   parts.push(...amendClauses(v.lines))
+  if (v.allow && v.allow.length > 0) parts.push(`allow ${v.allow.join(',')}`)
   parts.push(`next=${shortNext(v.next)}`)
   return parts.join(' · ')
 }
