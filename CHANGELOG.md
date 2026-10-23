@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.20 — 2026-10-23
 
 - **`effortNudge.cards` unset means the card folder, so a repo on defaults gets the up nudge (MOD-121).** The built-in glob was `cards/**` while the built-in `cardDir` is `agents/tasks`, so a repo left on defaults never saw the nudge when a worker handed back cards (the 0.9.19 note had people set the glob by hand). Now, when no layer sets `effortNudge.cards`, the glob is `<cardDir>/**` (`agents/tasks/**` on defaults, and it follows `cardDir`); a layer that sets `cards` wins, `cards: ""` still turns the nudge off, and `up` and `down` merge key by key as before. `/delegation` prints the resolved glob: `effort nudge: agents/tasks/** · up high · down medium`.
 
