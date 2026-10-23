@@ -555,6 +555,17 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     return w.appended.filter(a => a.text.includes('bench.sh --scene 3'))
   }
 
+  test('MOD-119 (#187): three distinct probes to one tool raise no warning; the same argv three times with unchanged output does', async ($, on) => {
+    const w = world(on, { model: FABLE })
+    on('tool.call', { tool: 'Bash' }, passed)
+    await $.session.start(sessionStart)
+    w.context = { window: 1_000_000, percent: 30 }
+    const prefix = 'O=/tmp/probe-output-folder-with-a-rather-long-name-to-pass-sixty; ./bench.sh --scene 3'
+    for (const n of ['one', 'two', 'three']) await $.tool.call({ tool: 'Bash', command: `${prefix} --probe ${n}` } as never)
+    expect(w.appended.filter(a => a.text.includes('bench.sh --scene 3'))).toHaveLength(0)
+    expect(await bench($, w)).toHaveLength(1)
+  })
+
   test('driveWarn: off raises no warning on a third identical run in a big session', async ($, on) => {
     const w = world(on, { model: FABLE })
     on('tool.call', { tool: 'Bash' }, passed)

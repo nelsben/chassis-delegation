@@ -1,7 +1,7 @@
 // MOD-48: what the brain's driving costs it: the call kinds, the split's lines, and the warn row (pure).
 import { test, expect, describe } from 'claude-code/testing'
 import { priceFor, usdOf } from '../hooks/lib/cost'
-import { callKind, commandKey, driveCall, driveLines, driveStep, driveTurn, emptyDrive, emptyWatch, DRIVE_THRESHOLD_TOKENS, freshSessionRow } from '../hooks/lib/drive'
+import { callKind, commandKey, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyDrive, emptyWatch, DRIVE_THRESHOLD_TOKENS, freshSessionRow } from '../hooks/lib/drive'
 
 describe('MOD-48: the kind of a call', () => {
   test('a background Bash call, an until loop and a sleep loop are run-or-poll', () => {
@@ -52,18 +52,32 @@ describe('MOD-48: the warn row', () => {
   const run = (cmd: string, ctx: number, state = emptyWatch()) => driveStep(state, { command: cmd, context: ctx, threshold: DRIVE_THRESHOLD_TOKENS, model: OPUS, enabled: true })
   const CMD = './bench.sh --scene 3 --frames 600 --out /tmp/bench-one-of-many.csv'
 
-  test('commandKey is the first 60 characters, whitespace squeezed', () => {
-    expect(commandKey(`  ${'a'.repeat(80)}  `)).toBe('a'.repeat(60))
-    expect(commandKey('a   b')).toBe('a b')
+  test('commandKey squeezes whitespace and keys on the whole command, not its first 60 characters', () => {
+    expect(commandKey('  a   b  ')).toBe('a b')
+    const head = 'a'.repeat(80)
+    expect(commandKey(`${head} one`)).not.toBe(commandKey(`${head} two`))
+    expect(commandKey(`${head} one`)).toBe(commandKey(` ${head}   one `))
   })
-  test('it fires on the third command sharing its first 60 characters at 300K, and names the command, the count, the context and the dollars', () => {
+  test('MOD-119 (#187): commands sharing a leading NAME=value assignment get different keys', () => {
+    const out = `O=/tmp/${'x'.repeat(70)};`
+    expect(commandKey(`${out} ./probe-a --flag`)).not.toBe(commandKey(`${out} ./probe-b --flag`))
+    expect(commandKey('O=/tmp/x; ./probe-a --flag')).not.toBe(commandKey('O=/tmp/x; ./probe-b --flag'))
+    expect(commandKey('O=/tmp/x && A=1 ./probe-a')).not.toBe(commandKey('O=/tmp/x && A=1 ./probe-b'))
+  })
+  test('MOD-119 (#187): the same command behind different assignments or a cd has the same key', () => {
+    expect(commandKey('O=/tmp/x; ./probe-a --flag')).toBe(commandKey('O=/tmp/y; ./probe-a --flag'))
+    expect(commandKey('O="/tmp/a b" ./probe-a')).toBe(commandKey('./probe-a'))
+    expect(commandKey('cd /somewhere && O=1; ./probe-a')).toBe(commandKey('./probe-a'))
+    expect(commandKey('O=/tmp/x')).toBe('O=/tmp/x')
+  })
+  test('it fires on the third run of the same command at 300K, and names the command, the count, the context and the dollars', () => {
     let s = emptyWatch()
     for (let i = 0; i < 2; i++) {
-      const r = run(`${CMD} ${i}`, 300_000, s)
+      const r = run(CMD, 300_000, s)
       expect(r.row).toBeUndefined()
       s = r.state
     }
-    const third = run(`${CMD} 2`, 300_000, s)
+    const third = run(CMD, 300_000, s)
     expect(third.row).toContain('bench.sh --scene 3')
     expect(third.row).toContain('3 times')
     expect(third.row).toContain('300K')
@@ -71,6 +85,29 @@ describe('MOD-48: the warn row', () => {
     expect(third.row).toContain(`$${call.toFixed(2)}`)
     expect(third.row).toContain('standard card')
     expect(third.row).toContain('resources')
+  })
+  test('MOD-119: three distinct commands sharing a long prefix do not fire', () => {
+    let s = emptyWatch()
+    for (let i = 0; i < 4; i++) {
+      const r = run(`${CMD} ${i}`, 300_000, s)
+      expect(r.row).toBeUndefined()
+      s = r.state
+    }
+  })
+  test('MOD-119: the same command with unchanged output fires; with output that changed each time it does not', () => {
+    const sequence = (outs: string[]) => {
+      let s = emptyWatch()
+      let rows = 0
+      outs.forEach(o => {
+        const r = run(CMD, 300_000, s)
+        if (r.row) rows++
+        s = driveOutput(r.state, CMD, o)
+      })
+      return rows
+    }
+    expect(sequence(['same', 'same', 'same'])).toBe(1)
+    expect(sequence(['a', 'b', 'c'])).toBe(0)
+    expect(sequence(['a', 'b', 'b', 'b'])).toBe(1)
   })
   test('it does not fire at 100K', () => {
     let s = emptyWatch()

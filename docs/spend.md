@@ -54,7 +54,7 @@ A worker takes the build, run and poll loop from a fresh, small context. `resour
 | `effortByTier` | A worker's effort | economy `low`, standard `medium`, frontier `high` | Each step is rewritten. A card's `effort:` (`low` to `max`) wins; `0` or empty keeps the engine's. Brain and ad hoc steps are untouched. The started row names it: `· effort high`. | itself, card `effort:` |
 | `effortNudge` | The brain's effort (yours, by `/model`; the mod never sets it) | cards `cards/**`, up `high`, down `medium` | A hand-back whose report's `artefacts=` names a file the glob takes ends its row `· lead: judgment next, raise to high`. Once no such hand-back awaits its verdict, the first accept row of another task, or the next started row that is not a resume, ends `· lead: back to medium`, once. `cards: ""` turns it off. | itself |
 | `delegateOnly` | The brain's source edits | `off` | Warn or deny, above | itself |
-| `driveWarn` | Brain runs a command a third time or polls a job | `true` | One row a turn with the dollars per call, past `driveWarnTokens` | itself |
+| `driveWarn` | Brain runs the same command a third time (leading `NAME=value` assignments and `cd <dir> &&` ignored; a repeat whose output changed does not count) or polls a job | `true` | One row a turn with the dollars per call, past `driveWarnTokens` | itself |
 | `driveWarnTokens` | Context at which `driveWarn` can fire | `200K` | n/a | itself |
 | `freshSessionTokens` | The brain's context | `400K`; `0` = off | One row, once a session: start a fresh session at the next phase boundary | `freshSessionTokens` |
 | `sessionUsdCap` | T2 live eval | `50` | T2 does not start | itself |
