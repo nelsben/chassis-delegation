@@ -10,6 +10,11 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.21 to 0.9.22
+
+Nothing to do.
+Detail: [CHANGELOG 0.9.22](../CHANGELOG.md).
+
 ### From 0.9.20 to 0.9.21
 
 Nothing to do.
