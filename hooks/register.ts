@@ -15,7 +15,7 @@ import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from 
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { callKind, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
 import { saysWaiting, waitStep, WAIT_STALL_DEFAULT_MIN, type WaitState } from './lib/waitstate'
-import { bandTree } from './lib/band'
+import { bandTree, rationBandTree } from './lib/band'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
 import { paneTree, type PaneTable, type PaneView } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
@@ -1218,7 +1218,7 @@ const windowsOf = (rl: readonly HostLimit[] | undefined): RationWindow[] =>
       : [],
   )
 
-/** session.measure: fold each reported window into today's record, keep the readings, redraw the footer. */
+/** session.measure: fold each reported window into today's record, keep the readings, redraw the band. */
 async function foldRation($: Host, reported: readonly HostLimit[] | undefined): Promise<void> {
   const windows = windowsOf(reported)
   if (!rateFirstDone) {
@@ -1330,6 +1330,7 @@ async function rationPane($: Host): Promise<PaneView['ration']> {
   return {
     ...(cells ? { cells } : {}),
     text: `${Math.max(0, 100 - Math.round(m.window.percentUsed))}% left · resets ${resetsIn(m.window.resetsAt - m.now)}`,
+    tail: rationLabel(m).replace(/^.*? · (today )/, '$1'),
     bar: bar(m.window.percentUsed, segs),
   }
 }
@@ -7358,20 +7359,6 @@ export const register: Register = (on, opts) => {
     return next(e)
   })
 
-  // MOD-128: the meter is a mode label at the right of the prompt footer, after the host's own
-  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    try {
-      const m = await rationModel($)
-      if (!m) return next(e)
-      const el = e as unknown as { props?: { modes?: unknown } }
-      const modes = Array.isArray(el.props?.modes) ? (el.props?.modes as unknown[]) : []
-      return next({ ...(el as object), props: { ...el.props, modes: [...modes, rationLabel(m)] } } as never)
-    } catch (err) {
-      debug($, `ration label not drawn: ${String(err)}`)
-      return next(e)
-    }
-  })
-
   // ---- /dispatch and the dispatch tool: two doors, one function (2A) --------------
   on('command.run', { command: 'dispatch' }, async ($, e) => ({ text: await runDispatch($, parseDispatchArgs(e.args)) }))
   // The literal is DISPATCH_TOOL_NAME, written out so the validator reads it; `as never` because the
@@ -7423,14 +7410,19 @@ export const register: Register = (on, opts) => {
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => ({ result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
+  // MOD-133: the ration bar lives here (the footer row is not drawn on every client); dashboardBand adds the worker line.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (!cfg.dashboardBand || e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey) return next(e)
     try {
-      const { view } = await liveModel($)
-      if (!isActive(view)) return next(e)
+      const ration = await rationPane($)
+      const view = cfg.dashboardBand ? (await liveModel($)).view : undefined
+      const live = view && isActive(view) ? view : undefined
+      if (!ration && !live) return next(e)
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      const tree = bandTree(p, view, pickScheme(e), e.props.bodyColumns, () => void $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })) as never
-      return tree
+      const scheme = pickScheme(e)
+      const details = () => void $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })
+      if (live) return bandTree(p, live, scheme, e.props.bodyColumns, details, ration) as never
+      return rationBandTree(p, ration!, scheme, details) as never
     } catch (err) {
       debug($, `band not drawn: ${String(err)}`)
       return next(e)

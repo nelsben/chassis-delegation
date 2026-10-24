@@ -38,7 +38,7 @@ card-to-merge flow is in [How it works](how-it-works.md).
 - The tier under each spawn, such as `tier=standard → sonnet (brief) · attempt 1/2`.
   Source: the header's `tier=`, else the caller's `model`, else the classifier.
   Log: `T-7: tier=economy picked by the brief header's tier= (no classify call)`.
-- The rationing meter next to `focus` in the prompt footer, `██▉░░░░ 41% · day 3/7 · today 6.2/8.4 · on pace` (see the spend doc; `/delegation ration` prints it). The host status line is retired.
+- The rationing health bar in the band above the prompt, seven coloured cells then `59% left · resets 2d 4h · today 6.2/8.4 · on pace`, with a `[ details ]` button (see the spend doc; `/delegation config ration off` hides it, `/delegation ration` prints the report). The band draws whenever the window has a reading; `dashboardBand on` adds the worker line to it while a worker is active. The host status line is retired.
 - Toasts: `debrief running in the background`, `T1 63/63`, `started queued OPS-3 (waited 4 min)`.
 
 While anything runs or is owed, the system prompt carries a "Delegation state" section (at most 40 lines) that survives compaction.

@@ -2,13 +2,14 @@
 // while a worker is live, a spawn is queued or a verdict is owed. The whole
 // band is a hover scope: hovering it reveals the card (the KPI tiles, the spend
 // chart, the worktree table) beneath the row. `[ details ]` opens the pane.
+// MOD-133: the ration health bar draws here too, alone or above the live row.
 // No `$` here: register.ts resolves the element table and hands in the handler.
 import type { RenderNode } from 'claude-code'
 
 import type { BandLine } from './dashboard'
 import { sparkCells, sparkSvg } from './dashboard'
 import { bandSummary, recentSpend, type LiveView, type Scheme } from './live'
-import { liveBlocks, type PaneTable } from './pane'
+import { liveBlocks, rationBar, type PaneTable, type PaneView } from './pane'
 
 export const DASH_SCOPE = 'chassis-delegation-dash'
 
@@ -47,10 +48,29 @@ function sparkline(p: PaneTable, v: LiveView): RenderNode | null {
   )
 }
 
-export function bandTree(p: PaneTable, v: LiveView, scheme: Scheme, columns: number, onDetails: () => void): RenderNode {
+type Ration = NonNullable<PaneView['ration']>
+
+/** MOD-133: the coloured bar and `59% left · resets 2d 4h · today 6.2/8.4 · on pace`, the pane's own rationBar. */
+function rationRow(p: PaneTable, r: Ration, scheme: Scheme): RenderNode {
+  return rationBar(p, r, scheme, 0, r.tail ? `${r.text} · ${r.tail}` : r.text)
+}
+
+/** MOD-133: the band with the ration bar alone: the bar row, then `[ details ]`. No worker figures. */
+export function rationBandTree(p: PaneTable, r: Ration, scheme: Scheme, onDetails: () => void): RenderNode {
+  const { Box, Button } = p.t
+  return (
+    <Box key="dash-band" flexDirection="row" gap={1}>
+      {rationRow(p, r, scheme)}
+      <Button key="details" label="details" hotkey="d" variant="primary" onPress={onDetails} />
+    </Box>
+  )
+}
+
+export function bandTree(p: PaneTable, v: LiveView, scheme: Scheme, columns: number, onDetails: () => void, ration?: Ration): RenderNode {
   const { Box, Text, Button } = p.t
   return (
     <Box key="dash-band" flexDirection="column" hover={{ scope: DASH_SCOPE }}>
+      {ration ? rationRow(p, ration, scheme) : null}
       <Box flexDirection="row" gap={1} hover={{ scope: DASH_SCOPE }}>
         <Text wrap="truncate-end">{bandSummary(v, Math.max(20, columns - BAND_RESERVED))} ·</Text>
         {sparkline(p, v)}

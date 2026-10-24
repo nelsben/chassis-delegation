@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The ration health bar moves from the prompt footer to the band above the prompt (MOD-133).** The footer label never showed on a client that does not draw that row. The band now draws the coloured seven-cell bar and one line, `59% left · resets 2d 4h · today 6.2/8.4 · on pace`, with the `[ details ]` button, whenever the chosen window has a reading and no survey is showing, with no worker figures. `dashboardBand: true` still adds the worker line and sparkline under it while a worker is active; `ration: off` draws nothing. The footer label is gone; `/delegation ration` and the `ration:` line are unchanged.
+
 ## 0.9.24 — 2026-10-24
 
 - **`maxWorkersByTier` caps the briefed workers of each tier beside the `maxWorkers` total, so a cheap row no longer waits behind queued frontier rows (MOD-131, #219).** A repo-scope option, an object of tier (`economy`, `standard`, `frontier`, `premium`) to a whole number of 1 or more, default `{}` (no per-tier cap); it merges key by key across the layers and is a second, lower ceiling under `maxWorkers` (which still means the built-in 2 at `0`). A briefed spawn starts when the total has room and its tier's own count is under its entry; a tier the map lacks takes the total alone. The queue plans per tier: a row whose tier is full is skipped without taking a slot, so a row of another tier behind it is `ready:` in its place. When only the tier is full the refusal reads `queued: X — the mod will tell you when a frontier slot frees (…)`, and the dashboard line and the debug line name the tier; `/delegation` prints `max workers 6 (economy 5, standard 5, frontier 2)`. With the option absent nothing changes.
