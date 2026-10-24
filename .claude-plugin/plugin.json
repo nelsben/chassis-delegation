@@ -1,6 +1,6 @@
 {
   "name": "chassis-delegation",
-  "version": "0.9.22",
+  "version": "0.9.23",
   "description": "Delegate coding tasks to verified Claude workers: tiering, verification, background debrief and eval, dashboard",
   "author": {
     "name": "Ben Nelsen"
