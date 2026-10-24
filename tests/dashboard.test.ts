@@ -96,6 +96,10 @@ describe('4B: the pane', () => {
       'debrief: running 00:30 — nothing to do',
     ])
   })
+  test('MOD-131: a queued item held by its own tier cap names the tier', () => {
+    const held = [{ kind: 'queued', task: 'BE-9', position: 1, slotTier: 'frontier' }] as unknown as BandItem[]
+    expect(openItemLines(held, NOW)).toEqual(['BE-9: queued (position 1) — starts when a frontier slot frees'])
+  })
   test('MOD-24: a queued item that waits for a resource says which and who holds it; one that waits for a slot reads as before', () => {
     const waiting: BandItem[] = [
       { kind: 'queued', task: 'OPS-9', position: 1, waits: { resource: 'blender-live', holder: 'OPS-8' } },

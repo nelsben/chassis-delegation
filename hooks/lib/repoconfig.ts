@@ -3,7 +3,7 @@
 // `<root>/.chassis-delegation.json` (optional) carries what differs per repo.
 // The mod reads it at session.start and on each dispatch. Precedence, lowest
 // first: the built-in defaults < the repo file < the user's settings
-// (`/config`). Maps (gateMap, agentTypes, tierMap, spendByTier) merge per key across the
+// (`/config`). Maps (gateMap, agentTypes, tierMap, spendByTier, maxWorkersByTier) merge per key across the
 // three layers; every other key is replaced whole by the higher layer.
 //
 // A settings field is "unset" when it holds its manifest default: an empty
@@ -82,6 +82,8 @@ export type RepoConfig = {
   /** MOD-124 (#188): a gitignored rules file (repo-relative or absolute) copied into every brief under a section the debrief drops. */
   briefLocal?: string
   maxWorkers?: number
+  /** MOD-131 (#219): a second, lower ceiling under maxWorkers for the briefed workers of a tier (a whole number of 1 or more); a tier the map lacks takes the total alone. */
+  maxWorkersByTier?: Partial<Record<Tier, number>>
   domains?: string[]
   worktreeRoot?: string
   /** GH-12: where the task cards live, relative to the root; default agents/tasks. */
@@ -107,7 +109,7 @@ export type RepoConfig = {
   reviewTier?: Tier
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
+export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -122,6 +124,7 @@ export type Effective = {
   briefExtra: string
   briefLocal: string
   maxWorkers: number
+  maxWorkersByTier: Partial<Record<Tier, number>>
   domains: string[]
   worktreeRoot: string
   cardDir: string
@@ -244,6 +247,22 @@ function spendByTierOf(v: unknown, errors: string[], where: string): Partial<Rec
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+/** MOD-131 (#219): `maxWorkersByTier` as tier → a whole number of 1 or more, any of the four tiers; a bad entry is named and dropped. */
+function maxWorkersByTierOf(v: unknown, errors: string[], where: string): Partial<Record<Tier, number>> | undefined {
+  if (!isObject(v)) {
+    errors.push(`maxWorkersByTier${where}: not an object (ignored)`)
+    return undefined
+  }
+  const out: Partial<Record<Tier, number>> = {}
+  for (const [k, x] of Object.entries(v)) {
+    if (k.startsWith('_')) continue
+    if (!isTier(k)) errors.push(`maxWorkersByTier.${k}${where}: not a tier (economy, standard, frontier, premium) (ignored)`)
+    else if (typeof x !== 'number' || !Number.isInteger(x) || x < 1) errors.push(`maxWorkersByTier.${k}${where}: needs a whole number of 1 or more (ignored)`)
+    else out[k] = x
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 /** MOD-13: `effortByTier` as tier → low…max, or 0 / "" for the engine's default; a bad entry is named and dropped. */
 function effortByTierOf(v: unknown, errors: string[], where: string): Partial<Record<SpendTier, EffortSetting>> | undefined {
   if (!isObject(v)) {
@@ -302,6 +321,11 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         if (typeof v === 'number' && Number.isInteger(v) && v >= 1) config.maxWorkers = v
         else if (!(v === 0 && !strict)) errors.push(`maxWorkers${where}: needs a whole number of 1 or more (ignored)`)
         break
+      case 'maxWorkersByTier': {
+        const m = maxWorkersByTierOf(v, errors, where)
+        if (m) config.maxWorkersByTier = m
+        break
+      }
       case 'spendByTier': {
         const m = spendByTierOf(v, errors, where)
         if (m) config.spendByTier = m
@@ -392,7 +416,7 @@ export function settingsLayer(options: Readonly<Record<string, unknown>>): Parse
   for (const key of REPO_KEYS) {
     const v = options[key]
     if (v === undefined || v === '' || v === 0 || v === false) continue
-    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'effortByTier' || key === 'effortNudge') && typeof v === 'string') {
+    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'maxWorkersByTier' || key === 'effortByTier' || key === 'effortNudge') && typeof v === 'string') {
       try {
         obj[key] = JSON.parse(v)
       } catch {
@@ -429,6 +453,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     briefExtra: pick('briefExtra', ''),
     briefLocal: pick('briefLocal', ''),
     maxWorkers: pick('maxWorkers', DEFAULT_MAX_WORKERS),
+    maxWorkersByTier: { ...repo.maxWorkersByTier, ...user.maxWorkersByTier, ...settings.maxWorkersByTier },
     domains: [...pick('domains', [...DEFAULT_DOMAINS])],
     worktreeRoot: pick('worktreeRoot', ''),
     cardDir,

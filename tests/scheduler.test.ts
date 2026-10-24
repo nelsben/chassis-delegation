@@ -1,4 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
+import * as sched from '../hooks/lib/scheduler'
+import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
 import { startingOthers, hasSlot, queuedDeny, isQueuedDeny, alreadyQueuedDeny, enqueue, dequeue, promptKey, queuedText, parseMaxWorkers, readyCount, readyLine, runningDeny, parseReadyFallbackMinutes, DEFAULT_READY_FALLBACK_MINUTES, fallbackDue, fallbackDelay, fallbackKind, readyWaitLine, fallbackRow } from '../hooks/lib/scheduler'
 
 const item = (task: string) => ({ prompt: `Your brief is the file /s/briefs/${task}.brief.md.`, description: task, subagentType: 'backend', task, at: 1 })
@@ -136,5 +138,105 @@ describe('MOD-15: a ready row the brain leaves unclaimed', () => {
       "chassis-delegation: T-9 was ready for 10 min and the brain had not spawned it; the mod started it itself (attempt 1/3, sonnet, agent agent-3). It runs outside the mod's hooks: no git guard, no effort setting, cost known only at the end.",
     )
     expect(fallbackRow({ label: 'T-9', waited: 10, attempt: 2, budget: 3 })).toContain('(attempt 2/3)')
+  })
+})
+
+describe('MOD-131 (#219): per-tier worker slots', () => {
+  const caps = { frontier: 2 }
+  const want = (label: string, tier?: 'economy' | 'standard' | 'frontier' | 'premium') => ({ label, resources: [] as string[], ...(tier ? { tier } : {}) })
+
+  test('two frontier workers under {frontier: 2} of 6: a frontier spawn has no slot, a standard one has', () => {
+    const held = { frontier: 2 }
+    expect(sched.hasSlot(2, 0, 6, 'frontier', caps, held)).toBe(false)
+    expect(sched.hasSlot(2, 0, 6, 'standard', caps, held)).toBe(true)
+  })
+
+  test('free by the total but not by the tier; by the tier but not by the total; a tier the map lacks takes the total alone', () => {
+    expect(sched.hasSlot(2, 0, 6, 'frontier', caps, { frontier: 2 })).toBe(false)
+    expect(sched.hasSlot(5, 0, 6, 'frontier', caps, { frontier: 1 })).toBe(true)
+    expect(sched.hasSlot(6, 0, 6, 'frontier', caps, { frontier: 1 })).toBe(false)
+    expect(sched.hasSlot(2, 0, 6, 'economy', caps, { frontier: 2 })).toBe(true)
+    expect(sched.hasSlot(6, 0, 6, 'economy', caps, { frontier: 2 })).toBe(false)
+    // the starting spawns count in the tier's held count by the caller; a cap above the held count leaves the slot
+    expect(sched.hasSlot(1, 1, 6, 'frontier', caps, { frontier: 1 })).toBe(true)
+  })
+
+  test('the old forms are untouched: no tier, no map', () => {
+    expect(sched.hasSlot(1, 0, 2)).toBe(true)
+    expect(sched.hasSlot(2, 0, 2)).toBe(false)
+    expect(sched.hasSlot(2, 0, 6, 'frontier')).toBe(true)
+    expect(sched.readyCount(1, 1, 3)).toBe(1)
+  })
+
+  test('the free slot of each capped tier', () => {
+    expect(sched.tierFree({ frontier: 2, standard: 5 }, { frontier: 2, standard: 1 })).toEqual({ frontier: 0, standard: 4 })
+    expect(sched.tierFree({ frontier: 2 }, { frontier: 3 })).toEqual({ frontier: 0 })
+    expect(sched.tierFree({}, { frontier: 3 })).toEqual({})
+  })
+
+  test('planQueue: [frontier A, frontier B, standard C] with one frontier slot free of three free: A and C are ready, B waits', () => {
+    const plan = sched.planQueue([want('A', 'frontier'), want('B', 'frontier'), want('C', 'standard')], [], 3, { frontier: 1 })
+    expect(plan.ready).toEqual(['A', 'C'])
+    expect(plan.waits.size).toBe(0)
+  })
+
+  test('planQueue: a full tier is skipped without a slot, so a row of another tier behind it is ready in its place', () => {
+    const plan = sched.planQueue([want('A', 'frontier'), want('B', 'frontier'), want('C', 'standard')], [], 1, { frontier: 0 })
+    expect(plan.ready).toEqual(['C'])
+    // B and A wait for their tier, not for a resource
+    expect(plan.waits.size).toBe(0)
+    expect([...(plan.tierHeld ?? new Map()).entries()]).toEqual([['A', 'frontier'], ['B', 'frontier']])
+  })
+
+  test('planQueue: a row held back by the total is not said to wait for its tier', () => {
+    const plan = sched.planQueue([want('A', 'frontier'), want('B', 'frontier')], [], 1, { frontier: 1 })
+    expect(plan.ready).toEqual(['A'])
+    expect(plan.tierHeld?.size ?? 0).toBe(0)
+  })
+
+  test('planQueue: a resource wait and a tier cap together; no tier info is the old plan', () => {
+    const rows = [{ label: 'A', resources: ['gpu'], tier: 'frontier' as const }, want('B', 'frontier'), want('C', 'frontier'), want('D', 'standard')]
+    const plan = sched.planQueue(rows, [{ label: 'X', resources: ['gpu'] }], 4, { frontier: 1 })
+    expect(plan.ready).toEqual(['B', 'D'])
+    expect(plan.waits.get('A')).toEqual({ resource: 'gpu', holder: 'X' })
+    expect(sched.planQueue([want('A'), want('B')], [], 1).ready).toEqual(['A'])
+  })
+
+  test('the two deny forms: the total full is unchanged, only the tier full names the tier; both read as queued', () => {
+    const total = sched.queuedDeny('T-3', ['T-1', 'T-2'], ['T-3'])
+    expect(total).toBe('queued: T-3 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: T-3)')
+    const tier = sched.queuedDeny('T-3', ['T-1', 'T-2'], ['T-3'], 'frontier')
+    expect(tier).toBe('queued: T-3 — the mod will tell you when a frontier slot frees (2 live: T-1, T-2; 1 queued: T-3)')
+    expect(sched.isQueuedDeny(total)).toBe(true)
+    expect(sched.isQueuedDeny(tier)).toBe(true)
+    const again = sched.alreadyQueuedDeny('T-3', 0, 2, 'frontier')
+    expect(again).toMatch(/^queued: T-3 — the mod will tell you when a frontier slot frees; already queued since \d\d:\d\d \(position 2\)$/)
+    expect(sched.isQueuedDeny(again)).toBe(true)
+    expect(sched.alreadyQueuedPart(again)).toMatch(/^already queued since \d\d:\d\d \(position 2\)$/)
+    expect(sched.alreadyQueuedDeny('T-3', 0, 2)).toMatch(/^queued: T-3 — the mod will tell you when a slot frees; already queued/)
+    expect(sched.isQueuedDeny('queued: T-3 — the mod will tell you when a bogus slot frees')).toBe(false)
+  })
+
+  test('the max workers text for /delegation: the total alone, or the tiers in ladder order', () => {
+    expect(sched.maxWorkersText(2, {})).toBe('2')
+    expect(sched.maxWorkersText(6, { frontier: 2, standard: 5, economy: 5 })).toBe('6 (economy 5, standard 5, frontier 2)')
+  })
+
+  test('maxWorkersByTier is parsed like spendByTier: a bad key or value is named and dropped, the rest kept', () => {
+    const r = parseRepoConfig('{"maxWorkersByTier":{"frontier":2,"bogus":3,"standard":0,"economy":1.5,"premium":1}}')
+    expect(r.config.maxWorkersByTier).toEqual({ frontier: 2, premium: 1 })
+    expect(r.errors.join('\n')).toContain('maxWorkersByTier.bogus')
+    expect(r.errors.join('\n')).toContain('maxWorkersByTier.standard')
+    expect(r.errors.join('\n')).toContain('maxWorkersByTier.economy')
+    expect(parseRepoConfig('{"maxWorkersByTier":3}').errors.join()).toContain('maxWorkersByTier')
+  })
+
+  test('maxWorkersByTier merges key by key: the repo file {frontier: 2} and a user value {standard: 5} read back as both', () => {
+    const repo = parseRepoConfig('{"maxWorkersByTier":{"frontier":2}}').config
+    const user = parseRepoConfig('{"maxWorkersByTier":{"standard":5}}').config
+    expect(mergeConfig(repo, {}, user).maxWorkersByTier).toEqual({ frontier: 2, standard: 5 })
+    expect(mergeConfig({}, {}).maxWorkersByTier).toEqual({})
+    const settings = settingsLayer({ maxWorkersByTier: '{"frontier":1}' }).config
+    expect(mergeConfig(repo, settings, user).maxWorkersByTier).toEqual({ frontier: 1, standard: 5 })
   })
 })

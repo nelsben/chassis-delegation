@@ -119,6 +119,8 @@ export const CONFIG_TEMPLATE = `${JSON.stringify(
     domains: [...DEFAULT_DOMAINS],
     _maxWorkers: 'Briefed workers at once; past it /dispatch says queued, and the hand-back that frees a slot says ready: <id>, and the brain makes the spawn.',
     maxWorkers: DEFAULT_MAX_WORKERS,
+    _maxWorkersByTier: 'A lower limit on the briefed workers of one tier (economy, standard, frontier, premium), under maxWorkers; a tier not named takes maxWorkers alone. Example: {"frontier": 2}.',
+    maxWorkersByTier: {},
     _worktreeRoot: "Folder for the workers' worktrees; empty = sibling folders <repo>-<id>.",
     worktreeRoot: '',
     _cardDir: "The folder the task cards live in, relative to the repo root. In a repo that is itself a plugin keep it out of agents/: the engine reads agents/*.md as subagents.",

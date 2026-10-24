@@ -12,7 +12,7 @@ export const OTHER_GROUP = 'Other'
 export type Source = 'default' | 'repo' | 'yours' | 'host' | 'locked'
 
 /** How a value reads: on/off, a count, `20 min`, `6 h`, `$10`, `200K`, a map, the gate ids, a list, text, a choice, an agent type, a tier. */
-export type Render = 'bool' | 'count' | 'minutes' | 'hours' | 'dollars' | 'tokens' | 'map' | 'dollarMap' | 'effortMap' | 'gates' | 'list' | 'text' | 'choice' | 'agent' | 'tier'
+export type Render = 'bool' | 'count' | 'minutes' | 'hours' | 'dollars' | 'tokens' | 'map' | 'dollarMap' | 'effortMap' | 'countMap' | 'gates' | 'list' | 'text' | 'choice' | 'agent' | 'tier'
 
 export type TableEntry = { group: ConfigGroup; summary: string; render: Render; scope: 'repo' | 'user'; def: string | number | boolean; choices?: readonly string[] }
 
@@ -22,6 +22,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['effortByTier', 'Workers and models', 'How hard a worker thinks at each level, from low to max', 'effortMap', 'repo', ''],
   ['defaultBudget', 'Workers and models', 'How many tries a task gets when its instructions do not say', 'count', 'user', 3],
   ['maxWorkers', 'Workers and models', 'How many workers may run at the same time; more wait in line', 'count', 'repo', 0],
+  ['maxWorkersByTier', 'Workers and models', 'A lower limit on workers at once for each level, such as frontier 2', 'countMap', 'repo', ''],
   ['agentTypes', 'Workers and models', 'Which kind of helper agent handles each kind of task', 'map', 'repo', ''],
   ['domains', 'Workers and models', 'The kinds of task you can hand to a worker', 'list', 'repo', ''],
   ['autoEscalate', 'Workers and models', 'After a failed try, send the worker back in once without asking you', 'bool', 'user', false],

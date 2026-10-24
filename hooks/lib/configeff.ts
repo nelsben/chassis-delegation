@@ -70,7 +70,7 @@ export type Resolved = {
   errors: string[]
 }
 
-const MAP_FIELDS: readonly string[] = ['gateMap', 'agentTypes', 'tierMap', 'spendByTier', 'effortByTier', 'effortNudge']
+const MAP_FIELDS: readonly string[] = ['gateMap', 'agentTypes', 'tierMap', 'spendByTier', 'maxWorkersByTier', 'effortByTier', 'effortNudge']
 /** A map the user file holds as JSON text (as a /config row does) is read as its object. */
 const mapText = (field: string, v: unknown): unknown => {
   if (!MAP_FIELDS.includes(field) || typeof v !== 'string') return v

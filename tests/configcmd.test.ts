@@ -276,10 +276,10 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
     expect(await say($, 'modelGlyphs')).not.toContain('in effect')
   })
 
-  test('nothing set: the count line, "all 55 at their defaults", the how-to line, nothing else', async ($, on) => {
+  test('nothing set: the count line, "all 56 at their defaults", the how-to line, nothing else', async ($, on) => {
     bare(on)
     await $.session.start(sessionStart)
-    expect((await say($, '')).split('\n')).toEqual(['chassis-delegation: 55 options, 0 set (0 repo, 0 yours, 0 host, 0 locked)', 'all 55 at their defaults', HOW])
+    expect((await say($, '')).split('\n')).toEqual(['chassis-delegation: 56 options, 0 set (0 repo, 0 yours, 0 host, 0 locked)', 'all 56 at their defaults', HOW])
   })
 
   test('the short view lists only what is set, by group, one line each, with the source; any case finds the name', async ($, on) => {
@@ -288,7 +288,7 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
     expect(await say($, 'maxworkers 4')).toBe('maxWorkers = 4 (yours)')
     expect(await say($, 'DEBRIEFIDLEMINUTES 45')).toBe('debriefIdleMinutes = 45 min (yours)')
     expect((await say($, '')).split('\n')).toEqual([
-      'chassis-delegation: 55 options, 3 set (1 repo, 2 yours, 0 host, 0 locked)',
+      'chassis-delegation: 56 options, 3 set (1 repo, 2 yours, 0 host, 0 locked)',
       'Workers and models',
       ' maxWorkers = 4 (yours)',
       'Checking the work',
@@ -342,6 +342,11 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
     expect(await say($, 'reviewTier')).toContain('unused (review is off)')
     const mw = await say($, 'maxWorkers')
     expect(mw).not.toContain('in effect')
+    // MOD-131: the per-tier cap, empty, says it is the total alone
+    expect(await say($, 'maxWorkersByTier')).toContain('in effect: none: maxWorkers alone')
+    expect(await say($, 'maxWorkersByTier frontier=2, standard=5')).toBe('maxWorkersByTier = frontier 2, standard 5 (yours)')
+    expect(await say($, 'maxWorkersByTier')).not.toContain('in effect')
+    expect(await say($, 'maxWorkersByTier frontier=x')).toContain('frontier takes a number')
     const wake = (await say($, 'wakeOnVerdict')).split('\n')
     expect(wake).toContain('scope: user')
     expect(wake[wake.length - 1]).toBe('set it: /delegation config wakeOnVerdict <value> · back to the default: /delegation config wakeOnVerdict default')

@@ -68,6 +68,7 @@ Only the engine has tiering, the queue, `maxWorkers`, the respawn ladder, spend 
 - **`usd` marked `~`** is the session delta, approximate.
 - **Waiting workers.** The mod wakes the brain once per state from `turn.complete`. A host notification the hooks never see cannot be held.
 - **Queue.** `maxWorkers` (2) caps briefed workers, not ad hoc agents. A spawn past the cap waits in a queue of one row per task and subtask.
+  - `maxWorkersByTier` adds a lower cap per tier: a spawn needs a total slot and a slot of its own tier, and the queue plan skips a row whose tier is full, so a row of another tier behind it is ready in its place.
   - The queue is advice: the brain starts a queued task; the mod starts only a ready worktree row unclaimed for `readyFallbackMinutes`.
   - `resources=` queues a spawn too; only a running or starting worker holds one.
 - **Several Agent calls in one message** are decided one at a time within the host's 10 s; a decision with under 2.5 s left is refused, so repeat the call.

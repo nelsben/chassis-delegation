@@ -127,6 +127,12 @@
       "description": "Briefed workers that run at once (built in: 2); a briefed spawn past it is queued; the hand-back that frees a slot says ready: <id> and the brain makes the spawn (ad hoc spawns never wait). Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
       "default": 0
     },
+    "maxWorkersByTier": {
+      "type": "string",
+      "title": "Max workers per tier (JSON)",
+      "description": "A second, lower ceiling under maxWorkers for the briefed workers of one tier, e.g. {\"frontier\":2}; each value a whole number of 1 or more, tiers economy, standard, frontier, premium; a tier not named takes maxWorkers alone (built in: none). A spawn waits when its tier is full though the total has room, and a cheaper row behind it starts first. Empty or 0 = the repo file (.chassis-delegation.json), else none; a value here wins over both",
+      "default": ""
+    },
     "autoDebrief": {
       "type": "boolean",
       "title": "Background debrief",

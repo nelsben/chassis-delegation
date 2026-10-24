@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`maxWorkersByTier` caps the briefed workers of each tier beside the `maxWorkers` total, so a cheap row no longer waits behind queued frontier rows (MOD-131, #219).** A repo-scope option, an object of tier (`economy`, `standard`, `frontier`, `premium`) to a whole number of 1 or more, default `{}` (no per-tier cap); it merges key by key across the layers and is a second, lower ceiling under `maxWorkers` (which still means the built-in 2 at `0`). A briefed spawn starts when the total has room and its tier's own count is under its entry; a tier the map lacks takes the total alone. The queue plans per tier: a row whose tier is full is skipped without taking a slot, so a row of another tier behind it is `ready:` in its place. When only the tier is full the refusal reads `queued: X — the mod will tell you when a frontier slot frees (…)`, and the dashboard line and the debug line name the tier; `/delegation` prints `max workers 6 (economy 5, standard 5, frontier 2)`. With the option absent nothing changes.
+
 ## 0.9.23 — 2026-10-23
 
 - **A rationing meter in the prompt footer shows the week's rate-limit window, today's share and the pace (MOD-128).** Next to `focus` the footer now reads `██▉░░░░ 41% · day 3/7 · today 6.2/8.4 · on pace`: a bar of the window (a cell a day for `seven_day`, an hour for `five_hour`), the share of what is left that today may use, and whether today is on pace. The mod keeps one record per local day and window for 14 days. New options `ration` (`seven_day` default, `five_hour`, `off`) and `rationDaily` (points; `0` paces to the reset). `/delegation ration` prints the report, `/delegation` gains a `ration:` line, the pane draws the bar in colour and the Spend tile names the window.

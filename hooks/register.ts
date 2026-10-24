@@ -225,7 +225,7 @@ import {
   shownRefuted,
   type ReviewMarker,
 } from './lib/review'
-import { alreadyQueuedDeny, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, planQueue, promptKey, heldLine, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, resourceBlock, resourceDeny, runningDeny, startingOthers, waitedMinutes, waitsText, type FallbackKind, type ResourceWait, type Wanting } from './lib/scheduler'
+import { alreadyQueuedDeny, countTiers, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, maxWorkersText, parseReadyFallbackMinutes, planQueue, promptKey, heldLine, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, resourceBlock, resourceDeny, runningDeny, startingOthers, tierFree, tierFull, waitedMinutes, waitsText, type FallbackKind, type ResourceWait, type TierCounts, type Wanting } from './lib/scheduler'
 import {
   aliasOf,
   CLASSIFIER_LABELS,
@@ -560,6 +560,8 @@ type Config = {
   /** MOD-124 (#188): the gitignored rules file copied into every brief. */
   briefLocal: string
   maxWorkers: number
+  /** MOD-131 (#219): the lower ceiling of each capped tier under maxWorkers. */
+  maxWorkersByTier: Partial<Record<Tier, number>>
   domains: string[]
   worktreeRoot: string
   /** GH-12: the card folder, relative to the root. */
@@ -661,6 +663,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       briefExtra: eff.briefExtra,
       briefLocal: eff.briefLocal,
       maxWorkers: eff.maxWorkers,
+      maxWorkersByTier: eff.maxWorkersByTier,
       domains: eff.domains,
       worktreeRoot: eff.worktreeRoot,
       cardDir: eff.cardDir,
@@ -765,6 +768,8 @@ let slotSeq = 0
 const starting = new Map<number, string>() // slot token → the task label of a spawn holding a slot before $.agent.list shows it
 /** MOD-23: slot token → the resources that spawn names, held from the claim until $.agent.list shows the worker. */
 const startingResources = new Map<number, string[]>()
+/** MOD-131 (#219): slot token → the tier of that spawn, held from the claim until $.agent.list shows the worker. */
+const startingTiers = new Map<number, Tier>()
 /** MOD-12: the queued tasks the mod has said `ready:` for and that are still ready; each is said once. */
 const announced = new Set<string>()
 /** MOD-56: the last worker of this session stopped on a usage limit (at, as ms; resetsAt as the hand-back wrote it); cleared by the brain's next spawn. */
@@ -1594,7 +1599,7 @@ async function worktreeList($: Host, root: string, t: number): Promise<string> {
 }
 
 /** Everything the band and the pane draw: the session's facts gathered, the model made by live.ts. */
-async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number; repo?: string }[]; waits: ReadonlyMap<string, ResourceWait> }> {
+async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number; repo?: string }[]; waits: ReadonlyMap<string, ResourceWait>; tierHeld: ReadonlyMap<string, Tier> }> {
   const t = await now($)
   const live = await liveState($)
   const queue = await readQueue($)
@@ -1625,7 +1630,8 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
   // MOD-23: the resource a worker holds, and what a queued row waits for, ride the worktree rows
   const holds: Record<string, string[]> = {}
   for (const w of live.workers) if ((w.spawn.resources ?? []).length > 0) holds[w.label] = w.spawn.resources as string[]
-  const waits = (await planOfQueue($, live, queue)).waits
+  const queuePlan = await planOfQueue($, live, queue)
+  const waits = queuePlan.waits
   const view = liveView({
     root,
     ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}),
@@ -1647,7 +1653,7 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     ...(ctx !== undefined ? { ctx } : {}),
     ...(brain ? { brain } : {}),
   })
-  return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits }
+  return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits, tierHeld: queuePlan.tierHeld ?? new Map() }
 }
 
 /** One sample of the session's dollars; the next waits 15 s while a worker is live or queued, else 60 s. */
@@ -1798,7 +1804,7 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
  * looks: a free slot is not taken, a full one queues the task all the same.
  * A spawn of the same task still starting is refused (MOD-12: never twice).
  */
-async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true, wants: readonly string[] = [], s?: Stopper): Promise<{ token?: number } | { deny: string }> {
+async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true, wants: readonly string[] = [], tier: Tier = 'standard', s?: Stopper): Promise<{ token?: number } | { deny: string }> {
   // MOD-92: a stopped spawn decision leaves the lock at its next step (or its pending one), holding no slot
   const step = <T>(p: Promise<T>): Promise<T> => (s ? s.race(p) : p)
   return withLock(async () => {
@@ -1811,27 +1817,34 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
     s?.check()
     // MOD-23: a resource a running attempt (or a spawn starting) holds queues the task whether or not a slot is free
     const blocked = resourceBlock(wants, heldResources(live.workers), label)
-    if (!blocked && hasSlot(live.workers.length, others.length, cfg.maxWorkers)) {
+    // MOD-131 (#219): the workers of each tier running or starting (a spawn's own token is not counted against it)
+    const heldByTier = countTiers([...live.workers.map(w => w.spawn.tier), ...[...starting.entries()].filter(([, l]) => l !== label).flatMap(([token]) => startingTiers.get(token) ?? [])])
+    const totalFree = hasSlot(live.workers.length, others.length, cfg.maxWorkers)
+    // the tier's own cap is what holds it only when the total has room
+    const tierHolds = totalFree && tierFull(tier, cfg.maxWorkersByTier, heldByTier)
+    if (!blocked && totalFree && !tierHolds) {
       if (!claim) return {}
       slotSeq += 1
       starting.set(slotSeq, label)
       startingResources.set(slotSeq, [...wants])
+      startingTiers.set(slotSeq, tier)
       return { token: slotSeq }
     }
+    const slotTier = tierHolds ? tier : undefined
     const entered = enqueue(queue, item)
     // MOD-44: a task for another local repo shows that repo's folder name beside it
     const shown = withRepoName(label, item.repo, sessionRoot)
     if (entered.existing) {
       const kept = entered.existing
-      return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position) }
+      return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position, slotTier) }
     }
     await writeQueue($, entered.queue)
     if (blocked) {
       debug($, `queued ${label}: ${blocked.holder} holds resource ${blocked.resource}`)
       return { deny: resourceDeny(shown, blocked.resource, blocked.holder) }
     }
-    debug($, `queued ${label}: ${holders.length} workers hold the ${cfg.maxWorkers} slots`)
-    return { deny: queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot))) }
+    debug($, slotTier ? `queued ${label}: ${heldByTier[slotTier] ?? 0} workers hold the ${cfg.maxWorkersByTier[slotTier]} ${slotTier} slots` : `queued ${label}: ${holders.length} workers hold the ${cfg.maxWorkers} slots`)
+    return { deny: queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot)), slotTier) }
   })
 }
 
@@ -1869,28 +1882,35 @@ function heldResources(workers: readonly { label: string; spawn: SpawnRecord }[]
 }
 
 /** MOD-23: the resources a queued row names, read once per row: its brief file's header, else the header in its prompt. Unreadable is none. */
-const queuedResourceCache = new Map<string, string[]>()
-async function queuedResources($: Host, q: QueuedSpawn): Promise<string[]> {
+const queuedResourceCache = new Map<string, { resources: string[]; tier: Tier }>()
+async function queuedHeader($: Host, q: QueuedSpawn): Promise<{ resources: string[]; tier: Tier }> {
   const key = `${queuedLabel(q)}@${q.at}`
   const known = queuedResourceCache.get(key)
   if (known) return known
   const path = findBriefPath(q.prompt)
   const text = path ? await readText($, path) : undefined
-  const names = resourcesOf((text !== undefined ? parseHeader(text) : undefined) ?? parseHeader(q.prompt))
-  queuedResourceCache.set(key, names)
-  return names
+  const header = (text !== undefined ? parseHeader(text) : undefined) ?? parseHeader(q.prompt)
+  // MOD-131 (#219): the row's tier is its brief header's tier=, standard when unreadable
+  const read = { resources: resourcesOf(header), tier: tierOf(header?.tier) ?? 'standard' }
+  queuedResourceCache.set(key, read)
+  return read
 }
 
 /**
  * MOD-23: which queued rows are ready (head first, as many as the slots free, none whose resource a running attempt
  * or a row ahead of it holds) and which wait for a resource, and for whom.
  */
-async function planOfQueue($: Host, live: Live, queue: readonly QueuedSpawn[]): Promise<{ ready: string[]; waits: Map<string, ResourceWait> }> {
+async function planOfQueue($: Host, live: Live, queue: readonly QueuedSpawn[]): Promise<{ ready: string[]; waits: Map<string, ResourceWait>; tierHeld?: Map<string, Tier> }> {
   const names = new Set(queue.map(q => `${queuedLabel(q)}@${q.at}`))
   for (const key of [...queuedResourceCache.keys()]) if (!names.has(key)) queuedResourceCache.delete(key)
   const wants: Wanting[] = []
-  for (const q of queue) wants.push({ label: queuedLabel(q), resources: await queuedResources($, q) })
-  return planQueue(wants, heldResources(live.workers), readyCount(live.workers.length, starting.size, cfg.maxWorkers))
+  for (const q of queue) {
+    const h = await queuedHeader($, q)
+    wants.push({ label: queuedLabel(q), resources: h.resources, tier: h.tier })
+  }
+  // MOD-131 (#219): the free slots of each capped tier, from the workers running and the spawns still starting
+  const held: TierCounts = countTiers([...live.workers.map(w => w.spawn.tier), ...[...starting.keys()].flatMap(token => startingTiers.get(token) ?? [])])
+  return planQueue(wants, heldResources(live.workers), readyCount(live.workers.length, starting.size, cfg.maxWorkers), tierFree(cfg.maxWorkersByTier, held))
 }
 
 const hhmm = (ms: number): string => {
@@ -5990,7 +6010,7 @@ async function statusReport($: Host): Promise<string> {
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + the mod's options: /delegation config)` : `${root}/${REPO_CONFIG_FILE} + the mod's options (/delegation config)`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
-    `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${cfg.maxWorkers} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
+    `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${maxWorkersText(cfg.maxWorkers, cfg.maxWorkersByTier)} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
     effortText(cfg.effortByTier),
     nudgeText(cfg.effortNudge),
     ...(cfg.review !== 'off' ? [`review: ${cfg.review} · ${cfg.reviewTier ? `reviewer at ${cfg.reviewTier}` : "reviewer one tier below the worker's"}`] : []),
@@ -6396,7 +6416,7 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
   }
   // 2F: a briefed spawn takes a worker slot or waits in the queue; an ad hoc one never waits.
   const repo = (p.briefText !== undefined ? parseHeader(p.briefText)?.repo : undefined) ?? p.header?.repo
-  return claimSlot($, { ...item, ...(p.cwd ? { cwd: p.cwd } : {}), ...(repo?.startsWith('/') ? { repo } : {}), task: p.task, subtask: p.subtask, at: p.t }, p.label, claim, p.resources, s)
+  return claimSlot($, { ...item, ...(p.cwd ? { cwd: p.cwd } : {}), ...(repo?.startsWith('/') ? { repo } : {}), task: p.task, subtask: p.subtask, at: p.t }, p.label, claim, p.resources, pickFor(p, item.model).tier, s)
 }
 
 /**
@@ -6599,6 +6619,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     if (token !== undefined) {
       starting.delete(token)
       startingResources.delete(token)
+      startingTiers.delete(token)
     }
   }
 }
@@ -7417,7 +7438,7 @@ export const register: Register = (on, opts) => {
   })
   on('ui.render', { component: 'Pane', requestId: DASH_PANE }, async ($, e, next) => {
     try {
-      const { view, since, records, running, waits } = await liveModel($)
+      const { view, since, records, running, waits, tierHeld } = await liveModel($)
       const mine = sessionRecords(records, since, await ownerFields($))
       const here0 = await sessionRootOf($)
       const items: BandItem[] = [
@@ -7426,7 +7447,9 @@ export const register: Register = (on, opts) => {
           const task = taskLabel(q.task, q.subtask ?? 'main')
           // MOD-24: a row waiting for a resource carries it, and who holds it; a row waiting for a slot carries nothing
           const wait = waits.get(task)
-          return { kind: 'queued', task: withRepoName(task, q.repo, here0), position: i + 1, ...(wait ? { waits: wait } : {}) }
+          // MOD-131 (#219): a row held by its own tier's cap, with the total having room, names the tier
+          const slotTier = tierHeld.get(task)
+          return { kind: 'queued', task: withRepoName(task, q.repo, here0), position: i + 1, ...(wait ? { waits: wait } : {}), ...(slotTier && !wait ? { slotTier } : {}) }
         }),
       ]
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
