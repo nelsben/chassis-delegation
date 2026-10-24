@@ -47,7 +47,7 @@ export function decisionText(r: { verdict: string; reason?: string; advice?: str
 }
 
 /** MOD-78: a queued row may carry the alias it will run on (the host's type has none). */
-type QueuedItem = Extract<BandItem, { kind: 'queued' }> & { alias?: string }
+type QueuedItem = Extract<BandItem, { kind: 'queued' }> & { alias?: string; /** MOD-131 (#219): the tier whose own cap holds the row while the total has room. */ slotTier?: string }
 
 export type BandLine = { key: string; text: string; clear?: boolean }
 
@@ -106,7 +106,7 @@ export function openItemLines(items: readonly BandItem[], now: number, verdictTo
         return `${item.task}: ${item.next}`
       case 'queued':
         // MOD-24: a row held up by a resource names it and who holds it; a row waiting for a slot reads as it did
-        return `${item.task}: queued (position ${item.position})${(item as QueuedItem).alias ? ` · ${mark((item as QueuedItem).alias as string)}` : ''} — ${item.waits ? `waits for ${item.waits.resource} (held by ${item.waits.holder})` : 'starts when a worker slot frees'}`
+        return `${item.task}: queued (position ${item.position})${(item as QueuedItem).alias ? ` · ${mark((item as QueuedItem).alias as string)}` : ''} — ${item.waits ? `waits for ${item.waits.resource} (held by ${item.waits.holder})` : `starts when a ${(item as QueuedItem).slotTier ?? 'worker'} slot frees`}`
       case 'eval-failed': {
         const score = item.total !== undefined && item.pass !== undefined ? ` ${item.pass}/${item.total}` : ''
         return `eval ${item.tier}${score} at ${item.sha.slice(0, 8)}: read the failing names in the transcript, then press clear in the band`

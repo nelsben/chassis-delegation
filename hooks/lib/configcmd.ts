@@ -143,6 +143,10 @@ export function shownValue(field: string, v: unknown): string {
       const e = entries(v)
       return e.length === 0 ? NONE : e.map(([k, x]) => `${k}→${typeof x === 'number' ? dollars(x) : String(x)}`).join(', ')
     }
+    case 'countMap': {
+      const e = entries(v)
+      return e.length === 0 ? NONE : e.map(([k, x]) => `${k} ${String(x)}`).join(', ')
+    }
     case 'effortMap': {
       const e = entries(v)
       return e.length === 0 ? NONE : e.map(([k, x]) => `${k}→${x === 0 || x === '' ? 'default' : String(x)}`).join(', ')
@@ -186,6 +190,8 @@ export function inEffect(field: string, values: Readonly<Record<string, unknown>
       return empty(v) ? 'one tier below the worker' : undefined
     case 'maxWorkers':
       return v === 0 ? '2' : undefined
+    case 'maxWorkersByTier':
+      return entries(v).length === 0 ? 'none: maxWorkers alone' : undefined
     case 'freshSessionTokens':
       return v === 0 ? 'off' : undefined
     case 'waitStallMin':
@@ -411,6 +417,10 @@ function mapOf(render: Render, typed: string): Record<string, unknown> | string 
       const n = numberOf('dollars', x)
       if (!Number.isFinite(n)) return `${k} takes dollars, not ${JSON.stringify(x)}`
       out[k] = n
+    } else if (render === 'countMap') {
+      const n = numberOf('count', x)
+      if (!Number.isFinite(n)) return `${k} takes a number of workers, not ${JSON.stringify(x)}`
+      out[k] = n
     } else if (render === 'effortMap') out[k] = x === '0' || x.toLowerCase() === 'default' ? 0 : x
     else out[k] = x
   }
@@ -435,7 +445,7 @@ export function valueFor(field: string, typed: string, forRepoFile = false): { v
     const n = numberOf(r, typed)
     if (!Number.isFinite(n)) return { error: `${field} takes a number${r === 'minutes' ? ' of minutes' : r === 'hours' ? ' of hours' : r === 'dollars' ? ' of dollars (0 = no cap)' : r === 'tokens' ? ' of tokens (200K, 1M)' : ''}, not ${JSON.stringify(typed.trim())}; ${POINT} ${field}` }
     value = n
-  } else if (r === 'map' || r === 'dollarMap' || r === 'effortMap' || r === 'gates') {
+  } else if (r === 'map' || r === 'dollarMap' || r === 'countMap' || r === 'effortMap' || r === 'gates') {
     const m = mapOf(r, typed)
     if (typeof m === 'string') return { error: `${field} ${m}; ${POINT} ${field}` }
     value = m

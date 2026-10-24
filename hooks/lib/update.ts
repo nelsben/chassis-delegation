@@ -113,6 +113,7 @@ export function changelogSlice(changelog: string, oldVersion: string, newVersion
 const NOTES: Record<string, string> = {
   tierMap: 'tier → model alias; the built-in ladder',
   maxWorkers: 'workers running at once',
+  maxWorkersByTier: 'a lower limit per tier under maxWorkers; a tier not named takes the total alone',
   domains: 'the card domains a branch may carry',
   cardDir: 'where the task cards live, relative to the repo root',
   autoEval: 'run the eval command after a task comes back consistent',

@@ -159,6 +159,18 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.spawns).toHaveLength(3)
   })
 
+  test('maxWorkersByTier: frontier=1 queues a second frontier worker while a standard one still starts', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.session.start(sessionStart)
+    await set($, 'maxWorkers', '6')
+    expect(await say($, 'maxWorkersByTier frontier=1')).toBe('maxWorkersByTier = frontier 1 (yours)')
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1').replace('tier=standard', 'tier=frontier'), tool_use_id: 'toolu_A0000001' }))
+    const second = await $.agent.spawn(spawnInput({ prompt: brief('T-2').replace('tier=standard', 'tier=frontier'), tool_use_id: 'toolu_B0000002' }))
+    expect(second.deny).toContain('when a frontier slot frees')
+    expect((await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_C0000003' }))).deny).toBeUndefined()
+    expect(w.spawns).toHaveLength(2)
+  })
+
   test('agentTypes: backend=frontend prepares a backend card on the frontend agent type', async ($, on) => {
     dispatchWorld(on)
     await $.session.start(sessionStart)

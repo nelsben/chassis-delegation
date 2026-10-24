@@ -15,7 +15,7 @@ Four layers, lowest first; the higher one wins:
 | yours | `~/.claude/chassis-delegation/options.json`, `{ "<field>": <value> }` for any option; reread when it changes. |
 | host | A `/config` row, or `pluginConfigs["chassis-delegation"].options` in `settings.json`. An unset row (`""`, `0`, `false`) counts as absent. A locked row always wins. |
 
-Maps (`gateMap`, `agentTypes`, `tierMap`, `spendByTier`, `effortByTier`, `effortNudge`) merge key by key; other options are replaced whole.
+Maps (`gateMap`, `agentTypes`, `tierMap`, `spendByTier`, `maxWorkersByTier`, `effortByTier`, `effortNudge`) merge key by key; other options are replaced whole.
 A bad key or value is ignored and named in a toast.
 
 ### /delegation config
@@ -50,6 +50,7 @@ Shows the options in force and where each value came from; works in VS Code.
 | `effortByTier` | repo | `{economy: low, standard: medium, frontier: high}` | effort by tier: `low`, `medium`, `high`, `xhigh`, `max`; `0` or empty = engine default. A card's `effort:` wins. |
 | `effortNudge` | repo | `{cards: "<cardDir>/**", up: high, down: medium}` | the brain's own effort, said on rows (never set): a hand-back whose report names an artefact the `cards` glob takes ends `lead: judgment next, raise to <up>`; the next accept of another task, or the next started row that is not a resume, ends `lead: back to <down>`. `cards` unset means the card folder (`<cardDir>/**`, `agents/tasks/**` on defaults); an explicit glob wins; `cards: ""` turns it off. |
 | `maxWorkers` | repo | `2` | briefed workers at once; the rest queue (`ready:` when a slot frees). |
+| `maxWorkersByTier` | repo | `{}` | a second, lower ceiling under `maxWorkers` for the briefed workers of one tier (`economy`, `standard`, `frontier`, `premium`), each a whole number of 1 or more; a tier not named takes the total alone, and `maxWorkers` `0` still means 2, so raise `maxWorkers` too for a tier above 2. A row whose tier is full waits (`queued: … when a frontier slot frees`) while a row of another tier starts. Example: `{frontier: 2, standard: 5}`. |
 | `worktreeRoot` | repo | `""` (siblings `<root>-<id>`) | worktrees go to `<worktreeRoot>/<repo name>-<id>`. |
 | `cardDir` | repo | `agents/tasks` | card folder relative to the root (no leading `/`, no `..`). `--replay` stays on `agents/tasks/`. |
 | `briefTemplate` | repo | `hooks/templates/brief.md` | brief template file. |

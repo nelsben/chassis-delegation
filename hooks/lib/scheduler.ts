@@ -5,18 +5,53 @@
 // brain leaves unclaimed past readyFallbackMinutes is started by the mod itself.
 // Ad hoc spawns (no brief) are never queued. Pure: no `$`.
 import type { QueuedSpawn } from '../types'
+import { TIERS, type Tier } from './tier'
 
 export const DEFAULT_MAX_WORKERS = 2
 export const QUEUED_PREFIX = 'queued: '
 /** MOD-12: what a queued task waits for; the mod says `ready:` when it comes. */
 export const SLOT_FREES = 'the mod will tell you when a slot frees'
+/** MOD-131 (#219): the same wait when only the spawn's own tier is full: `the mod will tell you when a frontier slot frees`. */
+export const slotFrees = (tier?: Tier): string => (tier ? `the mod will tell you when a ${tier} slot frees` : SLOT_FREES)
+const TIER_SLOT_FREES = new RegExp(`^queued: .* — the mod will tell you when a (?:${TIERS.join('|')}) slot frees`)
 /** MOD-23: what a queued task waits for when a running attempt holds a resource it names. */
 const RESOURCE_WAIT = ' — waiting for resource '
 
 export const parseMaxWorkers = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : DEFAULT_MAX_WORKERS)
 
-/** A slot is free while the workers running plus those still starting stay under the cap. */
-export const hasSlot = (running: number, starting: number, max: number): boolean => running + starting < max
+/** MOD-131 (#219): a count of briefed workers, or a cap on them, by tier; a tier the map lacks has none. */
+export type TierCounts = Partial<Record<Tier, number>>
+
+/** The workers of each tier among `tiers` (the ones running plus those starting). */
+export const countTiers = (tiers: Iterable<Tier>): TierCounts => {
+  const out: TierCounts = {}
+  for (const t of tiers) out[t] = (out[t] ?? 0) + 1
+  return out
+}
+
+/** MOD-131: is the tier's own cap reached? A tier the map lacks (or no tier) has none. */
+export const tierFull = (tier: Tier | undefined, caps: TierCounts | undefined, held: TierCounts | undefined): boolean => {
+  const cap = tier ? caps?.[tier] : undefined
+  return tier !== undefined && cap !== undefined && (held?.[tier] ?? 0) >= cap
+}
+
+/**
+ * A slot is free while the workers running plus those still starting stay under the cap. MOD-131 (#219): given the
+ * spawn's tier, the caps by tier and the workers held (running plus starting) by tier, the tier's own cap must
+ * leave room too; a tier the caps lack takes the total alone.
+ */
+export const hasSlot = (running: number, starting: number, max: number, tier?: Tier, caps?: TierCounts, held?: TierCounts): boolean =>
+  running + starting < max && !tierFull(tier, caps, held)
+
+/** MOD-131: the free slots of each capped tier (never below 0). */
+export const tierFree = (caps: TierCounts | undefined, held: TierCounts | undefined): TierCounts =>
+  Object.fromEntries(Object.entries(caps ?? {}).map(([t, cap]) => [t, Math.max(0, (cap ?? 0) - (held?.[t as Tier] ?? 0))])) as TierCounts
+
+/** MOD-131: `6` when the map is empty, `6 (economy 5, standard 5, frontier 2)` when it is set (ladder order, only the tiers it has). */
+export const maxWorkersText = (max: number, byTier: TierCounts | undefined): string => {
+  const parts = TIERS.filter(t => byTier?.[t] !== undefined).map(t => `${t} ${byTier?.[t]}`)
+  return parts.length === 0 ? String(max) : `${max} (${parts.join(', ')})`
+}
 
 /** The labels of spawns starting for someone else: a spawn's own starting token (same label) is never counted against it. */
 export const startingOthers = (starting: Iterable<string>, label: string): string[] => [...starting].filter(l => l !== label)
@@ -26,8 +61,8 @@ export const startingOthers = (starting: Iterable<string>, label: string): strin
  * and the spawn hook both give (MOD-12): the agents live and the rows queued,
  * named apart.
  */
-export const queuedDeny = (task: string, live: readonly string[], queued: readonly string[]): string =>
-  `${QUEUED_PREFIX}${task} — ${SLOT_FREES} (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')})`
+export const queuedDeny = (task: string, live: readonly string[], queued: readonly string[], tier?: Tier): string =>
+  `${QUEUED_PREFIX}${task} — ${slotFrees(tier)} (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')})`
 
 /** HH:MM of a queue row's time, as the clock on the wall reads it. */
 export const clockText = (at: number): string => {
@@ -37,7 +72,7 @@ export const clockText = (at: number): string => {
 
 export const alreadyQueuedText = (at: number, position: number): string => `already queued since ${clockText(at)} (position ${position})`
 
-export const alreadyQueuedDeny = (task: string, at: number, position: number): string => `${QUEUED_PREFIX}${task} — ${SLOT_FREES}; ${alreadyQueuedText(at, position)}`
+export const alreadyQueuedDeny = (task: string, at: number, position: number, tier?: Tier): string => `${QUEUED_PREFIX}${task} — ${slotFrees(tier)}; ${alreadyQueuedText(at, position)}`
 
 /** The "already queued since …" part of a deny, if it is that kind. */
 export const alreadyQueuedPart = (deny: string): string | undefined => (isQueuedDeny(deny) ? /already queued since \d\d:\d\d \(position \d+\)$/.exec(deny)?.[0] : undefined)
@@ -48,7 +83,7 @@ export const waitedMinutes = (since: number, now: number): number => Math.max(0,
 /** The queue index of a task and subtask, or -1. */
 export const queuedIndex = (queue: readonly QueuedSpawn[], task: string, subtask: string): number => queue.findIndex(q => q.task === task && (q.subtask ?? 'main') === subtask)
 
-export const isQueuedDeny = (deny: string): boolean => deny.startsWith(QUEUED_PREFIX) && (deny.includes(` — ${SLOT_FREES}`) || deny.includes(RESOURCE_WAIT))
+export const isQueuedDeny = (deny: string): boolean => deny.startsWith(QUEUED_PREFIX) && (deny.includes(` — ${SLOT_FREES}`) || TIER_SLOT_FREES.test(deny) || deny.includes(RESOURCE_WAIT))
 
 export const queuedText = (position: number): string => `queued (position ${position})`
 
@@ -140,7 +175,7 @@ export const fallbackRow = (v: { label: string; waited: number; attempt: number;
 // ---- MOD-23: exclusive resources -----------------------------------------------------------------
 
 /** A task label and the resources its brief names (`resources=`): a running attempt holds them, a queued one wants them. */
-export type Wanting = { label: string; resources: readonly string[] }
+export type Wanting = { label: string; resources: readonly string[]; /** MOD-131: the tier of a queued row (its brief header's `tier=`). */ tier?: Tier }
 /** The resource a card waits for, and the label of the attempt (or the queued card ahead of it) that holds it. */
 export type ResourceWait = { resource: string; holder: string }
 
@@ -170,15 +205,30 @@ export const resourceDeny = (task: string, resource: string, holder: string, exi
  * Which queued rows the mod calls ready (head first, at most `free`) and which wait for a resource. A row waits when
  * an attempt in `held` holds a resource it names, or when a row ahead of it in the queue names it (the queue is
  * first come, first served per resource). A row that waits for a resource takes no slot, so a row behind it with no
- * resources, or others, is ready in its place.
+ * resources, or others, is ready in its place. MOD-131 (#219): `tierLeft` is the free slots of each capped tier; a row
+ * is ready when a total slot and a slot of its tier are both free, consuming both, and a row whose tier is full is
+ * skipped without a slot (named in `tierHeld` when the total had room), so a row of another tier behind it is ready.
  */
-export function planQueue(queue: readonly Wanting[], held: readonly Wanting[], free: number): { ready: string[]; waits: Map<string, ResourceWait> } {
+export function planQueue(queue: readonly Wanting[], held: readonly Wanting[], free: number, tierLeft: TierCounts = {}): { ready: string[]; waits: Map<string, ResourceWait>; tierHeld?: Map<string, Tier> } {
   const ready: string[] = []
   const waits = new Map<string, ResourceWait>()
+  const tierHeld = new Map<string, Tier>()
+  const left: TierCounts = { ...tierLeft }
   for (const [i, row] of queue.entries()) {
     const block = resourceBlock(row.resources, [...held, ...queue.slice(0, i)], row.label)
     if (block) waits.set(row.label, block)
-    else if (ready.length < free) ready.push(row.label)
+    else if (ready.length < free) {
+      // MOD-131 (#219): a row whose tier is full is skipped without taking a slot; a row of another tier behind it may be ready
+      const cap = row.tier ? left[row.tier] : undefined
+      if (row.tier && cap !== undefined) {
+        if (cap <= 0) {
+          tierHeld.set(row.label, row.tier)
+          continue
+        }
+        left[row.tier] = cap - 1
+      }
+      ready.push(row.label)
+    }
   }
-  return { ready, waits }
+  return tierHeld.size > 0 ? { ready, waits, tierHeld } : { ready, waits }
 }
