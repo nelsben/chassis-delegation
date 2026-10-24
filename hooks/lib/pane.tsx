@@ -31,7 +31,7 @@ export type PaneView = {
   live?: LiveView
   scheme?: Scheme
   /** MOD-128: the rationing bar drawn under the Spend tile. `cells` is one entry per day of a seven-day window. */
-  ration?: { cells?: readonly DaySegment[]; text: string; bar: string }
+  ration?: { cells?: readonly DaySegment[]; text: string; bar: string; /** MOD-133: the `today 6.2/8.4 · on pace` clauses the band adds after `text`. */ tail?: string }
 }
 
 /** MOD-128: a day's colour in the ration bar: green under its share, yellow within 10% over, red over; the day in progress takes the scheme's accent. */
@@ -39,10 +39,10 @@ export const RATION_COLOR = { under: '#0ca30c', near: '#fab219', over: '#d03b3b'
 export const RATION_ACCENT: Record<Scheme, string> = { light: '#2f6fd6', dark: '#6ea2f0' }
 
 /** MOD-128: one Box per day, each three cells wide, then the words beside the bar. */
-function rationBar(p: PaneTable, r: NonNullable<PaneView['ration']>, scheme: Scheme): RenderNode {
+export function rationBar(p: PaneTable, r: NonNullable<PaneView['ration']>, scheme: Scheme, indent = INDENT, text = r.text): RenderNode {
   const { Box, Text } = p.t
   return (
-    <Box key="dash-ration" flexDirection="row" gap={1} paddingLeft={INDENT}>
+    <Box key="dash-ration" flexDirection="row" gap={1} paddingLeft={indent}>
       {r.cells ? (
         <Box flexDirection="row">
           {r.cells.map((c, i) => {
@@ -79,7 +79,7 @@ function rationBar(p: PaneTable, r: NonNullable<PaneView['ration']>, scheme: Sch
       ) : (
         <Text>{r.bar}</Text>
       )}
-      <Text wrap="truncate-end">{r.text}</Text>
+      <Text wrap="truncate-end">{text}</Text>
     </Box>
   )
 }

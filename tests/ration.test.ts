@@ -32,17 +32,29 @@ async function evening(_w: ReturnType<typeof world>): Promise<number> {
 }
 const measure = ($: any, rateLimits: { kind: string; percentUsed: number; resetsAt: number }[]) =>
   $.session.measure({ context: { tokens: 24_000, window: 200_000, percent: 12 }, rateLimits, changed: ['rateLimits'] })
+const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { bodyRows: 18 }, view: {} }
+/** The footer is no longer ours: a SessionMode render passes its modes on unchanged. */
 const footer = async ($: any, seen: { modes: string[] }[]) => {
   const before = seen.length
   await $.ui.mount({ plugin: RED, surface: 'terminal', component: 'SessionMode', props: PROPS } as never)
   expect(seen.length).toBe(before + 1)
   return seen[seen.length - 1]!.modes
 }
+/** MOD-133: the band above the prompt, mounted fresh; undefined when the mod passes it on. */
+const band = async ($: any, surface = 'terminal', props: object = BAND_PROPS) => {
+  try {
+    const ui = await $.ui.mount({ plugin: RED, surface, component: 'AbovePrompt', props } as never)
+    return (await ui.find({ key: 'dash-band' })) ? ui : undefined
+  } catch {
+    return undefined
+  }
+}
+const bandHas = async (ui: any, re: RegExp) => (await ui.find({ type: 'Text', text: re })) !== undefined
 const sec = (ms: number) => Math.round(ms / 1000)
 const text = (r: { text?: unknown }) => String(r.text)
 
-describe('MOD-128: the footer meter', () => {
-  test('a measure with seven_day 41% writes the day record and the footer label follows the host modes', { options: { rationDaily: 8.4 } }, async ($, on) => {
+describe('MOD-133: the ration bar in the band', () => {
+  test('a measure with seven_day 41% writes the day record and the band draws the bar, with no live line', { options: { rationDaily: 8.4 } }, async ($, on) => {
     const seen = bottom(on)
     const now = eveningAt()
     const resetsAt = now + 4.5 * DAY
@@ -51,10 +63,16 @@ describe('MOD-128: the footer meter', () => {
     await evening(w)
     await measure($, [{ kind: 'seven_day', percentUsed: 41, resetsAt: sec(resetsAt) }])
     expect(w.store.get(keyOf('seven_day', now))).toMatchObject({ startPct: 34.8, lastPct: 41, resetsAt })
-    const modes = await footer($, seen)
-    expect(modes[0]).toBe(FOCUS)
-    expect(modes[1]).toMatch(/^██▉░░░░ 41% · day 3\/7 · today 6\.2\/8\.4 · (on pace|ahead by [\d.]+)$/)
+    expect(await footer($, seen)).toEqual([FOCUS])
     expect(w.invalidations).toBeGreaterThan(0)
+    for (const surface of ['terminal', 'desktop', 'vscode']) {
+      const ui = await band($, surface)
+      expect(ui, surface).toBeDefined()
+      expect(await bandHas(ui, /^59% left · resets 4d 12h · today 6\.2\/8\.4 · (on pace|ahead by [\d.]+)$/)).toBe(true)
+      for (const i of [1, 2, 3, 4, 5, 6, 7]) expect(await ui.find({ key: `ration-cell-${i}` })).toBeDefined()
+      expect(await ui.find({ key: 'details' })).toBeDefined()
+      expect(await bandHas(ui, /live|ctx/)).toBe(false)
+    }
   })
 
   test('pace-to-reset by default: the first reading of the day starts it, a second raises used', async ($, on) => {
@@ -64,11 +82,11 @@ describe('MOD-128: the footer meter', () => {
     const now = await evening(w)
     const resetsAt = now + 4.5 * DAY
     await measure($, [{ kind: 'seven_day', percentUsed: 41, resetsAt: sec(resetsAt) }])
-    expect(await footer($, seen)).toEqual([FOCUS, '██▉░░░░ 41% · day 3/7 · today 0.0/9.8 · on pace'])
+    expect(await bandHas(await band($), /^59% left · resets 4d 12h · today 0\.0\/9\.8 · on pace$/)).toBe(true)
     expect(w.store.get(keyOf('seven_day', now))).toMatchObject({ startPct: 41, lastPct: 41, used: 0 })
     await measure($, [{ kind: 'seven_day', percentUsed: 45, resetsAt: sec(resetsAt) }])
     expect(w.store.get(keyOf('seven_day', now))).toMatchObject({ startPct: 41, lastPct: 45, used: 4 })
-    expect((await footer($, seen))[1]).toMatch(/^███▏░░░ 45% · day 3\/7 · today 4\.0\/9\.8 · (on pace|ahead by [\d.]+)$/)
+    expect(await bandHas(await band($), /^55% left · resets 4d 12h · today 4\.0\/9\.8 · (on pace|ahead by [\d.]+)$/)).toBe(true)
   })
 
   test('one write per measure whose readings changed; the same readings write nothing', async ($, on) => {
@@ -92,15 +110,16 @@ describe('MOD-128: the footer meter', () => {
     const now = await evening(w)
     w.rateLimits = [{ kind: 'seven_day', percentUsed: 41, resetsAt: sec(now + 4.5 * DAY) }]
     await measure($, [])
-    expect((await footer($, seen))[1]).toMatch(/^██▉░░░░ 41% · day 3\/7/)
+    expect(await bandHas(await band($), /^59% left · resets 4d 12h · today/)).toBe(true)
   })
 
-  test('ration: off passes the modes unchanged', { options: { ration: 'off' } }, async ($, on) => {
+  test('ration: off passes the band on', { options: { ration: 'off' } }, async ($, on) => {
     const seen = bottom(on)
     const w = world(on)
     await $.session.start(sessionStart)
     const now = await evening(w)
     await measure($, [{ kind: 'seven_day', percentUsed: 41, resetsAt: sec(now + 4.5 * DAY) }])
+    expect(await band($)).toBeUndefined()
     expect(await footer($, seen)).toEqual([FOCUS])
   })
 
@@ -110,16 +129,48 @@ describe('MOD-128: the footer meter', () => {
     await $.session.start(sessionStart)
     const now = await evening(w)
     await measure($, [{ kind: 'seven_day', percentUsed: 41, resetsAt: sec(now + 4.5 * DAY) }, { kind: 'five_hour', percentUsed: 40, resetsAt: sec(now + 2.5 * HOUR) }])
-    expect((await footer($, seen))[1]).toMatch(/^██░░░ 40% · hour 3\/5 · today 0\.0\//)
+    const ui = await band($)
+    expect(await bandHas(ui, /^██░░░$/)).toBe(true)
+    expect(await bandHas(ui, /^60% left · resets 2h 30m · today 0\.0\//)).toBe(true)
+    expect(await ui.find({ key: 'ration-cell-1' })).toBeUndefined()
   })
 
-  test('with no reading the modes pass unchanged', async ($, on) => {
+  test('with no reading, or a survey showing, the band passes on', async ($, on) => {
     const seen = bottom(on)
+    const w = world(on)
+    await $.session.start(sessionStart)
+    expect(await band($)).toBeUndefined()
+    await measure($, [])
+    expect(await band($)).toBeUndefined()
+    await measure($, [{ kind: 'seven_day', percentUsed: 41, resetsAt: sec(NOW + 4.5 * DAY) }])
+    expect(await band($)).toBeDefined()
+    expect(await band($, 'terminal', { ...BAND_PROPS, hasSurvey: true })).toBeUndefined()
+    expect(await footer($, seen)).toEqual([FOCUS])
+    void w
+  })
+
+  test('a second measure the same day changes the band text', async ($, on) => {
+    bottom(on)
     world(on)
     await $.session.start(sessionStart)
-    expect(await footer($, seen)).toEqual([FOCUS])
-    await measure($, [])
-    expect(await footer($, seen)).toEqual([FOCUS])
+    const rl = (p: number) => [{ kind: 'seven_day', percentUsed: p, resetsAt: sec(NOW + 4.5 * DAY) }]
+    await measure($, rl(41))
+    expect(await bandHas(await band($), /^59% left/)).toBe(true)
+    await measure($, rl(45))
+    expect(await bandHas(await band($), /^55% left/)).toBe(true)
+  })
+
+  test('dashboardBand true with a live worker holds the ration row and the live line', { options: { dashboardBand: true } }, async ($, on) => {
+    bottom(on)
+    world(on, { listAgents: true })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-7 subtask=main tier=standard]]\nDo it.', description: 'T-7' }))
+    await measure($, [{ kind: 'seven_day', percentUsed: 41, resetsAt: sec(NOW + 4.5 * DAY) }])
+    const ui = await band($)
+    expect(ui).toBeDefined()
+    expect(await ui.find({ key: 'ration-cell-1' })).toBeDefined()
+    expect(await bandHas(ui, /^delegation · 1 live/)).toBe(true)
+    expect(await ui.find({ key: 'details' })).toBeDefined()
   })
 })
 

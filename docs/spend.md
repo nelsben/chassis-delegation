@@ -65,14 +65,16 @@ The band and `/delegation` show each live worker's cost so far: `(2 live: BE-310
 
 ## Rationing the week
 
-The host reports each rate-limit window (`seven_day`, `five_hour`) as a percent used and a reset time. The mod keeps one record per local day and window, and shows a meter next to `focus` in the prompt footer:
+The host reports each rate-limit window (`seven_day`, `five_hour`) as a percent used and a reset time. The mod keeps one record per local day and window, and draws a health bar in the band above the prompt (not the footer), beside a `[ details ]` button that opens the dashboard pane:
 
-    ██▉░░░░ 41% · day 3/7 · today 6.2/8.4 · on pace
+    ██▉░░░░ 59% left · resets 2d 4h · today 6.2/8.4 · on pace
 
-- The bar is seven cells for the seven-day window (a day each) or five for the five-hour one (an hour each), filled by the percent used.
+`/delegation config ration off` hides it. The band draws whenever the chosen window has a reading, with no worker figures; `dashboardBand on` adds the worker line and sparkline under it while a worker is active.
+
+- The bar is seven coloured cells for the seven-day window (a day each) or five for the five-hour one (an hour each), filled by the percent used.
 - `today a/b`: points of the window spent today, and today's allowance. With `rationDaily` 0 (the default) the allowance is what was left at the day's first reading, divided by the days to the reset. A number fixes it, and points earlier days left unspent show as `(+x)`.
 - The pace is `on pace`, `ahead by x` (more spent than the hours so far allow) or `over by x` (the allowance is gone).
-- `ration` picks the window: `seven_day` (default), `five_hour`, or `off` (no meter, no records).
+- `ration` picks the window: `seven_day` (default), `five_hour`, or `off` (no bar, no records).
 - `/delegation ration` prints the bar with the reset time, today's line and the days so far. `/delegation` carries one `ration:` line. The dashboard pane draws the bar in colour (green under the allowance, yellow within 10% over, red beyond; `?` for a day with no record) and the Spend tile names the window.
 - Day records are kept 14 days. Nothing else is stored.
 
