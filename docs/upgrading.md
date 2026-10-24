@@ -10,6 +10,12 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.23 to 0.9.24
+
+Nothing to do.
+Optional: `maxWorkersByTier` caps each tier under the `maxWorkers` total, e.g. `{"frontier": 2}` with `maxWorkers` 6 runs up to six workers of which at most two are frontier; unset, nothing changes.
+Detail: [CHANGELOG 0.9.24](../CHANGELOG.md).
+
 ### From 0.9.22 to 0.9.23
 
 Nothing to do.
