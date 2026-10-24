@@ -10,6 +10,12 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.22 to 0.9.23
+
+Nothing to do.
+Optional: the footer meter reads the seven-day window by default; `/delegation config ration off` hides it, `ration five_hour` reads the five-hour window, `rationDaily <points>` fixes the daily share. The status line above the prompt is gone and the band is off; `/delegation config dashboardBand on` brings the band back.
+Detail: [CHANGELOG 0.9.23](../CHANGELOG.md).
+
 ### From 0.9.21 to 0.9.22
 
 Nothing to do.
@@ -168,7 +174,7 @@ Detail: [CHANGELOG 0.6.1](../CHANGELOG.md).
 ### From 0.5.0 to 0.6.0
 
 What to do: a session on 0.5.0 has no `/delegation update`: follow the by-hand steps above once. Nothing in `.chassis-delegation.json` has to change.
-Optional: `dashboardBand` turns the band off, `classifierSecondOpinion` the second opinion, `delegateOnly` guards the brain; `/dispatch <ID> --verify <sha>` re-judges an attempt.
+Optional: `dashboardBand` turns the band on (off by default since 0.9.23), `classifierSecondOpinion` the second opinion, `delegateOnly` guards the brain; `/dispatch <ID> --verify <sha>` re-judges an attempt.
 Detail: [CHANGELOG 0.6.0](../CHANGELOG.md).
 
 ### From 0.4.0 to 0.5.0
