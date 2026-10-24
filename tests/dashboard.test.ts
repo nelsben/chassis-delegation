@@ -217,19 +217,9 @@ const drawnBand = async ($: any) => {
 }
 
 describe('GH-112: the band and the pane', () => {
-  // MOD-81: one meter. While the band is drawn the host status line is cleared; otherwise it shows as before.
+  // MOD-128: the band is off by default and the host status line is retired; band tests turn it on.
   const spawnT7 = ($: any) => $.agent.spawn({ tool_use_id: 'toolu_C0000081', prompt: '[[brief v=1 task=T-7 subtask=main tier=standard]]\nDo it.', description: 'T-7', subagentType: 'general-purpose', provider: { kind: 'model' }, parentModel: 'claude-opus-5-5', background: true, fork: false } as never)
-  test('MOD-81: with the band drawn, the next status refresh leaves the host status line cleared', async ($, on) => {
-    const w = world(on, { listAgents: true })
-    await spawnT7($)
-    expect(w.statuses.at(-1)).toMatch(/^1 worker · \$/)
-    expect(await drawnBand($)).toBeDefined()
-    await w.clock.advance(60_000)
-    expect(w.statuses.length).toBeGreaterThan(1)
-    expect(w.statuses.at(-1)).toBeUndefined()
-    expect(w.state.get('chassis-delegation.status')).toBe('')
-  })
-  test('MOD-81: the band says the live workers and the context, cut to the columns before the dollars', async ($, on) => {
+  test('MOD-81: the band says the live workers and the context, cut to the columns before the dollars', { options: { dashboardBand: true } }, async ($, on) => {
     const w = world(on, { listAgents: true })
     await spawnT7($)
     const band = await drawnBand($)
@@ -240,7 +230,7 @@ describe('GH-112: the band and the pane', () => {
     const ui2 = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
     expect(await ui2.find({ type: 'Text', text: /ctx 40%/ })).toBeDefined()
   })
-  test('MOD-81: after a usage read moves the cost from $1.00 to $1.40 with no new sample, the band says $1.40', async ($, on) => {
+  test('MOD-81: after a usage read moves the cost from $1.00 to $1.40 with no new sample, the band says $1.40', { options: { dashboardBand: true } }, async ($, on) => {
     const w = world(on, { listAgents: true })
     w.usd = 1
     await spawnT7($)
@@ -249,38 +239,21 @@ describe('GH-112: the band and the pane', () => {
     const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
     expect(await ui.find({ type: 'Text', text: /\$1\.40/ })).toBeDefined()
   })
-  test('MOD-81: the band off, the status line shows as before', { options: { dashboardBand: false } }, async ($, on) => {
-    const w = world(on, { listAgents: true })
-    await spawnT7($)
-    await drawnBand($)
-    await w.clock.advance(60_000)
-    expect(w.statuses.at(-1)).toMatch(/^1 worker · \$.*\(1 live: T-7/)
-  })
-  test('MOD-81: a band not drawn for longer than one refresh interval gives the status line back', async ($, on) => {
-    const w = world(on, { listAgents: true })
-    await spawnT7($)
-    expect(await drawnBand($)).toBeDefined()
-    await w.clock.advance(60_000)
-    expect(w.statuses.at(-1)).toBeUndefined()
-    await w.clock.advance(60_000)
-    await w.clock.advance(60_000)
-    expect(w.statuses.at(-1)).toMatch(/^1 worker · \$/)
-  })
-  test('the band draws nothing while no worker is live or queued', async ($, on) => {
+  test('the band draws nothing while no worker is live or queued', { options: { dashboardBand: true } }, async ($, on) => {
     world(on)
     expect(await drawnBand($)).toBeUndefined()
   })
-  test('the band draws while a worker is live', async ($, on) => {
+  test('the band draws while a worker is live', { options: { dashboardBand: true } }, async ($, on) => {
     const w = world(on, { listAgents: true })
     worker(w)
     expect(await drawnBand($)).toBeDefined()
   })
-  test('the band draws while a spawn is queued', async ($, on) => {
+  test('the band draws while a spawn is queued', { options: { dashboardBand: true } }, async ($, on) => {
     const w = world(on)
     w.state.set('chassis-delegation.queue', [{ prompt: '', description: '', subagentType: 'general-purpose', task: 'T-3', at: WORLD_NOW }])
     expect(await drawnBand($)).toBeDefined()
   })
-  test('a redraw reads the store once per 15 s; a record the mod writes shows at once', async ($, on) => {
+  test('a redraw reads the store once per 15 s; a record the mod writes shows at once', { options: { dashboardBand: true } }, async ($, on) => {
     const w = world(on, { listAgents: true })
     worker(w)
     await drawnBand($)
@@ -357,7 +330,7 @@ describe('GH-112: the band and the pane', () => {
     await $.command.run({ command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
     expect(w.opened).toEqual([])
   })
-  test('on the desktop the spend chart is an Svg, on the terminal a Raster; the band hover scope reveals the card', async ($, on) => {
+  test('on the desktop the spend chart is an Svg, on the terminal a Raster; the band hover scope reveals the card', { options: { dashboardBand: true } }, async ($, on) => {
     const w = world(on, { listAgents: true })
     worker(w)
     w.state.set('chassis-delegation.spend', [{ t: WORLD_NOW - 60_000, usd: 0.5 }, { t: WORLD_NOW - 30_000, usd: 1 }, { t: WORLD_NOW, usd: 1.5 }])

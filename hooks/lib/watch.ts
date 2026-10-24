@@ -1,6 +1,4 @@
-// Alias drift, new agent types, model probes and the status line. Pure: no `$`.
-
-export const STATUS_IDLE_MS = 10 * 60 * 1000
+// Alias drift, new agent types and model probes. Pure: no `$`.
 
 /** A toast line when an alias now resolves to a different id; undefined for a first sighting or no change. */
 export function driftMessage(alias: string, previous: string | undefined, now: string): string | undefined {
@@ -81,13 +79,3 @@ export function newAgentTypes(known: readonly string[] | undefined, seen: readon
 
 export const parseCandidateIds = (s: string | undefined): string[] =>
   (s ?? '').split(',').map(x => x.trim()).filter(Boolean)
-
-export function statusText(s: { running: number; usd: number | undefined; pct: number | undefined }): string {
-  const workers = `${s.running} worker${s.running === 1 ? '' : 's'}`
-  const usd = s.usd === undefined ? '$–' : `$${s.usd.toFixed(2)}`
-  const ctx = s.pct === undefined ? 'ctx –' : `ctx ${Math.round(s.pct)}%`
-  return `${workers} · ${usd} · ${ctx}`
-}
-
-export const shouldClearStatus = (s: { running: number; now: number; lastCostChangeAt: number }): boolean =>
-  s.running === 0 && s.now - s.lastCostChangeAt >= STATUS_IDLE_MS

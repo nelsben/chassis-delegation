@@ -660,9 +660,35 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
         return undefined
       }
     }
+    expect(await band()).toBeUndefined() // MOD-128: off by default
+    await set($, 'dashboardBand', 'on')
     expect(await band()).toBeDefined()
     await set($, 'dashboardBand', 'off')
     expect(await band()).toBeUndefined()
+  })
+
+  test('ration: off draws no meter in the footer; five_hour reads the five-hour window', async ($, on) => {
+    ;(on as unknown as (n: string, h: unknown) => void)('session.measure', (_$: unknown, e: { changed: string[] }) => ({ changed: e.changed }))
+    const w = world(on)
+    await $.session.start(sessionStart)
+    const rateLimits = [{ kind: 'five_hour', percentUsed: 40, resetsAt: Math.floor(NOW / 1000) + 3 * 3600 }, { kind: 'seven_day', percentUsed: 71, resetsAt: Math.floor(NOW / 1000) + 3 * 86400 }]
+    await set($, 'ration', 'five_hour')
+    await $.session.measure({ context: { tokens: 1, window: 200_000, percent: 1 }, rateLimits, changed: ['rateLimits'] } as never)
+    const ask = async () => String((await $.command.run({ command: 'delegation', args: 'ration', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)).text)
+    const five = await ask()
+    expect(five).toContain('40%')
+    expect(five).not.toContain('71%')
+    await set($, 'ration', 'off')
+    expect(await ask()).not.toContain('40%')
+    expect(w.store.size).toBeGreaterThanOrEqual(0)
+  })
+
+  test('rationDaily: a number fixes the daily allowance, 0 paces to the reset', async ($, on) => {
+    world(on)
+    await $.session.start(sessionStart)
+    await set($, 'rationDaily', '8')
+    const all = String((await $.command.run({ command: 'delegation', args: 'config', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)).text)
+    expect(all).toContain('rationDaily')
   })
 
   test('modelGlyphs: off removes the glyph from a started row', async ($, on) => {

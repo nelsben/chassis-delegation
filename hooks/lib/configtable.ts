@@ -68,7 +68,9 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['readyFallbackMinutes', 'Guards and nudges for the brain', 'Minutes before a waiting task is started for you if you have not started it', 'minutes', 'user', 10],
   ['waitStallMin', 'Guards and nudges for the brain', 'Minutes a worker may wait before the mod says it is stalled; 0 turns it off', 'minutes', 'user', 20],
   ['classifierSecondOpinion', 'Guards and nudges for the brain', 'In a dry run, also ask a classifier how hard a task is and show both answers', 'bool', 'user', true],
-  ['dashboardBand', 'Display', 'Show a status strip above the prompt while workers are busy or waiting', 'bool', 'user', true],
+  ['dashboardBand', 'Display', 'Show a status strip above the prompt while workers are busy or waiting', 'bool', 'user', false],
+  ['ration', 'Display', 'Which usage window the footer meter reads: seven_day, five_hour, or off', 'choice', 'user', 'seven_day', ['seven_day', 'five_hour', 'off']],
+  ['rationDaily', 'Display', 'A fixed daily share of that window, in points; 0 paces the days left to the reset', 'count', 'user', 0],
   ['modelGlyphs', 'Display', 'A glyph per model on every row: alias=glyph pairs, off, or empty for the built-in set', 'text', 'user', ''],
 ]
 

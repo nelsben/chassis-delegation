@@ -11,6 +11,7 @@ import type { DashboardBlock } from '../types'
 import { sparkCells, sparkSvg, sparkValues } from './dashboard'
 import type { BrainSummary } from './brain'
 import { brainTileText } from './brain'
+import type { DaySegment } from './ration'
 import { brainModelLabel, chartCells, chartSvg, FABLE_COLOR, modelColor, modelLabel, tokText, verdictMark, type LiveView, type Scheme, type WorktreeRow } from './live'
 
 /** The surface's table, narrowed: the terminal draws a Raster, the rest an Svg. */
@@ -29,6 +30,58 @@ export type PaneView = {
   /** GH-112: the live model; absent, the pane draws only the cross-session blocks. */
   live?: LiveView
   scheme?: Scheme
+  /** MOD-128: the rationing bar drawn under the Spend tile. `cells` is one entry per day of a seven-day window. */
+  ration?: { cells?: readonly DaySegment[]; text: string; bar: string }
+}
+
+/** MOD-128: a day's colour in the ration bar: green under its share, yellow within 10% over, red over; the day in progress takes the scheme's accent. */
+export const RATION_COLOR = { under: '#0ca30c', near: '#fab219', over: '#d03b3b' } as const
+export const RATION_ACCENT: Record<Scheme, string> = { light: '#2f6fd6', dark: '#6ea2f0' }
+
+/** MOD-128: one Box per day, each three cells wide, then the words beside the bar. */
+function rationBar(p: PaneTable, r: NonNullable<PaneView['ration']>, scheme: Scheme): RenderNode {
+  const { Box, Text } = p.t
+  return (
+    <Box key="dash-ration" flexDirection="row" gap={1} paddingLeft={INDENT}>
+      {r.cells ? (
+        <Box flexDirection="row">
+          {r.cells.map((c, i) => {
+            const key = `ration-cell-${i + 1}`
+            if (!c.known && c.state !== 'today' && c.state !== 'future') {
+              return (
+                <Box key={key} width={3}>
+                  <Text dimColor>░?░</Text>
+                </Box>
+              )
+            }
+            if (c.state === 'future') {
+              return (
+                <Box key={key} width={3}>
+                  <Text dimColor>███</Text>
+                </Box>
+              )
+            }
+            if (c.state === 'today') {
+              const filled = c.share > 0 ? Math.min(3, Math.max(0, Math.round((c.used / c.share) * 3))) : 0
+              return (
+                <Box key={key} width={3}>
+                  <Text color={RATION_ACCENT[scheme]}>{'█'.repeat(filled) + '░'.repeat(3 - filled)}</Text>
+                </Box>
+              )
+            }
+            return (
+              <Box key={key} width={3}>
+                <Text color={RATION_COLOR[c.state]}>███</Text>
+              </Box>
+            )
+          })}
+        </Box>
+      ) : (
+        <Text>{r.bar}</Text>
+      )}
+      <Text wrap="truncate-end">{r.text}</Text>
+    </Box>
+  )
 }
 
 const INDENT = 2
@@ -241,6 +294,7 @@ export function paneTree(p: PaneTable, view: PaneView, onClose: () => void): Ren
             <Text wrap="truncate-end">{gap + d}</Text>
           ))}
           {spark(p, b, view.columns)}
+          {b.key === 'spend' && view.ration ? rationBar(p, view.ration, view.scheme ?? 'dark') : null}
         </Box>
       ))}
       <Box flexDirection="column">

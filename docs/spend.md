@@ -61,7 +61,20 @@ A worker takes the build, run and poll loop from a fresh, small context. `resour
 | `evalLiveMaxUsd` | One T2 run | `1` | n/a | itself |
 
 The mod reads a worker's cost from its `turn.complete` events and acts on its next tool call (given the running turn's `agentId`, it also calls `$.turn.abort`).
-The status line shows each live worker's cost so far: `(2 live: BE-310 $3.10, BE-314 $1.20)`.
+The band and `/delegation` show each live worker's cost so far: `(2 live: BE-310 $3.10, BE-314 $1.20)`. The host status line is retired.
+
+## Rationing the week
+
+The host reports each rate-limit window (`seven_day`, `five_hour`) as a percent used and a reset time. The mod keeps one record per local day and window, and shows a meter next to `focus` in the prompt footer:
+
+    ██▉░░░░ 41% · day 3/7 · today 6.2/8.4 · on pace
+
+- The bar is seven cells for the seven-day window (a day each) or five for the five-hour one (an hour each), filled by the percent used.
+- `today a/b`: points of the window spent today, and today's allowance. With `rationDaily` 0 (the default) the allowance is what was left at the day's first reading, divided by the days to the reset. A number fixes it, and points earlier days left unspent show as `(+x)`.
+- The pace is `on pace`, `ahead by x` (more spent than the hours so far allow) or `over by x` (the allowance is gone).
+- `ration` picks the window: `seven_day` (default), `five_hour`, or `off` (no meter, no records).
+- `/delegation ration` prints the bar with the reset time, today's line and the days so far. `/delegation` carries one `ration:` line. The dashboard pane draws the bar in colour (green under the allowance, yellow within 10% over, red beyond; `?` for a day with no record) and the Spend tile names the window.
+- Day records are kept 14 days. Nothing else is stored.
 
 ## A worker's identity
 

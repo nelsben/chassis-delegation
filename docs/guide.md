@@ -38,7 +38,7 @@ card-to-merge flow is in [How it works](how-it-works.md).
 - The tier under each spawn, such as `tier=standard → sonnet (brief) · attempt 1/2`.
   Source: the header's `tier=`, else the caller's `model`, else the classifier.
   Log: `T-7: tier=economy picked by the brief header's tier= (no classify call)`.
-- The status line, `<n> workers · $<usd> · ctx <pct>%`.
+- The rationing meter next to `focus` in the prompt footer, `██▉░░░░ 41% · day 3/7 · today 6.2/8.4 · on pace` (see the spend doc; `/delegation ration` prints it). The host status line is retired.
 - Toasts: `debrief running in the background`, `T1 63/63`, `started queued OPS-3 (waited 4 min)`.
 
 While anything runs or is owed, the system prompt carries a "Delegation state" section (at most 40 lines) that survives compaction.
@@ -132,7 +132,7 @@ One committed file per domain, `<cardDir>/lessons/<domain>.md`, appended to ever
 | The band above the prompt | only while a worker is live, a spawn is queued or a verdict is owed | `delegation · 2 live: OPS-165, OPS-160 · 1 queued · $4.12 · ctx 11% ·`, a 30-minute sparkline and `[ details ]`; hover for the first three blocks |
 | The pane | `/delegation dashboard` or `[ details ]` | all four blocks, "Across sessions" (six sparklines, 14 sessions), open items |
 
-The band replaces the host status line (`2 workers · $… · ctx …`). Turn it off with `/delegation config dashboardBand false` (default on).
+The band is off by default. Turn it on with `/delegation config dashboardBand on`.
 
 The four blocks:
 

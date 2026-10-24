@@ -261,8 +261,25 @@
     "dashboardBand": {
       "type": "boolean",
       "title": "Dashboard band",
-      "description": "Draw the delegation band above the prompt while a worker is live, queued or owed a verdict; hover it for the spend chart and worktrees, [ details ] opens the pane. Off hides the band; /delegation dashboard still opens the pane",
-      "default": true
+      "description": "Draw the delegation band above the prompt while a worker is live, queued or owed a verdict; hover it for the spend chart and worktrees, [ details ] opens the pane. Off (the default): no band above the prompt; /delegation dashboard still opens the pane",
+      "default": false
+    },
+    "ration": {
+      "type": "string",
+      "title": "Rationing meter (seven_day | five_hour | off)",
+      "description": "The rate-limit window the footer meter reads: a bar of the window (a cell per day, or per hour for five_hour), today's share of what is left and whether today is on pace. seven_day or five_hour name the window; off draws no meter. /delegation ration prints the report",
+      "options": [
+        "seven_day",
+        "five_hour",
+        "off"
+      ],
+      "default": "seven_day"
+    },
+    "rationDaily": {
+      "type": "number",
+      "title": "Daily allowance (window points)",
+      "description": "A fixed share of the window to spend each day, in points of the window (0 to 100); what an earlier day left unspent carries into today. 0 = pace to the reset: the points left over the days left",
+      "default": 0
     },
     "modelGlyphs": {
       "type": "string",
