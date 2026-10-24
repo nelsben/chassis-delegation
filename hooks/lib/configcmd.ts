@@ -235,6 +235,10 @@ export function inEffect(field: string, values: Readonly<Record<string, unknown>
       return empty(v) ? builtinGlyphText() : undefined
     case 'delegateOnly':
       return v !== 'off' ? 'only while the main assistant runs on opus or fable' : undefined
+    case 'dashboardBand':
+      return v === true ? undefined : 'off: no band above the prompt'
+    case 'rationDaily':
+      return values.ration === 'off' ? 'unused (ration is off)' : v === 0 ? 'pace to the reset: the points left over the days left' : undefined
     case 'defaultBudget':
       return typeof v === 'number' && (v < 1 || !Number.isInteger(v)) ? String(v >= 1 ? Math.floor(v) : 3) : undefined
     default:

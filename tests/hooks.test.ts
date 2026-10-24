@@ -139,7 +139,7 @@ describe('agent.spawn: tier selection, ledger, store', () => {
     expect(w.toasts.filter(t => t.startsWith('sonnet now resolves'))).toHaveLength(1)
     // the transcript notice goes through session.append (live only: the kit refuses a plugin's append)
     expect(delivered(w)).toContain('sonnet now resolves to claude-sonnet-5-5')
-    expect(w.statuses.at(-1)).toBe('0 workers · $1.50 · ctx 12%')
+    expect(w.statuses.at(-1)).toBeUndefined() // MOD-128: the status line is retired
   })
 })
 
@@ -2200,14 +2200,6 @@ describe('GH-106: a per-attempt spend ceiling', () => {
     expect(rows(w)[0]?.text.split('\n')[0]).toContain('usd=~3.00')
   })
 
-  test('the status line names each live worker with its running cost', { options: { ...GM } }, async ($, on) => {
-    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(), agentId: 'agent-6', listAgents: true })
-    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
-    await $.turn.complete(turnInput('agent-6', 'working', turnUsage(600_000, 100_000))) // $2.20: warned, carries on
-    w.agents[0]!.status = 'running'
-    await w.clock.advance(60_000) // the status line's tick
-    expect(w.statuses.at(-1)).toContain('(1 live: T-6 $2.20)')
-  })
 })
 
 describe('GH-111: the card tool', () => {

@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { aliasLines, driftMessage, statusText, shouldClearStatus, newAgentTypes, parseCandidateIds, STATUS_IDLE_MS } from '../hooks/lib/watch'
+import { aliasLines, driftMessage, newAgentTypes, parseCandidateIds } from '../hooks/lib/watch'
 
 describe('alias drift', () => {
   test('a changed id is news; a first sighting or the same id is not', () => {
@@ -39,18 +39,5 @@ describe('new agent types', () => {
   test('candidate ids', () => {
     expect(parseCandidateIds(' claude-a , ,claude-b ')).toEqual(['claude-a', 'claude-b'])
     expect(parseCandidateIds('')).toEqual([])
-  })
-})
-
-describe('status line', () => {
-  test('text', () => {
-    expect(statusText({ running: 2, usd: 3.456, pct: 41 })).toBe('2 workers · $3.46 · ctx 41%')
-    expect(statusText({ running: 1, usd: undefined, pct: undefined })).toBe('1 worker · $– · ctx –')
-  })
-  test('cleared when nothing runs and cost has not moved for ten minutes', () => {
-    expect(STATUS_IDLE_MS).toBe(600000)
-    expect(shouldClearStatus({ running: 0, now: 700000, lastCostChangeAt: 0 })).toBe(true)
-    expect(shouldClearStatus({ running: 0, now: 500000, lastCostChangeAt: 0 })).toBe(false)
-    expect(shouldClearStatus({ running: 1, now: 9e9, lastCostChangeAt: 0 })).toBe(false)
   })
 })

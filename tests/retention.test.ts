@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { MIB, PRESSURE_BYTES, RETAIN_MS, TARGET_BYTES, prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from '../hooks/lib/retention'
+import { MIB, PRESSURE_BYTES, RATION_RETAIN_MS, RETAIN_MS, TARGET_BYTES, prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from '../hooks/lib/retention'
 
 // MOD-89 (#157, #159): what the mod deletes from its store so a set is never refused at the host's 4 MiB cap.
 const NOW = 100 * 24 * 60 * 60 * 1000
@@ -123,6 +123,17 @@ describe('MOD-89: the retention plan', () => {
     const entries: StoreEntry[] = []
     for (let i = 0; i < 40; i++) entries.push(spawn(`k${i}`, `T-${i}`, NOW - DAY, { pad }), attempts(`T-${i}`, NOW - DAY, 'pending', `k${i}`))
     expect(plan(entries).delete).toEqual([])
+  })
+
+  test('MOD-128: a ration day record is kept 14 days by its lastAt, groups under no task, and an open task never holds it', () => {
+    const day = (name: string, lastAt: number): StoreEntry => [`delegation.ration.seven_day.${name}`, { startPct: 0, startAt: lastAt - 1000, resetsAt: lastAt + DAY, lastPct: 5, lastAt, used: 5 }]
+    const entries: StoreEntry[] = [day('old', NOW - 15 * DAY), day('mid', NOW - 10 * DAY), day('new', NOW - DAY)]
+    expect(RATION_RETAIN_MS).toBe(14 * DAY)
+    expect(plan(entries).delete).toEqual(['delegation.ration.seven_day.old'])
+    expect(plan(entries, ['seven_day']).delete).toEqual(['delegation.ration.seven_day.old'])
+    // under store pressure a ration record younger than 14 days still stays: it is no task's
+    const big: StoreEntry = ['delegation.junk', 'x'.repeat(PRESSURE_BYTES)]
+    expect(plan([...entries, big]).delete).toEqual(['delegation.ration.seven_day.old'])
   })
 
   test('the store is measured as the host would: the compact JSON text of the whole object, in UTF-8 bytes', () => {

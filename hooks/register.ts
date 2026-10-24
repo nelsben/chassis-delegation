@@ -17,7 +17,7 @@ import { callKind, driveCall, driveLines, driveOutput, driveStep, driveTurn, emp
 import { saysWaiting, waitStep, WAIT_STALL_DEFAULT_MIN, type WaitState } from './lib/waitstate'
 import { bandTree } from './lib/band'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
-import { paneTree, type PaneTable } from './lib/pane'
+import { paneTree, type PaneTable, type PaneView } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
 import { checkArgv, isSha, refusedLine, type AllowConfig, type MergeCtx } from './lib/allow'
@@ -275,7 +275,8 @@ import {
   type WorkPresent,
 } from './lib/verify'
 import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
-import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds, shouldClearStatus, statusText } from './lib/watch'
+import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds } from './lib/watch'
+import { allowance, bar, cellDay, dayIndex, dayKey, dayRecord, daySegments, inWindow, pace, parseRecord, rationKey, rationReport, rationText, resetsIn, segments, surplus, type DayRecord, type Window as RationWindow } from './lib/ration'
 import { MOD_VERSION } from './lib/version'
 import {
   cardDiff,
@@ -329,7 +330,6 @@ type Host = EngineInterface
 
 const PLUGIN = 'chassis-delegation'
 const WORKERS = { plugin: 'chassis-delegation', key: 'workers' } as const
-const STATUS = { plugin: 'chassis-delegation', key: 'status' } as const
 const LAST_VERDICT = { plugin: 'chassis-delegation', key: 'lastVerdict' } as const
 const QUEUE = { plugin: 'chassis-delegation', key: 'queue' } as const
 const SPEND = { plugin: 'chassis-delegation', key: 'spend' } as const
@@ -401,7 +401,6 @@ const K = {
 }
 
 const PROBE_EVERY_MS = 24 * 60 * 60 * 1000
-const STATUS_EVERY_MS = 60 * 1000
 const MIN_MS = 60 * 1000
 const HOUR_MS = 60 * MIN_MS
 const RECENT_CAP = 50
@@ -535,8 +534,12 @@ type Config = {
   evalAgent: string
   ledgerFile: boolean
   gitGuard: boolean
-  /** GH-112: the band above the prompt. */
+  /** GH-112: the band above the prompt. MOD-128: off unless the option is true. */
   dashboardBand: boolean
+  /** MOD-128: the rate-limit window the footer meter reads, or off. */
+  ration: 'seven_day' | 'five_hour' | 'off'
+  /** MOD-128: a fixed daily allowance in window points; 0 = pace to the reset. */
+  rationDaily: number
   /** MOD-78: the glyph per model on every row: a map, or 'off'; `glyphsText` is the option as written. */
   glyphs: GlyphMap | 'off'
   glyphsText: string
@@ -640,7 +643,9 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       evalAgent: str('evalAgent') || DEFAULT_DEBRIEF_AGENT,
       ledgerFile: o.ledgerFile !== false,
       gitGuard: o.gitGuard !== false,
-      dashboardBand: o.dashboardBand !== false,
+      dashboardBand: o.dashboardBand === true,
+      ration: o.ration === 'off' || o.ration === 'five_hour' ? o.ration : 'seven_day',
+      rationDaily: Math.min(100, num('rationDaily', 0)),
       glyphs: parseGlyphs(str('modelGlyphs')),
       glyphsText: str('modelGlyphs'),
       classifierSecondOpinion: o.classifierSecondOpinion !== false,
@@ -724,20 +729,14 @@ const remembered = new Map<string, SpawnRecord>()
 const REMEMBER_CAP = 500
 const offered = new Set<string>()
 let seedingTypes = false
-let delegated = false
 /** GH-106: the turn id a subagent's `turn.start` carried (the engine gives none today), by agentId. */
 const turnOf = new Map<string, string>()
-let lastUsd: number | undefined
-/** MOD-81: the newest session dollars any read of $.session.usage() gave the mod, with when: the band and the status line both show this. */
+/** MOD-81: the newest session dollars any read of $.session.usage() gave the mod, with when: the band shows this. */
 let latestUsage: { usd: number; at: number } | undefined
-/** MOD-81: when the ui.render handler last drew the band; undefined once it declines to. */
-let bandDrawnAt: number | undefined
 async function noteUsd($: Host, usd: number | undefined, at?: number): Promise<void> {
   if (usd === undefined) return
   latestUsage = { usd, at: at ?? (await now($)) }
 }
-let lastCostChangeAt = 0
-let statusTimer: { cancel: () => void } | undefined
 let sampleTimer: { cancel: () => void } | undefined
 /** GH-112: `git worktree list --porcelain`, kept for 15 s so a redraw does not run git. */
 let worktreeCache: { at: number; text: string } | undefined
@@ -1196,6 +1195,140 @@ function redraw($: Host) {
   }
 }
 
+// ---- MOD-128: the rationing meter ----------------------------------------------------
+type HostLimit = { kind: string; percentUsed: number; resetsAt?: number }
+/** The latest window readings the host pushed, resetsAt in ms (the host sends epoch seconds). */
+let rateNow: RationWindow[] = []
+/** The readings the store last took, as a signature: a measure that changes nothing writes nothing. */
+let rateSig = ''
+/** The first measure of a session also reads $.session.usage(), so the footer does not wait for a whole-point move. */
+let rateFirstDone = false
+/** The meter's model, kept 5 s so a redraw does not read the store; a fold clears it. */
+let rationCache: { at: number; key: string; model: RationModel | undefined } | undefined
+
+const windowsOf = (rl: readonly HostLimit[] | undefined): RationWindow[] =>
+  (rl ?? []).flatMap(r =>
+    r && typeof r.kind === 'string' && Number.isFinite(r.percentUsed) && typeof r.resetsAt === 'number' && Number.isFinite(r.resetsAt)
+      ? [{ kind: r.kind, percentUsed: r.percentUsed, resetsAt: Math.round(r.resetsAt * 1000) }]
+      : [],
+  )
+
+/** session.measure: fold each reported window into today's record, keep the readings, redraw the footer. */
+async function foldRation($: Host, reported: readonly HostLimit[] | undefined): Promise<void> {
+  const windows = windowsOf(reported)
+  if (!rateFirstDone) {
+    rateFirstDone = true
+    try {
+      for (const w of windowsOf((await $.session.usage()).rateLimits as readonly HostLimit[] | undefined)) if (!windows.some(x => x.kind === w.kind)) windows.push(w)
+    } catch {
+      // the event's readings stand alone
+    }
+  }
+  if (windows.length === 0) return
+  const sig = JSON.stringify(windows.map(w => [w.kind, w.percentUsed, w.resetsAt]))
+  if (sig === rateSig) return
+  rateSig = sig
+  rateNow = [...rateNow.filter(x => !windows.some(w => w.kind === x.kind)), ...windows]
+  rationCache = undefined
+  const t = await now($)
+  for (const w of windows) {
+    const key = rationKey(w.kind, t)
+    const prev = parseRecord(await storeGet($, key))
+    const next = dayRecord(prev, w, t)
+    if (JSON.stringify(next) !== JSON.stringify(prev)) await storeSet($, key, next)
+  }
+  redraw($)
+}
+
+type RationModel = {
+  window: RationWindow
+  record: DayRecord
+  allow: number
+  extra: number
+  pace: string
+  now: number
+  idx: number
+  /** The records of the window's days in cell order (a seven-day window only); today's is the model's own. */
+  days: (DayRecord | undefined)[]
+  shares: (r: DayRecord | undefined) => number
+}
+
+/** The chosen window's meter now, or undefined: ration off, no reading, or a reading whose window has reset. */
+async function rationModel($: Host): Promise<RationModel | undefined> {
+  if (cfg.ration === 'off') return undefined
+  const window = rateNow.find(w => w.kind === cfg.ration)
+  const t = await now($)
+  if (!window || window.resetsAt <= t) return undefined
+  const key = `${cfg.ration}|${cfg.rationDaily}|${window.percentUsed}|${window.resetsAt}`
+  if (rationCache && rationCache.key === key && t - rationCache.at < 5000) return rationCache.model
+  const segs = segments(window.kind)
+  const idx = dayIndex(t, window.resetsAt, segs)
+  const prev = parseRecord(await storeGet($, rationKey(window.kind, t)))
+  const record = dayRecord(prev, window, t)
+  const days: (DayRecord | undefined)[] = []
+  if (segs === 7) {
+    for (let cell = 1; cell < idx; cell++) {
+      const r = parseRecord(await storeGet($, `delegation.ration.${window.kind}.${cellDay(t, idx, cell)}`))
+      days.push(inWindow(r, window.resetsAt) ? r : undefined)
+    }
+  }
+  const option = { rationDaily: cfg.rationDaily }
+  const extra = surplus(days.filter((r): r is DayRecord => r !== undefined), cfg.rationDaily)
+  const allow = allowance(record, option) + extra
+  const model: RationModel = {
+    window,
+    record,
+    allow,
+    extra,
+    pace: pace(record, allow, t),
+    now: t,
+    idx,
+    days: [...days, record],
+    shares: r => (cfg.rationDaily > 0 ? cfg.rationDaily : r ? allowance(r, option) : allow),
+  }
+  rationCache = { at: t, key, model }
+  return model
+}
+
+const rationLabel = (m: RationModel): string => rationText(m.window, m.record, m.allow, m.pace, m.now, m.extra)
+
+/** `/delegation ration`: the bar line with the reset, today's line, and the window's days so far. */
+async function rationReportText($: Host): Promise<string> {
+  if (cfg.ration === 'off') return 'ration: off (turn it on with /delegation config ration seven_day)'
+  const m = await rationModel($)
+  if (!m) return `ration: no reading yet for the ${cfg.ration} window (the host sends it after a turn)`
+  return rationReport(m.window, m.record, m.allow, m.pace, m.now, m.days, m.extra)
+}
+
+/** The `/delegation` summary's one `ration:` line; none without a reading. */
+async function rationSummary($: Host): Promise<string[]> {
+  try {
+    const m = await rationModel($)
+    return m ? [`ration: ${rationLabel(m)}`] : []
+  } catch {
+    return []
+  }
+}
+
+/** The Spend tile's windows: the chosen one when the host reported it, else every one reported. */
+const rateLimitsShown = (): { kind: string; percentUsed: number }[] => {
+  const chosen = rateNow.filter(w => w.kind === cfg.ration)
+  return (chosen.length > 0 ? chosen : rateNow).map(w => ({ kind: w.kind, percentUsed: Math.round(w.percentUsed) }))
+}
+
+/** What the pane draws under the Spend tile: the day cells (a seven-day window), the bar, and `59% left · resets 2d 4h`. */
+async function rationPane($: Host): Promise<PaneView['ration']> {
+  const m = await rationModel($)
+  if (!m) return undefined
+  const segs = segments(m.window.kind)
+  const cells = segs === 7 ? daySegments(Array.from({ length: segs }, (_, i) => m.days[i]), m.idx, m.shares) : undefined
+  return {
+    ...(cells ? { cells } : {}),
+    text: `${Math.max(0, 100 - Math.round(m.window.percentUsed))}% left · resets ${resetsIn(m.window.resetsAt - m.now)}`,
+    bar: bar(m.window.percentUsed, segs),
+  }
+}
+
 async function allRecords($: Host): Promise<AttemptRecord[]> {
   // the store is shared with every session on the machine, so a write elsewhere shows within RECORDS_TTL_MS
   const t = await now($)
@@ -1541,72 +1674,14 @@ function scheduleSample($: Host, ms: number) {
   }
 }
 
-// ---- status line ------------------------------------------------------------
-async function refreshStatus($: Host) {
-  if (!delegated) return
-  let running = 0
-  try {
-    running = (await $.agent.list()).filter(a => a.status === 'running').length
-  } catch {
-    running = 0
-  }
-  let pct: number | undefined
-  let usd: number | undefined
+// ---- usage ------------------------------------------------------------------
+/** The session's dollars, noted for the band and the dashboard. MOD-128: the host status line is retired; nothing is pinned. */
+async function noteUsage($: Host) {
   try {
     const u = await $.session.usage()
-    pct = u.context.percent
-    usd = u.cost?.usd
+    await noteUsd($, u.cost?.usd, await now($))
   } catch {
     // leave them unknown
-  }
-  const t = await now($)
-  await noteUsd($, usd, t)
-  if (usd !== lastUsd) {
-    lastUsd = usd
-    lastCostChangeAt = t
-  }
-  if (shouldClearStatus({ running, now: t, lastCostChangeAt })) {
-    $.ui.status(undefined)
-    statusTimer?.cancel()
-    statusTimer = undefined
-    delegated = false
-    try {
-      await $.state.set(STATUS, '')
-    } catch {
-      // view only
-    }
-    return
-  }
-  const liveAll = await liveState($)
-  const liveNow = liveAll.workers
-  // MOD-81: one meter. While the band is drawn it carries the workers, the dollars and the context, so the host line is cleared
-  if (cfg.dashboardBand && bandDrawnAt !== undefined && t - bandDrawnAt <= STATUS_EVERY_MS && isActive({ live: liveNow.length, queued: liveAll.queued, owed: liveAll.pending.length })) {
-    $.ui.status(undefined)
-    try {
-      await $.state.set(STATUS, '')
-    } catch {
-      // view only
-    }
-    armStatusTimer($)
-    return
-  }
-  const text = statusText({ running, usd, pct }) + (liveNow.length > 0 ? ` · (${liveNow.length} live: ${(await liveLabels($, liveNow)).join(', ')})` : '')
-  $.ui.status(text)
-  try {
-    await $.state.set(STATUS, text)
-  } catch {
-    // view only
-  }
-  armStatusTimer($)
-}
-function armStatusTimer($: Host) {
-  if (!statusTimer) {
-    try {
-      // a worker killed without a turn.complete frees its slot: the next prompt's state section says ready (MOD-12)
-      statusTimer = $.clock.every(STATUS_EVERY_MS, () => void refreshStatus($))
-    } catch {
-      statusTimer = undefined
-    }
   }
 }
 
@@ -4684,7 +4759,7 @@ async function verdictFromLedger($: Host, task: string, subtask: string): Promis
   const shown = deliveryFor(cfg.verbosity, rendered).row ?? rendered.line
   // the tool's answer is the row: a later hand-back of the same attempt posts no second one
   if (await claimPost($, spawn)) await storeSet($, K.postedRow(await attemptKey($, spawn)), shown)
-  await refreshStatus($)
+  await noteUsage($)
   return { kind: 'judged', text: shown }
 }
 
@@ -5905,6 +5980,7 @@ async function statusReport($: Host): Promise<string> {
     '',
     ...(split.hasBrain ? [brainLine(split.summary)] : []),
     ...(split.hasEdits ? [`brain edits: ${split.summary.edits}`] : []),
+    ...(await rationSummary($)),
     ...driveLines(await readDrive($)),
     `mod: chassis-delegation ${MOD_VERSION} loaded from ${$.plugin.root}`,
     ...(await storeStatusLines($)),
@@ -6488,7 +6564,6 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
     // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
     if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t }, await sessionIdOf($)))
-    delegated = true
     // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
     if (s?.stopped) {
       debug($, `${label}: started; its views skipped (the hook was ${s.stopped === 'abort' ? 'abandoned' : 'near its budget'})`)
@@ -6516,8 +6591,8 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     await setWorkers($, list => [...list, { task, subtask, attempt, kind: 'spawn', tier, alias, ...(res.agentId ? { agentId: res.agentId } : {}), verdict: 'pending', at: t }])
     // MOD-74: a briefed worker's model is said where the person looks, once it has started
     if (!adhoc) await postStarted($, { label, task, repo: other?.path, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started' })
-    // MOD-92: the status line walks every agent's records and need not decide the spawn: the hook refreshes it once the next decision may run
-    if (!s) await refreshStatus($)
+    // MOD-92: the usage read need not decide the spawn: the hook makes it once the next decision may run
+    if (!s) await noteUsage($)
     return res
   } finally {
     // the slot is held by the record (and $.agent.list) from here on
@@ -6658,8 +6733,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
   await storeSet($, K.spawn(key), spawn)
   if (res.agentId) await storeSet($, K.agent(res.agentId), key)
   if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
-  delegated = true
-  if (!s) await refreshStatus($)
+  if (!s) await noteUsage($)
   return res
 }
 
@@ -6851,7 +6925,7 @@ export const register: Register = (on, opts) => {
         return undefined
       }
     }
-    return decideInBudget($, next.signal, remaining, id, s => (marker ? decideReview($, asked, marker, start, s) : decideSpawn($, asked, start, s)), () => refreshStatus($))
+    return decideInBudget($, next.signal, remaining, id, s => (marker ? decideReview($, asked, marker, start, s) : decideSpawn($, asked, start, s)), () => noteUsage($))
   })
 
   // ---- every tool call: the worker's SubagentHandback text; denials as friction (5E) ---
@@ -6998,7 +7072,7 @@ export const register: Register = (on, opts) => {
     const rendered = await finalize($, base, text, { tokens, model })
     // a cardless report is judged like any other (GH-1 item 2); an ad hoc no-report stays quiet
     const row = sideEffects($, rendered, base.adhoc && !(isCardless(base) && extractReport(text) !== undefined))
-    await refreshStatus($)
+    await noteUsage($)
     // MOD-12: a worker's slot may be free now: the verdict row carries `ready:` for the queued task the brain spawns next
     const ready = await readyRows($, agentId)
     const carried = row === undefined ? ready : [[row, ...ready].join('\n')]
@@ -7094,7 +7168,7 @@ export const register: Register = (on, opts) => {
       armIdle($)
       await flushWakes($)
     }
-    await refreshStatus($)
+    await noteUsage($)
     return out
   })
 
@@ -7168,6 +7242,12 @@ export const register: Register = (on, opts) => {
 
   // ---- session.start: the commands and tools, the repo file, agent types, probes -------
   on('session.start', async ($, e, next) => {
+    // MOD-128: the host status line is retired; this clears a line an earlier version pinned
+    try {
+      $.ui.status(undefined)
+    } catch {
+      // a view only
+    }
     try {
       await $.command.register({
         name: 'dispatch',
@@ -7248,8 +7328,27 @@ export const register: Register = (on, opts) => {
   })
 
   on('session.measure', async ($, e, next) => {
-    await refreshStatus($)
+    try {
+      await foldRation($, (e as unknown as { rateLimits?: readonly HostLimit[] }).rateLimits)
+    } catch (err) {
+      debug($, `ration not folded: ${String(err)}`)
+    }
+    await noteUsage($)
     return next(e)
+  })
+
+  // MOD-128: the meter is a mode label at the right of the prompt footer, after the host's own
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    try {
+      const m = await rationModel($)
+      if (!m) return next(e)
+      const el = e as unknown as { props?: { modes?: unknown } }
+      const modes = Array.isArray(el.props?.modes) ? (el.props?.modes as unknown[]) : []
+      return next({ ...(el as object), props: { ...el.props, modes: [...modes, rationLabel(m)] } } as never)
+    } catch (err) {
+      debug($, `ration label not drawn: ${String(err)}`)
+      return next(e)
+    }
   })
 
   // ---- /dispatch and the dispatch tool: two doors, one function (2A) --------------
@@ -7269,6 +7368,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'debrief post' || arg.startsWith('debrief post ')) return { text: await runDebriefPost($, arg.slice('debrief post'.length)) }
     if (arg === 'lesson' || arg.startsWith('lesson ')) return { text: await runLesson($, arg.slice('lesson'.length)) }
     if (arg === 'config' || arg.startsWith('config ')) return { text: await runConfig($, arg.slice('config'.length)) }
+    if (arg === 'ration') return { text: await rationReportText($) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'merge' || arg.startsWith('merge ')) return { text: await runMerge($, parseMergeArgs(arg.slice('merge'.length))) }
     if (arg === 'dashboard') {
@@ -7292,7 +7392,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => ({ result: await runVerdict($, e as unknown as Record<string, unknown>) }))
@@ -7303,14 +7403,12 @@ export const register: Register = (on, opts) => {
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    bandDrawnAt = undefined
     if (!cfg.dashboardBand || e.props.hasSurvey) return next(e)
     try {
       const { view } = await liveModel($)
       if (!isActive(view)) return next(e)
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
       const tree = bandTree(p, view, pickScheme(e), e.props.bodyColumns, () => void $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })) as never
-      bandDrawnAt = await now($)
       return tree
     } catch (err) {
       debug($, `band not drawn: ${String(err)}`)
@@ -7332,8 +7430,9 @@ export const register: Register = (on, opts) => {
         }),
       ]
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      const blocks = blocksFor({ current: metricsFromRecords(mine, since), history: [metricsFromRecords(mine, since)], driveLines: driveLines(await readDrive($)) })
-      return paneTree(p, { blocks, open: openItemLines(items, view.now, !cfg.wakeOnVerdict, glyphOf), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e) }, () => void $.ui.close({ id: DASH_PANE })) as never
+      const blocks = blocksFor({ current: metricsFromRecords(mine, since), history: [metricsFromRecords(mine, since)], rateLimits: rateLimitsShown(), driveLines: driveLines(await readDrive($)) })
+      const ration = await rationPane($)
+      return paneTree(p, { blocks, open: openItemLines(items, view.now, !cfg.wakeOnVerdict, glyphOf), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e), ...(ration ? { ration } : {}) }, () => void $.ui.close({ id: DASH_PANE })) as never
     } catch (err) {
       debug($, `pane not drawn: ${String(err)}`)
       return next(e)

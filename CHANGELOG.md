@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **A rationing meter in the prompt footer shows the week's rate-limit window, today's share and the pace (MOD-128).** Next to `focus` the footer now reads `██▉░░░░ 41% · day 3/7 · today 6.2/8.4 · on pace`: a bar of the window (a cell a day for `seven_day`, an hour for `five_hour`), the share of what is left that today may use, and whether today is on pace. The mod keeps one record per local day and window for 14 days. New options `ration` (`seven_day` default, `five_hour`, `off`) and `rationDaily` (points; `0` paces to the reset). `/delegation ration` prints the report, `/delegation` gains a `ration:` line, the pane draws the bar in colour and the Spend tile names the window.
+
+- **The host status line is retired and `dashboardBand` now defaults to off (MOD-128).** The status line text and its refresh timer are gone; the mod clears the line once at session start. The band above the prompt no longer draws unless `dashboardBand` is on (`/delegation config dashboardBand on`); the config view says `off: no band above the prompt`.
+
 ## 0.9.22 — 2026-10-23
 
 - **The verdict row keeps `next=` last: `allow` rides inside it, and `/delegation config` names `briefLocal`'s default (MOD-126, follow-up to MOD-124).** The `allow` clause was appended after `next=`, so a reader scanning for `next=` met it mid-row. Now the quiet line carries `allow <a,b>` after the amend clauses and before `next=`, and the full verdict line carries ` · allow=<a,b>` before ` · next=`; with no allow ids both rows are byte-identical to before. The config view shows `none: no local rules` for an empty `briefLocal`, as `briefTemplate` shows its default. A test pins that a repo with neither `briefLocal` nor a card `allow:` renders the same brief as one whose `briefLocal` names a missing file. No new option.

@@ -7,6 +7,8 @@ export const MIB = 1024 * 1024
 export const STORE_CAP_BYTES = 4 * MIB
 /** A closed task's records are kept this long after their newest timestamp. */
 export const RETAIN_MS = 7 * 24 * 60 * 60 * 1000
+/** MOD-128: a rationing day record (`delegation.ration.<kind>.<day>`) is kept this long after its lastAt, and never belongs to a task. */
+export const RATION_RETAIN_MS = 14 * 24 * 60 * 60 * 1000
 /** Over this, closed records younger than RETAIN_MS go too, oldest first ... */
 export const PRESSURE_BYTES = 3.5 * MIB
 /** ... until the store is under this. */
@@ -64,6 +66,7 @@ const SPAWN = `${P}spawn.`
 const AGENT = `${P}agent.`
 const NAME = `${P}agentName.`
 const COST = `${P}cost.`
+const RATION = `${P}ration.`
 
 /** The task id of a task label or key: `T-1/api`, `T-1@replay-ab12`, `T-1:1:2`, `T-1@/other` are all T-1. */
 export const taskOfLabel = (label: string): string => label.split(/[/@:]/)[0] ?? label
@@ -134,6 +137,7 @@ function metas(entries: readonly StoreEntry[]): Meta[] {
     else if (BY_ATTEMPT.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_TASK.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_BRIEF.some(p => key.startsWith(p))) m = withTask(taskOfBrief(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
+    else if (key.startsWith(RATION)) return { key, bytes, ...(ownTs(value) !== undefined ? { ts: ownTs(value) as number } : {}) }
     else return { key, bytes } // session-level and global keys: never the plan's
     return { key, bytes, ...(m.task ? { task: m.task } : {}), ...(m.ts !== undefined ? { ts: m.ts } : {}) }
   })
@@ -163,7 +167,7 @@ export function retentionPlan(input: RetentionInput): RetentionPlan {
   const before = storeBytes(entries)
   const open = openTasks(entries, input.open, now)
   const closed = metas(entries).filter(m => m.ts !== undefined && !(m.task !== undefined && open.has(m.task)))
-  const old = closed.filter(m => now - (m.ts as number) > RETAIN_MS)
+  const old = closed.filter(m => now - (m.ts as number) > (m.key.startsWith(RATION) ? RATION_RETAIN_MS : RETAIN_MS))
   const gone = new Set(old.map(m => m.key))
   let count = entries.length
   let size = before
