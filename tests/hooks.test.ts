@@ -3,6 +3,7 @@ import type { TestBody } from 'claude-code/testing'
 import { world, spawnInput, turnInput, usage, agentResult, sessionStart, commandInput, DEBRIEF_TEMPLATE, composeInput, brainSpawn, spawnCallOf, workerCall, stepInput, paneProps, STEPPED_PAST, ROOT, SCRATCH, NOW, HOME, type RunAnswer, type SpawnCall } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 import { MOD_VERSION } from '../hooks/lib/version'
+import { DEFAULT_DEBRIEF_COOLDOWN_HOURS } from '../hooks/lib/cleanstop'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
 const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=25 budget=')
 
@@ -2647,6 +2648,9 @@ describe('MOD-6: /delegation debrief', () => {
 })
 
 describe('MOD-10: the debrief hand-back is validated against its window', () => {
+  // MOD-130: a quarter-hour cooldown and a five-minute idle wait (the built-ins are DEFAULT_DEBRIEF_COOLDOWN_HOURS and 20 minutes) keep the simulated idling short; each advance fires every pending timer, so time costs real time
+  const IDLE_MIN = 5
+  const COOL = Math.min(0.25, DEFAULT_DEBRIEF_COOLDOWN_HOURS)
   const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
   const FOLDER = `${ROOT}/.delegation/debriefs`
   const DEBRIEF = `${FOLDER}/2026-10-10-mod-run.json`
@@ -2680,7 +2684,7 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
     expect(w.files.get(CRUMBS.replace(/\.jsonl$/, '.done'))).toBe('1\n')
   })
 
-  test('MOD-91 (#156): a debrief whose check fails twice starts no third time, says the stopped row once, and leaves .check.txt and .orig.json beside the debrief', { options: { autoEval: false } }, async ($, on) => {
+  test('MOD-91 (#156): a debrief whose check fails twice starts no third time, says the stopped row once, and leaves .check.txt and .orig.json beside the debrief', { options: { autoEval: false, debriefCooldownHours: COOL, debriefIdleMinutes: IDLE_MIN } }, async ($, on) => {
     const MIN = 60_000
     const HR = 60 * MIN
     const old = Array.from({ length: 10 }, () => JSON.stringify({ ts: '2026-10-08T09:00:00Z', kind: 'session_start', detail: {} }))
@@ -2691,7 +2695,7 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
     const idle = async (hours: number) => {
       await w.clock.advance(hours * HR)
       await $.turn.complete(mainT)
-      await w.clock.advance(20 * MIN)
+      await w.clock.advance(IDLE_MIN * MIN)
     }
     await $.session.start(sessionStart)
     await idle(0)
@@ -2700,13 +2704,13 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
     // the failed attempt started a moment ago: the cooldown holds, though the last passed debrief is old
     await idle(0)
     expect(w.spawns).toHaveLength(1)
-    await idle(7)
+    await idle(COOL)
     expect(w.spawns).toHaveLength(2)
     w.files.set(DEBRIEF, bad)
     await $.turn.complete(turnInput('agent-2', `Wrote ${DEBRIEF}`))
     expect(w.store.get('delegation.debrief.sess-1')).toMatchObject({ watermark: 1, failedChecks: { watermark: 10, count: 2 } })
-    await idle(7)
-    await idle(7)
+    await idle(COOL)
+    await idle(COOL)
     expect(w.spawns).toHaveLength(2)
     const stopped = 'debrief stopped: the check failed twice on the window from line 10; run /delegation debrief to retry by hand'
     expect(w.appended.map(a => a.text).join('\n').split(stopped)).toHaveLength(2)
