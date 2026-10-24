@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.25 — 2026-10-24
 
 - **The ration health bar moves from the prompt footer to the band above the prompt (MOD-133).** The footer label never showed on a client that does not draw that row. The band now draws the coloured seven-cell bar and one line, `59% left · resets 2d 4h · today 6.2/8.4 · on pace`, with the `[ details ]` button, whenever the chosen window has a reading and no survey is showing, with no worker figures. `dashboardBand: true` still adds the worker line and sparkline under it while a worker is active; `ration: off` draws nothing. The footer label is gone; `/delegation ration` and the `ration:` line are unchanged.
 
