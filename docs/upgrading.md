@@ -10,6 +10,15 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.28 to 0.9.29
+
+Changed: `review` now defaults to `on-frontier` and `delegateOnly` to `warn`, so frontier and premium cards get a fresh-context review and the brain guard shows one warning per turn. To turn either off, write `"review": "off"` or `"delegateOnly": "off"` in `.chassis-delegation.json`.
+Changed: the README's Why section cites Anthropic's delegation guidance and corrects three stale figures.
+Fixed: the price table matches the live pricing page (Sonnet 5 at $2/$10; Sonnet 5.5 cache reads at $0.10 per million tokens).
+Fixed: with `lanes`, a lane's own `doneWhen` is added to the shared one instead of replacing it.
+Fixed: a `repo=none` hand-back's gate runs in the checkout the worker ran in, not the output folder.
+Detail: [CHANGELOG 0.9.29](../CHANGELOG.md).
+
 ### From 0.9.27 to 0.9.28
 
 Nothing to do.
