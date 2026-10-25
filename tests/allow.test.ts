@@ -368,3 +368,53 @@ describe('MOD-75: the merge shapes, on only while /delegation merge runs', () =>
     ok(['git', '-C', R, 'worktree', 'list', '--porcelain'], MERGE)
   })
 })
+
+describe('MOD-152 (#246): git worktree lock / unlock, the two exact shapes', () => {
+  const X = '/Users/b/acme-app'
+  const OTHER = '/Users/b/other'
+  const REASON = 'chassis-delegation: verifier running; land after the verdict'
+  const lock = (dir: string, path: string, reason = REASON) => ['git', '-C', dir, 'worktree', 'lock', '--reason', reason, path]
+  const unlock = (dir: string, path: string) => ['git', '-C', dir, 'worktree', 'unlock', path]
+  const A: AllowConfig = { ...ALLOW, root: X, taskRepos: { 'T-1': { path: OTHER } } }
+  test('the exact shapes pass for the session repo, a replay, and a worktreeRoot', () => {
+    ok(lock(X, `${X}-T-1`), A)
+    ok(unlock(X, `${X}-T-1`), A)
+    ok(lock(`${X}/`, `${X}-T-2`), A)
+    ok(lock(X, `${X}-T-2-replay`), A)
+    ok(unlock(X, `/wt/acme-app-T-2`), { ...A, worktreeRoot: '/wt' })
+  })
+  test('a task that names another repo may lock and unlock in that repo only', () => {
+    ok(lock(OTHER, `${OTHER}-T-1`), A)
+    ok(unlock(OTHER, `${OTHER}-T-1`), A)
+    no(lock(OTHER, `${OTHER}-T-2`), A)
+    no(unlock(OTHER, `${OTHER}-T-1-replay`), A)
+    no(lock('/Users/b/elsewhere', '/Users/b/elsewhere-T-1'), A)
+  })
+  test('a wrong path is refused with a reason that names it', () => {
+    for (const p of [X, `${X}-T-1/inner`, `${X}/../x-T-1`, '/Users/b/other-T-9', `${X}-notanid`]) no(unlock(X, p), A)
+    const c = checkArgv(lock(X, '/etc/passwd'), A)
+    expect(c.ok).toBe(false)
+    expect(c.ok ? '' : c.reason).toContain('/etc/passwd')
+    no(lock(X, `${OTHER}-T-1`), A)
+  })
+  test('a wrong reason, --force, extra words or no -C are refused', () => {
+    const c = checkArgv(lock(X, `${X}-T-1`, 'because'), A)
+    expect(c.ok).toBe(false)
+    expect(c.ok ? '' : c.reason).toContain('because')
+    no(['git', '-C', X, 'worktree', 'lock', `${X}-T-1`], A)
+    no(['git', '-C', X, 'worktree', 'lock', '--force', '--reason', REASON, `${X}-T-1`], A)
+    no(['git', '-C', X, 'worktree', 'lock', '--reason', REASON, `${X}-T-1`, 'x'], A)
+    no(['git', '-C', X, 'worktree', 'unlock', '--force', `${X}-T-1`], A)
+    no(['git', '-C', X, 'worktree', 'unlock', `${X}-T-1`, `${X}-T-2`], A)
+    no(['git', 'worktree', 'lock', '--reason', REASON, `${X}-T-1`], A)
+    no(['git', 'worktree', 'unlock', `${X}-T-1`], A)
+    no(['git', '-C', X, '-C', X, 'worktree', 'unlock', `${X}-T-1`], A)
+    no(['git', '-C', X, 'worktree', 'remove', '--force', `${X}-T-1`], A)
+  })
+  test('the merge context passes the unlock of its one worktree, no other', () => {
+    const merge = { root: X, worktree: `${X}-T-1`, branch: 'agent/ops/T-1', baseRef: 'origin/main', id: 'T-1' }
+    ok(unlock(X, `${X}-T-1`), { ...ALLOW, merge })
+    no(unlock(X, '/etc/elsewhere'), { ...ALLOW, merge })
+    no(unlock(`${X}-T-1`, `${X}-T-1`), { ...ALLOW, merge })
+  })
+})

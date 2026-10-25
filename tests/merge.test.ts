@@ -250,6 +250,7 @@ describe('MOD-75: /delegation merge <id>', () => {
       ['git', '-C', ROOT, 'show', `${TWIN}:docs/cards/${CARD_NAME}`],
       ['git', '-C', ROOT, 'clean', '-q', '-f', '--', `docs/cards/${CARD_NAME}`],
       ['git', '-C', ROOT, 'pull', '--ff-only'],
+      ['git', '-C', ROOT, 'worktree', 'unlock', WT],
       ['git', '-C', ROOT, 'worktree', 'remove', WT],
       ['git', '-C', ROOT, 'branch', '-D', BRANCH],
     ])
@@ -316,6 +317,20 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(ran.some(a => / (clean|pull|worktree remove|branch -D) /.test(` ${a} `))).toBe(false)
     expect(w.files.get(LEDGER)).not.toContain('"kind":"merged"')
   })
+
+  for (const unlockExit of [0, 128]) {
+    test(`MOD-152 (#246): --finish on a locked worktree unlocks, then removes (unlock exits ${unlockExit})`, async ($, on) => {
+      const w = world(on, { files: files(), dirs, store, run: landed(markMerged(CARD), argv => (is(argv, 'git', '-C', ROOT, 'worktree', 'unlock', WT) ? { exitCode: unlockExit, stdout: '', stderr: unlockExit ? 'not locked' : '' } : undefined)) })
+      await $.session.start(sessionStart)
+      const from = w.runs.length
+      const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+      const ran = w.runs.slice(from).map(r => r.argv.join(' '))
+      const unlock = ran.indexOf(`git -C ${ROOT} worktree unlock ${WT}`)
+      expect(unlock).toBeGreaterThanOrEqual(0)
+      expect(ran.indexOf(`git -C ${ROOT} worktree remove ${WT}`)).toBe(unlock + 1)
+      expect(out.split('\n').at(-1)).toBe(`${ID} merged at ${TWIN}`)
+    })
+  }
 
   test('MOD-142: --finish --discard completes and notes what it discarded', async ($, on) => {
     const w = world(on, { files: files(), dirs, store, run: withStatus(EVIDENCE) })
