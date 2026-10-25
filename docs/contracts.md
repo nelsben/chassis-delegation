@@ -58,6 +58,8 @@ with the report line. Sections pick the mode (`{{#worktree}}`, `{{#here}}`, `{{#
 red-test lines; `{{#outdir}}` and `{{#scratch}}` render when named; `{{reportExtra}}` is the `artefacts=` and
 `metrics=` placeholders. A template without sections renders the same in every mode.
 
+**Where the verifier looks for a brief.** At the spawn, the first absolute `….brief.md` path in the prompt; failing that, the first relative one (`.delegation/briefs/T-1.brief.md`, with or without `./`), read from the spawn's folder, else the session root, and never one that climbs out of that folder with `..`. At the hand-back, a spawn left with no brief whose report names a `task=` (a plain name, as a store key) is checked for `<root>/.delegation/briefs/<task>.brief.md` (for a `subtask=` other than `main`, the inline header's `<task>.<subtask>.brief.md`); a file there whose header is for that task is the brief, and the attempt is recorded under the task. With none of the three, the hand-back is cardless (below).
+
 **Inline header.** A header in the Agent prompt works as a brief when the prompt names no `….brief.md` and the header
 has `task=`, `scope=` or `scope_globs=`, and `gate=` or `repo=none`. The mod writes it and the rest of the prompt to
 `<root>/.delegation/briefs/<task>.<subtask>.brief.md` (or `briefDir`), reuses a file already there, and verifies

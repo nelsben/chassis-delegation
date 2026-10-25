@@ -2,6 +2,7 @@ import { test, expect, describe } from 'claude-code/testing'
 import {
   parseHeader,
   findBriefPath,
+  resolveBriefPath,
   parseAmends,
   effectiveList,
   extractReport,
@@ -56,7 +57,6 @@ describe('header parse', () => {
   test('finds a .brief.md path the prompt names', () => {
     const p = 'Your brief is the file /private/tmp/s/scratchpad/briefs/MOD-001.brief.md. Read it whole.'
     expect(findBriefPath(p)).toBe('/private/tmp/s/scratchpad/briefs/MOD-001.brief.md')
-    expect(findBriefPath('see briefs/X.brief.md (relative)')).toBeUndefined()
     expect(findBriefPath('no file here')).toBeUndefined()
   })
 })
@@ -314,5 +314,28 @@ describe('MOD-98: a forbid entry with a space (#160)', () => {
     if (!c.ok) throw new Error(c.line)
     expect(c.scope).toEqual(['My Docs/n.md'])
     expect(c.scopeProse).toBeUndefined()
+  })
+})
+
+// MOD-135 (#222)
+const mod135prompt = (p: string) => `Your brief is ${p}. Read it whole, then follow it exactly.`
+describe('MOD-135: findBriefPath and resolveBriefPath', () => {
+  test('a relative path is found, with or without ./', () => {
+    expect(findBriefPath(mod135prompt('.delegation/briefs/T-1.brief.md'))).toBe('.delegation/briefs/T-1.brief.md')
+    expect(findBriefPath(mod135prompt('./.delegation/briefs/T-1.brief.md'))).toBe('./.delegation/briefs/T-1.brief.md')
+    expect(findBriefPath('Read `briefs/X.brief.md`.')).toBe('briefs/X.brief.md')
+    expect(findBriefPath('see (briefs/X.brief.md) now')).toBe('briefs/X.brief.md')
+    expect(findBriefPath('no file here')).toBeUndefined()
+    expect(findBriefPath('x.brief.mdx only')).toBeUndefined()
+  })
+  test('the absolute form wins when both appear', () => {
+    expect(findBriefPath('first .delegation/briefs/A.brief.md then /abs/B.brief.md')).toBe('/abs/B.brief.md')
+  })
+  test('a relative path resolves against the cwd, else the root; a climbing one is refused', () => {
+    expect(resolveBriefPath('/r/x.brief.md', '/w', '/root')).toBe('/r/x.brief.md')
+    expect(resolveBriefPath('.delegation/briefs/T.brief.md', '/w', '/root')).toBe('/w/.delegation/briefs/T.brief.md')
+    expect(resolveBriefPath('./.delegation/briefs/T.brief.md', undefined, '/root/')).toBe('/root/.delegation/briefs/T.brief.md')
+    expect(resolveBriefPath('../T.brief.md', '/w', '/root')).toBeUndefined()
+    expect(resolveBriefPath('a/../../T.brief.md', undefined, '/root')).toBeUndefined()
   })
 })

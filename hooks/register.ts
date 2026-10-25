@@ -64,6 +64,7 @@ import {
   extractAmendBlocks,
   extractReport,
   findBriefPath,
+  resolveBriefPath,
   inlineHeaderMissing,
   lacksLine,
   noBriefLine,
@@ -4368,6 +4369,45 @@ const reportTaskOf = (task: string | undefined): string | undefined => {
 }
 
 /**
+ * MOD-135 (#222): a spawn with no brief (ad hoc with no brief path, or a named brief it could not read) whose report
+ * names a task= that is a store key looks for `<root>/.delegation/briefs/<task>.brief.md` (the subtask file name when
+ * subtask= is not main). Found, and its header names that task, the spawn becomes that task's next attempt, judged
+ * against the brief as a dispatched one is. Nothing found leaves the spawn to the cardless path.
+ */
+async function briefForReport($: Host, spawn: SpawnRecord, report: ReturnType<typeof parseReport>): Promise<SpawnRecord | undefined> {
+  if (!spawn.adhoc || (spawn.briefPath !== undefined && spawn.noBrief === undefined)) return undefined
+  const task = reportTaskOf(report.task)
+  if (task === undefined) return undefined
+  const subtask = reportTaskOf(report.subtask) ?? 'main'
+  const name = subtask === 'main' ? `${task}.brief.md` : inlineBriefFileName(task, subtask)
+  if (name === undefined) return undefined
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const briefPath = `${root}/.delegation/briefs/${name}`
+  const text = await readText($, briefPath)
+  const header = text !== undefined ? parseHeader(text) : undefined
+  if (!header || header.task !== task) return undefined
+  const repo = header.repo?.startsWith('/') ? header.repo : undefined
+  const before = (await loadAttempts($, { task, repo })).filter(r => (r as HereRecord).adhoc !== true)
+  const attempt = nextAttempt(before, subtask)
+  const spend = spendOf(header)
+  const { noBrief: _noBrief, ...rest } = spawn
+  return {
+    ...rest,
+    task,
+    subtask,
+    adhoc: false,
+    attempt,
+    lineage: attempt,
+    briefPath,
+    purpose: header.purpose,
+    budget: parseBudget(header.budget, cfg.defaultBudget),
+    ...(spend !== undefined ? { spend } : {}),
+    resources: resourcesOf(header),
+    ...(repo ? { repo } : {}),
+  }
+}
+
+/**
  * GH-1 item 2: the git claims of a cardless report, checked in the spawn's
  * cwd (else the session root); scope, gate and red are unchecked (no brief).
  */
@@ -4459,6 +4499,15 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     const claimed: Partial<AttemptRecord> & HereFields = { files: reportFiles(report.files) }
     await saveAttempts($, spawn, patchRecord(await loadAttempts($, spawn), spawn.subtask, spawn.attempt, claimed, laneOf(spawn)))
   }
+  // MOD-135: a spawn with no brief whose report names a task with a brief in the root is judged against that brief
+  let adopted = false
+  if (report && !spawn.review) {
+    const found = await briefForReport($, spawn, report)
+    if (found) {
+      spawn = found
+      adopted = true
+    }
+  }
   const cardless = report !== undefined && isCardless(spawn)
   if (!block) verdict = 'no-report'
   else if (cardless) {
@@ -4530,7 +4579,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     const lane = laneOf(spawn)
     const held = await loadAttempts($, spawn)
     // MOD-94: an attempt whose record the store refused is judged on the record it would have had
-    const before = from && !attemptsFor(held, spawn.subtask, lane).some(r => r.attempt === spawn.attempt) ? [...held, await attemptOfSpawn($, spawn)] : held
+    const before = (from || adopted) && !attemptsFor(held, spawn.subtask, lane).some(r => r.attempt === spawn.attempt) ? [...held, await attemptOfSpawn($, spawn)] : held
     // A resume's own record has no model: it runs on its lineage's spawn.
     if (model === undefined) {
       model = attemptsFor(before, spawn.subtask, lane)
@@ -6311,7 +6360,9 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
   const t = await now($)
   spawnSeq += 1
   const key = e.tool_use_id || `plugin-${t}-${spawnSeq}`
-  const named = findBriefPath(e.prompt)
+  // MOD-135: a relative path is read from the spawn's folder, else the session root; one that climbs out is not read
+  const written = findBriefPath(e.prompt)
+  const named = written !== undefined ? resolveBriefPath(written, e.cwd, await $.session.root()) : undefined
   let briefText: string | undefined
   if (named) {
     try {
