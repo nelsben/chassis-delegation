@@ -83,13 +83,13 @@ export const CARD_TOOL = {
       resources: { type: 'array', items: { type: 'string' }, description: 'Exclusive resources the worker holds while it runs, e.g. ["blender-live"] (one live app with one open file): one plain word each. A card that names a resource a running worker holds waits in the queue until that worker hands back' },
       lanes: {
         type: 'array',
-        description: 'Fan-out: one card per lane, with sequential ids, the shared why, gate, tier, repo, resources and forbid, and each lane its own scope (and so its own output folder). Lanes whose scopes overlap are refused. Give the shared title/doneWhen as the umbrella; a lane without its own doneWhen takes the shared one',
+        description: 'Fan-out: one card per lane, with sequential ids, the shared why, gate, tier, repo, resources and forbid, and each lane its own scope (and so its own output folder). Lanes whose scopes overlap are refused. Give the shared title/doneWhen as the umbrella: every lane carries the shared doneWhen, and each lane\'s own doneWhen is added after it',
         items: {
           type: 'object',
           properties: {
             title: { type: 'string', description: 'One line that says what this lane delivers' },
             scope: { type: 'array', items: { type: 'string' }, description: "The lane's own globs or paths, its output folder first; disjoint from every other lane's" },
-            doneWhen: { type: 'array', items: { type: 'string' }, description: 'Checkable statements for this lane (default: the shared doneWhen)' },
+            doneWhen: { type: 'array', items: { type: 'string' }, description: 'Checkable statements for this lane, added after the shared doneWhen (which every lane carries)' },
           },
           required: ['title', 'scope'],
           additionalProperties: false,
@@ -261,7 +261,7 @@ ${done.map(d => `- ${d}`).join('\n')}
 /**
  * MOD-23: the cards one call writes. Without `lanes`, the one card `cardFromFields` renders. With them, one card per
  * lane, in order, ids N, N+1, … : the shared why, gate, tier, repo, resources, budget and forbid, and each lane its own
- * title, scope and (when it has one) doneWhen. A shared scope beside lanes is refused, and so are lanes whose scopes
+ * title, scope and (when it has one) doneWhen, added after the shared doneWhen. A shared scope beside lanes is refused, and so are lanes whose scopes
  * overlap, naming both: two workers must not own the same files. Nothing is returned to write on a refusal.
  */
 export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): NewCard[] | { error: string } {
@@ -297,9 +297,11 @@ export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): N
     }
   }
   const { lanes: _lanes, ...shared } = input
+  // MOD-162: every lane carries the shared doneWhen, and a lane's own statements follow it
+  const sharedDone = Array.isArray(shared.doneWhen) ? (shared.doneWhen as unknown[]).map(text).filter(Boolean) : []
   const made: NewCard[] = []
   for (const [i, lane] of lanes.entries()) {
-    const one = cardFromFields({ ...shared, title: lane.title, scope: lane.scope, ...(lane.doneWhen ? { doneWhen: lane.doneWhen } : {}) }, ctx, i)
+    const one = cardFromFields({ ...shared, title: lane.title, scope: lane.scope, ...(lane.doneWhen ? { doneWhen: [...sharedDone, ...lane.doneWhen] } : {}) }, ctx, i)
     if ('error' in one) return one
     made.push(one)
   }
