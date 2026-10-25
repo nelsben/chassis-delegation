@@ -4369,6 +4369,8 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
       allowed,
       filesPath,
       gateTimeoutMs: GATE_TIMEOUT_MS,
+      outDir: `${root}/.delegation/${spawn.task}`,
+      attempt: spawn.attempt,
       priorRed,
       ...(spawn.replay && spawn.base ? { base: spawn.base } : {}),
       ...(baseRef ? { baseRef } : {}),

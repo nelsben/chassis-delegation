@@ -86,6 +86,10 @@ export type NativeInput = {
   cardless?: boolean
   /** MOD-22: the listings taken at dispatch and a way to list a root now; absent, the outside delta is no part of the scope claim. */
   outside?: OutsideInput
+  /** MOD-149: the folder a red gate's full output is saved in (`verify-gate-<attempt>.txt`); absent, nothing is saved. */
+  outDir?: string
+  /** MOD-149: the attempt number in the saved file's name (1 when absent). */
+  attempt?: number
 }
 
 /** The reason a cardless verify gives for the claims only a brief can check. */
@@ -806,6 +810,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     else {
       let code = 0
       let tail: string[] = []
+      let fullOut = ''
       let stopped: string | undefined
       // MOD-20: timeouts in tests the delta never touched, seen on a first run that was then run again
       let reranTimeouts = 0
@@ -837,7 +842,26 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         if (r.exitCode !== 0) {
           code = r.exitCode
           tail = outputTail(r.stdout, r.stderr)
+          fullOut = `${r.stdout}${r.stdout && r.stderr && !r.stdout.endsWith('\n') ? '\n' : ''}${r.stderr}`
           break
+        }
+      }
+      // MOD-149: a red run in a worktree that is gone or moved by the end of it is not judged
+      let changed: string | undefined
+      if (!stopped && code !== 0 && !here) {
+        const head = firstLine(await out('rev-parse', 'HEAD'))
+        if (!head) changed = 'gone'
+        else if (head !== full) changed = `HEAD now ${head.slice(0, 7)}`
+      }
+      // MOD-149: the whole output of a red run, saved where the lead can read it
+      let outputAt = ''
+      if (!stopped && !changed && code !== 0 && input.outDir) {
+        const file = `${input.outDir.replace(/\/+$/, '')}/verify-gate-${input.attempt ?? 1}.txt`
+        try {
+          await io.write(file, fullOut)
+          outputAt = file
+        } catch {
+          // the claim reads as it always did
         }
       }
       const said = (report.gate ?? '').trim()
@@ -845,10 +869,11 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       const hereNote = here ? '; repo=here: the dirty tree is allowed, the clean-tree rule does not apply' : ''
       const green = reranTimeouts > 0 ? `gate green on rerun (first run: ${plural(reranTimeouts, 'timeout')} in untouched tests)` : 'gate green'
       if (stopped) claim('gate', 'unchecked', stopped)
+      else if (changed) claim('gate', 'unchecked', `the worktree changed while the gate ran (${changed}); the gate was not judged`)
       else if (said === 'pass') {
         if (code === 0) claim('gate', 'held', `${green} ${at} (gate=pass confirmed${hereNote})`)
         else {
-          claim('gate', 'failed', `gate=pass claimed but the gate is RED ${at} (exit ${code}${hereNote})`)
+          claim('gate', 'failed', `gate=pass claimed but the gate is RED ${at} (exit ${code}${outputAt ? `; output ${outputAt}` : ''}${hereNote})`)
           lines.push(...tail)
         }
       } else if (said === 'fail') {
