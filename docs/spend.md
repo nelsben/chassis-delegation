@@ -101,8 +101,8 @@ A worker's cost sums the `usage` of its `turn.complete` events (by `agentId`, re
 
     usd = (in·P_in + out·P_out + cacheRead·P_in·0.1 + cacheWrite·P_in·1.25) / 1e6
 
-Prices per million tokens (in/out): opus-5-5 4/20, opus-5 5/25, fable-5-1 and fable-5 10/50, sonnet-5-5 2/10, sonnet-5 3/15,
-haiku-5-5 0.10/0.50, haiku-4-5 1/5. Cache reads cost $0.20 for Opus 5.5 and Sonnet 5.5, $0.25 for Fable and Mythos 5.1, else 0.1x input. Haiku 5.5 bills 0.50/2.50 past a 100K prompt; usage arrives summed, so that rate cannot apply and a long run reads as a floor.
+Prices per million tokens (in/out): opus-5-5 4/20, opus-5 5/25, fable-5-1 and fable-5 10/50, sonnet-5-5 2/10, sonnet-5 2/10,
+haiku-5-5 0.10/0.50, haiku-4-5 1/5. Cache reads cost $0.20 for Opus 5.5, $0.10 for Sonnet 5.5, $0.25 for Fable and Mythos 5.1, else 0.1x input. Haiku 5.5 bills 0.50/2.50 past a 100K prompt; usage arrives summed, so that rate cannot apply and a long run reads as a floor.
 Verdict row, attempt record and ledger carry it: 4 places stored, 2 shown.
 
 With no usage, or an unknown model, the row uses the session's cost growth over the attempt, shown as `usd=~2.91` (`usdApprox: true`); it includes concurrent spend.

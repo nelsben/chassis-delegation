@@ -18,9 +18,9 @@ describe('3B: the price table', () => {
     expect(priceFor('claude-opus-5-5')).toEqual({ in: 4, out: 20, cacheRead: 0.2 })
     expect(priceFor('claude-opus-5')).toEqual({ in: 5, out: 25 })
     expect(priceFor('claude-opus-5-20260101')).toEqual({ in: 5, out: 25 })
-    expect(priceFor('claude-sonnet-5-5')).toEqual({ in: 2, out: 10, cacheRead: 0.2 })
-    expect(priceFor('claude-sonnet-5-5[1m]')).toEqual({ in: 2, out: 10, cacheRead: 0.2 })
-    expect(priceFor('claude-sonnet-5')).toEqual({ in: 3, out: 15 })
+    expect(priceFor('claude-sonnet-5-5')).toEqual({ in: 2, out: 10, cacheRead: 0.1 })
+    expect(priceFor('claude-sonnet-5-5[1m]')).toEqual({ in: 2, out: 10, cacheRead: 0.1 })
+    expect(priceFor('claude-sonnet-5')).toEqual({ in: 2, out: 10 })
     expect(priceFor('claude-haiku-4-5')).toEqual({ in: 1, out: 5 })
     expect(priceFor('claude-haiku-5-5')).toEqual({ in: 0.1, out: 0.5 })
     expect(priceFor('us.anthropic.claude-haiku-5-5')).toEqual({ in: 0.1, out: 0.5 })
@@ -43,12 +43,12 @@ describe('3B: a worker cost is the sum of its turns', () => {
     s = addTurn(s, turn('claude-sonnet-5-5', 100_000, 10_000, 500_000, 20_000))
     s = addTurn(s, turn('claude-sonnet-5-5', 50_000, 5_000, 800_000, 0))
     s = addTurn(s, turn('claude-sonnet-5-5', 10_000, 2_000, 900_000, 20_000))
-    // in 160k*2 = 0.32; out 17k*10 = 0.17; read 2.2M*0.2 = 0.44; write 40k*2.5 = 0.10
+    // in 160k*2 = 0.32; out 17k*10 = 0.17; read 2.2M*0.1 = 0.22; write 40k*2.5 = 0.10
     expect(s.tokens).toEqual({ in: 160_000, out: 17_000, cacheRead: 2_200_000, cacheWrite: 40_000 })
-    expect(Math.round((s.usd ?? 0) * 1e6) / 1e6).toBe(1.03)
+    expect(Math.round((s.usd ?? 0) * 1e6) / 1e6).toBe(0.81)
     expect(s.turns).toBe(3)
     expect(s.models).toEqual(['claude-sonnet-5-5'])
-    expect(usdText(s)).toBe('$1.03')
+    expect(usdText(s)).toBe('$0.81')
   })
   test('an unknown model leaves tokens only: usd=?', () => {
     let s = addTurn(undefined, turn('claude-sonnet-5-5', 1000, 1000))
@@ -103,11 +103,14 @@ const r6 = (n: number | null | undefined): number => Math.round((n ?? 0) * 1e6) 
 describe('MOD-47: cache reads at each model\'s own rate, writes by TTL', () => {
   const MTOK = (model: string, t: Partial<ReturnType<typeof tokensOf>>, extra: Record<string, unknown> = {}) =>
     addTurn(undefined, { model, input_tokens: t.in ?? 0, output_tokens: t.out ?? 0, cache_read_input_tokens: t.cacheRead ?? 0, cache_creation_input_tokens: t.cacheWrite ?? 0, ...extra }).usd
-  test('1M cache-read tokens cost $0.20 on Opus 5.5, $0.25 on Fable 5.1, $0.20 on Sonnet 5.5, 0.1x input elsewhere', () => {
+  test('1M cache-read tokens cost $0.20 on Opus 5.5, $0.25 on Fable 5.1, $0.10 on Sonnet 5.5, 0.1x input elsewhere', () => {
     expect(r6(usdOf({ in: 0, out: 0, cacheRead: 1e6, cacheWrite: 0 }, priceFor('claude-opus-5-5')!))).toBe(0.2)
     expect(r6(usdOf({ in: 0, out: 0, cacheRead: 1e6, cacheWrite: 0 }, priceFor('claude-fable-5-1')!))).toBe(0.25)
     expect(r6(usdOf({ in: 0, out: 0, cacheRead: 1e6, cacheWrite: 0 }, priceFor('claude-mythos-5-1')!))).toBe(0.25)
-    expect(r6(MTOK('claude-sonnet-5-5', { cacheRead: 1e6 }))).toBe(0.2)
+    expect(r6(MTOK('claude-sonnet-5-5', { cacheRead: 1e6 }))).toBe(0.1)
+    // MOD-168: Sonnet 5 is $2/$10 (cache read 0.1x = $0.20); a usdOf result with the page's figures
+    expect(r6(usdOf({ in: 1e6, out: 1e6, cacheRead: 1e6, cacheWrite: 0 }, priceFor('claude-sonnet-5')!))).toBe(12.2)
+    expect(r6(usdOf({ in: 1e6, out: 1e6, cacheRead: 1e6, cacheWrite: 0 }, priceFor('claude-sonnet-5-5')!))).toBe(12.1)
     expect(r6(MTOK('claude-opus-5', { cacheRead: 1e6 }))).toBe(0.5)
     expect(r6(MTOK('claude-haiku-4-5', { cacheRead: 1e6 }))).toBe(0.1)
   })
