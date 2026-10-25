@@ -48,6 +48,8 @@ Not reviewed: a hand-back that is not consistent (`gate=fail` included), a `repo
 
 ## Merging a card
 
+While the verifier runs, the worker's worktree is locked, so `git worktree remove --force` refuses it; land after the verdict. `git worktree unlock <path>` frees one a killed verify left behind, and `/delegation merge <ID> --finish` unlocks before it removes.
+
 After a consistent verdict with next=accept, run `/delegation merge <ID>` (or the `merge` tool with `task: <ID>`). It does the local half; the brain runs the printed lines verbatim.
 
 It refuses in one line, running nothing, when:

@@ -18,6 +18,11 @@
 //   git -C <task repo> worktree add -q -b agent/<domain>/<id> <task repo>-<id> <origin/main|sha>
 //                                       (MOD-44: <task repo> is the absolute path the task <id> names as its repo,
 //                                        <domain>: that repo's own; with the session root known, no other -C passes)
+//   git -C <root> worktree lock --reason 'chassis-delegation: verifier running; land after the verdict' <worktree>
+//   git -C <root> worktree unlock <worktree>
+//                                       (MOD-152: the worker's worktree is locked while the verifier judges it; exactly these two
+//                                        shapes, one -C <root> under the same root rules as worktree add, <worktree> the path
+//                                        worktreePath gives for a task id, and for lock exactly that --reason)
 //   git -C <root> ls-tree --name-only <sha> agents/tasks/    (exact; /dispatch --replay)
 //   git -C <root> show <sha>:agents/tasks/<id>-<name>.md     (exact; /dispatch --replay)
 //   the same two with origin/main for <sha> and the configured cardDir for agents/tasks
@@ -146,6 +151,7 @@ function checkGit(args: readonly string[], allow: AllowConfig): Check {
       return bad ? refuse(`git worktree list ${bad} is not on the list`) : ok
     }
     if (action === 'add') return checkWorktreeAdd(dirs, tail.slice(1), allow)
+    if (action === 'lock' || action === 'unlock') return checkWorktreeLock(action, dirs, tail.slice(1), allow)
     return refuse(`git worktree ${action ?? ''} is not on the list`.trim())
   }
   return refuse(`git ${sub} is not on the list`)
@@ -172,6 +178,36 @@ function checkWorktreeAdd(dirs: readonly string[], args: readonly string[], allo
   if (path !== want) return refuse(`worktree path ${path} is not ${want}`)
   if (!isBaseRef(base)) return refuse(`base ${base} is not origin/main or a 7-40 hex sha`)
   return ok
+}
+
+/** MOD-152: the one reason a verify's lock carries. */
+export const LOCK_REASON = 'chassis-delegation: verifier running; land after the verdict'
+
+/**
+ * MOD-152: `-C <root> worktree lock --reason <LOCK_REASON> <worktree>` and `-C <root> worktree unlock <worktree>`, exactly.
+ * <worktree> is what worktreePath gives for a task id, under the root rules of `worktree add`.
+ */
+function checkWorktreeLock(action: 'lock' | 'unlock', dirs: readonly string[], args: readonly string[], allow: AllowConfig): Check {
+  const shape = action === 'lock' ? `-C <root> worktree lock --reason '${LOCK_REASON}' <worktree>` : '-C <root> worktree unlock <worktree>'
+  if (dirs.length !== 1) return refuse(`git worktree ${action} needs exactly one -C <root> (${shape})`)
+  const root = (dirs[0] as string).replace(/\/+$/, '')
+  if (action === 'lock') {
+    if (args.length !== 3 || args[0] !== '--reason') return refuse(`git worktree lock ${args.join(' ')} is not the exact shape (${shape})`)
+    if (args[1] !== LOCK_REASON) return refuse(`git worktree lock reason ${args[1]} is not '${LOCK_REASON}'`)
+  } else if (args.length !== 1) return refuse(`git worktree unlock ${args.join(' ')} is not the exact shape (${shape})`)
+  const path = args[args.length - 1] as string
+  const session = (allow.root ?? '').replace(/\/+$/, '')
+  const other = session !== '' && root !== session
+  for (let i = path.indexOf('-'); i >= 0; i = path.indexOf('-', i + 1)) {
+    const m = new RegExp(`^(${TASK_ID_SRC})(${REPLAY})?$`).exec(path.slice(i + 1))
+    if (!m) continue
+    const id = m[1] as string
+    const replay = m[2] !== undefined
+    const taskRepo = allow.taskRepos?.[id]
+    if (other && !(taskRepo && taskRepo.path.replace(/\/+$/, '') === root && !replay)) continue
+    if (path === worktreePath(root, id, replay, other ? undefined : allow.worktreeRoot)) return ok
+  }
+  return refuse(`git -C ${root} worktree ${action} ${path}: the path is not a task worktree of ${root}${other ? ' (a task that names it as its repo)' : ''}`)
 }
 
 function checkGh(args: readonly string[], allow: AllowConfig): Check {
@@ -280,7 +316,7 @@ export const isRemoteArgv = (argv: readonly string[]): boolean => {
  *   git -C <worktree> add -- <card>           git -C <worktree> commit -q -m 'cards: <ID> merged' [-m <Co-Authored-By trailer>]
  *   git -C <root> remote get-url origin       git -C <root> clean -q -f -- <card>
  *   git -C <root> pull --ff-only              git -C <root> worktree remove <worktree>
- *   git -C <root> branch -D <branch>
+ *   git -C <root> branch -D <branch>          git -C <root> worktree unlock <worktree>   (MOD-152: finish frees a lock a crashed verify left)
  * <worktree>, <branch> and <card> are the one task's; nothing else passes here.
  */
 function isMergeShape(argv: readonly string[], c: MergeCtx): boolean {
@@ -301,7 +337,7 @@ function isMergeShape(argv: readonly string[], c: MergeCtx): boolean {
     return false
   }
   if (dir === root) {
-    if (is('fetch', 'origin') || is('remote', 'get-url', 'origin') || is('pull', '--ff-only') || is('worktree', 'remove', wt) || is('branch', '-D', c.branch)) return true
+    if (is('fetch', 'origin') || is('remote', 'get-url', 'origin') || is('pull', '--ff-only') || is('worktree', 'remove', wt) || is('worktree', 'unlock', wt) || is('branch', '-D', c.branch)) return true
     if (c.cardRel && is('clean', '-q', '-f', '--', c.cardRel)) return true
   }
   return false

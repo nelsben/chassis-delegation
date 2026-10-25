@@ -5655,7 +5655,7 @@ describe('MOD-44: the brain delegates into another local repo (repo set to an ab
     const verifying = w.runs.slice(before).map(r => r.argv)
     // every git read of the verify is in the worktree; the merged check asks /other's origin/main; none is in the session root
     expect(verifying.filter(a => a[0] === 'git').filter(a => a[2] !== WT && a[2] !== OTHER)).toEqual([])
-    expect(verifying.filter(a => a[0] === 'git' && a[2] === OTHER).map(a => a.slice(3, 5))).toEqual([['merge-base', '--is-ancestor']])
+    expect(verifying.filter(a => a[0] === 'git' && a[2] === OTHER).map(a => a.slice(3, 5))).toEqual([['worktree', 'lock'], ['worktree', 'unlock'], ['merge-base', '--is-ancestor']])
     expect(verifying.some(a => a[0] === 'git' && a.includes('origin/main'))).toBe(true)
     // the gate is /other's own detected gate, run in /other-T-1
     const gate = w.runs.slice(before).find(r => r.argv[0] === 'npm')

@@ -20,7 +20,7 @@ import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine,
 import { paneTree, type PaneTable, type PaneView } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
-import { checkArgv, isSha, refusedLine, type AllowConfig, type MergeCtx } from './lib/allow'
+import { checkArgv, isSha, LOCK_REASON, refusedLine, type AllowConfig, type MergeCtx } from './lib/allow'
 import {
   attemptsFor,
   escalationSource,
@@ -2913,6 +2913,8 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   }
   const pulled = await run($, ['git', '-C', root, 'pull', '--ff-only'], { cwd: root, timeoutMs: 120000 })
   if (!pulled.ok || pulled.exitCode !== 0) return `${id}: git pull --ff-only failed in the main checkout: ${whyOf(pulled)}; the worktree and branch are left`
+  // MOD-152: a lock a crashed or killed verify left must not stop the finish; its failure (not locked) is ignored
+  await unlockWorktree($, root, wt.path)
   const removed = await run($, ['git', '-C', root, 'worktree', 'remove', wt.path], { cwd: root, timeoutMs: 60000 })
   const removedOk = removed.ok && removed.exitCode === 0
   if (!removedOk) {
@@ -4356,6 +4358,20 @@ async function recordOutside($: Host, task: string, briefPath: string, reused: b
   return `outside: listed ${roots.join(', ')} before the run (${files} file${files === 1 ? '' : 's'})${bad.length > 0 ? `; ${bad.map(b => `${b.root} could not be listed: ${b.error}`).join('; ')}, so scope will be unchecked there` : ''}${marks.map(m => `; ${m.root} holds more than ${OUTSIDE_MAX_ENTRIES} files, so changes there will be found by modification time`).join('')}`
 }
 
+/** MOD-152: lock the worker's worktree for the verify; true only when this call's lock took. A failure is debug, never a stop. */
+async function lockWorktree($: Host, repo: string, worktree: string): Promise<boolean> {
+  const r = await run($, ['git', '-C', repo, 'worktree', 'lock', '--reason', LOCK_REASON, worktree], { cwd: repo, timeoutMs: 15000 })
+  if (r.ok && r.exitCode === 0) return true
+  debug($, `worktree lock ${worktree} not taken: ${r.ok ? `exit ${r.exitCode} ${r.stderr.trim()}` : r.why}`)
+  return false
+}
+
+/** MOD-152: free a worktree; a failure is debug only (a lock left behind is freed by `git worktree unlock <path>`). */
+async function unlockWorktree($: Host, repo: string, worktree: string): Promise<void> {
+  const r = await run($, ['git', '-C', repo, 'worktree', 'unlock', worktree], { cwd: repo, timeoutMs: 15000 })
+  if (!r.ok || r.exitCode !== 0) debug($, `worktree unlock ${worktree} failed: ${r.ok ? `exit ${r.exitCode} ${r.stderr.trim()}` : r.why}`)
+}
+
 async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<VerifyResult> {
   await loadRepoConfig($)
   const root = await $.session.root()
@@ -4387,25 +4403,34 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const priorRed = priorRedHashes(await loadAttempts($, spawn), spawn.subtask, spawn.attempt, laneOf(spawn))
   const others = here ? (await inFlightHere($, root, taskLabel(spawn.task, spawn.subtask))).map(c => ({ card: c.label, files: c.files })) : []
   const outside = await outsideFor($, spawn.task, other?.path)
-  const r = await verifyNative(
-    {
-      repo,
-      report,
-      briefText,
-      gateMap,
-      allowed,
-      filesPath,
-      gateTimeoutMs: GATE_TIMEOUT_MS,
-      outDir: `${root}/.delegation/${spawn.task}`,
-      attempt: spawn.attempt,
-      priorRed,
-      ...(spawn.replay && spawn.base ? { base: spawn.base } : {}),
-      ...(baseRef ? { baseRef } : {}),
-      ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),
-      ...(outside ? { outside } : {}),
-    },
-    { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)), stat: path => statArtefact($, path) },
-  )
+  // MOD-152 (#246): a worktree is locked while the verifier judges it, so a plain `worktree remove --force` refuses it
+  const taskRepo = (other?.path ?? root).replace(/\/+$/, '')
+  const lockPath = repo.replace(/\/+$/, '')
+  const locked = !here && lockPath !== taskRepo ? await lockWorktree($, taskRepo, lockPath) : false
+  let r: Awaited<ReturnType<typeof verifyNative>>
+  try {
+    r = await verifyNative(
+      {
+        repo,
+        report,
+        briefText,
+        gateMap,
+        allowed,
+        filesPath,
+        gateTimeoutMs: GATE_TIMEOUT_MS,
+        outDir: `${root}/.delegation/${spawn.task}`,
+        attempt: spawn.attempt,
+        priorRed,
+        ...(spawn.replay && spawn.base ? { base: spawn.base } : {}),
+        ...(baseRef ? { baseRef } : {}),
+        ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),
+        ...(outside ? { outside } : {}),
+      },
+      { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)), stat: path => statArtefact($, path) },
+    )
+  } finally {
+    if (locked) await unlockWorktree($, taskRepo, lockPath)
+  }
   return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.metrics ? { metrics: r.metrics } : {}), ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
 }
 
