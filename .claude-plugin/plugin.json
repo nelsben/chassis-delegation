@@ -136,7 +136,7 @@
     "gateTimeoutMinutes": {
       "type": "number",
       "title": "Gate timeout minutes",
-      "description": "Whole minutes (1 to 120) the verifier and /delegation merge let one gate command run before they stop it (built in: 9). Raise it for a repo whose full suite runs long; the host stops any one command at 10 minutes, so a higher value still runs a gate for at most 10. A value outside 1 to 120 is named in the config errors and 9 is used. Empty or 0 = the repo file (.chassis-delegation.json), else 9; a value here wins over both",
+      "description": "Whole minutes (1 to 10) the verifier and /delegation merge let one gate command run before they stop it (built in: 9). Raise it for a repo whose full suite runs long, up to the 10 the host allows for one command. A value outside 1 to 10 is named in the config errors and 9 is used. Empty or 0 = the repo file (.chassis-delegation.json), else 9; a value here wins over both",
       "default": 9
     },
     "maxWorkersByTier": {

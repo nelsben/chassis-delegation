@@ -747,8 +747,8 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(gateRunOf(w)?.timeoutMs).toBe(480_000)
   })
 
-  test('gate timeout 15 minutes runs the gate at the host ceiling of 10 minutes, since the host refuses a longer run', async ($, on) => {
-    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 15 }) } })
+  test('gate timeout 10 minutes runs the gate for the host ceiling of 10 minutes', async ($, on) => {
+    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 10 }) } })
     await $.session.start(sessionStart)
     await handBack($)
     expect(gateRunOf(w)?.timeoutMs).toBe(600_000)
@@ -761,8 +761,8 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(gateRunOf(w)?.timeoutMs).toBe(540_000)
   })
 
-  test('gate timeout 500 is named in the config errors and the 9 minutes hold', async ($, on) => {
-    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 500 }) } })
+  test('gate timeout 15 is named in the config errors and the 9 minutes hold', async ($, on) => {
+    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 15 }) } })
     await $.session.start(sessionStart)
     await handBack($)
     expect(gateRunOf(w)?.timeoutMs).toBe(540_000)
