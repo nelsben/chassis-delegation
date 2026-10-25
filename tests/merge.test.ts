@@ -328,6 +328,17 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(out.split('\n').at(-1)).toBe(`${ID} merged at ${TWIN}`)
   })
 
+  test('MOD-142: --discard with an untracked file: the worktree is not removed, the note says why, no discarded line, no merged row, branch kept', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store, run: landed(markMerged(CARD), argv => (is(argv, ...STATUS_ARGV) ? { exitCode: 0, stdout: '?? notes.txt\n!! .local/log.txt\n' } : is(argv, 'git', '-C', ROOT, 'worktree', 'remove', WT) ? { exitCode: 1, stdout: '', stderr: 'contains untracked files' } : undefined)) })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish --discard`))).text)
+    expect(out).toContain(`note: the worktree ${WT} was not removed: it still holds 1 untracked files (git removes ignored files but not untracked ones); delete them, then run /delegation merge ${ID} --finish again`)
+    expect(out).not.toContain('discarded')
+    expect(w.runs.slice(from).map(r => r.argv.join(' ')).some(a => a.includes('branch -D'))).toBe(false)
+    expect(w.files.get(LEDGER)).not.toContain('"kind":"merged"')
+  })
+
   test('MOD-142: only node_modules/ and .delegation/ present: finish completes with no note', async ($, on) => {
     const w = world(on, { files: files(), dirs, store, run: withStatus('!! node_modules/\n!! .delegation/MOD-1/red-1.txt\n!! pkg/node_modules/x/y.js\n') })
     await $.session.start(sessionStart)
