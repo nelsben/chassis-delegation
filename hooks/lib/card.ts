@@ -537,11 +537,20 @@ export function forbidFix(forbid: readonly string[], doneWhen: readonly string[]
 /**
  * MOD-55: the warnings for each path-like word of the red_test (the donePaths rule) the brief cannot let the worker
  * write: `warning: red_test names <path>, which is outside scope`, or `… which is inside forbid <glob>`. Nothing is
- * added to the scope; the card is still written.
+ * added to the scope; the card is still written. MOD-146 (#234): a path word (a slash) holding an `<…>` placeholder gets
+ * `warning: red_test names <path>, which holds a placeholder <…>; name the real file or command` instead, and no scope line.
  */
 export function redTestWarnings(redTest: string, scope: readonly string[], forbid: readonly string[]): string[] {
   const out: string[] = []
-  for (const p of new Set(donePaths(redTest))) {
+  const ticked = [...redTest.matchAll(/`([^`]+)`/g)].map(m => cleanWord(m[1] as string))
+  const bare = redTest.replace(/`[^`]*`/g, ' ').split(/\s+/).map(cleanWord)
+  const placeholderWords = [...ticked, ...bare].filter(w => w.includes('/') && /<[^<>\s]*>/.test(w))
+  for (const p of new Set([...donePaths(redTest), ...placeholderWords])) {
+    const ph = /<[^<>\s]*>/.exec(p)
+    if (p.includes('/') && ph !== null) {
+      out.push(`warning: red_test names ${p}, which holds a placeholder ${ph[0]}; name the real file or command`)
+      continue
+    }
     const f = forbid.find(g => g !== '' && collides(p, g))
     if (f !== undefined) out.push(`warning: red_test names ${p}, which is inside forbid ${f}`)
     else if (!scope.some(s => s !== '' && namedBy(p, s))) out.push(`warning: red_test names ${p}, which is outside scope`)
