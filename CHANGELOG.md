@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **An ad hoc hand-back's owed row names how it clears (MOD-154, #246).** A cardless ad hoc hand-back judged `check the diff` leaves the owed row `<ID>: check the diff (ad hoc: clears with /delegation accept <ID>)`, since the retire sweep has no sha, patch or card to match it by. The verdict row's `next=` is unchanged, carded tasks' owed rows are unchanged, and `/delegation accept` (one id or `--owed`) clears the new rows as before.
 - **The worker's worktree is locked while the verifier judges it (MOD-152, #246).** A worktree-task verify runs `git worktree lock --reason "chassis-delegation: verifier running; land after the verdict"` before the gate and `git worktree unlock` after it, so a plain `git worktree remove --force` refuses the directory mid-gate. A lock that fails is logged and the verify goes on; a worktree already locked by someone else is left locked. `repo=here` and `repo=none` tasks take no lock. `/delegation merge <ID> --finish` unlocks before it removes, ignoring a failure. The allowlist passes exactly those two shapes for a task worktree.
 - **The hand-back row says to land after the verdict (MOD-153, #246).** The row now reads `chassis-delegation: <label> handed back · <glyph><alias> · <n> min · <usd> · verifying · land after the verdict`, with the up nudge still last, on every route that prints it, so a lead does not land or remove the worktree while the verifier's gate runs. The dashboard's verifying line and `/delegation status` are unchanged.
 

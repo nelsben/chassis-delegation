@@ -1317,6 +1317,37 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     expect(w.spawns).toHaveLength(1)
   })
 
+  // MOD-154 (#246): a cardless ad hoc hand-back that commits nothing has no sha, patch or card for the retire sweep; its owed row names the way out
+  const adhocCmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const adhocOwed = async ($: any, on: any) => {
+    const WT = '/work/tidy'
+    const w = world(on, { classify: 'standard', agentId: 'agent-c', dirs: { [WT]: [] }, run: nativeRun({ gate: 0 }) })
+    await $.agent.spawn(spawnInput({ prompt: 'Tidy the README.', cwd: WT }))
+    await $.turn.complete(turnInput('agent-c', 'Done.\n' + CARDLESS('1234abcd')))
+    await $.session.start(sessionStart)
+    return w
+  }
+
+  test('MOD-154: a cardless ad hoc hand-back judged check the diff leaves an owed row that names /delegation accept; the verdict next= is unchanged', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = await adhocOwed($, on)
+    expect(verdictRows(w)[0]?.split('\n')[0]).toMatch(/ next=check the diff$/)
+    const out = String((await $.command.run(adhocCmd(''))).text)
+    expect(out).toContain('owed: adhoc-ABCDEFGH: check the diff (ad hoc: clears with /delegation accept adhoc-ABCDEFGH)')
+  })
+
+  test('MOD-154: /delegation accept <id> clears the hinted ad hoc row; so does --owed', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    await adhocOwed($, on)
+    const accepted = String((await $.command.run(adhocCmd('accept adhoc-ABCDEFGH looked'))).text)
+    expect(accepted).toContain('accepted adhoc-ABCDEFGH')
+    expect(String((await $.command.run(adhocCmd(''))).text)).not.toContain('owed: adhoc-ABCDEFGH')
+  })
+
+  test('MOD-154: /delegation accept --owed clears the hinted ad hoc row', { options: { verdictVerbosity: 'full' } }, async ($, on) => {
+    await adhocOwed($, on)
+    expect(String((await $.command.run(adhocCmd('accept --owed'))).text)).toContain('retired 1 owed row (adhoc-ABCDEFGH)')
+    expect(String((await $.command.run(adhocCmd(''))).text)).not.toContain('owed: adhoc-ABCDEFGH')
+  })
+
   const BRIEF = `${SCRATCH}/briefs/T-5.brief.md`
   const HEADER = (budget = 3) => `[[brief v=1 task=T-5 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=${budget}-attempts report=chassis.report.v1]]`
   const REPORT = '[[report v=1 task=T-5 subtask=main branch=agent/frontend/T-5 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
@@ -1782,6 +1813,8 @@ describe('GH-104: spend guards', () => {
     const w = await owedWorkPresent($, on, 1)
     await $.session.start(sessionStart)
     expect(String((await $.command.run(delegationCmd(''))).text)).toContain(`- owed: T-4: verify sha=${HEAD}`)
+    // MOD-154: a carded task's owed row carries no ad hoc hint
+    expect(String((await $.command.run(delegationCmd(''))).text)).not.toContain('ad hoc: clears')
     const n = () => w.runs.filter(x => x.argv.includes('--is-ancestor')).length
     const first = n()
     expect(first).toBeGreaterThan(0)
