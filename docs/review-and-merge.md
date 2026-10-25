@@ -59,6 +59,7 @@ The target branch is the one `baseRef` names (`work` or `origin/work`, when orig
 
 Checklist, in print order:
 
+0. If the card names a [merge check](#merge-checks), it runs first, before anything is rebased.
 1. **Review.** Pass `--review <text>` or `--review-file <abs path>`. In the worktree it runs `git fetch origin` and `git rebase origin/main` (the `baseRef`). On a conflict it runs `git rebase --abort`: `<ID>: rebase onto origin/main conflicts in <files>; resolve by hand`.
 2. It copies `<cardDir>/<ID>-*.md` into the worktree with `status: merged` and the Review section, and commits `cards: <ID> merged` with a `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer. 
 3. It runs the card's gates into `.delegation/<ID>/merge-gates.txt`. A failure stops: `<ID>: gate <id> failed at <sha>; not pushed`.
@@ -75,6 +76,19 @@ Checklist, in print order:
    - It runs `git pull --ff-only`, `git worktree remove` and `git branch -D`, writes `{kind: 'merged', task, sha, pr?}`, and lists the task under `merged:` instead of `running:`.
 9. **Delete the branch:** `git push origin --delete agent/<domain>/<ID>`. The answer ends `<ID> merged at <sha>`.
 10. **Release extras**, only when `hooks/lib/version.ts` changed: `git tag -a v<version> -m v<version>`, `git push origin v<version>`, and `git -C <loaded clone> pull --ff-only` when the mod loads from another checkout. The last line is `release v<version>: run the block above, then reload the window`.
+
+### Merge checks
+
+A card can name a check that merge runs at the branch head, so a rule about the proof sits beside the proof. Two places name one:
+
+- the card's `merge_check: <command>` (one line; the card tool's `mergeCheck` writes it), which wins when present;
+- else the repo's `mergeCheckMap` (gate id → command): every entry whose id is in the card's `gate:` list applies, in gate order.
+
+The dry run prints `merge check: <command>` after the brief line for each one that applies.
+
+Merge runs them when it prepares, after the worktree, main checkout and card checks and before `git fetch` and the rebase. Each command is split into words, then `{card}` (the task id), `{sha}` (the worktree's full head) and `{worktree}` (its absolute path) are replaced inside each word; any other `{x}` stays as written. It runs by argv, never through a shell, with the worktree as its working folder and a 10-minute timeout. A command the gate map would refuse (a denied first word, shell syntax, a publish verb, or a chain with ` && `) is refused the same way at card write, at config load (the entry is dropped with a note) and at merge.
+
+Exit 0 lets merge go on, and its success line ends with `; merge check passed (<command as written>)` for each check. A non-zero exit, a timeout or a command that cannot start refuses: `<ID>: merge check failed: <command as written> exited <code>; nothing was rebased or committed`, then the last 15 lines of its output. The worktree, the branch and the card are left as they were. `merge --finish` runs no check.
 
 ### A merged task stays closed
 
