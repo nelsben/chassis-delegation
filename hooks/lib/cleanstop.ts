@@ -271,6 +271,8 @@ export type ModFinding = {
   title: string
   body: string
   evidence: string[]
+  /** MOD-137: where the finding came from, e.g. `review note note.md`; absent for a transcript debrief. */
+  source?: string
 }
 
 const KINDS = ['went_well', 'went_wrong'] as const
@@ -308,6 +310,7 @@ export function scrubbedFindings(json: string, rules: RedactRules): ModFinding[]
       title,
       body: redact(typeof r.body === 'string' ? r.body.trim() : '', rules),
       evidence: (Array.isArray(r.evidence) ? r.evidence : []).filter((e): e is string => typeof e === 'string').map(e => redact(e.trim(), rules)),
+      ...(typeof r.source === 'string' && r.source.trim() !== '' ? { source: redact(r.source.trim(), rules) } : {}),
     })
   }
   return out

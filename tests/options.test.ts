@@ -376,6 +376,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
   test('debriefIdleMinutes: 45 waits 45 quiet minutes (the built-in 20)', async ($, on) => {
     const w = world(on, { files: { [BC]: crumbs(40), [DONE]: '10\n' }, listAgents: true })
     await $.session.start(sessionStart)
+    await set($, 'debriefMode', 'transcript')
     await set($, 'debriefIdleMinutes', '45')
     await $.turn.complete(mainTurn())
     await w.clock.advance(20 * MIN)
@@ -388,6 +389,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
   test('debriefMinNewLines: 50 holds a debrief back on 30 new lines (the built-in 25 runs it)', async ($, on) => {
     const w = world(on, { files: { [BC]: crumbs(40), [DONE]: '10\n' }, listAgents: true })
     await $.session.start(sessionStart)
+    await set($, 'debriefMode', 'transcript')
     await set($, 'debriefMinNewLines', '50')
     await $.turn.complete(mainTurn())
     await w.clock.advance(20 * MIN)
@@ -398,6 +400,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     const w = world(on, { listAgents: true, skip: ['prompt.submit'] })
     on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
     await $.session.start(sessionStart)
+    await set($, 'debriefMode', 'transcript')
     await set($, 'debriefMinEvents', '2')
     for (const text of ['no, the other file', 'actually use pnpm']) await $.prompt.submit({ text } as never)
     await $.turn.complete(mainTurn())
@@ -409,6 +412,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
   test('debriefCooldownHours: 8 holds back a debrief 7 hours after the last (the built-in 6 runs it)', async ($, on) => {
     const w = world(on, { files: { [BC]: crumbs(80), [DONE]: '10\n' }, listAgents: true, store: { 'delegation.debrief.sess-1': { lastAt: NOW - 7 * H, watermark: 0, lines: 40 } } })
     await $.session.start(sessionStart)
+    await set($, 'debriefMode', 'transcript')
     await set($, 'debriefCooldownHours', '8')
     await $.turn.complete(mainTurn())
     await w.clock.advance(20 * MIN)
@@ -419,9 +423,24 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.spawns).toHaveLength(1) // 8 h 20 min since the last
   })
 
+  test('debriefMode: notes (the built-in) adds one row and spawns no agent; transcript spawns the debrief agent', async ($, on) => {
+    const verdict = { task: 'T-1', attempt: 1, verdict: 'consistent', line: 'T-1 consistent', at: NOW - 30 * MIN }
+    const w = world(on, { files: { [BC]: crumbs(40), [DONE]: '10\n' }, listAgents: true, store: { 'delegation.recent.sess-1': [verdict] } })
+    await $.session.start(sessionStart)
+    await $.turn.complete(mainTurn())
+    await w.clock.advance(20 * MIN)
+    expect(w.spawns).toHaveLength(0)
+    expect([...w.appended.map(a => a.text), ...w.logs].join('\n')).toContain('write the review note, then /delegation debrief ingest <note.md>')
+    await set($, 'debriefMode', 'transcript')
+    await $.turn.complete(mainTurn())
+    await w.clock.advance(20 * MIN)
+    expect(w.spawns).toHaveLength(1)
+  })
+
   test('debriefAgent: Explore is the agent type that writes the debrief', async ($, on) => {
     const w = world(on, { files: { [BC]: crumbs(40), [DONE]: '10\n' }, listAgents: true })
     await $.session.start(sessionStart)
+    await set($, 'debriefMode', 'transcript')
     await set($, 'debriefAgent', 'Explore')
     await $.turn.complete(mainTurn())
     await w.clock.advance(20 * MIN)

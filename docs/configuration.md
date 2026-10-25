@@ -84,6 +84,7 @@ Shows the options in force and where each value came from; works in VS Code.
 | `driveWarnTokens` | user | `200K` | context past which that row can appear. |
 | `freshSessionTokens` | user | `400K` | context at which the brain is told to start a fresh session. `0` = off. |
 | `autoDebrief` | user | `true` | debrief in the background at a clean stop. |
+| `debriefMode` | user | `notes` | `notes` or `transcript`: at a clean stop, ask for your review note, or run the background transcript debrief. See [The debrief from your review note](#the-debrief-from-your-review-note). |
 | `debriefIdleMinutes` | user | `20` | idle minutes before the clean-stop check. |
 | `debriefMinNewLines` | user | `25` | breadcrumb lines needed. |
 | `debriefMinEvents` | user | `5` | without breadcrumbs: events needed. |
@@ -97,6 +98,29 @@ Shows the options in force and where each value came from; works in VS Code.
 | `probeModels` | user | `false` | once a day ask each `candidateIds` model one token. |
 | `candidateIds` | user | `""` | model ids to probe. |
 | `redact` | user | `""` | words the findings scrub replaces; `/config` only, never the repo file. |
+
+### The debrief from your review note
+
+With `debriefMode` `notes` (the default), a clean stop runs no agent. Once a round of verdicts has closed (the verdicts since the last
+prompt row or ingest) the mod adds one row: `a round of tasks closed (N verdicts): write the review note, then /delegation debrief ingest <note.md>`,
+under the same idle and cooldown rules as before. `autoDebrief` `false` silences it. `debriefMode` `transcript` keeps the background agent that mines the session.
+
+In the note, put a heading `For the mod owner` (any level) and one top-level bullet per finding:
+
+```
+## For the mod owner
+
+- P2 The verifier counted a late hand-back as new work. It should not.
+  Evidence: verdict row T-1 refuted at abc1234
+- The dispatch queue gave no row when a slot freed
+```
+
+A bullet starting `P1`, `P2` or `P3` sets the severity (else `P3`); the title is its first sentence; the surface is the first mod surface the bullet names
+(else `debrief`); nested lines starting `Evidence:` are the evidence (else the bullet itself). The section ends at the next heading of the same or a higher level.
+
+`/delegation debrief ingest <note.md>` (a path under the session root, or absolute) scrubs the findings as a debrief's are, writes
+`<root>/.delegation/debriefs/YYYY-MM-DD-note-<name>.findings.json` and prints the lines. Nothing is posted: `/delegation debrief post` lists them, and
+`/delegation debrief post all|1,3` posts them ([Posting the findings](#posting-the-findings)). A note without the section prints `debrief ingest: <name> has no "For the mod owner" section; nothing written`.
 
 ### The debrief now
 

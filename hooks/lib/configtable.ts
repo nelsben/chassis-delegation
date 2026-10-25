@@ -43,6 +43,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['worktreeRoot', 'Where things go', 'The folder where each worker\'s separate copy of the repo is made', 'text', 'repo', ''],
   ['cardDir', 'Where things go', 'The folder, inside the repo, that holds your task cards', 'text', 'repo', ''],
   ['autoDebrief', 'Debriefs', 'When you stop for a while, write a short write-up of what went wrong or right', 'bool', 'user', true],
+  ['debriefMode', 'Debriefs', 'At a quiet stop: ask for your review note (notes) or run a helper (transcript)', 'choice', 'user', 'notes', ['notes', 'transcript']],
   ['debriefIdleMinutes', 'Debriefs', 'Minutes of quiet before the mod checks whether a write-up is due', 'minutes', 'user', 20],
   ['debriefMinNewLines', 'Debriefs', 'How much new session activity must pile up before a write-up is worth it', 'count', 'user', 25],
   ['debriefMinEvents', 'Debriefs', 'How many corrections, refusals or failures must pile up before a write-up', 'count', 'user', 5],
