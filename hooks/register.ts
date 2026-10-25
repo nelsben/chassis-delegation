@@ -151,6 +151,7 @@ import {
   overlapWarning,
   scopeSizeWarning,
   tierHint,
+  hedgeHints,
   parseCard,
   parseDispatchArgs,
   parseDispatchTool,
@@ -5669,6 +5670,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (sizeWarn) out.push(`   ${sizeWarn}`)
   const economyHint = tierHint({ tier, scope: sizeScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest })
   if (economyHint) out.push(`   ${economyHint}`)
+  // MOD-140: a Done when line that hedges hands the worker a decision; said once per line, at most three (nothing is refused)
+  for (const line of hedgeHints(doneWhenOf(card.body))) out.push(`   ${line}`)
   if (here) {
     const f: Record<string, string> = shownHeader?.fields ?? {}
     out.push(`   repo=here: base=${f.base || 'the chain (origin/main, main, origin/master, master)'} · ignore=${f.ignore || '(none)'}`)

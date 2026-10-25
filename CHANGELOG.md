@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **The dry run flags a hedged `Done when` line (MOD-140).** A statement that says `appropriately`, `as needed`, `tidy` or another listed hedge word outside backticks gets `hint: done-when line <n> says "<word>": the worker decides that alone; name the outcome`, printed beside the scope-size warning and the tier hint (at most three lines, then a count). Nothing is refused.
+
 ### Changed
 
 - **The docs and the card tool say the card is the worker's whole instruction (MOD-139).** `docs/guide.md` gains a "What the worker sees" subsection under "The card", the card tool's top-level `doneWhen` description names the rule, and `docs/how-it-works.md` step 2 says the same.

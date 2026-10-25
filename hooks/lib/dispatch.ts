@@ -281,6 +281,30 @@ export function tierHint(input: { tier: string; scope: readonly string[]; doneCo
   return `hint: tier economy would do: ${entries.length} files in scope, ${input.doneCount} done-when lines, a red test`
 }
 
+/** MOD-140: phrases that hand the worker a decision a Done when line should name. */
+export const HEDGE_WORDS: readonly string[] = [
+  'appropriate', 'appropriately', 'sensible', 'sensibly', 'as needed', 'as necessary', 'if needed', 'where relevant', 'reasonable', 'reasonably',
+  'etc', 'and so on', 'the existing one', 'as usual', 'properly', 'correctly', 'clean up', 'tidy', 'improve', 'better',
+]
+
+/** MOD-140: at most this many hedge hint lines, then one closing count. */
+export const HEDGE_HINTS_MAX = 3
+
+const HEDGE_RE = new RegExp(`(?<![A-Za-z0-9])(?:${HEDGE_WORDS.map(w => w.replace(/ /g, '\\s+')).join('|')})(?![A-Za-z0-9])`, 'i')
+
+/** MOD-140: one hint per Done when statement (a list item, or a non-blank line when there is no list) that holds a hedge word outside backticks. Pure. */
+export function hedgeHints(doneLines: readonly string[]): string[] {
+  const items = doneLines.filter(l => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(l))
+  const statements = items.length > 0 ? items : doneLines.filter(l => l.trim() !== '')
+  const found: string[] = []
+  statements.forEach((line, i) => {
+    const m = HEDGE_RE.exec(line.replace(/`[^`]*`/g, ' '))
+    if (m) found.push(`hint: done-when line ${i + 1} says "${m[0].replace(/\s+/g, ' ')}": the worker decides that alone; name the outcome`)
+  })
+  if (found.length <= HEDGE_HINTS_MAX) return found
+  return [...found.slice(0, HEDGE_HINTS_MAX), `hint: ${found.length - HEDGE_HINTS_MAX} more done-when lines hedge`]
+}
+
 /** MOD-22: which sections a brief keeps: a worktree brief, a repo=here one, or a repo=none one. */
 export type BriefMode = 'worktree' | 'here' | 'none'
 
