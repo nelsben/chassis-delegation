@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.27 to 0.9.28
+
+Nothing to do.
+Changed: while the verifier judges a hand-back the worker's worktree is locked, so `git worktree remove --force` refuses it; land after the verdict (`git worktree unlock <path>` frees one left behind).
+Optional: a repo can set `gateTimeoutMinutes` (whole minutes 1 to 10, default 9) for a long gate.
+Detail: [CHANGELOG 0.9.28](../CHANGELOG.md).
+
 ### From 0.9.26 to 0.9.27
 
 Nothing to do.
