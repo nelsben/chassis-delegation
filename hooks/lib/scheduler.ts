@@ -53,6 +53,26 @@ export const maxWorkersText = (max: number, byTier: TierCounts | undefined): str
   return parts.length === 0 ? String(max) : `${max} (${parts.join(', ')})`
 }
 
+/** MOD-145 (#234): the place a config layer names, as a person reads it. */
+const SOURCE_PLACE: Record<string, string> = { default: 'the default', repo: 'the repo file', yours: 'your options file', host: 'the host options', locked: 'the host options (locked)' }
+export const sourcePlace = (source: string): string => SOURCE_PLACE[source] ?? source
+
+/** MOD-145 (#234): `maxWorkers 3 from your options file`: a limit, its value and the layer it came from. */
+export const limitSourceText = (field: string, value: unknown, source: string): string => `${field} ${String(value)} from ${sourcePlace(source)}`
+
+/**
+ * MOD-145 (#234): the /delegation `max workers` text with where it came from:
+ * `3 (from your options file; standard 2 from the repo file)`. A tier is named only when its source differs from the total's.
+ */
+export const maxWorkersSourcedText = (max: number, byTier: TierCounts | undefined, sources: Record<string, string> | undefined): string => {
+  const total = sources?.maxWorkers
+  if (total === undefined) return maxWorkersText(max, byTier)
+  const tierSource = sources?.maxWorkersByTier
+  const named = TIERS.filter(t => byTier?.[t] !== undefined)
+  if (tierSource === undefined || tierSource === total || named.length === 0) return `${maxWorkersText(max, byTier)} (from ${sourcePlace(total)})`
+  return `${max} (from ${sourcePlace(total)}; ${named.map(t => limitSourceText(t, byTier?.[t], tierSource)).join('; ')})`
+}
+
 /** The labels of spawns starting for someone else: a spawn's own starting token (same label) is never counted against it. */
 export const startingOthers = (starting: Iterable<string>, label: string): string[] => [...starting].filter(l => l !== label)
 
@@ -61,8 +81,8 @@ export const startingOthers = (starting: Iterable<string>, label: string): strin
  * and the spawn hook both give (MOD-12): the agents live and the rows queued,
  * named apart.
  */
-export const queuedDeny = (task: string, live: readonly string[], queued: readonly string[], tier?: Tier): string =>
-  `${QUEUED_PREFIX}${task} — ${slotFrees(tier)} (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')})`
+export const queuedDeny = (task: string, live: readonly string[], queued: readonly string[], tier?: Tier, limit?: string): string =>
+  `${QUEUED_PREFIX}${task} — ${slotFrees(tier)} (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')}${limit ? `; limit: ${limit}` : ''})`
 
 /** HH:MM of a queue row's time, as the clock on the wall reads it. */
 export const clockText = (at: number): string => {
@@ -72,10 +92,10 @@ export const clockText = (at: number): string => {
 
 export const alreadyQueuedText = (at: number, position: number): string => `already queued since ${clockText(at)} (position ${position})`
 
-export const alreadyQueuedDeny = (task: string, at: number, position: number, tier?: Tier): string => `${QUEUED_PREFIX}${task} — ${slotFrees(tier)}; ${alreadyQueuedText(at, position)}`
+export const alreadyQueuedDeny = (task: string, at: number, position: number, tier?: Tier, limit?: string): string => `${QUEUED_PREFIX}${task} — ${slotFrees(tier)}; ${alreadyQueuedText(at, position)}${limit ? `; limit: ${limit}` : ''}`
 
 /** The "already queued since …" part of a deny, if it is that kind. */
-export const alreadyQueuedPart = (deny: string): string | undefined => (isQueuedDeny(deny) ? /already queued since \d\d:\d\d \(position \d+\)$/.exec(deny)?.[0] : undefined)
+export const alreadyQueuedPart = (deny: string): string | undefined => (isQueuedDeny(deny) ? /already queued since \d\d:\d\d \(position \d+\)(?=$|; limit: )/.exec(deny)?.[0] : undefined)
 
 /** Whole minutes a queued row waited. */
 export const waitedMinutes = (since: number, now: number): number => Math.max(0, Math.round((now - since) / 60000))

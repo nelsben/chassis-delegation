@@ -1,7 +1,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import * as sched from '../hooks/lib/scheduler'
 import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
-import { startingOthers, hasSlot, queuedDeny, isQueuedDeny, alreadyQueuedDeny, enqueue, dequeue, promptKey, queuedText, parseMaxWorkers, readyCount, readyLine, runningDeny, parseReadyFallbackMinutes, DEFAULT_READY_FALLBACK_MINUTES, fallbackDue, fallbackDelay, fallbackKind, readyWaitLine, fallbackRow } from '../hooks/lib/scheduler'
+import { startingOthers, hasSlot, queuedDeny, isQueuedDeny, alreadyQueuedDeny, alreadyQueuedPart, enqueue, dequeue, promptKey, queuedText, parseMaxWorkers, readyCount, readyLine, runningDeny, parseReadyFallbackMinutes, DEFAULT_READY_FALLBACK_MINUTES, fallbackDue, fallbackDelay, fallbackKind, readyWaitLine, fallbackRow, limitSourceText, maxWorkersSourcedText } from '../hooks/lib/scheduler'
 
 const item = (task: string) => ({ prompt: `Your brief is the file /s/briefs/${task}.brief.md.`, description: task, subagentType: 'backend', task, at: 1 })
 
@@ -238,5 +238,31 @@ describe('MOD-131 (#219): per-tier worker slots', () => {
     expect(mergeConfig({}, {}).maxWorkersByTier).toEqual({})
     const settings = settingsLayer({ maxWorkersByTier: '{"frontier":1}' }).config
     expect(mergeConfig(repo, settings, user).maxWorkersByTier).toEqual({ frontier: 1, standard: 5 })
+  })
+})
+
+describe('MOD-145 (#234): the limit and where it came from', () => {
+  test('limitSourceText names all five places', () => {
+    expect(limitSourceText('maxWorkers', 3, 'default')).toBe('maxWorkers 3 from the default')
+    expect(limitSourceText('maxWorkers', 3, 'repo')).toBe('maxWorkers 3 from the repo file')
+    expect(limitSourceText('maxWorkers', 3, 'yours')).toBe('maxWorkers 3 from your options file')
+    expect(limitSourceText('maxWorkers', 3, 'host')).toBe('maxWorkers 3 from the host options')
+    expect(limitSourceText('maxWorkersByTier.standard', 2, 'locked')).toBe('maxWorkersByTier.standard 2 from the host options (locked)')
+  })
+  test('queuedDeny ends with the limit when given, and is the same without', () => {
+    const limit = 'maxWorkers 3 from your options file'
+    expect(queuedDeny('MOD-9', ['a', 'b', 'c'], [], undefined, limit)).toBe(`queued: MOD-9 — the mod will tell you when a slot frees (3 live: a, b, c; 0 queued: ; limit: ${limit})`)
+    expect(queuedDeny('MOD-9', ['a'], ['MOD-9'])).toBe('queued: MOD-9 — the mod will tell you when a slot frees (1 live: a; 1 queued: MOD-9)')
+    expect(isQueuedDeny(queuedDeny('MOD-9', ['a'], ['MOD-9'], 'frontier', limit))).toBe(true)
+    const again = alreadyQueuedDeny('MOD-9', 0, 1, undefined, limit)
+    expect(again).toMatch(/; limit: maxWorkers 3 from your options file$/)
+    expect(isQueuedDeny(again)).toBe(true)
+    expect(alreadyQueuedPart(again)).toMatch(/^already queued since \d\d:\d\d \(position 1\)$/)
+  })
+  test('the /delegation text appends the source, and names a tier whose source differs', () => {
+    expect(maxWorkersSourcedText(3, undefined, { maxWorkers: 'yours' })).toBe('3 (from your options file)')
+    expect(maxWorkersSourcedText(3, { standard: 2 }, { maxWorkers: 'yours', maxWorkersByTier: 'repo' })).toBe('3 (from your options file; standard 2 from the repo file)')
+    expect(maxWorkersSourcedText(6, { frontier: 2 }, { maxWorkers: 'repo', maxWorkersByTier: 'repo' })).toBe('6 (frontier 2) (from the repo file)')
+    expect(maxWorkersSourcedText(6, undefined, undefined)).toBe('6')
   })
 })
