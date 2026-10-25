@@ -10,6 +10,10 @@
 
 - **The docs and the card tool say the card is the worker's whole instruction (MOD-139).** `docs/guide.md` gains a "What the worker sees" subsection under "The card", the card tool's top-level `doneWhen` description names the rule, and `docs/how-it-works.md` step 2 says the same.
 
+### Fixed
+
+- **Dispatch re-renders a stale brief for the same repo (MOD-141, #232).** An existing worktree or `repo=none` brief used to be reused whatever the card or the flags said, and `--scope` and `--forbid` did nothing to it. Now dispatch renders the brief again and, when the card, `--scope` or `--forbid` would change it, rewrites the file and says `2. brief <path> rewritten: the card changed, --scope applied, --forbid applied`; an unchanged brief reads `exists — reused, not overwritten` with no suffix. While a worker on the task is live, a brief that would change is refused with `a worker on <ID> is live and reads <brief path>; its brief is not rewritten under it`, before any worktree is cut. Amend blocks survive, a base flag still only sets `base=`, and a brief written by hand or a `repo=here` brief is never rewritten. The forbid/done-when warning gains `fix: forbid=<list>`, the forbid to pass back as `--forbid`.
+
 ## 0.9.26 — 2026-10-24
 
 ### Added

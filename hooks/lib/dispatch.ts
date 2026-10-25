@@ -3,7 +3,7 @@
 // worker; the brain makes the Agent call the block names, and the spawn hook
 // shapes and records it like any other. Pure: no `$`.
 import { isBaseRef, isSha, isTaskId } from './allow'
-import { isSpacedPath, listForHeader, parseBudget } from './brief'
+import { isSpacedPath, listForHeader, parseBudget, parseHeader } from './brief'
 import { worktreePath as worktreePathOf } from './paths'
 import { DEFAULT_AGENT_TYPES, DEFAULT_DOMAINS } from './repoconfig'
 
@@ -757,4 +757,29 @@ export function parseDispatchTool(input: Record<string, unknown>): DispatchArgs 
     ...(repo !== undefined ? { repo } : {}),
     ...(input.forceOverlap === true ? { forceOverlap: true as const } : {}),
   }
+}
+
+/** MOD-141: the refusal when a worker on the task is live and the brief it reads would change. */
+export const liveBriefRefusal = (id: string, briefPath: string): string =>
+  `/dispatch ${id}: a worker on ${id} is live and reads ${briefPath}; its brief is not rewritten under it. Wait for its hand-back, then dispatch again`
+
+/**
+ * MOD-141: why a brief on disk is rewritten: `--scope applied` / `--forbid applied` when that flag was passed and the
+ * header field differs, and `the card changed` when the text still differs once the flagged fields are made equal.
+ */
+export function rewriteReasonsOf(old: string, next: string, scopeFlag: boolean, forbidFlag: boolean): string {
+  // scope runs to the forbid field, forbid to the next field (a prose scope may hold spaces)
+  const list = (key: string) => new RegExp(key === 'scope' ? '(\\sscope=)(.*?)(?= forbid=)' : '(\\sforbid=)(.*?)(?=\\s[a-z_]+=|\\]\\]$)')
+  const reasons: string[] = []
+  let same = old
+  for (const [key, flagged, label] of [['scope', scopeFlag, '--scope applied'], ['forbid', forbidFlag, '--forbid applied']] as const) {
+    const a = list(key).exec(parseHeader(same)?.raw ?? '')
+    const b = list(key).exec(parseHeader(next)?.raw ?? '')
+    if (!flagged || !a || !b || a[2] === b[2]) continue
+    reasons.push(label)
+    const h = parseHeader(same)
+    if (h) same = same.replace(h.raw, h.raw.replace(list(key), (_m, k: string) => `${k}${b[2]}`))
+  }
+  if (same !== next || reasons.length === 0) reasons.unshift('the card changed')
+  return reasons.join(', ')
 }

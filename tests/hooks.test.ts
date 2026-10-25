@@ -949,7 +949,7 @@ describe('/dispatch', () => {
     expect(out.text).toContain('the card scope reads as prose')
   })
 
-  test('GH-103: a prose card scope and no --scope stops at dispatch: the brief and the prose are shown, no worktree, no spawn; the second dispatch with --scope reuses the brief', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+  test('GH-103: a prose card scope and no --scope stops at dispatch: the brief and the prose are shown, no worktree, no spawn; the second dispatch with --scope rewrites the brief with it (MOD-141)', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, run, store: offered })
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput('BE-101'))
@@ -961,7 +961,7 @@ describe('/dispatch', () => {
     expect(w.runs).toEqual([])
     expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(true)
     const again = await $.command.run(commandInput('BE-101 --scope app/billing/**'))
-    expect(again.text).toContain('exists — reused, not overwritten')
+    expect(again.text).toContain('rewritten: --scope applied')
     expect(again.text).not.toContain('stopped:')
     expect(spawnCallOf(String(again.text))).toMatchObject({ subagent_type: 'backend', model: 'opus' })
     expect(w.spawns).toHaveLength(0)

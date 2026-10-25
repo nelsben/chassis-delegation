@@ -68,11 +68,12 @@ describe('MOD-95: a brief written for another repo is not reused', () => {
     expect(w.spawns).toHaveLength(0)
   })
 
-  test('(c) a reused brief whose only change is an amended scope is kept byte-identical', { options: BRIEFS }, async ($, on) => {
+  test('(c) a reused brief whose only change is an appended amend block is kept byte-identical', { options: BRIEFS }, async ($, on) => {
     const w = setup(on as never)
     await $.session.start(sessionStart)
     await dispatch($, 'T-1 --dry-run')
-    const amended = (w.files.get(BRIEF) ?? '').replace('scope=src/**,tests/**', 'scope=src/**,tests/**,docs/**') + '\n[[amend v=1 scope+=docs/** reason=the docs page]]\n'
+    // MOD-141: a hand edit of the header is re-rendered from the card; the amend block a worker appended is not a change
+    const amended = (w.files.get(BRIEF) ?? '') + '[[amend v=1 scope+=docs/** reason=the docs page]]\n'
     w.files.set(BRIEF, amended)
     const again = await dispatch($, 'T-1 --dry-run')
     expect(again).toContain('exists — reused')

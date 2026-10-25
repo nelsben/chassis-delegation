@@ -172,6 +172,8 @@ import {
   TEMPLATE_FILES,
   templatePath,
   unrenderedRefusal,
+  liveBriefRefusal,
+  rewriteReasonsOf,
   worktreeAddArgv,
   worktreePath,
   type BriefMode,
@@ -200,7 +202,7 @@ import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOf
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
-import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, redTestWarnings, sayGo, type NewCard } from './lib/card'
+import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
@@ -5548,40 +5550,33 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   // scratch= is written for a card that has an output folder, names a scratch folder, or shares or has no repo (a worktree card's header stays as it was)
   const scratch = outdir !== undefined || here || none || card.scratch ? (card.scratch ? expandTilde(card.scratch, home) : defaultScratch(await tmpDirOf($), id)) : undefined
   const folders = { ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}) }
-  let header: string
+  // MOD-141: an existing worktree or repo=none brief made for this task from its card is re-rendered when the card or the flags would change it
+  const candidate = reuse !== undefined && reusedText !== undefined && !replay && !here && reusedHeader?.task === id
+  const headerFor = (b: string): string => {
+    if (here && !reuse) {
+      // base=: a sha --base, else baseRef (HEAD pinned to the sha it is at now), else none (the verifier's chain)
+      return renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore: hereIgnoreList, ...folders })
+    }
+    if (none && (!reuse || candidate)) {
+      return renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'none', ...folders })
+    }
+    // GH-105: a base that is not the default is written, so the verifier diffs from the commit the worktree was cut from
+    return renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, ...(target ? { repo: target.path } : {}), ...(b !== 'origin/main' ? { base: b } : {}), ...folders })
+  }
+  let hereBase: string | undefined
+  let hereIgnoreList: string[] = []
   if (here && !reuse) {
-    // base=: a sha --base, else baseRef (HEAD pinned to the sha it is at now), else none (the verifier's chain)
-    let hereBase: string | undefined = base !== 'origin/main' ? base : cfg.baseRef || undefined
+    hereBase = base !== 'origin/main' ? base : cfg.baseRef || undefined
     if (hereBase === 'HEAD') {
       const head = await run($, headShaArgv(root), { cwd: root, timeoutMs: 10000 })
       const sha = head.ok && head.exitCode === 0 ? head.stdout.trim() : ''
       if (/^[0-9a-f]{7,40}$/.test(sha)) hereBase = sha
       else out.push('   note: baseRef HEAD could not be pinned (git rev-parse HEAD failed); the brief says base=HEAD')
     }
-    const ignore = hereIgnore(ignoreWithCards(cfg.ignore, cfg.cardDir), inflight.flatMap(c => c.files))
-    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore, ...folders })
-  } else if (none && !reuse) {
-    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'none', ...folders })
-  } else {
-    // GH-105: a base that is not the default is written, so the verifier diffs from the commit the worktree was cut from
-    header = renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, ...(target ? { repo: target.path } : {}), ...(base !== 'origin/main' ? { base } : {}), ...folders })
+    hereIgnoreList = hereIgnore(ignoreWithCards(cfg.ignore, cfg.cardDir), inflight.flatMap(c => c.files))
   }
-  let briefPath: string
-  let shown = header
-  if (reuse) {
-    briefPath = reuse
-    shown = reusedHeader?.raw ?? header
-    // MOD-2: a dispatch that names a base writes it into the reused brief's header; the rest of the file is untouched
-    let baseNote = ''
-    if (!here && !replay && reusedText !== undefined && parsed.base !== 'origin/main' && reusedHeader && reusedBase !== parsed.base) {
-      const set = setHeaderField(reusedText, 'base', parsed.base)
-      await $.fs.write(briefPath, set.text)
-      shown = parseHeader(set.text)?.raw ?? shown
-      baseNote = set.previous !== undefined ? `, base= replaced ${set.previous} → ${parsed.base}` : `, base= set to ${parsed.base}`
-    }
-    out.push(`2. brief ${briefPath} exists — reused${baseNote || ', not overwritten'}${scope || forbid ? ' (--scope/--forbid not applied to it)' : ''}`)
-    if ((here !== wantHere || none !== wantNone) && !replay) out.push(`   note: the reused brief is ${here ? 'repo=here' : none ? 'repo=none' : 'a worktree brief'}, so it decides the mode (remove it to re-render)`)
-  } else {
+  const header = headerFor(base)
+  const renderBrief = async (b: string): Promise<{ text: string } | { stop: string }> => {
     // MOD-28: the mod's own template is the copy read at load; a template the repo names (briefTemplate) is the repo's file, read now
     let template: string
     let templateAt: string
@@ -5590,13 +5585,13 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       try {
         template = await $.fs.read(cfg.briefTemplate)
       } catch (err) {
-        return [...out, `/dispatch ${id}: the brief template could not be read: ${String(err)}`].join('\n')
+        return { stop: [...out, `/dispatch ${id}: the brief template could not be read: ${String(err)}`].join('\n') }
       }
     } else {
       const loaded = await loadedTemplates($)
       templateAt = templatePath(loaded.root, 'brief.md')
       const text = loaded.text.get('brief.md')
-      if (text === undefined) return [...out, `/dispatch ${id}: the brief template could not be read: ${loaded.failed.get('brief.md') ?? 'not loaded'} (it failed to load when the mod started: ${templateAt})`].join('\n')
+      if (text === undefined) return { stop: [...out, `/dispatch ${id}: the brief template could not be read: ${loaded.failed.get('brief.md') ?? 'not loaded'} (it failed to load when the mod started: ${templateAt})`].join('\n') }
       template = text
     }
     let rootNames: string[] = []
@@ -5610,31 +5605,77 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     // MOD-44: a worker in another repo is told the gate as that repo's command, not a bare id
     // MOD-120 (#199): and every brief shows the command as it will run: {worktree}, {outdir} and {files} filled, with the line to write the listing
     const gateFilesAt = scratch ? `${scratch.replace(/\/+$/, '')}/files.txt` : filesPathFor(scratchFor(`${briefDirFor(root, cfg.briefDir)}/${fileName}`), id)
-    const gateLine = gateLineText(card.gate, target ? target.gateMap : cfg.gateMap, { worktree, ...(outdir ? { outdir } : {}), filesPath: gateFilesAt, base: base !== 'origin/main' ? base : (target ? target.baseRef : cfg.baseRef) || 'origin/main' })
+    const gateLine = gateLineText(card.gate, target ? target.gateMap : cfg.gateMap, { worktree, ...(outdir ? { outdir } : {}), filesPath: gateFilesAt, base: b !== 'origin/main' ? b : (target ? target.baseRef : cfg.baseRef) || 'origin/main' })
     const briefCard: Card = { ...card, gateText: gateLine.gate }
     // MOD-124 (#188): the gitignored rules file, copied under its own heading; the card's allow: blocks after it
     const localPath = (target ? target.briefLocal : cfg.briefLocal).trim()
     let localText: string | undefined
-    if (localPath === '' && card.allow.length > 0) return [...out, noLocalRefusal(id, card.allow)].join('\n')
+    if (localPath === '' && card.allow.length > 0) return { stop: [...out, noLocalRefusal(id, card.allow)].join('\n') }
     if (localPath !== '' && (await exists($, localAbs(repoRoot, localPath)))) {
       const at = localAbs(repoRoot, localPath)
       const tracked = await run($, ['git', '-C', repoRoot, 'ls-files', '--error-unmatch', '--', at], { cwd: repoRoot, timeoutMs: 15000 })
-      if (tracked.ok && tracked.exitCode === 0) return [...out, trackedRefusal(id, localPath)].join('\n')
+      if (tracked.ok && tracked.exitCode === 0) return { stop: [...out, trackedRefusal(id, localPath)].join('\n') }
       try {
         localText = await $.fs.read(at)
       } catch (err) {
-        return [...out, unreadableRefusal(id, localPath, String(err))].join('\n')
+        return { stop: [...out, unreadableRefusal(id, localPath, String(err))].join('\n') }
       }
     }
     if (card.allow.length > 0) {
       const missing = missingBlocks(localText ?? '', card.allow)[0]
-      if (missing !== undefined) return [...out, missingBlockRefusal(id, missing, localPath)].join('\n')
+      if (missing !== undefined) return { stop: [...out, missingBlockRefusal(id, missing, localPath)].join('\n') }
     }
     const briefExtraText = renderLocal(target ? target.briefExtra : cfg.briefExtra, localText, card.allow)
     const rendered = renderBriefChecked(template, { card: briefCard, gateNote: gateLine.note, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: briefExtraText, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
     // MOD-28: a brief with a marker left in it never reaches a worker; nothing is written, no worktree is made
-    if (rendered.leftover !== undefined) return [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n')
-    const written = await writeBrief($, root, fileName, `${header}\n\n${rendered.text}`)
+    if (rendered.leftover !== undefined) return { stop: [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n') }
+    return { text: `${headerFor(b)}\n\n${rendered.text}` }
+  }
+  let briefPath = ''
+  let shown = header
+  // MOD-141: the brief the current card and flags would render, compared with the file; amend blocks a worker appended ride along
+  let rewritten = false
+  let rewriteText: string | undefined
+  let rewriteReasons = ''
+  if (candidate && reuse !== undefined && reusedText !== undefined) {
+    const renderBase = reusedBase && isGitRef(reusedBase) ? reusedBase : 'origin/main'
+    const held = extractAmendBlocks(reusedText)
+    const blocks = [...held.amends.map(a => a.block), ...held.malformed.map(m => m.block)]
+    const first = await renderBrief(renderBase)
+    if ('stop' in first) return first.stop
+    if (appendAmends(first.text, blocks).text !== reusedText) {
+      const open = await openAttemptOf($, { task: id, repo: target?.path })
+      if (open !== undefined) return liveBriefRefusal(id, reuse)
+      const final = renderBase === base ? first : await renderBrief(base)
+      if ('stop' in final) return final.stop
+      rewriteText = appendAmends(final.text, blocks).text
+      rewriteReasons = rewriteReasonsOf(reusedText, rewriteText, scope !== undefined, forbid !== undefined)
+      rewritten = true
+    }
+  }
+  const reused = reuse !== undefined && !rewritten
+  if (reused && reuse) {
+    briefPath = reuse
+    shown = reusedHeader?.raw ?? header
+    // MOD-2: a dispatch that names a base writes it into the reused brief's header; the rest of the file is untouched
+    let baseNote = ''
+    if (!here && !replay && reusedText !== undefined && parsed.base !== 'origin/main' && reusedHeader && reusedBase !== parsed.base) {
+      const set = setHeaderField(reusedText, 'base', parsed.base)
+      await $.fs.write(briefPath, set.text)
+      shown = parseHeader(set.text)?.raw ?? shown
+      baseNote = set.previous !== undefined ? `, base= replaced ${set.previous} → ${parsed.base}` : `, base= set to ${parsed.base}`
+    }
+    out.push(`2. brief ${briefPath} exists — reused${baseNote || ', not overwritten'}${!candidate && (scope || forbid) ? ' (--scope/--forbid not applied to it)' : ''}`)
+    if ((here !== wantHere || none !== wantNone) && !replay) out.push(`   note: the reused brief is ${here ? 'repo=here' : none ? 'repo=none' : 'a worktree brief'}, so it decides the mode (remove it to re-render)`)
+  } else if (rewritten && rewriteText !== undefined && reuse) {
+    await $.fs.write(reuse, rewriteText)
+    briefPath = reuse
+    shown = parseHeader(rewriteText)?.raw ?? header
+    out.push(`2. brief ${briefPath} rewritten: ${rewriteReasons}`)
+  } else {
+    const built = await renderBrief(base)
+    if ('stop' in built) return built.stop
+    const written = await writeBrief($, root, fileName, built.text)
     if ('error' in written) return [...out, `/dispatch ${id}: ${written.error}`].join('\n')
     briefPath = written.path
     out.push(stale ? briefRewrittenLine(briefPath, stale) : `2. brief ${briefPath} written (tier=${tier}, model=${alias}, budget=${budget}-attempts${here ? ', repo=here' : none ? ', repo=none' : ''})`)
@@ -5645,10 +5686,10 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     if (n > LESSONS_CAP) out.push(`   ${lessonsCapWarning(card.domain, n, lessons.path)}`)
   }
   // GH-1 item 6: the budget the spawn will use, off the grammar, falls back to the default; say so once
-  const budgetWarn = budgetWarning(reuse ? reusedHeader?.budget : card.budget, cfg.defaultBudget)
+  const budgetWarn = budgetWarning(reused ? reusedHeader?.budget : card.budget, cfg.defaultBudget)
   if (budgetWarn) out.push(`   ${budgetWarn}`)
   // GH-108: a card tier the mod does not know runs at standard, and says so once
-  const tierWarn = tierWarning(reuse ? reusedHeader?.tier : card.tier)
+  const tierWarn = tierWarning(reused ? reusedHeader?.tier : card.tier)
   if (tierWarn) out.push(`   ${tierWarn}`)
   if (!scope && scopeLooksProse(card.scope)) {
     out.push('   note: the card scope reads as prose; the verifier leaves a prose scope unchecked unless the brief gains scope_globs= — pass scope globs')
@@ -5662,6 +5703,9 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   for (const line of forbidCollisions((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, doneWhenOf(card.body))) {
     out.push(`   ${line}`)
   }
+  // MOD-141: and the forbid to pass back as --forbid when a glob covers a path the done-when names
+  const fixLine = forbidFix(shownForbid, doneWhenOf(card.body))
+  if (fixLine !== undefined) out.push(`   ${fixLine}`)
   // MOD-55: a path the red_test names that the scope leaves out, or a forbid covers, is said once (nothing is added to the scope)
   for (const line of redTestWarnings(card.redTest, (shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid)) out.push(`   ${line}`)
   // MOD-54: a wide scope warns, and a small standard card is told economy would do (nothing is refused or changed)
@@ -5690,7 +5734,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   }
 
   // MOD-22: the absolute scope and forbid roots are listed now; the verifier lists them again at hand-back
-  const listedOutside = await recordOutside($, id, briefPath, reuse !== undefined, target?.path)
+  const listedOutside = await recordOutside($, id, briefPath, reused, target?.path)
   if (listedOutside) out.push(`   ${listedOutside}`)
 
   if (here) out.push(`3. no worktree (repo=here): the worker shares ${root}`)
