@@ -5910,8 +5910,32 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   // MOD-1: --verify at the last attempt's own sha re-judges that attempt instead of opening another
   const target = verifyTarget(ladder, subtask, sha)
   let red: string | undefined
-  if (target.rejudge && last?.red) red = last.red
-  else if (contract.ok && briefWantsRed(contract.redTest)) {
+  let redNote: string | undefined
+  if (target.rejudge && last?.red) {
+    red = last.red
+    // a re-judge looks again: a newer red file in the folder is the evidence it reads
+    if (contract.ok && briefWantsRed(contract.redTest)) {
+      try {
+        const entries = await $.fs.list(`${repo}/.delegation/${id}`)
+        const name = newestRed(entries.map(e => e.name))
+        const recorded = /(?:^|\/)red-(\d+)\.txt$/.exec(last.red)
+        let newer = false
+        if (name && recorded) newer = Number(/^red-(\d+)\.txt$/.exec(name)?.[1]) > Number(recorded[1])
+        else if (name) {
+          const mtime = (n: string) => entries.find(e => e.name === n)?.mtimeMs
+          const at = (await $.fs.stat(`${repo}/${last.red}`)).mtimeMs
+          const theirs = mtime(name)
+          newer = typeof at === 'number' && typeof theirs === 'number' && theirs > at
+        }
+        if (name && newer && `.delegation/${id}/${name}` !== last.red) {
+          red = `.delegation/${id}/${name}`
+          redNote = `red: ${red} (newer than the attempt's ${last.red})`
+        }
+      } catch {
+        // an unreadable folder or file keeps the recorded red
+      }
+    }
+  } else if (contract.ok && briefWantsRed(contract.redTest)) {
     try {
       const name = newestRed((await $.fs.list(`${repo}/.delegation/${id}`)).map(e => e.name))
       red = name ? `.delegation/${id}/${name}` : undefined
@@ -5969,7 +5993,7 @@ async function runVerifyDispatch($: Host, id: string, sha: string): Promise<stri
   }
   const rendered = await finalize($, spawn, report)
   const rejudged = target.rejudge ? [`re-judging attempt ${attempt}/${spawn.budget} at ${sha}`] : []
-  return [...rejudged, `${head}: no spawn — the verifier ran on ${here ? `the shared checkout ${root}` : `worktree ${repo}`} at ${sha.slice(0, 7)} (base ${delta.base})`, `synthetic report: ${report}`, rendered.full].join('\n')
+  return [...rejudged, ...(redNote ? [redNote] : []), `${head}: no spawn — the verifier ran on ${here ? `the shared checkout ${root}` : `worktree ${repo}`} at ${sha.slice(0, 7)} (base ${delta.base})`, `synthetic report: ${report}`, rendered.full].join('\n')
 }
 
 // ---- part 5B: /delegation init and the init tool ----------------------------------------
