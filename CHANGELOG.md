@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **A task already merged stays closed (MOD-136, #222).** A hand-back for a task whose last attempt is retired (or whose card on the default branch reads merged), or whose worktree folder and branch are both gone, was verified against the post-merge tree, gave a misleading refute and left an owed row for finished work. Now it is not verified, counts against no budget, writes no owed row, and posts one row: `<task>: hand-back after the task closed (merged|branch gone); not verified, nothing owed`. Retiring a task (the sweep, a merge command, `/delegation merge --finish`) clears its owed row, and the `/delegation` summary skips a retired task even for rows written before the retire. A task that is not retired and still has its branch is verified as before.
+
 - **The verifier finds a brief written by hand (MOD-135, #222).** A spawn prompt that names its brief by a relative path (`.delegation/briefs/T-1.brief.md`, with or without `./`) is verified against that brief, read from the spawn's folder, else the session root; a path that climbs out with `..` is not read. A spawn that names no brief at all, whose report names a `task=`, is verified against `<root>/.delegation/briefs/<task>.brief.md` when that file exists and its header is for that task, and the attempt is recorded under that task. With no such file nothing changes.
 
 ## 0.9.25 — 2026-10-24
