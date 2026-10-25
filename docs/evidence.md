@@ -2,6 +2,7 @@
 
 - **689 tasks** across six repos (A to F), 768 judged attempts, from 3 to 20 October 2026.
 - **88% settled in one attempt** (608 tasks); 276 tasks were accepted and landed.
+- **52% (356 tasks) ended consistent**; consistent means the report matched git, not that the task was right.
 - About **$2,677** of worker spend.
 
 Every number comes from [summary.json](evidence/summary.json), the anonymized output of `bin/evidence.mjs` over six ledgers. "Consistent" means the worker's report matches git; it is not a review.
@@ -30,7 +31,7 @@ Every number comes from [summary.json](evidence/summary.json), the anonymized ou
 | 2 | 73 | 11% |
 | 3 | 8 | 1% |
 
-**Lesson: most work settles first time; the attempt budget (default 2) caps the rest.**
+**Lesson: most work settles first time; the attempt budget (default 3) caps the rest.**
 
 ## Cost and time per tier
 
@@ -113,7 +114,7 @@ An adopter on a different workflow reviewed the mod. Versions are from [CHANGELO
 - **Gap, fixed in 0.9.17:** polling loops at large context drew cost nudges.
 - **Gap, fixed in 0.9.15 to 0.9.17:** store writes vanished across sessions.
 
-53 issues were filed and closed on the public tracker, and 27 tagged releases shipped since 2 October.
+53 issues were filed and closed on the public tracker, and 38 tagged releases shipped from 2 to 25 October.
 
 ## Reproduce it
 

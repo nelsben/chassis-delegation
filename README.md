@@ -23,10 +23,15 @@ flowchart LR
 
 The flow in four diagrams, with what the verifier checks: [docs/how-it-works.md](docs/how-it-works.md).
 
+## Why
+
+Anthropic's own guidance recommends delegating to fresh-context subagents, writing self-contained briefs, asking for evidence rather than claims, and using cheaper models for cheaper work. The same guidance notes that a coordinating agent [sometimes starts doing the work itself](https://code.claude.com/docs/en/agent-teams#wait-for-teammates-to-finish), and its remedy is an instruction telling it to wait. The output scan it describes [does not judge truthfulness](https://code.claude.com/docs/en/sub-agents#subagent-output-scanning), and no published mechanism checks a worker's claims against git or caps what one interactive attempt may spend. This mod exists because the brain forgets to delegate and forgets to pick the right tier, so it turns those recommendations into checks that refuse, queue or refute.
+
 ## Evidence
 
 - 689 tasks across six repos, from 3 to 20 October 2026.
-- 88% of tasks settled in one attempt.
+- 52% of tasks ended consistent: the worker's report matched git. Consistent means the report was honest, not that the task was right.
+- 88% of tasks needed one attempt (any final verdict).
 - About $1.3 per card through the mod against about $8.6 by hand (mean of three cards each way).
 
 Charts, data tables and lessons: [docs/evidence.md](docs/evidence.md).

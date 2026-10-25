@@ -346,7 +346,7 @@ resource only the first is made ready; a waiting row takes no slot.
 **Fan-out.** The `card` tool takes `lanes: [{ title, scope, doneWhen? }]` beside the shared fields (`title` and
 `doneWhen` as the umbrella, `why`, `gate`, `tier`, `repo`, `redTest`, `budget`, `spend`, `resources`, `forbid`). It
 writes one card per lane, all or none, with sequential ids: the shared fields, plus each lane's title, scope (its own
-output folder) and done-when (else the shared list). A shared `scope` beside lanes, or two lanes whose scopes overlap,
+output folder) and done-when (the shared statements first, then the lane's own; a lane with none gets the shared ones alone). A shared `scope` beside lanes, or two lanes whose scopes overlap,
 is refused, naming both. The dry run prints every lane's header; `dispatch: true` dispatches each in order, one spawn
 block per lane, and the queue keeps lanes sharing a resource apart. For a notes file every lane wants, forbid it in all
 of them and merge it yourself.

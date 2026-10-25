@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **The README says why the mod exists and reports the evidence honestly (MOD-165).** A new Why section cites Anthropic's guidance on delegation and on a lead that starts the work itself, and the evidence list now gives 52% of tasks ended consistent ahead of 88% needing one attempt. Three stale figures are corrected: the attempt budget default is 3, the release count is 38 from 2 to 25 October, and a lane's done-when is the shared statements then its own.
+
 ### Fixed
 
 - **A lane's own `doneWhen` is added to the shared one instead of replacing it (MOD-162).** With `lanes`, each lane card's Done when is the shared statements in order, then that lane's own; a lane with none gets the shared ones alone, as before. The card tool's text for `lanes` and a lane's `doneWhen` says so, so a layout or rule put in the shared `doneWhen` reaches every worker's brief.
