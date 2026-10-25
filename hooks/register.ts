@@ -267,6 +267,8 @@ import {
   isProveResume,
   newestRed,
   probeWork,
+  branchOnBase,
+  onBaseClause,
   rateLimitedVerdict,
   resumeText,
   scratchFor,
@@ -4088,6 +4090,33 @@ async function workerRepo($: Host, spawn: Pick<SpawnRecord, 'cwd' | 'task' | 're
 /** What the look at a worker's worktree needs of the task: who, where it ran, a replay's base, repo=here. */
 type LookFor = { task: string; subtask: string; cwd?: string; replay?: boolean; base?: string; here?: string }
 
+/** The worker's own worktree and the base its commits count from; undefined when it has none (its tree would be the session root). */
+async function workerTree($: Host, s: LookFor, header: BriefHeader | undefined, root: string): Promise<{ repo: string; base: string | undefined } | undefined> {
+  const other = await adoptRepo($, s.task, header)
+  const repo = (await workerRepo($, s, header?.repo, root)).replace(/\/+$/, '')
+  if (repo === root) return undefined
+  const briefBase = (header?.fields.base ?? '').trim()
+  return { repo, base: s.base || (briefBase && isGitRef(briefBase) ? briefBase : '') || (other ? other.baseRef : cfg.baseRef) || undefined }
+}
+
+/**
+ * MOD-150: a failing verdict's worker whose commits are all on the base already (cherry-picked by patch, or merged) is not
+ * resumed: the row's next says so. Read-only, through run(); anything it cannot read leaves the advice as it was.
+ */
+async function workOnBase($: Host, s: SpawnRecord, header: BriefHeader | undefined, sha: string): Promise<string | undefined> {
+  if (s.here || header?.repo === 'here' || header?.repo === 'none') return undefined
+  let root: string
+  try {
+    root = (await $.session.root()).replace(/\/+$/, '')
+  } catch {
+    return undefined
+  }
+  const tree = await workerTree($, s, header, root)
+  if (!tree) return undefined
+  const found = await branchOnBase({ repo: tree.repo, sha, ...(tree.base ? { base: tree.base } : {}), ...(s.at !== undefined ? { sinceMs: s.at } : {}) }, (argv, init) => run($, [...argv], init))
+  return found ? onBaseClause(found.base) : undefined
+}
+
 /**
  * GH-104: before a respawn or an auto-resume of a briefed task, the worker's
  * own worktree is read with allowlisted git reads. Work is present when HEAD
@@ -4104,11 +4133,9 @@ async function workInWorktree($: Host, s: LookFor, header: BriefHeader | undefin
   } catch {
     return undefined
   }
-  const other = await adoptRepo($, s.task, header)
-  const repo = (await workerRepo($, s, header?.repo, root)).replace(/\/+$/, '')
-  if (repo === root) return undefined
-  const briefBase = (header?.fields.base ?? '').trim()
-  const base = s.base || (briefBase && isGitRef(briefBase) ? briefBase : '') || (other ? other.baseRef : cfg.baseRef) || undefined
+  const tree = await workerTree($, s, header, root)
+  if (!tree) return undefined
+  const { repo, base } = tree
   const label = taskLabel(s.task, s.subtask)
   const seen = await probeWork({ repo, ...(base ? { base } : {}), judged: judgedShas(records, s.subtask, lane) }, (argv, init) => run($, [...argv], init))
   if (!seen.present) {
@@ -4848,6 +4875,12 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
       // MOD-21: a consistent verdict is followed by a reviewer when the option says so; a repo=none brief and a replay have no diff to read
       review: reviewDue(cfg.review, spawn.tier) && !noRepo && !spawn.replay,
     })
+  }
+  // MOD-150: a refuted or unverified hand-back whose commits are all on the base already is not resumed or escalated
+  if (!spawn.adhoc && spawn.briefPath && report?.sha && (advice.kind === 'resume' || advice.kind === 'respawn') && (verdict === 'refuted' || verdict === 'unverified')) {
+    const briefText = await readText($, spawn.briefPath)
+    const clause = await workOnBase($, spawn, briefText !== undefined ? parseHeader(briefText) : undefined, report.sha)
+    if (clause) advice = { kind: 'none', next: `none — ${clause}` }
   }
   // GH-104: a resume or a respawn looks at the worker's worktree first: finished work there is judged, not redone
   let work: WorkPresent | undefined
