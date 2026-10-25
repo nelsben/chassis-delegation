@@ -32,6 +32,7 @@ export const DEFAULT_AGENT_TYPES: Readonly<Record<string, string>> = {}
 /** Tier → alias; an alias, never an id, so the engine's release moves the ladder. */
 export const DEFAULT_TIER_MAP: Readonly<Record<Tier, Alias>> = { economy: 'haiku', standard: 'sonnet', frontier: 'opus', premium: 'fable' }
 
+export const DEFAULT_GATE_TIMEOUT_MINUTES = 9
 export const DEFAULT_MAX_WORKERS = 2
 
 /** GH-16: globs always subtracted from a repo=here delta (the brain's own scratch). */
@@ -84,6 +85,8 @@ export type RepoConfig = {
   /** MOD-124 (#188): a gitignored rules file (repo-relative or absolute) copied into every brief under a section the debrief drops. */
   briefLocal?: string
   maxWorkers?: number
+  /** MOD-155 (#246): whole minutes (1 to 120) the verifier and merge let one gate run; unset = 9. */
+  gateTimeoutMinutes?: number
   /** MOD-131 (#219): a second, lower ceiling under maxWorkers for the briefed workers of a tier (a whole number of 1 or more); a tier the map lacks takes the total alone. */
   maxWorkersByTier?: Partial<Record<Tier, number>>
   domains?: string[]
@@ -111,7 +114,7 @@ export type RepoConfig = {
   reviewTier?: Tier
 }
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -127,6 +130,7 @@ export type Effective = {
   briefExtra: string
   briefLocal: string
   maxWorkers: number
+  gateTimeoutMinutes: number
   maxWorkersByTier: Partial<Record<Tier, number>>
   domains: string[]
   worktreeRoot: string
@@ -371,6 +375,10 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         if (typeof v === 'number' && Number.isInteger(v) && v >= 1) config.maxWorkers = v
         else if (!(v === 0 && !strict)) errors.push(`maxWorkers${where}: needs a whole number of 1 or more (ignored)`)
         break
+      case 'gateTimeoutMinutes':
+        if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 120) config.gateTimeoutMinutes = v
+        else if (!(v === 0 && !strict)) errors.push(`gateTimeoutMinutes${where}: needs a whole number of minutes, 1 to 120 (ignored; 9 is used)`)
+        break
       case 'maxWorkersByTier': {
         const m = maxWorkersByTierOf(v, errors, where)
         if (m) config.maxWorkersByTier = m
@@ -504,6 +512,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     briefExtra: pick('briefExtra', ''),
     briefLocal: pick('briefLocal', ''),
     maxWorkers: pick('maxWorkers', DEFAULT_MAX_WORKERS),
+    gateTimeoutMinutes: pick('gateTimeoutMinutes', DEFAULT_GATE_TIMEOUT_MINUTES),
     maxWorkersByTier: { ...repo.maxWorkersByTier, ...user.maxWorkersByTier, ...settings.maxWorkersByTier },
     domains: [...pick('domains', [...DEFAULT_DOMAINS])],
     worktreeRoot: pick('worktreeRoot', ''),
