@@ -1548,6 +1548,54 @@ describe('MOD-1: one proof of red per task, and --verify at the last attempt\'s 
     expect(w.spawns).toHaveLength(1)
   })
 
+  describe('MOD-147: a re-judge reads the newest red file', () => {
+    const RED_2 = '.delegation/T-4/red-2.txt'
+    const PASSING = 'PASS a/x.test.ts\n  ok adds two numbers\n'
+    const FAILING = 'FAIL a/x.test.ts\n  \u2717 adds three numbers\n    AssertionError: expected 6 to be 7\n'
+    const handBack = async ($: Parameters<typeof setup>[0] extends never ? never : any, w: ReturnType<typeof setup>) => {
+      await $.session.start(sessionStart)
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+      await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd', RED_1)))
+      expect(rows(w)[0]).toContain('verdict=unverified')
+    }
+
+    test('(1) a newer red-N.txt than the recorded one is the red the re-judge reads, said on a red: line', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const w = setup(on, { v: 0 })
+      w.files.set(`${WT}/${RED_1}`, PASSING)
+      await handBack($, w)
+      w.files.set(`${WT}/${RED_2}`, FAILING)
+      const out = String((await $.command.run(commandInput('T-4 --verify 1234abcd'))).text)
+      const lines = out.split('\n')
+      const redLine = lines.findIndex(l => l === `red: ${RED_2} (newer than the attempt's ${RED_1})`)
+      expect(redLine).toBeGreaterThan(0)
+      expect(lines[redLine + 1]).toMatch(/^\/dispatch T-4 --verify 1234abcd: no spawn/)
+      expect(lines[redLine + 2]).toContain(`red=${RED_2}`)
+      expect(out).not.toContain(`red=${RED_1}`)
+      expect(out).not.toContain('claim red: unchecked')
+      expect(records(w, 'T-4').map(r => [r.attempt, r.red])).toEqual([[1, RED_2]])
+    })
+
+    test('(2) no newer file: the recorded red is used and no red: line is printed', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const w = setup(on, { v: 0 })
+      w.files.set(`${WT}/${RED_1}`, PASSING)
+      await handBack($, w)
+      const out = String((await $.command.run(commandInput('T-4 --verify 1234abcd'))).text)
+      expect(out).not.toMatch(/^red: /m)
+      expect(out).toContain(`red=${RED_1}`)
+      expect(records(w, 'T-4').map(r => [r.attempt, r.red])).toEqual([[1, RED_1]])
+    })
+
+    test('(3) a verify at a new sha, not a re-judge, still takes the newest red and prints no red: line', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const w = setup(on, { v: 0 })
+      w.files.set(`${WT}/${RED_1}`, PASSING)
+      await handBack($, w)
+      w.files.set(`${WT}/${RED_2}`, FAILING)
+      const out = String((await $.command.run(commandInput('T-4 --verify 5678abcd'))).text)
+      expect(out).not.toMatch(/^red: /m)
+      expect(out).toContain(`red=${RED_2}`)
+    })
+  })
+
   test("a resume hand-back at a new sha whose red= is attempt 1's held file is held on red", { options: { verdictVerbosity: 'full', autoEscalate: true, ...GM } }, async ($, on) => {
     const gate = { v: 1 }
     const w = setup(on, gate)
