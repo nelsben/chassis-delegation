@@ -5321,14 +5321,17 @@ async function cardsInTree($: Host, tasksDir: string, id: string): Promise<{ nam
 }
 
 /**
- * MOD-44: which repo a task is for, and where its card is. `repoArg` (the dispatch's repo) wins, then the repo the card
- * tool remembered for this id; else the session's own card folder, and (the id found nowhere there) the session's
+ * MOD-44: which repo a task is for, and where its card is. `repoArg` (the dispatch's repo) wins, then (MOD-144) a card in
+ * the session's own card folder, then the repo the card tool remembered for this id; else the session's own card folder, and (the id found nowhere there) the session's
  * `.delegation/cards/<folder>/` boards, whose card may say `repo: <path>`. A card that says a path other than the one
  * given is refused. Returns the target (none for the session's own repo), the folder the card was looked for in, and
  * the cards found there; a string is the refusal.
  */
-async function locateTask($: Host, id: string, repoArg: string | undefined, root: string, replay: boolean): Promise<{ target?: Target; tasksDir: string; found: { name: string; card: Card }[] | string } | string> {
+async function locateTask($: Host, id: string, repoArg: string | undefined, root: string, replay: boolean): Promise<{ target?: Target; tasksDir: string; found: { name: string; card: Card }[] | string; staleRepo?: string } | string> {
   let target: Target | undefined
+  // MOD-144 (#234): the session's own card folder is read before the repo the store remembers for the id
+  let ownFound: { name: string; card: Card }[] | undefined
+  let staleRepo: string | undefined
   if (repoArg !== undefined) {
     const r = await resolveRepo($, repoArg, root)
     if ('error' in r) return `/dispatch ${id}: refused repo ${repoArg}: ${r.error}`
@@ -5337,11 +5340,17 @@ async function locateTask($: Host, id: string, repoArg: string | undefined, root
     const saved = await storeGet<string>($, K.taskRepo(id, await cardRepo($)))
     if (saved) {
       const r = await resolveRepo($, saved, root)
-      if ('path' in r) target = await loadTarget($, r.path)
+      if ('path' in r) {
+        const own = await cardsInTree($, cardDirPath(root, cfg.cardDir), id)
+        if (Array.isArray(own) && own.length > 0) {
+          ownFound = own
+          staleRepo = r.path
+        } else target = await loadTarget($, r.path)
+      }
     }
   }
   let tasksDir = target ? targetCardsDir(root, target) : cardDirPath(root, cfg.cardDir)
-  let found = replay ? [] : await cardsInTree($, tasksDir, id)
+  let found = replay ? [] : ownFound ?? (await cardsInTree($, tasksDir, id))
   // the id alone, a card on one of the session's boards for another repo
   if (!target && !replay && Array.isArray(found) && found.length === 0) {
     let boards: string[] = []
@@ -5371,7 +5380,7 @@ async function locateTask($: Host, id: string, repoArg: string | undefined, root
       return `/dispatch ${id}: the card says repo: ${said}, which is not a task for ${target.path}`
     }
   }
-  return { ...(target ? { target } : {}), tasksDir, found }
+  return { ...(target ? { target } : {}), tasksDir, found, ...(staleRepo !== undefined && !target ? { staleRepo } : {}) }
 }
 
 /** The cards for `id` at the base commit (replay): `git ls-tree`, then `git show` per match, both read-only. */
@@ -5560,6 +5569,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       : `1. card ${cardPath} (status ${card.status}, domain ${card.domain})`,
   )
   if (replay && (card.repo === 'here' || card.repo === 'none')) out.push(`   note: the card says repo: ${card.repo}; a replay works in its own worktree at the base`)
+  if (located.staleRepo !== undefined) out.push(`   note: ${id} was once a task for ${located.staleRepo}; this dispatch is for the card in ${tasksDir} (pass repo=${located.staleRepo} for the other)`)
   if (target) {
     out.push(`   ${repoLine(target, card.gate)}`)
     for (const g of card.gate) if (target.gateMap[g] === undefined && !/\s/.test(g)) out.push(`   warning: gate ${g} is not in ${target.name}'s gate map (${Object.keys(target.gateMap).filter(k => k !== EMPTY_GATE_KEY).join(', ') || 'empty'}); the verifier will not re-run it`)
@@ -5803,6 +5813,14 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       return [...out, `3. git worktree add failed: ${added.ok ? added.stderr.trim() : added.why}`].join('\n')
     }
     out.push(`3. worktree ${worktree} on ${branch} from ${base}`)
+    // MOD-144: the session's own card was dispatched: the remembered other repo is stale for this id
+    if (located.staleRepo !== undefined && !target && !replay) {
+      try {
+        await $.store.delete(K.taskRepo(id, await cardRepo($)))
+      } catch (err) {
+        debug($, `store.delete taskRepo ${id} failed: ${String(err)}`)
+      }
+    }
   }
 
   const subagentType = agentTypeFor(card.domain, cfg.agentTypes, (await storeGet<string[]>($, K.agentTypes)) ?? [])
