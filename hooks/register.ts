@@ -2474,13 +2474,17 @@ async function retireCheck($: Host, label: string, t: number, force = false, car
     const records = await loadAttempts($, ref)
     const last = attemptsFor(records, subtask).at(-1)
     if (!last) return { retired: false, checked: false }
-    if (last.retired) return { retired: true, checked: true }
+    if (last.retired) {
+      await clearOwed($, label)
+      return { retired: true, checked: true }
+    }
     if (!force && !retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
     const patch = retirePatch(await retireProbe($, task, last.sha, last.root, cardOnly), t)
     // a card-only check (a non-consistent verdict) records nothing unless the card reads merged: it must not hold off the sha check of the 15-minute retire sweep
     if (cardOnly && patch.retired === undefined) return { retired: false, checked: last.retireCheckedAt !== undefined }
     await saveAttempts($, ref, patchRecord(await loadAttemptsRaw($, ref), subtask, last.attempt, patch))
     if (patch.retired === 'merged') await appendLedger($, acceptRow(last, 'merged', t))
+    if (patch.retired !== undefined) await clearOwed($, label)
     return { retired: patch.retired !== undefined, checked: patch.retireCheckedAt !== undefined || last.retireCheckedAt !== undefined }
   } catch (err) {
     debug($, `${label}: retire check failed: ${String(err)}`)
@@ -2577,6 +2581,7 @@ async function noteMergeCommand($: Host, command: string): Promise<void> {
       const last = attemptsFor(records, 'main').at(-1) ?? records.filter(r => r.kind !== 'review' && !r.replay).sort((a, b) => a.attempt - b.attempt).at(-1)
       if (!last) continue
       if (!last.retired) await saveAttempts($, id, patchRecord(raw, last.subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }))
+      await clearOwed($, taskLabel(last.task, last.subtask))
       await appendLedger($, { ...acceptRow(last, 'merged', t), sessionId: await sessionIdOf($) })
     } catch (err) {
       debug($, `${id}: merge not recorded: ${String(err)}`)
@@ -2874,6 +2879,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
     debug($, `${id}: merge not recorded on the task: ${String(err)}`)
   }
   await appendLedger($, { kind: 'merged', task: id, sha, ...(pr ? { pr: Number(pr) } : {}), at: t, ...(sid ? { sessionId: sid } : {}) })
+  await clearOwed($, id)
   if (sid) {
     const list = ((await storeGet<MergedEntry[]>($, K.merged(sid))) ?? []).filter(m => m.task !== id)
     await storeSet($, K.merged(sid), [...list, { task: id, sha, ...(version ? { version } : {}), at: t }])
@@ -4471,6 +4477,88 @@ async function attemptOfSpawn($: Host, spawn: SpawnRecord): Promise<AttemptRecor
 
 const renderedOf = (s: SpawnRecord): Rendered => ({ full: s.verdictBlock as string, line: s.verdictLine ?? (s.verdictBlock as string).split('\n')[0] ?? '' })
 
+// ---- MOD-136 (#222): a task already merged is closed ---------------------------------------------
+/** Drops a task's owed row from this session's recent list (its work is merged, accepted or closed), leaving the verdict line. */
+async function clearOwed($: Host, label: string): Promise<void> {
+  try {
+    const sid = await sessionIdOf($)
+    if (!sid) return
+    const list = (await storeGet<RecentRow[]>($, K.recent(sid))) ?? []
+    if (!list.some(r => r.task === label && r.owed !== undefined)) return
+    await storeSet($, K.recent(sid), list.map(r => (r.task === label && r.owed !== undefined ? (({ owed: _owed, ...rest }) => rest)(r) : r)))
+  } catch (err) {
+    debug($, `${label}: owed row not cleared: ${String(err)}`)
+  }
+}
+
+/** Is the branch (any domain's, or the one the report names) absent both locally and as origin's tracking ref? An unanswered read is not absent. */
+async function branchIsGone($: Host, spawn: SpawnRecord, reportBranch: string | undefined): Promise<boolean> {
+  const named = (reportBranch ?? '').trim()
+  const own = new RegExp(`^agent/[^/\\s]+/${spawn.task.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
+  const branches = own.test(named) ? [named] : cfg.domains.map(d => branchName(d, spawn.task))
+  if (branches.length === 0) return false
+  const root = (spawn.repo ?? (await $.session.root())).replace(/\/+$/, '')
+  for (const b of branches) {
+    for (const ref of [`refs/heads/${b}`, `refs/remotes/origin/${b}`]) {
+      const r = await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', ref], { cwd: root, timeoutMs: 10000 })
+      if (!r.ok || r.exitCode !== 1) return false
+    }
+  }
+  return true
+}
+
+/**
+ * MOD-136: why a hand-back arrives for a task that is done, else undefined. `merged`: an earlier attempt of the task is
+ * retired, or the card on origin/main reads merged (only asked once an earlier attempt exists, so a first hand-back is
+ * never closed by the card). `branch gone`: the worktree folder this worker ran in no longer exists and neither does
+ * the branch. Not for an ad hoc, review or replay spawn. The attempt being judged is not an earlier attempt.
+ */
+async function closedReason($: Host, spawn: SpawnRecord, report: ReturnType<typeof parseReport> | undefined): Promise<'merged' | 'branch gone' | undefined> {
+  if (spawn.adhoc || spawn.review || spawn.replay) return undefined
+  try {
+    const lane = laneOf(spawn)
+    const prior = attemptsFor(await loadAttempts($, spawn), spawn.subtask, lane).filter(r => r.attempt < spawn.attempt && r.kind !== 'review' && r.verdict !== 'pending')
+    const last = prior.at(-1)
+    if (last?.retired) return 'merged'
+    if (last) {
+      const probe = await retireProbe($, spawn.task, undefined, last.root, true)
+      if (probe.card !== undefined && cardReadsMerged(probe.card)) {
+        const t = await now($)
+        await saveAttempts($, spawn, patchRecord(await loadAttemptsRaw($, spawn), spawn.subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }, lane))
+        return 'merged'
+      }
+    }
+    if (spawn.cwd && !(await exists($, spawn.cwd)) && (await branchIsGone($, spawn, report?.branch))) return 'branch gone'
+  } catch (err) {
+    debug($, `${taskLabel(spawn.task, spawn.subtask)}: closed check failed: ${String(err)}`)
+  }
+  return undefined
+}
+
+/** MOD-136: the hand-back of a closed task: one row, no verify, no owed row, and the attempt it opened is not counted. */
+async function closeHandback($: Host, spawn: SpawnRecord, why: 'merged' | 'branch gone'): Promise<Rendered> {
+  const label = taskLabel(spawn.task, spawn.subtask)
+  // the row's wording is the card's own; the old-word scan allows the one spelling on a line marked as below
+  const line = `chassis-delegation: ${label}: hand-back after the task closed (${why}); not verified, nothing owed` // legacy word: read-only normaliser
+  const lane = laneOf(spawn)
+  const t = await now($)
+  const held = await loadAttempts($, spawn)
+  const here = attemptsFor(held, spawn.subtask, lane).find(r => r.attempt === spawn.attempt)
+  if (here && here.verdict === 'pending') {
+    const others = held.filter(r => r !== here)
+    // a lone pending attempt stays, marked unverified; any other is removed, so it counts against no budget
+    if (attemptsFor(others, spawn.subtask, lane).length > 0) await saveAttempts($, spawn, others)
+    else await saveAttempts($, spawn, patchRecord(held, spawn.subtask, spawn.attempt, { verdict: 'unverified', verdictAt: t }, lane))
+  }
+  await clearOwed($, label)
+  const next: SpawnRecord = { ...((await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn), verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: line, verdictLine: line }
+  await storeSet($, K.spawn(spawn.key), next)
+  await setWorkers($, list => list.map(w => (w.task === spawn.task && w.subtask === spawn.subtask && w.attempt === spawn.attempt ? { ...w, verdict: 'unverified' } : w)))
+  await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'unverified', line, at: t })
+  debug($, `${label}: attempt ${spawn.attempt} hand-back after the task closed (${why}); no verify run`)
+  return { full: line, line }
+}
+
 /** Verifies, records, acts on the advice (autoEscalate), and returns the row in both forms (2B). */
 async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured: Measured): Promise<Rendered> {
   // MOD-94: a record rebuilt from memory or the ledger is judged as any other; its verdict says where it came from
@@ -4507,6 +4595,11 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
       spawn = found
       adopted = true
     }
+  }
+  // MOD-136 (#222): a task already merged, or one whose worktree and branch are gone, is closed: no verify, no budget, no owed row
+  if (!spawn.adhoc && !spawn.review) {
+    const why = await closedReason($, spawn, report)
+    if (why) return closeHandback($, spawn, why)
   }
   const cardless = report !== undefined && isCardless(spawn)
   if (!block) verdict = 'no-report'

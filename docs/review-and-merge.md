@@ -73,6 +73,10 @@ Checklist, in print order:
 9. **Delete the branch:** `git push origin --delete agent/<domain>/<ID>`. The answer ends `<ID> merged at <sha>`.
 10. **Release extras**, only when `hooks/lib/version.ts` changed: `git tag -a v<version> -m v<version>`, `git push origin v<version>`, and `git -C <loaded clone> pull --ff-only` when the mod loads from another checkout. The last line is `release v<version>: run the block above, then reload the window`.
 
+### A merged task stays closed
+
+Once a task's last judged attempt is retired (merged, by the retire sweep, a merge command or `/delegation merge --finish`; or accepted by hand), or its card on the default branch reads `status: merged`, the task is closed. A worker that hands back for it later is not verified against the post-merge tree: no verifier runs, no attempt counts against the budget, and no owed row is written. The row reads `<ID>: hand-back after the task closed (merged); not verified, nothing owed`. The same row, with `(branch gone)`, answers a hand-back whose worktree folder no longer exists and whose branch is absent both locally and in the remote-tracking refs. Retiring a task also clears its owed row, and `/delegation` and the state section skip a retired task even when its owed row was written before the retire. A task that is not retired and still has its branch is verified as before, and `/delegation accept --owed` still works.
+
 A card folder in `.git/info/exclude` or `.gitignore` merges the same way, uncommitted. The tool checks `git -C <root> check-ignore -q -- <card path>`; when ignored:
 
 - it marks the root card `status: merged` in place, runs no `git add`, and prints `card kept local (git-ignored): <root card path> marked merged` instead of `card committed as merged`;
