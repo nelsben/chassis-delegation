@@ -108,7 +108,7 @@ Shrink the forbid or list the files before you say go.
 
 A brief is the card plus the dispatch flags, rendered once. Dispatch renders it again each time and compares it with the file in the folder. If the card, `--scope` or `--forbid` would change it, the file is rewritten and step 2 reads `2. brief <path> rewritten: the card changed, --scope applied, --forbid applied` (only the reasons that hold). If nothing would change it, step 2 reads `exists — reused, not overwritten`. Pass the same flags on every dispatch: a flag you leave out means the card's own value.
 
-While a worker on the task is running, starting or waiting for its verdict, a brief that would change is not rewritten under it. Dispatch refuses before it cuts a worktree: `<ID>: a worker on <ID> is live and reads <brief path>; its brief is not rewritten under it. Wait for its hand-back, then dispatch again`. Amend blocks a worker appended are kept through a rewrite. A base flag on an unchanged brief only sets `base=`. A brief written by hand, whose `task=` names no card, and a `repo=here` brief are reused as they are.
+While a worker on the task is running, starting or waiting for its verdict, a brief that would change is not rewritten under it. Dispatch refuses before it cuts a worktree: `<ID>: a worker on <ID> is live and reads <brief path>; its brief is not rewritten under it. Wait for its hand-back, then dispatch again`. Amend blocks a worker appended are kept through a rewrite. A `budget=` you raised by hand in the brief is kept, so raising it to continue is never undone by dispatching again. A base flag on an unchanged brief only sets `base=`. A brief written by hand, whose `task=` names no card, and a `repo=here` brief are reused as they are.
 
 ### Prose scope
 
