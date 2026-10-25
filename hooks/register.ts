@@ -420,7 +420,10 @@ const EVAL_STALE_MS = 3 * HOUR_MS
 /** MOD-6: a debrief whose agent never handed back is not holding the one slot past this. */
 const DEBRIEF_STALE_MS = HOUR_MS
 const EVALS_CAP = 100
-const GATE_TIMEOUT_MS = 9 * 60 * 1000
+/** The longest timeoutMs the host takes for one process run (10 minutes). */
+const HOST_MAX_TIMEOUT_MS = 600_000
+/** MOD-155 (#246): how long one gate command may run, read at the time of the run (repo option gateTimeoutMinutes, default 9). */
+const gateTimeoutMs = (): number => cfg.gateTimeoutMinutes * 60 * 1000
 /** MOD-143: the longest a card's merge check may run. */
 const MERGE_CHECK_TIMEOUT_MS = 10 * 60 * 1000
 /** The advice kinds that leave something for the brain (or the person) to do. */
@@ -577,6 +580,8 @@ type Config = {
   /** MOD-124 (#188): the gitignored rules file copied into every brief. */
   briefLocal: string
   maxWorkers: number
+  /** MOD-155 (#246): whole minutes one gate command may run. */
+  gateTimeoutMinutes: number
   /** MOD-131 (#219): the lower ceiling of each capped tier under maxWorkers. */
   maxWorkersByTier: Partial<Record<Tier, number>>
   domains: string[]
@@ -682,6 +687,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       briefExtra: eff.briefExtra,
       briefLocal: eff.briefLocal,
       maxWorkers: eff.maxWorkers,
+      gateTimeoutMinutes: eff.gateTimeoutMinutes,
       maxWorkersByTier: eff.maxWorkersByTier,
       domains: eff.domains,
       worktreeRoot: eff.worktreeRoot,
@@ -1009,7 +1015,8 @@ async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<
     return { ok: false, why: `refused: ${check.reason}` }
   }
   try {
-    const r = await $.process.run(argv, init)
+    // MOD-155: the host refuses a timeoutMs over 600000, so a longer gate limit runs at the host's ceiling
+    const r = await $.process.run(argv, init?.timeoutMs !== undefined && init.timeoutMs > HOST_MAX_TIMEOUT_MS ? { ...init, timeoutMs: HOST_MAX_TIMEOUT_MS } : init)
     return { ok: true, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr }
   } catch (err) {
     return { ok: false, why: String(err) }
@@ -2830,7 +2837,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
       const turn = isEngineGate(g.argv) ? await takeEngineTurn($, `${id} merge`) : undefined
       let r: RunOut
       try {
-        r = await run($, g.argv, { cwd: wt.path, timeoutMs: GATE_TIMEOUT_MS })
+        r = await run($, g.argv, { cwd: wt.path, timeoutMs: gateTimeoutMs() })
       } finally {
         await turn?.release()
       }
@@ -4216,7 +4223,7 @@ async function takeEngineTurn($: Host, label: string): Promise<{ line?: string; 
       const t = await now($)
       const d = await alone(async () => {
         const decision = engineLockDecision(readEngineLock(await $.store.get(K.engineGate)), t, token)
-        if (decision.take) await $.store.set(K.engineGate, { holder: label, token, since: t, until: t + GATE_TIMEOUT_MS } satisfies EngineLock)
+        if (decision.take) await $.store.set(K.engineGate, { holder: label, token, since: t, until: t + gateTimeoutMs() } satisfies EngineLock)
         return decision
       })
       if (d.take) break
@@ -4417,7 +4424,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
         gateMap,
         allowed,
         filesPath,
-        gateTimeoutMs: GATE_TIMEOUT_MS,
+        gateTimeoutMs: gateTimeoutMs(),
         outDir: `${root}/.delegation/${spawn.task}`,
         attempt: spawn.attempt,
         priorRed,
@@ -4468,7 +4475,7 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
     if (turn?.line) waits.push(turn.line)
     let r: RunOut
     try {
-      r = await run($, g.argv, { cwd: scopeRoot, timeoutMs: GATE_TIMEOUT_MS })
+      r = await run($, g.argv, { cwd: scopeRoot, timeoutMs: gateTimeoutMs() })
     } finally {
       await turn?.release()
     }

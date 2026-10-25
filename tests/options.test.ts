@@ -737,5 +737,37 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_02ABCDEFGH' }))
     expect(delivered(w)).toContain('T-2 started · sonnet (standard)')
   })
+  const gateRunOf = (w: W) => w.runs.find(r => r.argv[0] === 'npx')
+  const gateRepo = (extra: Record<string, unknown>) => JSON.stringify({ gateMap: { prettier: 'npx prettier --check {files}' }, ...extra })
+
+  test('gateTimeoutMinutes: 8 in the repo file lets the verifier run a gate for 8 minutes', async ($, on) => {
+    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 8 }) } })
+    await $.session.start(sessionStart)
+    await handBack($)
+    expect(gateRunOf(w)?.timeoutMs).toBe(480_000)
+  })
+
+  test('gateTimeoutMinutes: 15 runs the gate at the host ceiling of 10 minutes, since the host refuses a longer run', async ($, on) => {
+    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 15 }) } })
+    await $.session.start(sessionStart)
+    await handBack($)
+    expect(gateRunOf(w)?.timeoutMs).toBe(600_000)
+  })
+
+  test('gateTimeoutMinutes unset: the verifier lets a gate run 9 minutes', async ($, on) => {
+    const w = handBackWorld(on)
+    await $.session.start(sessionStart)
+    await handBack($)
+    expect(gateRunOf(w)?.timeoutMs).toBe(540_000)
+  })
+
+  test('gateTimeoutMinutes 500 is named in the config errors and the 9 minutes hold', async ($, on) => {
+    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 500 }) } })
+    await $.session.start(sessionStart)
+    await handBack($)
+    expect(gateRunOf(w)?.timeoutMs).toBe(540_000)
+    expect(await say($, 'gateTimeoutMinutes')).toContain('gateTimeoutMinutes')
+    expect(delivered(w) + w.debugLogs.join('\n')).toContain('gateTimeoutMinutes')
+  })
 })
 

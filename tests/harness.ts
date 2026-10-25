@@ -9,7 +9,7 @@ export const TMP = '/tmp/td'
 export const HOME = '/home/u'
 export const NOW = 1_000_000
 
-export type Run = { argv: string[]; cwd?: string; env?: Record<string, string>; stdin?: string }
+export type Run = { argv: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number }
 export type RunAnswer = { exitCode: number; stdout: string; stderr?: string }
 
 export type World = {
@@ -255,8 +255,8 @@ export function world(on: On, options: WorldOptions = {}): World {
     const names = [...new Set([...listed, ...written])]
     return { value: names.map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false })) }
   })
-  hook('process.run', async (e: { argv: string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string } }) => {
-    w.runs.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env, stdin: e.init?.stdin })
+  hook('process.run', async (e: { argv: string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number } }) => {
+    w.runs.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env, stdin: e.init?.stdin, timeoutMs: e.init?.timeoutMs })
     // MOD-35: an unanswered "is this sha on origin/main" reads as not merged (MOD-4's retire check, and the wake's skip rule); every other unanswered command exits 0
     const unmerged = e.argv[3] === 'merge-base' && e.argv[4] === '--is-ancestor' && e.argv[e.argv.length - 1] === 'origin/main'
     // MOD-72: a `sleep` process (the mod's budget-free wait) takes its seconds on the test clock unless the test answers it
