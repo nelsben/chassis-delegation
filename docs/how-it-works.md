@@ -34,7 +34,7 @@ sequenceDiagram
 ```
 
 1. The person states the task in a sentence.
-2. The brain calls the card tool, which writes the card and prints the dry run.
+2. The brain calls the card tool, which writes the card and prints the dry run; the card's title, Why and Done when are the worker's whole instruction.
 3. The person says go, and the brain calls the dispatch tool.
 4. Dispatch writes the brief, cuts the worktree and prints the spawn block.
 5. The brain makes the Agent call with that block, and the worker starts.

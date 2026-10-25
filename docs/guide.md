@@ -82,6 +82,13 @@ Glob rules for `scope` and `forbid`:
 - an absolute entry (a leading `~` is the home folder) is allowed; there `*` stays inside one folder, `**` and `dir/**` span folders; the first one is the output folder (see [Research cards](contracts.md#research-cards), `repo=none`);
 - no spaces in an entry.
 
+### What the worker sees
+
+The worker reads the brief alone: the card's header, Why and Done when, and the domain's lessons file. None of the conversation that produced the card reaches it, so the card must carry every decision the brain does not want the worker to make. A Done when line that says `sensible`, `appropriate`, `as needed` or `the existing one` leaves a judgment call the worker makes alone, and the brain reads about it in the hand-back. A detailed card costs the same to dispatch as a thin one, so name the fallback and the target.
+
+Before: `- Handle errors appropriately.`
+After: `- A failed save returns HTTP 500 with the body {"error": "save-failed"}; a missing record returns 404 and writes nothing.`
+
 ### Dry-run warnings
 
 The dry run and `/dispatch` print these; the card is still written.
