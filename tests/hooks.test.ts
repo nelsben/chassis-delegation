@@ -859,7 +859,7 @@ describe('MOD-3: /delegation update', () => {
     expect(out).not.toContain('four a')
     expect(out).toContain('config: added')
     expect(out).toContain('delegateOnly')
-    expect(String(w.files.get(`${ROOT}/.chassis-delegation.json`))).toContain('"delegateOnly": "off"')
+    expect(String(w.files.get(`${ROOT}/.chassis-delegation.json`))).toContain('"delegateOnly": "warn"')
     const after = String((await $.command.run(delegation(''))).text)
     expect(after).not.toMatch(/^update:/m)
   })
@@ -3441,7 +3441,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
       return onMain(argv)
     }
     const RED_HERE = { [`${ROOT}/.delegation/BE-101/red-1.txt`]: 'npx vitest run\nFAIL RateA.test.ts: expected 1 got 0\n' }
-    const w = world(on, { files: { ...files(), ...gh19.files, ...RED_HERE }, dirs, run, agentId: 'agent-h', store: { ...offered, ...gh19.store } })
+    const w = world(on, { files: { ...files(), ...gh19.files, ...RED_HERE, [`${ROOT}/.chassis-delegation.json`]: '{"review":"off"}' }, dirs, run, agentId: 'agent-h', store: { ...offered, ...gh19.store } })
     await $.session.start(sessionStart)
     const out = String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text)
     expect(w.spawns).toHaveLength(0)
@@ -4097,7 +4097,7 @@ describe('MOD-19: the verdict says what it checked (verified became consistent; 
   })
 
   test('a ledger written before the rename stays as it was; the next verdict is appended after it, saying consistent', { options: { ...GM } }, async ($, on) => {
-    const w = world(on, { files: { ...ledgerFile, [BRIEF]: HEADER + '\nbody' }, store: legacyStore, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+    const w = world(on, { files: { ...ledgerFile, [BRIEF]: HEADER + '\nbody', [`${ROOT}/.chassis-delegation.json`]: '{"review":"off"}' }, store: legacyStore, run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
     await $.session.start(sessionStart)
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))
@@ -4267,8 +4267,8 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
   const delegationText = async ($: Tester) => String((await $.command.run({ command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)).text)
 
   // The worker hands back a consistent report (agent-4); a review spawn, when the brain makes it, is agent-2.
-  const handBack = async ($: Tester, on: On, over: { header?: string; cwd?: string; dirs?: Record<string, string[]>; agentSays?: string } = {}) => {
-    const w = world(on, { files: { [BRIEF]: (over.header ?? HEADER) + '\nbody' }, ...(over.dirs ? { dirs: over.dirs } : {}), run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
+  const handBack = async ($: Tester, on: On, over: { header?: string; cwd?: string; dirs?: Record<string, string[]>; agentSays?: string; files?: Record<string, string> } = {}) => {
+    const w = world(on, { files: { [BRIEF]: (over.header ?? HEADER) + '\nbody', ...over.files }, ...(over.dirs ? { dirs: over.dirs } : {}), run: nativeRun({ gate: 0 }), agentId: 'agent-4' })
     bottom = []
     // the engine's own tool, at the bottom; an Agent call goes on to a test's own hook
     ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async (_$: unknown, e: { tool: unknown; command?: unknown; agentId?: unknown }, next: (x: unknown) => unknown) => {
@@ -4291,8 +4291,8 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     return { w, row: since(w, m) }
   }
 
-  test('review off (the default): a consistent hand-back says next=accept and prints no spawn block', { options: FULL }, async ($, on) => {
-    const w = await handBack($, on)
+  test('review off in the repo file (MOD-166: the default is on-frontier): a consistent hand-back says next=accept and prints no spawn block', { options: FULL }, async ($, on) => {
+    const w = await handBack($, on, { files: { [`${ROOT}/.chassis-delegation.json`]: '{"review":"off"}' } })
     expect(delivered(w)).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=1/2 usd=~0.00 model=claude-sonnet-5-5 next=accept')
     expect(delivered(w)).not.toContain('spawn: Agent')
     expect(delivered(w)).not.toContain('review')

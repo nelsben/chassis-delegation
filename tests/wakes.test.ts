@@ -35,7 +35,7 @@ const repo = (o: { gate: () => number; ancestor: () => number }) => {
 describe('MOD-51: a held verdict wake is dropped at delivery when its task has moved on', () => {
   test('(1) attempt 1 refuted while the turn is open, attempt 2 consistent in the same turn: only attempt 2 is submitted', { options: { ...GMW } }, async ($, on) => {
     let gate = 1
-    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo({ gate: () => gate, ancestor: () => 1 }), agentId: 'agent-4' })
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', [`${ROOT}/.chassis-delegation.json`]: '{"review":"off"}' }, run: repo({ gate: () => gate, ancestor: () => 1 }), agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.start({ text: '', turnId: 'turn-main' } as never)
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1234abcd')))

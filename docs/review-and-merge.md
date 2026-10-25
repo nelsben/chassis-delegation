@@ -12,7 +12,7 @@ A `consistent` verdict says the report matches git, not that the work is right. 
 | `on` | every consistent verdict |
 | `on-frontier` | a frontier or premium attempt's consistent verdict |
 
-Set it in the repo file (`"review": "on"`), by `/delegation config review on` or in `/config`; `off` there is "not set here". `reviewTier` pins the reviewer's tier; unpinned, it is one below the worker's, economy at the floor. `tierMap` makes the alias; fable is never spawned.
+The default is `on-frontier`. Set it in the repo file (`"review": "on"`), by `/delegation config review on` or in `/config`; `off` in `/config` or the host settings is "not set here", and `"review": "off"` in the repo file turns it off. `reviewTier` pins the reviewer's tier; unpinned, it is one below the worker's, economy at the floor. `tierMap` makes the alias; fable is never spawned.
 
 ### What the review must check
 

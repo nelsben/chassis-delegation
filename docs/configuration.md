@@ -64,8 +64,8 @@ Shows the options in force and where each value came from; works in VS Code.
 | `baseRef` | repo | `""` (`origin/main`, `main`, `origin/master`, `master`) | where the delta starts when a brief names no `base=`. |
 | `ignore` | repo | `[".delegation/**"]` | globs dropped from a `repo=here` delta. `[]` ignores nothing. |
 | `issueRepo` | repo | the manifest's `repository` | `owner/name` where findings are filed. `""` in the repo file turns posting off. |
-| `delegateOnly` | repo | `off` | `off`, `warn`, `deny`: stops an opus or fable brain editing source. See [The brain's spend](spend.md#the-brains-spend). |
-| `review` | repo | `off` | `off`, `on`, `on-frontier` (frontier and premium cards only): a read-only reviewer checks each hand-back. See [Review](review-and-merge.md#review). |
+| `delegateOnly` | repo | `warn` | `off`, `warn`, `deny`: stops an opus or fable brain editing source. See [The brain's spend](spend.md#the-brains-spend). |
+| `review` | repo | `on-frontier` | `off`, `on`, `on-frontier` (frontier and premium cards only): a read-only reviewer checks each hand-back. See [Review](review-and-merge.md#review). |
 | `reviewTier` | repo | `""` (one below the worker, not below economy) | `economy`, `standard`, `frontier`, `premium`: the reviewer's tier. |
 | `autoEscalate` | user | `false` | perform the resume instead of advising it. |
 | `wakeOnVerdict` | user | `false` | on: a verdict row also starts a brain turn. |

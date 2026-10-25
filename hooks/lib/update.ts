@@ -132,7 +132,7 @@ export function migrationDefaults(): Record<string, unknown> {
     autoEval: false,
     ignore: [...DEFAULT_IGNORE],
     spendByTier: DEFAULT_SPEND_BY_TIER,
-    delegateOnly: 'off',
+    delegateOnly: 'warn',
   }
   return Object.fromEntries(REPO_KEYS.filter(k => k in all).map(k => [k, all[k]]))
 }
