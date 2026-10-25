@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.26 to 0.9.27
+
+Nothing to do.
+Changed: `/delegation merge --finish` stops when the worktree holds untracked or ignored files the merge does not carry; copy what you need, or pass `--discard`. Dispatch now rewrites a brief the card or `--scope`/`--forbid` changed, so a stale brief no longer needs deleting by hand.
+Optional: a card can name a `merge_check:` command (or a repo `mergeCheckMap` entry per gate id) that merge runs before it rebases.
+Detail: [CHANGELOG 0.9.27](../CHANGELOG.md).
+
 ### From 0.9.25 to 0.9.26
 
 Nothing to do.
