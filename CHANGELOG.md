@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- **The price table matches the live pricing page (MOD-168).** Checked against platform.claude.com/docs/en/about-claude/pricing on 2026-10-25. Sonnet 5 was priced $3/$15 and is now $2/$10 (the page says $2/$10 is the standard price); Sonnet 5.5 cache reads were $0.20 and are now $0.10 per million tokens. Every other model already matched.
 - **A lane's own `doneWhen` is added to the shared one instead of replacing it (MOD-162).** With `lanes`, each lane card's Done when is the shared statements in order, then that lane's own; a lane with none gets the shared ones alone, as before. The card tool's text for `lanes` and a lane's `doneWhen` says so, so a layout or rule put in the shared `doneWhen` reaches every worker's brief.
 - **A `repo=none` hand-back's gate fills `{worktree}` with the checkout the worker ran in (MOD-163).** It filled it with the card's output folder, which is not a plugin or a repo, so a research card's `claude plugin validate {worktree}` gate exited 1 on every attempt however the worker had run it. The gate now gets the session root (or the task's other repo path) as `{worktree}` and as its working directory; `{outdir}` and `{files}` fill as before. The verdict names it (`gate <id> ran in the checkout (repo=none)`), and the dispatch line and dry run for a research card end `· gate <ids> runs in <root>`.
 

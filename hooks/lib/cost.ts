@@ -16,10 +16,10 @@ export type Tokens = {
 export type Price = { in: number; out: number; cacheRead?: number }
 
 /**
- * MOD-47: prices are API list prices, checked 2026-10-06 against the claude-api skill's
- * pricing table (Opus 5.5 $4/$20, cache reads $0.20; Sonnet 5.5 $2/$10, cache reads $0.20;
- * Fable 5.1 and Mythos 5.1 $10/$50, cache reads $0.25; Haiku 5.5 $0.10/$0.50 up to 100K-token
- * prompts). A model with no `cacheRead` of its own reads the cache at 0.1x input.
+ * MOD-47, MOD-168: prices are API list prices, checked 2026-10-25 against
+ * https://platform.claude.com/docs/en/about-claude/pricing (Opus 5.5 $4/$20, cache reads $0.20;
+ * Sonnet 5.5 $2/$10, cache reads $0.10; Sonnet 5 $2/$10; Fable 5.1 and Mythos 5.1 $10/$50, cache
+ * reads $0.25; Haiku 5.5 $0.10/$0.50 up to 100K-token prompts). A model with no `cacheRead` of its own reads the cache at 0.1x input.
  * Cache writes: 1.25x input for the 5-minute TTL, 2x for the 1-hour TTL (Claude Code writes 1-hour entries).
  */
 export const CACHE_READ = 0.1
@@ -32,8 +32,8 @@ const TABLE: readonly [string, Price][] = [
   ['fable-5', { in: 10, out: 50 }],
   ['opus-5-5', { in: 4, out: 20, cacheRead: 0.2 }],
   ['opus-5', { in: 5, out: 25 }],
-  ['sonnet-5-5', { in: 2, out: 10, cacheRead: 0.2 }],
-  ['sonnet-5', { in: 3, out: 15 }],
+  ['sonnet-5-5', { in: 2, out: 10, cacheRead: 0.1 }],
+  ['sonnet-5', { in: 2, out: 10 }],
   // Haiku 5.5 bills $0.50 / $2.50 for a request whose prompt passes 100K tokens. Usage
   // arrives summed per turn (a worker's whole run), so that tier cannot be applied:
   // for a long Haiku 5.5 run this figure is a floor.
