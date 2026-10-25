@@ -1,6 +1,8 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { SCOPE_FILES_MAX, TIER_HINT_SCOPE_MAX, TIER_HINT_DONE_MAX, scopeSizeWarning, tierHint } from '../hooks/lib/dispatch'
 import { doneStatementCount } from '../hooks/lib/card'
+import { world, commandInput, sessionStart, ROOT } from './harness'
+import type { TestBody } from 'claude-code/testing'
 
 const files = (n: number): string[] => Array.from({ length: n }, (_, i) => `src/f${i}.ts`)
 
@@ -59,5 +61,22 @@ describe('MOD-54: counting done-when statements', () => {
     expect(doneStatementCount(['', '- one', '  continued', '- two', '', '- three', ''])).toBe(3)
     expect(doneStatementCount([])).toBe(0)
     expect(doneStatementCount(['', 'one', 'two'])).toBe(2)
+  })
+})
+
+describe('MOD-140: the hedge hint in the dry run', () => {
+  type Tester = Parameters<TestBody>[0]
+  const card = (second: string) => `---\nid: BE-201\ntitle: A card\ndomain: backend\ntier: standard\nstatus: queued\nowner: backend\npriority: P3\nblocked_by: []\ngate: G2\nred_test: "a test fails on main"\nscope: src/a.ts\nforbid: vendor/**\nbudget: 3-attempts\n---\n\n## Why\n\nA reason.\n\n## Done when\n\n- Writes the file.\n- ${second}\n`
+  const name = 'BE-201-a-card.md'
+  const run = async ($: Tester, on: unknown, second: string) => {
+    world(on as never, { files: { [`${ROOT}/agents/tasks/${name}`]: card(second), '/tpl/brief.md': 'Rules.\n{{extra}}\n\n## The card\n\n{{body}}\n', [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ briefTemplate: '/tpl/brief.md' }) }, dirs: { [`${ROOT}/agents/tasks`]: [name] } })
+    await $.session.start(sessionStart)
+    return String((await $.command.run(commandInput('BE-201 --dry-run'))).text)
+  }
+  test('a second line that says appropriately prints the hint', async ($, on) => {
+    expect(await run($, on, 'Handle errors appropriately.')).toContain('hint: done-when line 2 says "appropriately"')
+  })
+  test('a card with no hedge words prints no hedge hint', async ($, on) => {
+    expect(await run($, on, 'Returns the count.')).not.toContain('hint: done-when line')
   })
 })

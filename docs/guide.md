@@ -99,6 +99,7 @@ The dry run and `/dispatch` print these; the card is still written.
 | `warning: forbid covers paths done-when names: artifacts/kit/index.html (artifacts/*.html)` | a `forbid` glob covers a path-like word of a `Done when` line; a path the line says is written or changed gets its own `forbid <glob> matches <path> named in done-when` line, first |
 | `warning: scope names 8 files (and 1 globs); cost tracks the files a card touches: split it` | more than 6 literal scope entries |
 | `hint: tier economy would do: 2 files in scope, 3 done-when lines, a red test` | a standard card with at most 2 literal scope entries (not `tests/` or `test/`), 3 `Done when` lines and a red test |
+| `hint: done-when line 2 says "appropriately": the worker decides that alone; name the outcome` | a `Done when` line holds a hedge word (`sensible`, `as needed`, `properly`, `tidy`, `etc` and the like) outside backticks; at most three lines, then `hint: <k> more done-when lines hedge` |
 
 Shrink the forbid or list the files before you say go.
 
