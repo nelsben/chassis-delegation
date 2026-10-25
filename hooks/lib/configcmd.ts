@@ -200,6 +200,7 @@ export function inEffect(field: string, values: Readonly<Record<string, unknown>
       return v === 0 ? 'never (a waiting task waits for you)' : undefined
     case 'debriefMinEvents':
       return v === 0 ? '1' : unused('autoDebrief')
+    case 'debriefMode':
     case 'debriefIdleMinutes':
     case 'debriefMinNewLines':
     case 'debriefCooldownHours':

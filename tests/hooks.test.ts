@@ -2684,7 +2684,7 @@ describe('MOD-10: the debrief hand-back is validated against its window', () => 
     expect(w.files.get(CRUMBS.replace(/\.jsonl$/, '.done'))).toBe('1\n')
   })
 
-  test('MOD-91 (#156): a debrief whose check fails twice starts no third time, says the stopped row once, and leaves .check.txt and .orig.json beside the debrief', { options: { autoEval: false, debriefCooldownHours: COOL, debriefIdleMinutes: IDLE_MIN } }, async ($, on) => {
+  test('MOD-91 (#156): a debrief whose check fails twice starts no third time, says the stopped row once, and leaves .check.txt and .orig.json beside the debrief', { options: { autoEval: false, debriefMode: 'transcript', debriefCooldownHours: COOL, debriefIdleMinutes: IDLE_MIN } }, async ($, on) => {
     const MIN = 60_000
     const HR = 60 * MIN
     const old = Array.from({ length: 10 }, () => JSON.stringify({ ts: '2026-10-08T09:00:00Z', kind: 'session_start', detail: {} }))

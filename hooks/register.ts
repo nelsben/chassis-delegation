@@ -122,6 +122,7 @@ import {
   type FrictionEvent,
 } from './lib/cleanstop'
 import { resolveFindings, notFoundLine, expandHome } from './lib/debriefdir'
+import { noteFindings, noteFindingsName, notesPromptRow } from './lib/notes'
 import { checkDebrief, windowOf, userMessagesOf, userMessagesFromJsonl, transcriptPath, type DebriefWindow, type UserMessage } from './lib/debriefcheck'
 import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedRowsFrom, prsFrom, renderState, SECTION_ID, splitOwed, type RecentVerdict, type StateSnapshot } from './lib/compaction'
 import {
@@ -375,6 +376,8 @@ const K = {
   recent: (sessionId: string) => `delegation.recent.${sessionId}`,
   /** MOD-53: set once the fresh-session row is posted in a session. */
   freshSession: (sessionId: string) => `delegation.freshSession.${sessionId}`,
+  /** MOD-137: when the last review-note prompt row was added or a note ingested, and the ingested findings file. */
+  notes: (sessionId: string) => `delegation.notes.${sessionId}`,
   /** The background debrief of a session (2C). */
   debrief: (sessionId: string) => `delegation.debrief.${sessionId}`,
   /** MOD-31: the post-findings question a debrief left waiting for the person (count, repo). */
@@ -519,6 +522,8 @@ type Config = {
   briefDir: string
   verbosity: Verbosity
   autoDebrief: boolean
+  /** MOD-137 */
+  debriefMode: 'notes' | 'transcript'
   debriefIdleMs: number
   debriefMinNewLines: number
   debriefMinEvents: number
@@ -632,6 +637,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       briefDir: str('briefDir'),
       verbosity: parseVerbosity(o.verdictVerbosity),
       autoDebrief: o.autoDebrief !== false,
+      debriefMode: o.debriefMode === 'transcript' ? 'transcript' : 'notes',
       debriefIdleMs: num('debriefIdleMinutes', DEFAULT_DEBRIEF_IDLE_MINUTES) * MIN_MS,
       debriefMinNewLines: Math.floor(num('debriefMinNewLines', DEFAULT_DEBRIEF_MIN_NEW_LINES)),
       debriefMinEvents: Math.max(1, Math.floor(num('debriefMinEvents', DEFAULT_DEBRIEF_MIN_EVENTS))),
@@ -2939,6 +2945,7 @@ async function maybeDebrief($: Host) {
   if (debriefBusy || inTurn || !cfg.autoDebrief) return
   debriefBusy = true
   try {
+    if (cfg.debriefMode === 'notes') return await notesPrompt($)
     const basis = await debriefBasis($)
     if (!basis) return debug($, 'no debrief: the session id or HOME is unknown')
     const { sid, prev, mode, lines, watermark, live } = basis
@@ -2971,6 +2978,31 @@ async function maybeDebrief($: Host) {
   } finally {
     debriefBusy = false
   }
+}
+
+/** MOD-137: what the notes-mode debrief remembers: when the last prompt row was added or a note ingested, and the findings file that ingest wrote. */
+type NotesRecord = { at: number; path?: string }
+
+/**
+ * MOD-137: notes mode. The same clean stop as the transcript debrief (idle, no worker, nothing pending or queued, past the cooldown),
+ * but no agent runs: once per round (the verdicts since the last row or ingest) one row asks for the review note.
+ */
+async function notesPrompt($: Host) {
+  const sid = await sessionIdOf($)
+  if (!sid) return debug($, 'no debrief: the session id is unknown')
+  const live = await liveState($)
+  const prev = await storeGet<DebriefRecord>($, K.debrief(sid))
+  const rec = await storeGet<NotesRecord>($, K.notes(sid))
+  const t = await now($)
+  const lastAt = Math.max(prev?.lastAt ?? -Infinity, rec?.at ?? -Infinity)
+  const verdict = cleanStop({ inTurn, running: live.running, pending: live.pending.length, queued: live.queued, lines: 0, watermark: 0, minNewLines: 0, now: t, cooldownMs: cfg.debriefCooldownMs, ...(Number.isFinite(lastAt) ? { lastAt } : {}) })
+  if (!verdict.ok) return debug($, `no debrief note prompt: ${verdict.why}`)
+  const since = rec?.at ?? -Infinity
+  const round = readRecent($, (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? []).filter(r => r.at > since)
+  if (round.length === 0) return debug($, 'no debrief note prompt: no verdicts since the last row or ingest')
+  if (inTurn) return
+  await storeSet($, K.notes(sid), { ...(rec ?? {}), at: t })
+  await appendRow($, notesPromptRow(round.length))
 }
 
 type DebriefBasis = { sid: string; home: string; prev: DebriefRecord | undefined; mode: 'breadcrumbs' | 'events'; lines: number; watermark: number; friction: FrictionRecord; live: Live; window?: DebriefWindow }
@@ -3075,6 +3107,38 @@ async function runDebrief($: Host): Promise<string> {
   } finally {
     debriefBusy = false
   }
+}
+
+/**
+ * MOD-137, `/delegation debrief ingest <note.md>`: the "For the mod owner" bullets of the lead's review note become findings, scrubbed
+ * and cut of local-rule quotes as a debrief's are, in <root>/.delegation/debriefs; `debrief post` then lists them. Nothing is posted.
+ */
+async function runDebriefIngest($: Host, argText: string): Promise<string> {
+  const arg = argText.trim().replace(/^(['"])([\s\S]*)\1$/, '$2').trim()
+  if (arg === '') return 'debrief ingest: name the note, /delegation debrief ingest <note.md> (a path under the session root, or absolute)'
+  if (!/\.md$/i.test(arg)) return `debrief ingest: ${arg} is not a .md file; nothing written`
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const path = arg.startsWith('/') ? arg : arg.startsWith('~/') ? expandHome(arg, await homeOf($)) : `${root}/${arg.replace(/^\.\//, '')}`
+  const base = path.slice(path.lastIndexOf('/') + 1)
+  const text = await readText($, path)
+  if (text === undefined) return `debrief ingest: could not read ${path}; nothing written`
+  const raw = noteFindings(text, `review note ${base}`)
+  if (raw.length === 0) return `debrief ingest: ${base} has no "For the mod owner" section; nothing written`
+  const rules = await redactRules($)
+  const scrubbed = scrubbedFindings(JSON.stringify({ mod_findings: raw }), rules) ?? []
+  const findings = dropLocalQuotes(scrubbed, await localBriefTexts($, rules))
+  const date = new Date(await now($)).toISOString().slice(0, 10)
+  const out = `${root}/.delegation/debriefs/${noteFindingsName(date, path)}`
+  const { mod, host } = splitModFindings(findings)
+  try {
+    await $.fs.write(out, JSON.stringify(findingsFile(path, MOD_VERSION, mod, host), null, 2) + '\n')
+  } catch (err) {
+    return `debrief ingest: could not write ${out}: ${String(err)}`
+  }
+  const t = await now($)
+  const sid = await sessionIdOf($)
+  if (sid) await storeSet($, K.notes(sid), { at: t, path: out })
+  return [...findingsLines(mod, out, host.length), mod.length > 0 ? 'post with /delegation debrief post all|1,3' : ''].filter(l => l !== '').join('\n')
 }
 
 /**
@@ -3323,6 +3387,10 @@ async function findFindings($: Host, root: string): Promise<{ path: string } | {
   const harnessFolder = `${home}/.claude/harness/debriefs`
   const recd = await recordDebrief($, sid, home)
   let recordFindings: string | undefined
+  // MOD-137: a note ingested after the session's last debrief is the latest findings
+  const ing = sid ? await storeGet<NotesRecord>($, K.notes(sid)) : undefined
+  const lastDebrief = sid ? (await storeGet<DebriefRecord>($, K.debrief(sid)))?.lastAt : undefined
+  if (ing?.path !== undefined && (lastDebrief === undefined || ing.at >= lastDebrief) && (await readText($, ing.path)) !== undefined) return { path: ing.path }
   if (recd !== undefined) {
     const f = findingsPathOf(recd)
     if ((await readText($, f)) !== undefined) recordFindings = f
@@ -7516,6 +7584,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'setup' || arg.startsWith('setup ')) return { text: await runSetup($, false, arg.slice(5)) }
     if (arg === 'update') return { text: await runUpdate($) }
     if (arg === 'debrief') return { text: await runDebrief($) }
+    if (arg === 'debrief ingest' || arg.startsWith('debrief ingest ')) return { text: await runDebriefIngest($, arg.slice('debrief ingest'.length)) }
     if (arg === 'debrief apply' || arg.startsWith('debrief apply ')) return { text: await runDebriefApply($, arg.slice('debrief apply'.length)) }
     if (arg === 'debrief post' || arg.startsWith('debrief post ')) return { text: await runDebriefPost($, arg.slice('debrief post'.length)) }
     if (arg === 'lesson' || arg.startsWith('lesson ')) return { text: await runLesson($, arg.slice('lesson'.length)) }

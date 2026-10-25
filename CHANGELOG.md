@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- **`/delegation debrief ingest <note.md>` turns the lead's review note into debrief findings (MOD-137, #223).** Each top-level bullet under a `For the mod owner` heading becomes one finding (`P1`/`P2`/`P3` prefix for severity, the first sentence for the title, nested `Evidence:` lines for the evidence, source `review note <name>`). The findings are scrubbed as a debrief's are and written to `<root>/.delegation/debriefs/YYYY-MM-DD-note-<name>.findings.json`; `/delegation debrief post` lists them. Nothing is posted by ingest.
+
+### Changed
+
+- **The clean-stop debrief asks for a review note instead of running an agent (MOD-137, #223).** A new user option `debriefMode` (`notes` by default, or `transcript`). With `notes` the clean stop spawns nothing and appends one row per round of closed tasks: `a round of tasks closed (N verdicts): write the review note, then /delegation debrief ingest <note.md>`. `transcript` runs the background debrief exactly as before; `autoDebrief false` silences both.
+
 ### Fixed
 
 - **A task already merged stays closed (MOD-136, #222).** A hand-back for a task whose last attempt is retired (or whose card on the default branch reads merged), or whose worktree folder and branch are both gone, was verified against the post-merge tree, gave a misleading refute and left an owed row for finished work. Now it is not verified, counts against no budget, writes no owed row, and posts one row: `<task>: hand-back after the task closed (merged|branch gone); not verified, nothing owed`. Retiring a task (the sweep, a merge command, `/delegation merge --finish`) clears its owed row, and the `/delegation` summary skips a retired task even for rows written before the retire. A task that is not retired and still has its branch is verified as before.

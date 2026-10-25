@@ -139,6 +139,16 @@
       "description": "At a clean stop (idle, no worker, nothing pending or queued, enough friction, past the cooldown) a background agent writes a debrief: ~/.claude/commands/debrief.md when it exists, else the built-in hooks/templates/debrief.md into <root>/.delegation/debriefs/",
       "default": true
     },
+    "debriefMode": {
+      "type": "string",
+      "title": "Debrief mode (notes | transcript)",
+      "description": "What the clean-stop debrief does. notes: no agent runs; once a round of verdicts has closed the mod adds one row asking you to write the review note (a section headed 'For the mod owner', one bullet per finding), then /delegation debrief ingest <note.md> turns the bullets into findings that /delegation debrief post reads. transcript: a background agent mines the session as before. autoDebrief false silences both",
+      "options": [
+        "notes",
+        "transcript"
+      ],
+      "default": "notes"
+    },
     "debriefIdleMinutes": {
       "type": "number",
       "title": "Debrief idle minutes",

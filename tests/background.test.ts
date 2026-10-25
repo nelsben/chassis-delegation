@@ -247,7 +247,7 @@ describe('2C: the clean-stop debrief', () => {
   const BC = `${HOME}/.claude/harness/breadcrumbs/sess-1.jsonl`
   const DONE = `${HOME}/.claude/harness/breadcrumbs/sess-1.done`
   const SKILL = `${HOME}/.claude/commands/debrief.md`
-  const NO_EVAL = { options: { autoEval: false } }
+  const NO_EVAL = { options: { autoEval: false, debriefMode: 'transcript' } }
 
   test('20 idle minutes at a clean stop: a sonnet agent runs the debrief skill; its path is toasted; never twice', NO_EVAL, async ($, on) => {
     const w = world(on, { files: { [BC]: crumbs(40), [DONE]: '10\n', [SKILL]: '# debrief' }, listAgents: true })
