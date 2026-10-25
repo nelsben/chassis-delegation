@@ -123,17 +123,23 @@ describe('MOD-143: the card tool takes mergeCheck', () => {
 describe('MOD-155 (#246): gateTimeoutMinutes sets how long merge lets one gate run', () => {
   const delta: Answers = argv => (argv.includes('diff') ? { exitCode: 0, stdout: 'hooks/register.ts\n' } : undefined)
   const gateRun = (w: { runs: { argv: string[]; timeoutMs?: number }[] }) => w.runs.find(r => r.argv[0] === 'claude' && r.argv[1] === 'plugin' && r.argv[2] === 'test')
-  test('8 in the repo file gives the merge gate run 480000, 15 the host ceiling of 600000', async ($, on) => {
+  test('8 in the repo file gives the merge gate run 480000', async ($, on) => {
     const set15 = world(on, { ...setup(card(), repoFile({ gateTimeoutMinutes: 8 })), run: happy(delta) })
     await $.session.start(sessionStart)
     await $.command.run(mergeCmd(ID))
     expect(gateRun(set15)?.timeoutMs).toBe(480_000)
   })
-  test('15 runs the merge gate at the host ceiling, which refuses a longer run', async ($, on) => {
-    const w = world(on, { ...setup(card(), repoFile({ gateTimeoutMinutes: 15 })), run: happy(delta) })
+  test('10 gives the merge gate run 600000', async ($, on) => {
+    const w = world(on, { ...setup(card(), repoFile({ gateTimeoutMinutes: 10 })), run: happy(delta) })
     await $.session.start(sessionStart)
     await $.command.run(mergeCmd(ID))
     expect(gateRun(w)?.timeoutMs).toBe(600_000)
+  })
+  test('15 is over the cap: the merge gate run keeps 540000', async ($, on) => {
+    const w = world(on, { ...setup(card(), repoFile({ gateTimeoutMinutes: 15 })), run: happy(delta) })
+    await $.session.start(sessionStart)
+    await $.command.run(mergeCmd(ID))
+    expect(gateRun(w)?.timeoutMs).toBe(540_000)
   })
   test('unset: 540000', async ($, on) => {
     const w = world(on, { ...setup(card()), run: happy(delta) })
