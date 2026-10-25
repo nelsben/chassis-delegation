@@ -57,7 +57,7 @@ describe('MOD-74: a row when a worker hands back', () => {
     await w.clock.advance(7 * 60_000)
     await $.turn.complete(turnInput('agent-1', REPORT('T-4'), usage('claude-sonnet-5-5', 1_000_000, 100_000)))
     const text = delivered(w)
-    expect(text).toMatch(/T-4 handed back · 🔵 sonnet · 7 min · \$\d+\.\d\d · verifying/)
+    expect(text).toMatch(/T-4 handed back · 🔵 sonnet · 7 min · \$\d+\.\d\d · verifying · land after the verdict/)
     expect(text.indexOf('T-4 handed back')).toBeLessThan(text.indexOf('T-4 attempt 1/2'))
   })
 
@@ -70,8 +70,11 @@ describe('MOD-74: a row when a worker hands back', () => {
   })
 
   test('the pure rows: `$?` while the spend is unknown', () => {
-    expect(handedBackRow({ label: 'T-4', alias: 'opus', minutes: 12 })).toBe('chassis-delegation: T-4 handed back · opus · 12 min · $? · verifying')
-    expect(handedBackRow({ label: 'T-4', alias: 'opus', minutes: 12, usd: 1.4 })).toContain('· 12 min · $1.40 · verifying')
+    expect(handedBackRow({ label: 'T-4', alias: 'opus', minutes: 12 })).toBe('chassis-delegation: T-4 handed back · opus · 12 min · $? · verifying · land after the verdict')
+    expect(handedBackRow({ label: 'T-4', alias: 'opus', minutes: 12, usd: 1.4 })).toContain('· 12 min · $1.40 · verifying · land after the verdict')
+    const base = handedBackRow({ label: 'MOD-1', alias: 'sonnet', minutes: 12, usd: 1.4 })
+    expect(base).toBe('chassis-delegation: MOD-1 handed back · sonnet · 12 min · $1.40 · verifying · land after the verdict')
+    expect(handedBackRow({ label: 'MOD-1', alias: 'sonnet', minutes: 12, usd: 1.4, nudge: 'lead: next' })).toBe(base + ' · lead: next')
     expect(startedRow({ label: 'T-4', alias: 'opus', tier: 'frontier', attempt: 2, budget: 3, kind: 'resumed' })).toBe('chassis-delegation: T-4 resumed · opus (frontier) · attempt 2/3')
   })
 })
@@ -116,7 +119,7 @@ describe('MOD-114: the rows (pure)', () => {
     expect(startedRow({ ...base, effort: 'high', nudge: 'lead: back to medium' })).toBe('chassis-delegation: T-1 started · 🟣 opus (frontier) · attempt 1/2 · effort high · lead: back to medium')
   })
   test('the handed-back row ends with the up nudge when given', () => {
-    expect(handedBackRow({ label: 'T-1', alias: 'opus', minutes: 3, usd: 1.2, nudge: 'lead: judgment next, raise to high' })).toBe('chassis-delegation: T-1 handed back · opus · 3 min · $1.20 · verifying · lead: judgment next, raise to high')
+    expect(handedBackRow({ label: 'T-1', alias: 'opus', minutes: 3, usd: 1.2, nudge: 'lead: judgment next, raise to high' })).toBe('chassis-delegation: T-1 handed back · opus · 3 min · $1.20 · verifying · land after the verdict · lead: judgment next, raise to high')
   })
   test('cardsHandedBack: the glob is anchored at any folder; "" is off; `none` artefacts are nothing', () => {
     expect(cardsHandedBack(['cards/H10.jpg'], 'cards/**')).toBe(true)
@@ -171,7 +174,7 @@ describe('MOD-114: the nudge on the rows (engine)', () => {
     w.files.set('/out/hair/model.glb', 'glb-bytes')
     await $.turn.complete(turnInput(agentOf(w, 'OPS-9'), `Done.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg')}`))
     const afterNine = rows(w)
-    expect(afterNine.find(l => l.includes('OPS-9 handed back'))).toMatch(/OPS-9 handed back · 🟣 opus · \d+ min · \$[\d?.]+ · verifying · lead: judgment next, raise to high$/)
+    expect(afterNine.find(l => l.includes('OPS-9 handed back'))).toMatch(/OPS-9 handed back · 🟣 opus · \d+ min · \$[\d?.]+ · verifying · land after the verdict · lead: judgment next, raise to high$/)
     expect(afterNine.find(l => l.includes('OPS-9 attempt 1/2'))).toMatch(/consistent \(no repo\) · 🟣 opus · .*next=accept$/)
     await $.turn.complete(turnInput(agentOf(w, 'OPS-8'), `Done.\n${REPORT('OPS-8', 'artefacts=model.glb')}`))
     const eight = rows(w).find(l => l.includes('OPS-8 attempt 1/2'))

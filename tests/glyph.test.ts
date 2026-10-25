@@ -44,7 +44,7 @@ describe('MOD-78: parseGlyphs', () => {
 describe('MOD-78: the pure rows', () => {
   test('the glyph sits immediately before the alias; none given, none shown', () => {
     expect(startedRow({ label: 'T-1', alias: 'opus', tier: 'frontier', attempt: 1, budget: 2, kind: 'started', glyph: '🟣' })).toBe('chassis-delegation: T-1 started · 🟣 opus (frontier) · attempt 1/2')
-    expect(handedBackRow({ label: 'T-1', alias: 'opus', minutes: 3, glyph: '🟣' })).toBe('chassis-delegation: T-1 handed back · 🟣 opus · 3 min · $? · verifying')
+    expect(handedBackRow({ label: 'T-1', alias: 'opus', minutes: 3, glyph: '🟣' })).toBe('chassis-delegation: T-1 handed back · 🟣 opus · 3 min · $? · verifying · land after the verdict')
     expect(runningSection([{ label: 'T-1', alias: 'opus', tier: 'frontier', state: 'running', minutes: 1, glyph: '🟣' }], 'sonnet', '🔵')).toEqual(['running:', 'T-1 · 🟣 opus (frontier) · running · 1 min · $?', 'brain: 🔵 sonnet'])
     expect(quietLine({ task: 'T-1', attempt: 1, budget: 2, verdict: 'consistent', alias: 'sonnet', glyph: '🔵', next: 'accept', lines: [] })).toContain(' · 🔵 sonnet · next=accept')
     expect(quietLine({ task: 'T-1', attempt: 1, budget: 2, verdict: 'consistent', alias: 'sonnet', next: 'accept', lines: [] })).toContain(' · sonnet · next=accept')

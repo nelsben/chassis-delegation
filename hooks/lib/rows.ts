@@ -15,10 +15,10 @@ export function startedRow(i: { label: string; alias: string; tier: string; atte
   return `chassis-delegation: ${i.label} ${verb} · ${glyphBefore(i.glyph)}${i.alias} (${i.tier}) · attempt ${i.attempt}/${i.budget}${i.effort ? ` · effort ${i.effort}` : ''}${i.nudge ? ` · ${i.nudge}` : ''}`
 }
 
-/** `MOD-1 handed back · sonnet · 12 min · $1.40 · verifying`; `$?` while the spend is not known. MOD-114: `nudge` rides last. */
+/** `MOD-1 handed back · sonnet · 12 min · $1.40 · verifying · land after the verdict`; `$?` while the spend is not known. MOD-114: `nudge` rides last. */
 export function handedBackRow(i: { label: string; alias: string; minutes: number; usd?: number; glyph?: string; nudge?: string }): string {
   const usd = i.usd !== undefined && Number.isFinite(i.usd) ? `$${i.usd.toFixed(2)}` : '$?'
-  return `chassis-delegation: ${i.label} handed back · ${glyphBefore(i.glyph)}${i.alias} · ${i.minutes} min · ${usd} · verifying${i.nudge ? ` · ${i.nudge}` : ''}`
+  return `chassis-delegation: ${i.label} handed back · ${glyphBefore(i.glyph)}${i.alias} · ${i.minutes} min · ${usd} · verifying · land after the verdict${i.nudge ? ` · ${i.nudge}` : ''}`
 }
 
 /** silent suppresses the started and handed-back rows; line and full post them. */
