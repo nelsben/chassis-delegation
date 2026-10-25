@@ -189,11 +189,10 @@ describe('MOD-23: the card tool takes resources and lanes', () => {
     for (const m of made) expect(m.text).toContain('## Why\n\nThe avatar is built outside the repo; one lane per part.\n')
   })
 
-  test("a lane's doneWhen is its own; a lane without one takes the shared list", () => {
+  test("a lane's doneWhen is added after the shared list; a lane without one takes the shared list alone", () => {
     const [hair, eyes] = lanes(card.cardsFromFields(input(), ctx())).map(m => m.text)
     expect(hair).toContain('## Done when\n\n- the part is in the lane output folder\n')
-    expect(eyes).toContain('## Done when\n\n- eyes.glb is in /out/eyes\n')
-    expect(eyes).not.toContain('the part is in the lane output folder')
+    expect(eyes).toContain('## Done when\n\n- the part is in the lane output folder\n- eyes.glb is in /out/eyes\n')
   })
 
   test('the ids continue the card folder per prefix, and a lane of another domain takes that prefix', () => {
