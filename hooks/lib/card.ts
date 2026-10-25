@@ -512,6 +512,18 @@ export function forbidCollisions(scope: readonly string[], forbid: readonly stri
 }
 
 /**
+ * MOD-141: `fix: forbid=<the forbid list without each glob that covers a path the done-when names, comma-joined>` for the
+ * brain to pass back to dispatch as --forbid, or `fix: forbid= (none left)` when every glob goes; undefined when no glob
+ * covers a named path.
+ */
+export function forbidFix(forbid: readonly string[], doneWhen: readonly string[]): string | undefined {
+  const paths = [...new Set(doneWhen.flatMap(donePaths))]
+  const covers = (f: string): boolean => paths.some(p => collides(p, f))
+  if (!forbid.some(f => f !== '' && covers(f))) return undefined
+  return `fix: forbid=${forbid.filter(f => f !== '' && !covers(f)).join(',') || ' (none left)'}`
+}
+
+/**
  * MOD-55: the warnings for each path-like word of the red_test (the donePaths rule) the brief cannot let the worker
  * write: `warning: red_test names <path>, which is outside scope`, or `… which is inside forbid <glob>`. Nothing is
  * added to the scope; the card is still written.
