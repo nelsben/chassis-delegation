@@ -5552,16 +5552,18 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const folders = { ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}) }
   // MOD-141: an existing worktree or repo=none brief made for this task from its card is re-rendered when the card or the flags would change it
   const candidate = reuse !== undefined && reusedText !== undefined && !replay && !here && reusedHeader?.task === id
+  // the budget= a person raised by hand in the brief is kept (the stop line says the brief is re-read)
+  const headBudget = candidate ? parseBudget(reusedHeader?.budget, budget) : budget
   const headerFor = (b: string): string => {
     if (here && !reuse) {
       // base=: a sha --base, else baseRef (HEAD pinned to the sha it is at now), else none (the verifier's chain)
-      return renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore: hereIgnoreList, ...folders })
+      return renderHeader({ card, tier, alias, budget: headBudget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'here', ...(hereBase ? { base: hereBase } : {}), ignore: hereIgnoreList, ...folders })
     }
     if (none && (!reuse || candidate)) {
-      return renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'none', ...folders })
+      return renderHeader({ card, tier, alias, budget: headBudget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, repo: 'none', ...folders })
     }
     // GH-105: a base that is not the default is written, so the verifier diffs from the commit the worktree was cut from
-    return renderHeader({ card, tier, alias, budget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, ...(target ? { repo: target.path } : {}), ...(b !== 'origin/main' ? { base: b } : {}), ...folders })
+    return renderHeader({ card, tier, alias, budget: headBudget, ...(spend > 0 ? { spend } : {}), scope: headScope, forbid: headForbid, ...(target ? { repo: target.path } : {}), ...(b !== 'origin/main' ? { base: b } : {}), ...folders })
   }
   let hereBase: string | undefined
   let hereIgnoreList: string[] = []
