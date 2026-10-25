@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The hand-back row says to land after the verdict (MOD-153, #246).** The row now reads `chassis-delegation: <label> handed back · <glyph><alias> · <n> min · <usd> · verifying · land after the verdict`, with the up nudge still last, on every route that prints it, so a lead does not land or remove the worktree while the verifier's gate runs. The dashboard's verifying line and `/delegation status` are unchanged.
+
 ## 0.9.27 — 2026-10-25
 
 ### Added
