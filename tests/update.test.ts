@@ -111,13 +111,13 @@ const FULL = `{
 `
 
 describe('MOD-3: migrating the repo config', () => {
-  test('a config that lacks delegateOnly gains _delegateOnly and delegateOnly: "off", every other byte unchanged', () => {
+  test('a config that lacks delegateOnly gains _delegateOnly and delegateOnly: "warn", every other byte unchanged', () => {
     const m = migrateConfig(FULL)
     expect(m.error).toBeUndefined()
     expect(m.added).toEqual(['delegateOnly'])
     expect(m.text).toContain('"_delegateOnly": ')
-    expect(m.text).toContain('"delegateOnly": "off"')
-    expect(JSON.parse(m.text).delegateOnly).toBe('off')
+    expect(m.text).toContain('"delegateOnly": "warn"')
+    expect(JSON.parse(m.text).delegateOnly).toBe('warn')
     const open = FULL.lastIndexOf('}')
     const body = FULL.slice(0, open).replace(/\s*$/, '')
     expect(m.text.startsWith(body + ',\n')).toBe(true)

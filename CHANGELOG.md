@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **`review` now defaults to `on-frontier` and `delegateOnly` to `warn` (MOD-166).** The mod assumes the brain forgets to delegate and skips checks, so a fresh install now gets the fresh-context review on frontier and premium cards and the brain guard's one warning row per turn. To turn either off, write `"review": "off"` or `"delegateOnly": "off"` in the repo file (`.chassis-delegation.json`); `off` in `/config` or the host settings still means "not set here". `/delegation update` and setup write `delegateOnly: "warn"` rather than `"off"`. The `ration` option's help text now says the band's meter, not the footer's.
 - **The README says why the mod exists and reports the evidence honestly (MOD-165).** A new Why section cites Anthropic's guidance on delegation and on a lead that starts the work itself, and the evidence list now gives 52% of tasks ended consistent ahead of 88% needing one attempt. Three stale figures are corrected: the attempt budget default is 3, the release count is 38 from 2 to 25 October, and a lane's done-when is the shared statements then its own.
 
 ### Fixed

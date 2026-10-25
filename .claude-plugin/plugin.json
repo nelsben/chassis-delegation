@@ -295,7 +295,7 @@
     "ration": {
       "type": "string",
       "title": "Rationing meter (seven_day | five_hour | off)",
-      "description": "The rate-limit window the footer meter reads: a bar of the window (a cell per day, or per hour for five_hour), today's share of what is left and whether today is on pace. seven_day or five_hour name the window; off draws no meter. /delegation ration prints the report",
+      "description": "The rate-limit window the band's meter reads: a bar of the window (a cell per day, or per hour for five_hour), today's share of what is left and whether today is on pace. seven_day or five_hour name the window; off draws no meter. /delegation ration prints the report",
       "options": [
         "seven_day",
         "five_hour",
@@ -318,7 +318,7 @@
     "delegateOnly": {
       "type": "string",
       "title": "Delegate only (off | warn | deny)",
-      "description": "Keep an opus or fable brain from doing worker work itself. warn: its Edit, Write, MultiEdit, NotebookEdit and Bash writes into the repo run, and the mod posts one row per turn saying so; deny: they are refused, naming the card tool. The card folder, .delegation/, .chassis-delegation.json, CHANGELOG.md and any docs/ folder stay writable. A sonnet or haiku brain, and workers, are never restricted. Empty or off = the repo file (.chassis-delegation.json), else off; a value here wins over it",
+      "description": "Keep an opus or fable brain from doing worker work itself. warn: its Edit, Write, MultiEdit, NotebookEdit and Bash writes into the repo run, and the mod posts one row per turn saying so; deny: they are refused, naming the card tool. The card folder, .delegation/, .chassis-delegation.json, CHANGELOG.md and any docs/ folder stay writable. A sonnet or haiku brain, and workers, are never restricted. Empty or off = the repo file (.chassis-delegation.json), else warn; a value here wins over it. The one way to switch it off is \"delegateOnly\": \"off\" in the repo file (or /delegation config delegateOnly off when that writes the repo file)",
       "default": "off"
     },
     "cardDir": {
@@ -342,7 +342,7 @@
     "review": {
       "type": "string",
       "title": "Review (off | on | on-frontier)",
-      "description": "After a consistent verdict, a fresh read-only reviewer reads the hand-back against the diff and labels each claim confirmed, refuted or unverifiable; a refuted claim resumes the worker. on: every consistent verdict; on-frontier: only frontier and premium cards; off: nothing changes. The reviewer is one tier below the worker's (see reviewTier), never edits, and never counts against budget=. Empty or off = the repo file (.chassis-delegation.json), else off; a value here wins over it",
+      "description": "After a consistent verdict, a fresh read-only reviewer reads the hand-back against the diff and labels each claim confirmed, refuted or unverifiable; a refuted claim resumes the worker. on: every consistent verdict; on-frontier: only frontier and premium cards; off: nothing changes. The reviewer is one tier below the worker's (see reviewTier), never edits, and never counts against budget=. Empty or off = the repo file (.chassis-delegation.json), else on-frontier; a value here wins over it. The one way to switch it off is \"review\": \"off\" in the repo file (or /delegation config review off when that writes the repo file)",
       "options": [
         "off",
         "on",

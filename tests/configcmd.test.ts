@@ -331,7 +331,7 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
   })
 
   test('the show view: the whole value, gate commands each on a line, in effect, scope, how to set', async ($, on) => {
-    bare(on, { [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node --no-warnings t.mjs', validate: 'node --no-warnings b.mjs' }, autoEval: true }) })
+    bare(on, { [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node --no-warnings t.mjs', validate: 'node --no-warnings b.mjs' }, autoEval: true, review: 'off' }) })
     await $.session.start(sessionStart)
     const gm = (await say($, 'gatemap')).split('\n')
     expect(gm[0]).toBe('gateMap = node, validate (repo)')

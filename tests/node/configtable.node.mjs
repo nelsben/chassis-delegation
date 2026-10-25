@@ -36,7 +36,9 @@ describe('MOD-73: the table holds the manifest both ways, and every option is me
     const m = manifest()
     expect([...TABLE_FIELDS].sort()).toEqual(Object.keys(m).sort())
     for (const [f, e] of Object.entries(CONFIG_TABLE)) {
-      expect([f, e.def]).toEqual([f, m[f].default])
+      // MOD-166: these two manifest defaults stay 'off' so an untouched settings layer defers to the repo file; the resolved default is the table's
+      const resolved = { review: 'on-frontier', delegateOnly: 'warn' }
+      expect([f, e.def]).toEqual([f, f in resolved ? resolved[f] : m[f].default])
       // the manifest's options, when it lists them; a repo field may name the words its repo-file parser takes
       if (m[f].options) expect([f, e.choices]).toEqual([f, m[f].options])
       else if (e.choices) expect([f, e.scope]).toEqual([f, 'repo'])

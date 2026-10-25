@@ -171,8 +171,10 @@ describe('MOD-8: Bash write targets are resolved before they are judged', () => 
 })
 
 describe('GH-113: the delegateOnly key', () => {
-  test('off | warn | deny; off by default; a bad value is named and ignored; settings win over the repo file', () => {
-    expect(mergeConfig({}, {}).delegateOnly).toBe('off')
+  test('off | warn | deny; warn by default; a bad value is named and ignored; settings win over the repo file', () => {
+    expect(mergeConfig({}, {}).delegateOnly).toBe('warn')
+    expect(mergeConfig(parseRepoConfig('{"delegateOnly":"off"}').config, {}).delegateOnly).toBe('off')
+    expect(mergeConfig({}, settingsLayer({ delegateOnly: 'off' }).config).delegateOnly).toBe('warn')
     const repo = parseRepoConfig('{"delegateOnly":"warn"}')
     expect(repo.errors).toEqual([])
     expect(mergeConfig(repo.config, {}).delegateOnly).toBe('warn')
@@ -180,7 +182,7 @@ describe('GH-113: the delegateOnly key', () => {
     expect(mergeConfig(repo.config, settingsLayer({ delegateOnly: 'off' }).config).delegateOnly).toBe('warn') // the manifest default is unset
     const bad = parseRepoConfig('{"delegateOnly":"strict"}')
     expect(bad.errors.join()).toContain('delegateOnly')
-    expect(mergeConfig(bad.config, {}).delegateOnly).toBe('off')
+    expect(mergeConfig(bad.config, {}).delegateOnly).toBe('warn')
   })
 })
 

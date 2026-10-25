@@ -104,11 +104,11 @@ export type RepoConfig = {
   effortByTier?: Partial<Record<SpendTier, EffortSetting>>
   /** MOD-114: the brain's effort nudge: the cards glob ("" = off) and the up and down words. */
   effortNudge?: Partial<EffortNudge>
-  /** GH-113: the brain on opus or fable may not edit source (warn: a row; deny: refused); default off. */
+  /** GH-113: the brain on opus or fable may not edit source (warn: a row; deny: refused); default warn. */
   delegateOnly?: DelegateOnly
   /** MOD-7: owner/name of the repo /delegation debrief post files issues in. MOD-18: unset = the mod's own repository (the manifest's); "" = posting is off. */
   issueRepo?: string
-  /** MOD-21: a read-only reviewer after a consistent verdict (off | on | on-frontier); default off. */
+  /** MOD-21: a read-only reviewer after a consistent verdict (off | on | on-frontier); default on-frontier. */
   review?: ReviewMode
   /** MOD-21: the tier the reviewer runs at; unset = one below the worker's. */
   reviewTier?: Tier
@@ -523,9 +523,9 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     spendByTier: { ...DEFAULT_SPEND_BY_TIER, ...repo.spendByTier, ...user.spendByTier, ...settings.spendByTier },
     effortByTier: { ...DEFAULT_EFFORT_BY_TIER, ...repo.effortByTier, ...user.effortByTier, ...settings.effortByTier },
     effortNudge,
-    delegateOnly: pick('delegateOnly', 'off'),
+    delegateOnly: pick('delegateOnly', 'warn'),
     issueRepo: pick('issueRepo', ''),
-    review: pick('review', 'off'),
+    review: pick('review', 'on-frontier'),
     reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
     sources,
   }

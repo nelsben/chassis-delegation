@@ -244,8 +244,10 @@ describe('MOD-21: a review is an attempt of kind review that never counts agains
 })
 
 describe('MOD-21: the review option', () => {
-  test('review defaults to off; the repo file and /config set it; /config off is unset; a bad value is named and dropped', () => {
-    expect(mergeConfig({}, {}).review).toBe('off')
+  test('review defaults to on-frontier; the repo file and /config set it; /config off is unset but a repo-file off wins; a bad value is named and dropped', () => {
+    expect(mergeConfig({}, {}).review).toBe('on-frontier')
+    expect(mergeConfig(parseRepoConfig('{"review":"off"}').config, {}).review).toBe('off')
+    expect(mergeConfig({}, settingsLayer({ review: 'off' }).config).review).toBe('on-frontier')
     const repo = parseRepoConfig('{"review":"on-frontier"}')
     expect(repo.errors).toEqual([])
     expect(mergeConfig(repo.config, {}).review).toBe('on-frontier')
@@ -253,7 +255,7 @@ describe('MOD-21: the review option', () => {
     expect(mergeConfig(repo.config, settingsLayer({ review: 'off' }).config).review).toBe('on-frontier') // the manifest default is unset
     const bad = parseRepoConfig('{"review":"always"}')
     expect(bad.errors.join()).toContain('review')
-    expect(mergeConfig(bad.config, {}).review).toBe('off')
+    expect(mergeConfig(bad.config, {}).review).toBe('on-frontier')
   })
 
   test('reviewTier defaults to none; a tier sets it; a word that is no tier is named and dropped', () => {
