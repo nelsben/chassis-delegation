@@ -15,7 +15,7 @@ Four layers, lowest first; the higher one wins:
 | yours | `~/.claude/chassis-delegation/options.json`, `{ "<field>": <value> }` for any option; reread when it changes. |
 | host | A `/config` row, or `pluginConfigs["chassis-delegation"].options` in `settings.json`. An unset row (`""`, `0`, `false`) counts as absent. A locked row always wins. |
 
-Maps (`gateMap`, `agentTypes`, `tierMap`, `spendByTier`, `maxWorkersByTier`, `effortByTier`, `effortNudge`) merge key by key; other options are replaced whole.
+Maps (`gateMap`, `mergeCheckMap`, `agentTypes`, `tierMap`, `spendByTier`, `maxWorkersByTier`, `effortByTier`, `effortNudge`) merge key by key; other options are replaced whole.
 A bad key or value is ignored and named in a toast.
 
 ### /delegation config
@@ -43,6 +43,7 @@ Shows the options in force and where each value came from; works in VS Code.
 | Key | Scope | Default | What it does (values) |
 | --- | --- | --- | --- |
 | `gateMap` | repo | `{}` | gate id → command, run by argv with no shell. `{files}`, `{worktree}`, `{outdir}` are filled in; chain with ` && `. Refused commands are dropped and named. An id not in the map is "gate not re-run". The key `_empty` (unlike other `_` keys, which are comments) names a gate id of the same map: when a hand-back changes no file, the verifier and `/delegation merge` run that gate instead of the card's, and the verdict says `gate: <card ids> → _empty <id> (no changed files)`. A value naming no id in the map is named in the config errors and ignored. |
+| `mergeCheckMap` | repo | `{}` | gate id → command merge runs in the task's worktree before it rebases, for a card whose `gate:` lists that id (a card's own `merge_check:` wins). `{card}`, `{sha}` (the full head) and `{worktree}` are filled in; run by argv with a 10-minute timeout. A non-zero exit refuses the merge and names the command and the last 15 lines of its output. Commands the gate map would refuse are dropped and named. See [Merge checks](review-and-merge.md#merge-checks). |
 | `agentTypes` | repo | `{}` | card domain → subagent type. Unnamed: same-named type, else `general-purpose`. |
 | `tierMap` | repo | `{economy: haiku, standard: sonnet, frontier: opus}` | tier → alias. `fable` is never spawned: it becomes opus. |
 | `domains` | repo | `frontend, backend, ops, dispatcher, cross, shared` | domains a card may name. |

@@ -11,6 +11,7 @@ import { dollars, spendCeiling } from './cost'
 import { scopeLooksProse, yamlScalar } from './dispatch'
 import { gateCommandTemplates } from './gates'
 import { matchGlob } from './norepo'
+import { mergeCheckRefusal } from './repoconfig'
 import { tierOf, type Tier } from './tier'
 import { globMatches } from './verify-native'
 
@@ -54,6 +55,8 @@ export type NewCard = {
   resources: string[]
   /** MOD-124 (#188): the exception blocks the brief pulls from the briefLocal file. */
   allow: string[]
+  /** MOD-143: the command merge runs in the worktree before it rebases (`merge_check:` on the card), when the card names one. */
+  mergeCheck?: string
 }
 
 export const CARD_TOOL = {
@@ -73,6 +76,7 @@ export const CARD_TOOL = {
       tier: { type: 'string', description: 'economy, standard (default), frontier or premium' },
       domain: { type: 'string', description: 'One of the repo domains (default: ops when the repo has it, else the first)' },
       gate: { type: 'string', description: 'Gate id(s) from gateMap, comma-separated (default: the first); for a repo given as a path also one command (words only, no comma), e.g. "npm run build"' },
+      mergeCheck: { type: 'string', description: 'One command merge runs in the worktree before it rebases, e.g. "node check.cjs {card} {sha}"; {card}, {sha} (the full head) and {worktree} are filled in, and a non-zero exit refuses the merge. Same rules as a gateMap command. Optional: a mergeCheckMap entry for one of the card\'s gate ids applies when the card names none' },
       budget: { type: 'number', description: 'Attempts before the task is handed back (default 2)' },
       spend: { type: 'number', description: "Dollars one attempt may spend; 0 = no ceiling (default: the tier's)" },
       allow: { type: 'array', items: { type: 'string' }, description: 'Named exceptions to the repo\'s local rules, e.g. ["live-reads"]: one plain word each. Each must have a "### allow: <id>" block in the file the repo config names as briefLocal; the block is copied into the brief and the id shows on the verdict row' },
@@ -215,6 +219,13 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
     for (const g of gate) if (!ctx.gateIds.includes(g)) return { error: `gate ${g} is not in gateMap; the ids are ${ctx.gateIds.join(', ')}` }
   }
 
+  const mergeCheck = input.mergeCheck === undefined ? '' : text(input.mergeCheck)
+  if (input.mergeCheck !== undefined && typeof input.mergeCheck !== 'string') return { error: 'mergeCheck must be one command, e.g. node check.cjs {card} {sha}' }
+  if (mergeCheck !== '') {
+    const why = mergeCheckRefusal(mergeCheck)
+    if (why !== undefined) return { error: `mergeCheck refused: ${why}` }
+  }
+
   const budget = input.budget === undefined ? 2 : Number(input.budget)
   if (!Number.isInteger(budget) || budget < 1) return { error: 'budget must be a whole number of attempts, 1 or more' }
   const spendIn = input.spend === undefined ? undefined : Number(input.spend)
@@ -233,7 +244,7 @@ ${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(
 forbid: [${forbid.map(inList).join(', ')}]
 ${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
 gate: ${gate.join(', ')}
-budget: ${budget}-attempts
+${mergeCheck !== '' ? `merge_check: ${yamlScalar(mergeCheck)}\n` : ''}budget: ${budget}-attempts
 spend: ${spend}
 ---
 ## Why
@@ -244,7 +255,7 @@ ${why}
 
 ${done.map(d => `- ${d}`).join('\n')}
 `
-  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow }
+  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow, ...(mergeCheck !== '' ? { mergeCheck } : {}) }
 }
 
 /**

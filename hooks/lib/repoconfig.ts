@@ -73,6 +73,8 @@ export type RepoConfig = {
   gateMap?: Record<string, string>
   /** MOD-98: gateMap entries the gate checker refused, id → why; they are not in gateMap. */
   refusedGates?: Record<string, string>
+  /** MOD-143: gate id → the command merge runs in the worktree before it rebases, for a card that names that gate. */
+  mergeCheckMap?: Record<string, string>
   agentTypes?: Record<string, string>
   tierMap?: Partial<Record<Tier, Alias>>
   evalCommand?: string
@@ -109,13 +111,14 @@ export type RepoConfig = {
   reviewTier?: Tier
 }
 
-export const REPO_KEYS = ['gateMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
   gateMap: Record<string, string>
   /** MOD-98: gateMap ids a layer wrote that the gate checker refused (and no layer defines validly), id → why. */
   refusedGates: Record<string, string>
+  mergeCheckMap: Record<string, string>
   agentTypes: Record<string, string>
   tierMap: Record<Tier, Alias>
   evalCommand: string
@@ -152,6 +155,48 @@ type Parsed = { config: RepoConfig; errors: string[] }
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
 
+// ---- MOD-143: merge checks ------------------------------------------------------------------
+/** The placeholders merge fills in a merge check, and the sample values the gate checker sees them as. */
+const MERGE_CHECK_SAMPLE: Readonly<Record<string, string>> = { '{card}': 'MOD-1', '{sha}': '0000000000000000000000000000000000000000' }
+
+/**
+ * MOD-143: why a merge check command is refused, or undefined when it may stand. The rule is the gate map's
+ * (checkGateEntry), with `{card}` and `{sha}` read as sample values; a merge check is one command, never a chain.
+ */
+export function mergeCheckRefusal(cmd: string): string | undefined {
+  if (cmd.trim() === '') return 'an empty command'
+  if (cmd.includes(' && ')) return 'a merge check is one command; chain nothing with &&'
+  let sample = cmd
+  for (const [k, v] of Object.entries(MERGE_CHECK_SAMPLE)) sample = sample.split(k).join(v)
+  const c = checkGateEntry(sample)
+  return c.ok ? undefined : c.reason
+}
+
+/** MOD-143: a merge check split into words, then `{card}`, `{sha}` and `{worktree}` replaced inside each word; any other `{x}` stays as written. */
+export function fillMergeCheck(cmd: string, v: { card: string; sha: string; worktree: string }): string[] {
+  return cmd
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(w => w.split('{card}').join(v.card).split('{sha}').join(v.sha).split('{worktree}').join(v.worktree))
+}
+
+/** MOD-143: the merge checks a card runs: its own `merge_check:` when it has one, else every map entry whose id is in its gate list, in gate order. */
+export function mergeChecksFor(own: string | undefined, gates: readonly string[], map: Readonly<Record<string, string>>): string[] {
+  if (own !== undefined && own.trim() !== '') return [own.trim()]
+  const out: string[] = []
+  for (const g of gates) {
+    const cmd = Object.prototype.hasOwnProperty.call(map, g) ? map[g] : undefined
+    if (cmd !== undefined && !out.includes(cmd)) out.push(cmd)
+  }
+  return out
+}
+
+const mergeCheckResult = (cmd: string): { ok: true } | { ok: false; reason: string } => {
+  const why = mergeCheckRefusal(cmd)
+  return why === undefined ? { ok: true } : { ok: false, reason: why }
+}
+
 /** A map of strings, `_`-keys (comments) skipped, non-strings named. */
 function stringMap(key: string, v: unknown, errors: string[], where: string, refused?: Record<string, string>): Record<string, string> | undefined {
   if (!isObject(v)) {
@@ -165,7 +210,7 @@ function stringMap(key: string, v: unknown, errors: string[], where: string, ref
     else if (key === 'gateMap' && k === EMPTY_GATE_KEY) out[k] = x // MOD-122: a gate id, checked below against the map
     else {
       // GH-11: a gate command the allowlist would refuse at verify time is refused now
-      const c = key === 'gateMap' ? checkGateEntry(x) : undefined
+      const c = key === 'gateMap' ? checkGateEntry(x) : key === 'mergeCheckMap' ? mergeCheckResult(x) : undefined
       if (c && !c.ok) {
         errors.push(`${key}.${k}${where}: ${c.reason} (ignored)`)
         if (refused) refused[k] = c.reason
@@ -287,6 +332,11 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
   for (const [key, v] of Object.entries(obj)) {
     if (key.startsWith('_')) continue
     switch (key) {
+      case 'mergeCheckMap': {
+        const m = stringMap(key, v, errors, where)
+        if (m) config.mergeCheckMap = m
+        break
+      }
       case 'gateMap':
       case 'agentTypes': {
         const refused: Record<string, string> = {}
@@ -416,7 +466,7 @@ export function settingsLayer(options: Readonly<Record<string, unknown>>): Parse
   for (const key of REPO_KEYS) {
     const v = options[key]
     if (v === undefined || v === '' || v === 0 || v === false) continue
-    if ((key === 'gateMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'maxWorkersByTier' || key === 'effortByTier' || key === 'effortNudge') && typeof v === 'string') {
+    if ((key === 'gateMap' || key === 'mergeCheckMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'maxWorkersByTier' || key === 'effortByTier' || key === 'effortNudge') && typeof v === 'string') {
       try {
         obj[key] = JSON.parse(v)
       } catch {
@@ -445,6 +495,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
   return {
     gateMap,
     refusedGates,
+    mergeCheckMap: { ...repo.mergeCheckMap, ...user.mergeCheckMap, ...settings.mergeCheckMap },
     agentTypes: { ...DEFAULT_AGENT_TYPES, ...repo.agentTypes, ...user.agentTypes, ...settings.agentTypes },
     tierMap: { ...DEFAULT_TIER_MAP, ...repo.tierMap, ...user.tierMap, ...settings.tierMap },
     evalCommand: pick('evalCommand', ''),

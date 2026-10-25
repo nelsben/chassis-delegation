@@ -213,7 +213,7 @@ import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLin
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { cardsHandedBack, nudgeDown, nudgeText, nudgeUp, type EffortNudge } from './lib/nudge'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
-import { DEFAULT_CARD_DIR, ignoreWithCards, isGitRef, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
+import { DEFAULT_CARD_DIR, fillMergeCheck, ignoreWithCards, isGitRef, mergeCheckRefusal, mergeChecksFor, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
 import {
   parseReviewBlock,
@@ -419,6 +419,8 @@ const EVAL_STALE_MS = 3 * HOUR_MS
 const DEBRIEF_STALE_MS = HOUR_MS
 const EVALS_CAP = 100
 const GATE_TIMEOUT_MS = 9 * 60 * 1000
+/** MOD-143: the longest a card's merge check may run. */
+const MERGE_CHECK_TIMEOUT_MS = 10 * 60 * 1000
 /** The advice kinds that leave something for the brain (or the person) to do. */
 const OWED_KINDS = ['resume', 'respawn', 'verify', 'exhausted', 'check', 'fix-brief', 'review']
 const LEDGER_FILE = '.delegation/ledger.jsonl'
@@ -561,6 +563,8 @@ type Config = {
   gateMap: Record<string, string>
   /** MOD-98: gateMap entries the gate checker refused, id → why. */
   refusedGates: Record<string, string>
+  /** MOD-143: gate id → the command merge runs before it rebases. */
+  mergeCheckMap: Record<string, string>
   gateTemplates: string[][]
   agentTypes: Record<string, string>
   tierMap: Record<Tier, Alias>
@@ -666,6 +670,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       guardBranches: parseGuardBranches(str('guardBranches')),
       gateMap: eff.gateMap,
       refusedGates: eff.refusedGates,
+      mergeCheckMap: eff.mergeCheckMap,
       gateTemplates: gateTemplatesOf(eff.gateMap),
       agentTypes: eff.agentTypes,
       tierMap: eff.tierMap,
@@ -817,7 +822,9 @@ let sessionRoot = ''
 const taskRepos = new Map<string, { path: string; domains: string[]; gateTemplates: string[][] }>()
 /** MOD-75: the task `/delegation merge` is working on, set only while that command runs (cleared in its finally); the allowlist's merge shapes pass for it alone. */
 let mergeCtx: MergeCtx | undefined
-const allowCfg = (): AllowConfig => ({ gateTemplates: taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates, ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}), ...(mergeCtx ? { merge: mergeCtx } : {}) })
+/** MOD-143: the filled argv of the merge check running now (it passed the gate checker); the allowlist accepts exactly it, only while merge runs it. */
+let mergeCheckArgvs: string[][] = []
+const allowCfg = (): AllowConfig => ({ gateTemplates: [...(taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates), ...mergeCheckArgvs], ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}), ...(mergeCtx ? { merge: mergeCtx } : {}) })
 
 // ---- small host helpers (fail-open) ---------------------------------------
 function debug($: Host, text: string) {
@@ -2655,6 +2662,7 @@ async function runMerge($: Host, parsed: MergeArgs | { error: string }): Promise
     return await mergeCommand($, parsed)
   } finally {
     mergeCtx = undefined
+    mergeCheckArgvs = []
   }
 }
 
@@ -2726,6 +2734,30 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   if (parsed.reviewFile) {
     review = await readText($, parsed.reviewFile)
     if (review === undefined) return `${id}: --review-file ${parsed.reviewFile} could not be read`
+  }
+  // MOD-143: the card's merge checks, in the worktree at its head, before anything is rebased or committed
+  const checks = mergeChecksFor(card.fields.merge_check as string | undefined, card.gate, cfg.mergeCheckMap)
+  const passed: string[] = []
+  if (checks.length > 0) {
+    const sha = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
+    for (const cmd of checks) {
+      const why = mergeCheckRefusal(cmd)
+      if (why !== undefined) return `${id}: merge check refused: ${cmd}: ${why}; nothing was rebased or committed`
+      const argv = fillMergeCheck(cmd, { card: id, sha, worktree: wt.path })
+      // the command passed the gate checker above: the allowlist takes exactly this argv, for this run only
+      mergeCheckArgvs = [argv]
+      let r: RunOut
+      try {
+        r = await run($, argv, { cwd: wt.path, timeoutMs: MERGE_CHECK_TIMEOUT_MS })
+      } finally {
+        mergeCheckArgvs = []
+      }
+      if (!r.ok || r.exitCode !== 0) {
+        const tail = r.ok ? lastLines(r.stdout, r.stderr, 15) : [r.why]
+        return [`${id}: merge check failed: ${cmd} ${r.ok ? `exited ${r.exitCode}` : 'did not run'}; nothing was rebased or committed`, ...tail].join('\n')
+      }
+      passed.push(cmd)
+    }
   }
   // the rebase onto the base, in the worktree, by argv
   const fetched = await run($, ['git', '-C', wt.path, 'fetch', 'origin'], { cwd: wt.path, timeoutMs: 120000 })
@@ -2821,7 +2853,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   const title = card.title || `${id} merged`
   const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id })
   return [
-    `${id}: rebased onto ${baseRef}; ${ignored ? cardKeptLocalClause(`${root}/${cardRel}`) : committed ? `card committed as merged (${cardRel})` : 'the worktree already carries the merged card; nothing committed again'}; gates green at ${short}${results.length > 0 ? ` (${results.map(r => r.id).join(', ')})` : ' (the card names no gate)'}`,
+    `${id}: rebased onto ${baseRef}; ${ignored ? cardKeptLocalClause(`${root}/${cardRel}`) : committed ? `card committed as merged (${cardRel})` : 'the worktree already carries the merged card; nothing committed again'}; gates green at ${short}${results.length > 0 ? ` (${results.map(r => r.id).join(', ')})` : ' (the card names no gate)'}${passed.map(c => `; merge check passed (${c})`).join('')}`,
     `pr body: ${prFile} · gate output: ${outDir}/merge-gates.txt${version ? ` · releases v${version}` : ''}`,
     remoteBlock('remote: run these lines verbatim, in order (the mod never pushes nor calls gh):', lines),
   ].join('\n')
@@ -5696,6 +5728,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     briefPath = written.path
     out.push(stale ? briefRewrittenLine(briefPath, stale) : `2. brief ${briefPath} written (tier=${tier}, model=${alias}, budget=${budget}-attempts${here ? ', repo=here' : none ? ', repo=none' : ''})`)
   }
+  // MOD-143: the merge check merge will run, said after the gate (the card's own, else the map's for its gate ids)
+  for (const cmd of target ? mergeChecksFor(card.fields.merge_check as string | undefined, [], {}) : mergeChecksFor(card.fields.merge_check as string | undefined, card.gate, cfg.mergeCheckMap)) out.push(`   merge check: ${cmd}`)
   if (lessons !== undefined) {
     const n = lessonLineCount(lessons.text)
     out.push(`   note: lessons: ${n} lines from ${lessons.path}`)
@@ -6203,7 +6237,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       continue
     }
     const alias = finalAlias({ tier: c.tier, source: 'brief' }, cfg.tierMap[c.tier]).alias
-    const notes = lines.filter(l => /^\s+(note|warning|hint|repo):/.test(l)).map(l => l.trim())
+    const notes = lines.filter(l => /^\s+(note|warning|hint|repo|merge check):/.test(l)).map(l => l.trim())
     // GH-114: one classifier call per card written, on the dry run only
     let second: string | undefined
     if (cfg.classifierSecondOpinion) {

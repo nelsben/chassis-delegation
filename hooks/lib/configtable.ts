@@ -29,6 +29,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['probeModels', 'Workers and models', 'Once a day, check whether new models you listed are available', 'bool', 'user', false],
   ['candidateIds', 'Workers and models', 'The model ids to check for, separated by commas', 'list', 'user', ''],
   ['gateMap', 'Checking the work', 'The commands that re-run the checks a task names, so results can be trusted', 'gates', 'repo', ''],
+  ['mergeCheckMap', 'Checking the work', 'A command run before a task is merged, for each check name a task lists', 'map', 'repo', ''],
   ['applyAmends', 'Checking the work', 'Accept a worker\'s request to add files it may or may not touch; removals ask you', 'bool', 'user', true],
   ['review', 'Checking the work', 'Have a second, read-only agent check what a worker says it did', 'choice', 'repo', 'off', ['off', 'on', 'on-frontier']],
   ['reviewTier', 'Checking the work', 'How capable the second checker is; empty means one level below the worker', 'tier', 'repo', ''],
