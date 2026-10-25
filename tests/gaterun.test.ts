@@ -140,11 +140,13 @@ const GIT: Record<string, ExecOut> = {
 }
 
 /** The gate answers `answers` in order (the last one for every run after); the calls and the turns are recorded. */
-function world(answers: ExecOut[], over: { delta?: string; turn?: { wait?: string } } = {}) {
+function world(answers: ExecOut[], over: { delta?: string; turn?: { wait?: string }; head?: ExecOut; written?: Map<string, string>; failWrite?: boolean } = {}) {
   const gate: string[][] = []
   const events: string[] = []
   const exec = async (argv: readonly string[]): Promise<ExecOut> => {
     if (argv[0] === 'git' && over.delta !== undefined && argv[3] === 'diff') return ok(over.delta)
+    // MOD-149: once the gate has run, HEAD reads as `over.head` (a moved HEAD, or a worktree that is gone)
+    if (argv[0] === 'git' && over.head && gate.length > 0 && argv.slice(3).join(' ') === 'rev-parse HEAD') return over.head
     const hit = GIT[argv.join(' ')]
     if (hit) return hit
     if (argv[0] === 'git') return { ok: true, exitCode: 1, stdout: '', stderr: `no such answer: ${argv.join(' ')}` }
@@ -158,7 +160,11 @@ function world(answers: ExecOut[], over: { delta?: string; turn?: { wait?: strin
         return { ...(over.turn?.wait ? { line: over.turn.wait } : {}), release: async () => void events.push('release') }
       }
     : undefined
-  return { gate, events, io: { exec, write: async () => undefined, ...(turn ? { turn } : {}) } }
+  const write = async (path: string, text: string) => {
+    if (over.failWrite && path.includes('verify-gate-')) throw new Error('disk full')
+    over.written?.set(path, text)
+  }
+  return { gate, events, io: { exec, write, ...(turn ? { turn } : {}) } }
 }
 const input = (over: Partial<Parameters<typeof verifyNative>[0]> = {}) => ({
   repo: REPO,
@@ -269,5 +275,57 @@ describe('MOD-96 (#147): a gate the runner stopped at the limit is advised as a 
     expect(a.kind).toBe('check')
     expect(a.next).toBe("gate npm test hit the verifier's 9-minute limit: time it by hand in the worktree, then re-run the verifier with `/dispatch T-1 --verify a1b2c3d` (no attempt spent)")
     expect(a.next).not.toContain('resume')
+  })
+})
+
+describe('MOD-149: a red gate saves its full output and says when the tree changed under it', () => {
+  const OUT = '/r/.delegation/T-1'
+  const RED_OUT = 'collecting\nFAILED test_x\n1 failed\n'
+  test('exit 1 writes verify-gate-<attempt>.txt with the full output; the row names the path', async () => {
+    const written = new Map<string, string>()
+    const w = world([{ ok: true, exitCode: 1, stdout: RED_OUT, stderr: 'warn on stderr\n' }], { written })
+    const r = await verifyNative(input({ outDir: OUT, attempt: 1 }), w.io)
+    expect(r.verdict).toBe('refuted')
+    expect(claim(r.lines, 'gate')).toBe(`claim gate: failed — gate=pass claimed but the gate is RED at a1b2c3d (exit 1; output ${OUT}/verify-gate-1.txt)`)
+    const text = written.get(`${OUT}/verify-gate-1.txt`) ?? ''
+    expect(text).toContain('FAILED test_x')
+    expect(text).toContain('warn on stderr')
+    expect(r.lines).toContain('  | 1 failed')
+  })
+  test('the attempt number names the file', async () => {
+    const written = new Map<string, string>()
+    const w = world([red(RED_OUT)], { written })
+    await verifyNative(input({ outDir: OUT, attempt: 3 }), w.io)
+    expect([...written.keys()].filter(k => k.includes('verify-gate-'))).toEqual([`${OUT}/verify-gate-3.txt`])
+  })
+  test('no outDir, or a failed write: the claim reads as before and no file is written', async () => {
+    const written = new Map<string, string>()
+    const w = world([red(RED_OUT)], { written })
+    const r = await verifyNative(input(), w.io)
+    expect(claim(r.lines, 'gate')).toBe('claim gate: failed — gate=pass claimed but the gate is RED at a1b2c3d (exit 1)')
+    expect([...written.keys()].some(k => k.includes('verify-gate-'))).toBe(false)
+    const w2 = world([red(RED_OUT)], { failWrite: true })
+    const r2 = await verifyNative(input({ outDir: OUT, attempt: 1 }), w2.io)
+    expect(claim(r2.lines, 'gate')).toBe('claim gate: failed — gate=pass claimed but the gate is RED at a1b2c3d (exit 1)')
+  })
+  test('a worktree gone by the end of a red run: unchecked, not refuted on gate', async () => {
+    const written = new Map<string, string>()
+    const w = world([red(RED_OUT)], { head: { ok: true, exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' }, written })
+    const r = await verifyNative(input({ outDir: OUT, attempt: 1 }), w.io)
+    expect(claim(r.lines, 'gate')).toBe('claim gate: unchecked — the worktree changed while the gate ran (gone); the gate was not judged')
+    expect(r.verdict).not.toBe('refuted')
+  })
+  test('a HEAD that moved during a red run: unchecked with the new short sha', async () => {
+    const w = world([red(RED_OUT)], { head: ok('ffffffffffffffffffffffffffffffffffffffff\n') })
+    const r = await verifyNative(input({ outDir: OUT, attempt: 1 }), w.io)
+    expect(claim(r.lines, 'gate')).toBe('claim gate: unchecked — the worktree changed while the gate ran (HEAD now fffffff); the gate was not judged')
+    expect(r.verdict).not.toBe('refuted')
+  })
+  test('a green run is not re-checked and writes nothing', async () => {
+    const written = new Map<string, string>()
+    const w = world([ok()], { head: { ok: true, exitCode: 128, stdout: '', stderr: '' }, written })
+    const r = await verifyNative(input({ outDir: OUT, attempt: 1 }), w.io)
+    expect(claim(r.lines, 'gate')).toBe('claim gate: held — gate green at a1b2c3d (gate=pass confirmed)')
+    expect(written.size).toBe(1)
   })
 })

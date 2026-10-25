@@ -10,6 +10,7 @@
 
 ### Changed
 
+- **A gate the verifier finds red says why on the verdict row (MOD-149, #222).** A refuted gate claim now reads `gate=pass claimed but the gate is RED at <sha> (exit <n>; output <path>)`, where the path is `verify-gate-<attempt>.txt` under the session's `.delegation/<task>/` and holds the gate's full stdout and stderr; the output tail lines stay. With no folder or a failed write the claim reads as before. After a red run in a worktree the verifier reads HEAD again: when the worktree is gone or HEAD moved, the gate claim is `unchecked` with `the worktree changed while the gate ran (gone | HEAD now <short>); the gate was not judged`, so the verdict is not refuted on gate.
 - **The docs and the card tool say the card is the worker's whole instruction (MOD-139).** `docs/guide.md` gains a "What the worker sees" subsection under "The card", the card tool's top-level `doneWhen` description names the rule, and `docs/how-it-works.md` step 2 says the same.
 
 ### Fixed

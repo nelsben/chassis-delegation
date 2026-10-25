@@ -160,7 +160,7 @@ describe('tool.call on Agent: report capture and verify', () => {
   // 5A: the repo names its gate; the verifier re-runs it in the worker's own tree
   const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
   const GATE_ARGV = ['npx', 'prettier', '--check', `${SCRATCH}/T-4/files.txt`]
-  const RED = 'claim gate: failed — gate=pass claimed but the gate is RED at 1234abcd (exit 1)'
+  const RED = 'claim gate: failed — gate=pass claimed but the gate is RED at 1234abcd (exit 1; output /repo/acme-app/.delegation/T-4/verify-gate-1.txt)'
   const verifierRun = nativeRun()
   const verifyStarts = (w: { runs: { argv: string[] }[] }) => w.runs.filter(x => isVerifyStart(x.argv))
 
@@ -1903,7 +1903,7 @@ describe('GH-104: spend guards', () => {
     const out = String((await $.command.run(commandInput(`T-4 --verify ${SHORT}`))).text)
     expect(out).toContain(`/dispatch T-4 --verify ${SHORT}: no spawn — the verifier ran on worktree ${WT} at ${SHORT} (base origin/main)`)
     expect(out).toContain('chassis-delegation: verdict=refuted task=T-4 attempt=1/3')
-    expect(out).toContain(`claim gate: failed — gate=pass claimed but the gate is RED at ${SHORT} (exit 1)`)
+    expect(out).toContain(`claim gate: failed — gate=pass claimed but the gate is RED at ${SHORT} (exit 1; output /repo/acme-app/.delegation/T-4/verify-gate-1.txt)`)
     expect(out).toContain(`next=respawn at frontier — same brief ${BRIEF}`)
     expect(records(w, 'T-4').map(x => [x.attempt, x.kind, x.verdict, x.sha])).toEqual([[1, 'verify', 'refuted', SHORT]])
     expect(w.spawns).toHaveLength(0)
@@ -4112,7 +4112,7 @@ describe('MOD-20: a gate that ran beside another worker does not false-refute', 
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
     expect(delivered(w)).toContain('chassis-delegation: verdict=refuted task=T-4')
-    expect(delivered(w)).toContain('claim gate: failed — gate=pass claimed but the gate is RED at 1234abcd (exit 1)')
+    expect(delivered(w)).toContain('claim gate: failed — gate=pass claimed but the gate is RED at 1234abcd (exit 1; output /repo/acme-app/.delegation/T-4/verify-gate-1.txt)')
     expect(engineRuns(w)).toHaveLength(2)
   })
 
