@@ -4979,7 +4979,9 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   await setLastVerdict($, { task: shownLabel, attempt: shownAttempt, verdict, next, at: t, text: full })
   // a cardless hand-back is posted, kept and ledgered like any other (GH-1 item 2)
   if (!spawn.adhoc || cardless) {
-    const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${shownLabel}: ${shortNext(next)}` : undefined
+    // MOD-154 (#246): a cardless ad hoc `check the diff` has no sha, patch or card for the retire sweep: the row names the way out
+    const hint = spawn.adhoc && cardless && advice.kind === 'check' && next === 'check the diff' ? ` (ad hoc: clears with /delegation accept ${shownLabel})` : ''
+    const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${shownLabel}: ${shortNext(next)}${hint}` : undefined
     await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line: quiet, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}), ...(report?.sha ? { sha: report.sha } : {}), ...(spawn.key.includes('-rejudge-') ? { rejudge: true } : {}) })
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
     await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, next: shortNext(next), sessionId: await sessionIdOf($) })
