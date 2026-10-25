@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A `repo=none` hand-back's gate fills `{worktree}` with the checkout the worker ran in (MOD-163).** It filled it with the card's output folder, which is not a plugin or a repo, so a research card's `claude plugin validate {worktree}` gate exited 1 on every attempt however the worker had run it. The gate now gets the session root (or the task's other repo path) as `{worktree}` and as its working directory; `{outdir}` and `{files}` fill as before. The verdict names it (`gate <id> ran in the checkout (repo=none)`), and the dispatch line and dry run for a research card end `· gate <ids> runs in <root>`.
+
 ## 0.9.28 — 2026-10-25
 
 ### Changed
