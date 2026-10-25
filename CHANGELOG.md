@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The docs and the card tool say the card is the worker's whole instruction (MOD-139).** `docs/guide.md` gains a "What the worker sees" subsection under "The card", the card tool's top-level `doneWhen` description names the rule, and `docs/how-it-works.md` step 2 says the same.
+
 ## 0.9.26 — 2026-10-24
 
 ### Added

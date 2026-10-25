@@ -55,6 +55,14 @@ describe('the docs', () => {
     expect(new RegExp(`^### From \\S+ to ${MOD_VERSION.replace(/\./g, '\\.')}\\s*$`, 'm').test(read('docs/upgrading.md'))).toBe(true)
   })
 
+  test('docs/guide.md has the worker-sees section under the card', () => {
+    const guide = read('docs/guide.md')
+    const card = guide.indexOf('\n## The card\n')
+    const sees = guide.indexOf('\n### What the worker sees\n')
+    const dry = guide.indexOf('\n### Dry-run warnings\n')
+    expect(card >= 0 && sees > card && (dry < 0 || sees < dry)).toBe(true)
+  })
+
   test('every relative link in the README and docs/*.md resolves, anchor included', () => {
     const bad = []
     for (const page of pages()) {
