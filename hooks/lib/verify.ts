@@ -254,6 +254,27 @@ export async function probeWork(input: { repo: string; base?: string; judged?: r
   return { present: true, sha: head, branch: ref && ref !== 'HEAD' ? ref : '(detached HEAD)', ahead }
 }
 
+/** MOD-150: the clause a refuted row carries when the branch's work is already on the base. */
+export const onBaseClause = (base: string): string => `the work is already on ${base} (cherry-picked or merged); nothing to resume`
+
+/**
+ * MOD-150: is every commit of the branch already on the base, by patch? The commits of `sha` with no patch-equal commit on the
+ * base are listed (`log --cherry-pick --right-only --no-merges`); none listed, and a commit of the branch's own (one dated since
+ * the attempt began, so a no-work hand-back that names an old base tip does not pass), says so. A refused or failing log, or
+ * anything unreadable, is undefined: the caller chooses the next step as before.
+ */
+export async function branchOnBase(input: { repo: string; sha: string; base?: string; sinceMs?: number }, exec: GitExec): Promise<{ base: string } | undefined> {
+  if (!HEX_SHA.test(input.sha.trim()) || input.sinceMs === undefined) return undefined
+  const out = gitIn(input.repo, exec)
+  const base = await resolveBase(out, input.base)
+  if (!base) return undefined
+  const sha = input.sha.trim()
+  const missing = await out('log', '--cherry-pick', '--right-only', '--no-merges', '--format=%H', `${base}...${sha}`)
+  if (missing === undefined || missing.split('\n').some(l => l.trim() !== '')) return undefined
+  const own = await out('log', '--no-merges', '-n', '1', '--format=%H', `--since=${Math.floor(input.sinceMs / 1000)}`, sha)
+  return own !== undefined && own.trim() !== '' ? { base } : undefined
+}
+
 /**
  * GH-104, `--verify`: the paths changed between merge-base(base, sha) and the
  * sha, as the verifier takes the delta (the same base chain).
