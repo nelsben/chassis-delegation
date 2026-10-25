@@ -194,10 +194,33 @@ export const noBriefLine = (why?: string): string => `note: no brief file named 
 /** `why` for an incomplete inline header: the fields it lacks. */
 export const lacksLine = (missing: readonly string[]): string => `the inline header lacks ${missing.join(' and ')}`
 
-/** The first absolute `….brief.md` path the text names. */
+/**
+ * The first `….brief.md` path the text names: an absolute one wins (MOD-135: else the first relative one, such as
+ * `.delegation/briefs/T-1.brief.md` or `./.delegation/briefs/T-1.brief.md`), with the same delimiters for both.
+ */
 export function findBriefPath(text: string): string | undefined {
-  const m = /(?:^|[\s"'`(<[])(\/[^\s"'`<>()[\]]*?\.brief\.md)(?![A-Za-z0-9_-])/.exec(text)
-  return m ? (m[1] as string) : undefined
+  const abs = /(?:^|[\s"'`(<[])(\/[^\s"'`<>()[\]]*?\.brief\.md)(?![A-Za-z0-9_-])/.exec(text)
+  if (abs) return abs[1] as string
+  const rel = /(?:^|[\s"'`(<[])([^\s"'`<>()[\]/][^\s"'`<>()[\]]*?\.brief\.md)(?![A-Za-z0-9_-])/.exec(text)
+  return rel ? (rel[1] as string) : undefined
+}
+
+/**
+ * MOD-135: a brief path as a file to read. An absolute path stands; a relative one is read from the spawn's folder,
+ * else the session root, and is refused (undefined) when `..` climbs out of that folder.
+ */
+export function resolveBriefPath(path: string, cwd: string | undefined, root: string): string | undefined {
+  if (path.startsWith('/')) return path
+  const base = (cwd && cwd.startsWith('/') ? cwd : root).replace(/\/+$/, '')
+  const kept: string[] = []
+  for (const seg of path.split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') {
+      if (kept.length === 0) return undefined
+      kept.pop()
+    } else kept.push(seg)
+  }
+  return kept.length === 0 ? undefined : `${base}/${kept.join('/')}`
 }
 
 /**
