@@ -4713,6 +4713,12 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     if (found) {
       spawn = found
       adopted = true
+      const vkey = await attemptKey($, given)
+      if (verifying.has(vkey)) verifying.set(vkey, spawn)
+      // MOD-148: the adopted attempt is on record (pending) and in the process memory before the verify, so the verdict tool waits for it
+      const held = await loadAttempts($, spawn)
+      if (!attemptsFor(held, spawn.subtask, laneOf(spawn)).some(r => r.attempt === spawn.attempt)) await saveAttempts($, spawn, [...held, await attemptOfSpawn($, spawn)])
+      remember(spawn)
     }
   }
   // MOD-136 (#222): a task already merged, or one whose worktree and branch are gone, is closed: no verify, no budget, no owed row
@@ -5003,7 +5009,11 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<Verdi
   // MOD-94 (#157): an attempt the store has no record of: this process's memory of its start, else the ledger
   const mem = rememberedFor(task, subtask, repo)
   if (mem && (!latest || mem.attempt > latest.attempt)) return mem.verdictAttempt === mem.attempt && mem.verdictBlock ? postedOf($, mem, undefined) : { kind: 'wait' }
-  if (!latest) return verdictFromLedger($, task, subtask)
+  if (!latest) {
+    // MOD-148: a hand-back whose verify is in flight in this process whose spawn names the task is an attempt, however late its record lands
+    for (const v of verifying.values()) if (v.task === task && v.subtask === subtask) return { kind: 'wait' }
+    return verdictFromLedger($, task, subtask)
+  }
   if (latest.verdict === 'pending') return { kind: 'wait' }
   const spawn = (await spawnByAgent($, latest.agentId)) ?? (latest.toolUseId ? await storeGet<SpawnRecord>($, K.spawn(latest.toolUseId)) : undefined)
   if (!spawn || spawn.attempt !== latest.attempt || spawn.task !== task || spawn.subtask !== subtask) return { kind: 'judged', text: `${PLUGIN}: ${label} attempt ${latest.attempt} ${latest.verdict}` }
