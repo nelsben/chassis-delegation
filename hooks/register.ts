@@ -230,7 +230,7 @@ import {
   shownRefuted,
   type ReviewMarker,
 } from './lib/review'
-import { alreadyQueuedDeny, countTiers, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, maxWorkersText, parseReadyFallbackMinutes, planQueue, promptKey, heldLine, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, resourceBlock, resourceDeny, runningDeny, startingOthers, tierFree, tierFull, waitedMinutes, waitsText, type FallbackKind, type ResourceWait, type TierCounts, type Wanting } from './lib/scheduler'
+import { alreadyQueuedDeny, countTiers, limitSourceText, maxWorkersSourcedText, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, planQueue, promptKey, heldLine, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, resourceBlock, resourceDeny, runningDeny, startingOthers, tierFree, tierFull, waitedMinutes, waitsText, type FallbackKind, type ResourceWait, type TierCounts, type Wanting } from './lib/scheduler'
 import {
   aliasOf,
   CLASSIFIER_LABELS,
@@ -1851,12 +1851,14 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
       return { token: slotSeq }
     }
     const slotTier = tierHolds ? tier : undefined
+    // MOD-145 (#234): the limit that is full, and the layer of the config it came from
+    const limit = slotTier ? limitSourceText(`maxWorkersByTier.${slotTier}`, cfg.maxWorkersByTier[slotTier], resolvedNow?.sources.maxWorkersByTier ?? 'default') : limitSourceText('maxWorkers', cfg.maxWorkers, resolvedNow?.sources.maxWorkers ?? 'default')
     const entered = enqueue(queue, item)
     // MOD-44: a task for another local repo shows that repo's folder name beside it
     const shown = withRepoName(label, item.repo, sessionRoot)
     if (entered.existing) {
       const kept = entered.existing
-      return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position, slotTier) }
+      return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position, slotTier, limit) }
     }
     await writeQueue($, entered.queue)
     if (blocked) {
@@ -1864,7 +1866,7 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
       return { deny: resourceDeny(shown, blocked.resource, blocked.holder) }
     }
     debug($, slotTier ? `queued ${label}: ${heldByTier[slotTier] ?? 0} workers hold the ${cfg.maxWorkersByTier[slotTier]} ${slotTier} slots` : `queued ${label}: ${holders.length} workers hold the ${cfg.maxWorkers} slots`)
-    return { deny: queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot)), slotTier) }
+    return { deny: queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot)), slotTier, limit) }
   })
 }
 
@@ -6336,7 +6338,7 @@ async function statusReport($: Host): Promise<string> {
     `config: ${repoText == null ? `no ${REPO_CONFIG_FILE} in ${root} (built-in defaults + the mod's options: /delegation config)` : `${root}/${REPO_CONFIG_FILE} + the mod's options (/delegation config)`}`,
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
-    `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${maxWorkersText(cfg.maxWorkers, cfg.maxWorkersByTier)} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
+    `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${maxWorkersSourcedText(cfg.maxWorkers, cfg.maxWorkersByTier, resolvedNow?.sources)} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
     effortText(cfg.effortByTier),
     nudgeText(cfg.effortNudge),
     ...(cfg.review !== 'off' ? [`review: ${cfg.review} · ${cfg.reviewTier ? `reviewer at ${cfg.reviewTier}` : "reviewer one tier below the worker's"}`] : []),
