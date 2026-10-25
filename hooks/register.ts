@@ -2858,7 +2858,6 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   if (!wtState.ok || wtState.exitCode !== 0) notes.push(`note: could not list untracked or ignored files in ${wt.path}: ${whyOf(wtState)}`)
   else leftovers = finishLeftovers(wtState.stdout)
   if (leftovers.length > 0 && !discard) return finishStopLines(id, wt.path, leftovers).join('\n')
-  if (leftovers.length > 0) notes.push(`note: discarded ${leftovers.length} untracked or ignored files from ${wt.path}`)
   // the root card goes only when the merged card on origin says the same (status aside; a Review section may be extra); a git-ignored card is the only copy and stays (MOD-86)
   if (cardRel && !ignored) {
     const merged = okOut(await run($, ['git', '-C', root, 'show', `${sha}:${cardRel}`], { cwd: root, timeoutMs: 15000 }))
@@ -2879,7 +2878,13 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const pulled = await run($, ['git', '-C', root, 'pull', '--ff-only'], { cwd: root, timeoutMs: 120000 })
   if (!pulled.ok || pulled.exitCode !== 0) return `${id}: git pull --ff-only failed in the main checkout: ${whyOf(pulled)}; the worktree and branch are left`
   const removed = await run($, ['git', '-C', root, 'worktree', 'remove', wt.path], { cwd: root, timeoutMs: 60000 })
-  if (!removed.ok || removed.exitCode !== 0) notes.push(`note: the worktree ${wt.path} was not removed: ${whyOf(removed)}`)
+  const removedOk = removed.ok && removed.exitCode === 0
+  if (!removedOk) {
+    // MOD-142: git removes ignored files but not untracked ones; stop here so a second finish completes the job (branch kept, no merged row)
+    const untracked = wtState.ok && wtState.exitCode === 0 ? finishLeftovers(wtState.stdout, '??').length : 0
+    if (untracked > 0) return [...notes, `${id}: on origin/${def} at ${short}; root card and pull done, but the worktree and branch are kept`, `note: the worktree ${wt.path} was not removed: it still holds ${untracked} untracked files (git removes ignored files but not untracked ones); delete them, then run /delegation merge ${id} --finish again`].join('\n')
+    notes.push(`note: the worktree ${wt.path} was not removed: ${whyOf(removed)}`)
+  } else if (leftovers.length > 0) notes.push(`note: discarded ${leftovers.length} untracked or ignored files from ${wt.path}`)
   const dropped = await run($, ['git', '-C', root, 'branch', '-D', wt.branch], { cwd: root, timeoutMs: 15000 })
   if (!dropped.ok || dropped.exitCode !== 0) notes.push(`note: the branch ${wt.branch} was not deleted: ${whyOf(dropped)}`)
   // the record, the ledger row, this session's merged list

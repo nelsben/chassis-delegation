@@ -175,10 +175,11 @@ const skipped = (path: string): boolean => {
 }
 
 /** The `??` and `!!` paths of `git status --porcelain --ignored --untracked-files=all`, minus FINISH_SKIP. */
-export function finishLeftovers(porcelain: string): string[] {
+export function finishLeftovers(porcelain: string, only?: '??' | '!!'): string[] {
   const out: string[] = []
   for (const l of porcelain.split('\n')) {
     if (!(l.startsWith('?? ') || l.startsWith('!! '))) continue
+    if (only && !l.startsWith(`${only} `)) continue
     let p = l.slice(3).trim()
     if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1)
     if (p !== '' && !skipped(p)) out.push(p)
