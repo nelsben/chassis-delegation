@@ -248,6 +248,13 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.runs.find(x => x.argv[0] === 'npx')?.argv).toEqual(['npx', 'prettier', '--check', `${SCRATCH}/T-4/files.txt`])
   })
 
+  test('mergeCheckMap: a /config row is read as a map and shown in the config view', async ($, on) => {
+    world(on, {})
+    await $.session.start(sessionStart)
+    await set($, 'mergeCheckMap', 'smoke=node smoke.cjs {card}')
+    expect(await say($, 'mergeCheckMap')).toContain('smoke')
+  })
+
   test('applyAmends: off leaves the brief alone when a worker asks for more scope', async ($, on) => {
     const AMEND = '[[amend v=1 scope+=c/x.ts reason=the helper lives there]]'
     const w = handBackWorld(on)
