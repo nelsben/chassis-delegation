@@ -15,9 +15,9 @@ import { mergedSubject } from './allow'
 
 export { mergedSubject }
 
-export const MERGE_USAGE = 'usage: /delegation merge <ID> [--review <text> | --review-file <abs path>] | /delegation merge <ID> --finish'
+export const MERGE_USAGE = 'usage: /delegation merge <ID> [--review <text> | --review-file <abs path>] | /delegation merge <ID> --finish [--discard]'
 
-export type MergeArgs = { id: string; finish: boolean; review?: string; reviewFile?: string }
+export type MergeArgs = { id: string; finish: boolean; discard?: boolean; review?: string; reviewFile?: string }
 
 const TASK_ID = /^[A-Z][A-Z0-9]*-\d+[a-z]?$/
 
@@ -28,28 +28,31 @@ export function parseMergeArgs(rest: string): MergeArgs | { error: string } {
   if (id === '') return { error: MERGE_USAGE }
   if (!TASK_ID.test(id)) return { error: `refused task id ${id}` }
   let finish = false
+  let discard = false
   let review: string | undefined
   let reviewFile: string | undefined
   for (let i = 0; i < more.length; i++) {
     const w = more[i] as string
     if (w === '--finish') finish = true
+    else if (w === '--discard') discard = true
     else if (w === '--review-file') {
       reviewFile = more[i + 1]
       i++
       if (!reviewFile) return { error: MERGE_USAGE }
     } else if (w === '--review') {
       // the review text runs to the next option, or to the end
-      const stop = more.findIndex((x, j) => j > i && (x === '--finish' || x === '--review-file'))
+      const stop = more.findIndex((x, j) => j > i && (x === '--finish' || x === '--discard' || x === '--review-file'))
       const end = stop === -1 ? more.length : stop
       review = more.slice(i + 1, end).join(' ')
       if (review === '') return { error: MERGE_USAGE }
       i = end - 1
     } else return { error: `${MERGE_USAGE} (unknown option ${w})` }
   }
+  if (discard && !finish) return { error: 'refused --discard without --finish' }
   if (finish && (review !== undefined || reviewFile !== undefined)) return { error: 'refused --finish with --review: the review goes in when the card is merged, before the push' }
   if (review !== undefined && reviewFile !== undefined) return { error: 'refused --review with --review-file: name one' }
   if (reviewFile !== undefined && !reviewFile.startsWith('/')) return { error: `refused --review-file ${reviewFile}: name an absolute path` }
-  return { id, finish, ...(review !== undefined ? { review } : {}), ...(reviewFile !== undefined ? { reviewFile } : {}) }
+  return { id, finish, ...(discard ? { discard } : {}), ...(review !== undefined ? { review } : {}), ...(reviewFile !== undefined ? { reviewFile } : {}) }
 }
 
 /** The merge tool's input, as the command's words. */
@@ -58,9 +61,10 @@ export function parseMergeTool(input: Record<string, unknown>): MergeArgs | { er
   if (id === '') return { error: 'the merge tool needs task=<ID>' }
   if (!TASK_ID.test(id)) return { error: `refused task id ${id}` }
   const finish = input.finish === true
+  const discard = input.discard === true
   const review = typeof input.review === 'string' && input.review.trim() !== '' ? input.review.trim() : undefined
   const reviewFile = typeof input.reviewFile === 'string' && input.reviewFile.trim() !== '' ? input.reviewFile.trim() : undefined
-  const words = [id, ...(finish ? ['--finish'] : []), ...(reviewFile ? ['--review-file', reviewFile] : [])]
+  const words = [id, ...(finish ? ['--finish'] : []), ...(discard ? ['--discard'] : []), ...(reviewFile ? ['--review-file', reviewFile] : [])]
   const parsed = parseMergeArgs(words.join(' '))
   if ('error' in parsed) return parsed
   if (review !== undefined && (finish || reviewFile !== undefined)) return { error: finish ? 'refused --finish with --review: the review goes in when the card is merged, before the push' : 'refused --review with --review-file: name one' }
@@ -70,12 +74,13 @@ export function parseMergeTool(input: Record<string, unknown>): MergeArgs | { er
 export const MERGE_TOOL = {
   name: 'merge',
   description:
-    'After a consistent verdict with next=accept: rebases the task worktree onto the base, commits the card as merged, runs the card gates there, and returns the push/PR block to run verbatim. With finish: true, after the PR has landed: removes the root card, pulls, removes the worktree and branch, records the merge, and returns the remote cleanup (and release) lines. Never pushes and never calls gh itself.',
+    'After a consistent verdict with next=accept: rebases the task worktree onto the base, commits the card as merged, runs the card gates there, and returns the push/PR block to run verbatim. With finish: true, after the PR has landed: removes the root card, pulls, removes the worktree and branch, records the merge, and returns the remote cleanup (and release) lines. Before removing anything it lists the untracked and git-ignored files in the worktree (outside a built-in skip list) and stops unless discard: true. Never pushes and never calls gh itself.',
   inputSchema: {
     type: 'object',
     properties: {
       task: { type: 'string', description: 'The task id, e.g. MOD-75.' },
       finish: { type: 'boolean', description: 'true after the PR has merged: clean up and name the release steps.' },
+      discard: { type: 'boolean', description: 'With finish: delete the untracked and git-ignored files in the worktree that finish would otherwise stop on (it lists them first).' },
       review: { type: 'string', description: 'Optional: text appended to the merged card as a ## Review section.' },
       reviewFile: { type: 'string', description: 'Optional: the absolute path of a file whose text is the ## Review section.' },
     },
@@ -149,6 +154,66 @@ export function statusPaths(porcelain: string, trackedOnly = false): string[] {
     .filter(l => l.trim() !== '')
     .filter(l => !(trackedOnly && l.startsWith('??')))
     .map(l => l.slice(3).trim())
+}
+
+// ---- MOD-142: what finish keeps for the brain to copy -----------------------------------------
+
+/** Paths finish never counts as evidence: a folder entry (trailing slash) skips everything under it at any depth; a name skips that file at any depth; `.pyc` skips by suffix. */
+export const FINISH_SKIP: readonly string[] = ['.delegation/', 'node_modules/', '.venv/', 'venv/', '__pycache__/', '.pytest_cache/', '.mypy_cache/', '.ruff_cache/', 'dist/', 'build/', 'coverage/', '.next/', '.turbo/', 'target/', '.cache/', '.DS_Store', '.pyc']
+
+const skipped = (path: string): boolean => {
+  const parts = path.split('/').filter(Boolean)
+  const last = parts[parts.length - 1] ?? ''
+  const isDir = path.endsWith('/')
+  return FINISH_SKIP.some(e => {
+    if (e.endsWith('/')) {
+      const name = e.slice(0, -1)
+      return parts.slice(0, isDir ? parts.length : parts.length - 1).includes(name)
+    }
+    return e.startsWith('.') && e !== '.DS_Store' ? last.endsWith(e) : last === e
+  })
+}
+
+/** The `??` and `!!` paths of `git status --porcelain --ignored --untracked-files=all`, minus FINISH_SKIP. */
+export function finishLeftovers(porcelain: string): string[] {
+  const out: string[] = []
+  for (const l of porcelain.split('\n')) {
+    if (!(l.startsWith('?? ') || l.startsWith('!! '))) continue
+    let p = l.slice(3).trim()
+    if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1)
+    if (p !== '' && !skipped(p)) out.push(p)
+  }
+  return out
+}
+
+/** Paths as listed: a top-level folder holding more than 3 of them becomes `<folder>/ (<k> files)`. */
+export function collapseLeftovers(paths: readonly string[]): string[] {
+  const count = new Map<string, number>()
+  for (const p of paths) {
+    const top = p.includes('/') ? p.slice(0, p.indexOf('/') + 1) : ''
+    if (top) count.set(top, (count.get(top) ?? 0) + 1)
+  }
+  const out: string[] = []
+  const done = new Set<string>()
+  for (const p of paths) {
+    const top = p.includes('/') ? p.slice(0, p.indexOf('/') + 1) : ''
+    const k = top ? (count.get(top) ?? 0) : 0
+    if (top && k > 3) {
+      if (!done.has(top)) out.push(`${top} (${k} files)`)
+      done.add(top)
+    } else out.push(p)
+  }
+  return out
+}
+
+/** The stop answer: the count, the copy-first line, up to 20 listed entries and `… <m> more`. */
+export function finishStopLines(id: string, worktree: string, paths: readonly string[]): string[] {
+  const shown = collapseLeftovers(paths)
+  return [
+    `${id}: the worktree ${worktree} holds ${paths.length} untracked or ignored files the merge does not carry; copy what you need, then run /delegation merge ${id} --finish again, or add --discard to delete them:`,
+    ...shown.slice(0, 20),
+    ...(shown.length > 20 ? [`… ${shown.length - 20} more`] : []),
+  ]
 }
 
 const listed = (paths: readonly string[]): string => (paths.length <= 3 ? paths.join(', ') : `${paths.slice(0, 3).join(', ')} and ${paths.length - 3} more`)

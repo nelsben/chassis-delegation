@@ -246,6 +246,7 @@ describe('MOD-75: /delegation merge <id>', () => {
       ['git', '-C', ROOT, 'merge-base', '--is-ancestor', HEAD, 'origin/main'],
       ['git', '-C', WT, 'log', '-1', '--format=%T%x09%s', 'HEAD'],
       ['git', '-C', ROOT, 'log', '--format=%H%x09%T%x09%s', '-n', '200', 'origin/main'],
+      ['git', '-C', WT, 'status', '--porcelain', '--ignored', '--untracked-files=all'],
       ['git', '-C', ROOT, 'show', `${TWIN}:docs/cards/${CARD_NAME}`],
       ['git', '-C', ROOT, 'clean', '-q', '-f', '--', `docs/cards/${CARD_NAME}`],
       ['git', '-C', ROOT, 'pull', '--ff-only'],
@@ -294,6 +295,63 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(out.split('\n')).toEqual([`${ID}: the merged card on origin/main differs from docs/cards/${CARD_NAME} (status aside); the root card is left and nothing else was done:`, '- - A test holds it.', '+ - A test holds it, twice.'])
     const ran = w.runs.slice(from).map(r => r.argv.join(' '))
     expect(ran.some(a => / (clean|pull|worktree remove|branch -D) /.test(` ${a} `))).toBe(false)
+  })
+
+  // ---- MOD-142: finish keeps a worker's evidence ----------------------------------------------
+  const STATUS_ARGV = ['git', '-C', WT, 'status', '--porcelain', '--ignored', '--untracked-files=all']
+  const withStatus = (stdout: string, exitCode = 0): Answers => landed(markMerged(CARD), argv => (is(argv, ...STATUS_ARGV) ? { exitCode, stdout } : undefined))
+  const EVIDENCE = '!! .local/run/log.txt\n!! .local/run/shot.png\n'
+
+  test('MOD-142: --finish with ignored evidence in the worktree stops, names it, and removes nothing', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store, run: withStatus(EVIDENCE) })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    expect(out.split('\n')).toEqual([
+      `${ID}: the worktree ${WT} holds 2 untracked or ignored files the merge does not carry; copy what you need, then run /delegation merge ${ID} --finish again, or add --discard to delete them:`,
+      '.local/run/log.txt',
+      '.local/run/shot.png',
+    ])
+    const ran = w.runs.slice(from).map(r => r.argv.join(' '))
+    expect(ran.some(a => / (clean|pull|worktree remove|branch -D) /.test(` ${a} `))).toBe(false)
+    expect(w.files.get(LEDGER)).not.toContain('"kind":"merged"')
+  })
+
+  test('MOD-142: --finish --discard completes and notes what it discarded', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store, run: withStatus(EVIDENCE) })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish --discard`))).text)
+    expect(out).toContain(`note: discarded 2 untracked or ignored files from ${WT}`)
+    const ran = w.runs.slice(from).map(r => r.argv.join(' '))
+    expect(ran).toContain(`git -C ${ROOT} worktree remove ${WT}`)
+    expect(out.split('\n').at(-1)).toBe(`${ID} merged at ${TWIN}`)
+  })
+
+  test('MOD-142: only node_modules/ and .delegation/ present: finish completes with no note', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store, run: withStatus('!! node_modules/\n!! .delegation/MOD-1/red-1.txt\n!! pkg/node_modules/x/y.js\n') })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    expect(out).not.toContain('discarded')
+    expect(out).not.toContain('note:')
+    expect(w.runs.slice(from).map(r => r.argv.join(' '))).toContain(`git -C ${ROOT} worktree remove ${WT}`)
+  })
+
+  test('MOD-142: a status read that fails is a note and finish goes on', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store, run: withStatus('', 128) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    expect(out).toContain(`note: could not list untracked or ignored files in ${WT}: exit 128`)
+    expect(out.split('\n').at(-1)).toBe(`${ID} merged at ${TWIN}`)
+    expect(w.runs.map(r => r.argv.join(' '))).toContain(`git -C ${ROOT} worktree remove ${WT}`)
+  })
+
+  test('MOD-142: --discard without --finish is refused', async ($, on) => {
+    world(on, { files: files(), dirs, store, run: happy() })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(`${ID} --discard`))).text)
+    expect(out).toContain('refused --discard without --finish')
   })
 
   test('no argv the command runs, prepare or finish, is a push, gh, curl or sf', async ($, on) => {
@@ -461,6 +519,8 @@ describe('MOD-75: the merge command\'s pure parts (the allowlist shapes are in t
     expect('error' in parseMergeArgs('rm -rf /')).toBe(true)
     expect('error' in parseMergeArgs('MOD-1 --finish --review x')).toBe(true)
     expect('error' in parseMergeArgs('MOD-1 --review-file relative.md')).toBe(true)
+    expect(parseMergeArgs('MOD-1 --finish --discard')).toEqual({ id: 'MOD-1', finish: true, discard: true })
+    expect(parseMergeArgs('MOD-1 --discard')).toEqual({ error: 'refused --discard without --finish' })
   })
   test('cards compare with the status aside and a Review section allowed as extra', () => {
     expect(cardDiff(markMerged(CARD, 'ok'), CARD)).toEqual([])
