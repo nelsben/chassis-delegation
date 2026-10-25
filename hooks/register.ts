@@ -4466,7 +4466,9 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const outside = await outsideCheck(absScope, absForbid, baseline)
   const artefacts = await artefactsCheck(reportArtefacts(report.artefacts), contract.outdir ?? scopeRoot, path => statArtefact($, path))
   const metrics = reportMetrics(report.metrics)
-  const gates = resolveGateRuns(contract.gate, cfg.gateMap, argv => checkArgv(argv, allowCfg()).ok, filesPath, scopeRoot, contract.outdir)
+  // MOD-163: a card with no worktree has one sensible {worktree}: the checkout the worker ran in (the task's other repo per MOD-44)
+  const gateRoot = repo ?? root
+  const gates = resolveGateRuns(contract.gate, cfg.gateMap, argv => checkArgv(argv, allowCfg()).ok, filesPath, gateRoot, contract.outdir)
   const outcomes: { label: string; exitCode?: number; error?: string }[] = []
   const waits: string[] = []
   for (const g of gates.runs) {
@@ -4475,7 +4477,7 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
     if (turn?.line) waits.push(turn.line)
     let r: RunOut
     try {
-      r = await run($, g.argv, { cwd: scopeRoot, timeoutMs: gateTimeoutMs() })
+      r = await run($, g.argv, { cwd: gateRoot, timeoutMs: gateTimeoutMs() })
     } finally {
       await turn?.release()
     }
@@ -4495,8 +4497,10 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
     ...(artefacts ? { artefacts } : {}),
     metrics,
   })
+  const ranIds = (contract.gate ?? '').split(',').map(g => g.trim()).filter(g => g && !gates.notRerun.some(n => n.id === g))
+  const ranNote = gates.runs.length > 0 && ranIds.length > 0 ? [`gate ${ranIds.join(', ')} ran in the checkout (repo=none)`] : []
   const note = watched.length > 0 && baseline === undefined ? [`note: outside delta not checked: no listing of ${watched.join(', ')} was taken at dispatch`] : []
-  return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...waits, ...v.lines, ...note], noRepo: true, ...(Object.keys(metrics).length > 0 ? { metrics } : {}) }
+  return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...waits, ...v.lines, ...ranNote, ...note], noRepo: true, ...(Object.keys(metrics).length > 0 ? { metrics } : {}) }
 }
 
 /**
@@ -5861,7 +5865,12 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     const f: Record<string, string> = shownHeader?.fields ?? {}
     out.push(`   repo=here: base=${f.base || 'the chain (origin/main, main, origin/master, master)'} · ignore=${f.ignore || '(none)'}`)
   }
-  if (shownHeader?.fields.outdir) out.push(`   research card: outdir=${shownHeader.fields.outdir} · scratch=${shownHeader.fields.scratch || '(none)'}`)
+  if (shownHeader?.fields.outdir) {
+    // MOD-163: a repo=none gate's {worktree} is the checkout the worker runs in; said before the spawn
+    const gateIds = (shownHeader.fields.gate ?? '').split(',').map(g => g.trim()).filter(Boolean)
+    const gateNote = none && gateIds.length > 0 ? ` · gate ${gateIds.join(', ')} runs in ${repoRoot}` : ''
+    out.push(`   research card: outdir=${shownHeader.fields.outdir} · scratch=${shownHeader.fields.scratch || '(none)'}${gateNote}`)
+  }
   const heldNames = resourcesOf(shownHeader)
   if (heldNames.length > 0) out.push(`   resources: ${heldNames.join(', ')} (held while the worker runs; another card naming one waits in the queue)`)
   if (dryRun) return [...out, '', shown].join('\n')

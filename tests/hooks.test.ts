@@ -4683,8 +4683,49 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     expect(row).toContain('claim artefacts: held — 2 artefacts exist and are not empty: model.glb (17 bytes), /out/notes/findings.md (10 bytes)')
     expect(row).toContain('claim gate: held — checker {outdir} exited 0')
     expect(row).toContain('metrics: tris=1200, len_s=2.4')
-    expect(w.runs.filter(r => r.argv[0] === 'checker').map(r => ({ argv: r.argv, cwd: r.cwd }))).toEqual([{ argv: ['checker', '/out/hair'], cwd: '/out/hair' }])
+    expect(w.runs.filter(r => r.argv[0] === 'checker').map(r => ({ argv: r.argv, cwd: r.cwd }))).toEqual([{ argv: ['checker', '/out/hair'], cwd: ROOT }])
     expect(records(w, 'OPS-9')[0]).toMatchObject({ verdict: 'consistent', metrics: { tris: '1200', len_s: '2.4' } })
+  })
+
+  // MOD-163: {worktree} in a repo=none gate is the checkout the worker ran in, not the output folder
+  describe('MOD-163: where a repo=none gate runs', () => {
+    const WT_OPTIONS = { ...OPTIONS, gateMap: '{"check":"checker {outdir}","wt":"validator {worktree}","both":"scanner {worktree} {outdir}"}' }
+    const runWt = (argv: string[]): RunAnswer | undefined => (argv[0] === 'checker' || argv[0] === 'validator' || argv[0] === 'scanner' ? { exitCode: 0, stdout: 'ok\n' } : undefined)
+    const setupGate = (on: Parameters<typeof world>[0], gate: string) =>
+      world(on, {
+        files: { [`${ROOT}/agents/tasks/${NAME}`]: CARD.replace('gate: check', `gate: ${gate}`), '/out/hair/old.txt': 'x', [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ briefTemplate: '/tpl/brief.md' }), '/tpl/brief.md': TEMPLATE },
+        dirs: { [`${ROOT}/agents/tasks`]: [NAME] },
+        trees: ['/out/hair', '/out/notes'],
+        run: runWt,
+        agentId: 'agent-r',
+        store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+      })
+
+    test('a gate naming {worktree} gets the session root as argv and cwd, and the verdict names the checkout', { options: WT_OPTIONS }, async ($, on) => {
+      const w = setupGate(on, 'wt')
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      expect(w.runs.filter(r => r.argv[0] === 'validator').map(r => ({ argv: r.argv, cwd: r.cwd }))).toEqual([{ argv: ['validator', ROOT], cwd: ROOT }])
+      expect(delivered(w)).toContain('gate wt ran in the checkout (repo=none)')
+    })
+
+    test('{outdir} still fills with the output folder while {worktree} is the checkout', { options: WT_OPTIONS }, async ($, on) => {
+      const w = setupGate(on, 'both')
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      expect(w.runs.filter(r => r.argv[0] === 'scanner').map(r => r.argv)).toEqual([['scanner', ROOT, '/out/hair']])
+    })
+
+    test('the dispatch line names the gate and the root it runs in, and a dry run says the same', { options: WT_OPTIONS }, async ($, on) => {
+      setupGate(on, 'wt')
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(commandInput('OPS-9'))).text)
+      expect(out).toContain(`research card: outdir=/out/hair · scratch=/tmp/td/chassis-delegation/OPS-9 · gate wt runs in ${ROOT}`)
+    })
   })
 
   test('a worker that also wrote a file outside every scope entry is refuted on scope, naming the file and the outside delta', { options: OPTIONS }, async ($, on) => {
