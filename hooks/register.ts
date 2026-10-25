@@ -305,6 +305,8 @@ import {
   noWorktreeLine,
   ownerRepoOf,
   parseMergeArgs,
+  finishLeftovers,
+  finishStopLines,
   parseMergeTool,
   prBody,
   pushLines,
@@ -2679,7 +2681,7 @@ async function mergeCommand($: Host, parsed: MergeArgs): Promise<string> {
     const prepared = await mergePrepare($, parsed, { root, id, baseRef, def, cardDir, row: row as VerdictRow })
     return targetNote ? `${id}: ${targetNote}\n${prepared}` : prepared
   }
-  return mergeFinish($, { root, id, def, cardDir })
+  return mergeFinish($, { root, id, def, cardDir, discard: parsed.discard === true })
 }
 
 /** The task's worktree on its branch, from `git worktree list` in the session root. */
@@ -2825,8 +2827,8 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   ].join('\n')
 }
 
-async function mergeFinish($: Host, o: { root: string; id: string; def: string; cardDir: string }): Promise<string> {
-  const { root, id, def, cardDir } = o
+async function mergeFinish($: Host, o: { root: string; id: string; def: string; cardDir: string; discard: boolean }): Promise<string> {
+  const { root, id, def, cardDir, discard } = o
   const wt = await mergeWorktree($, root, id)
   if (!wt) return noWorktreeLine(id)
   const name = await cardNameIn($, `${root}/${cardDir}`, id)
@@ -2849,6 +2851,14 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   }
   if (!sha) return ignored ? notLandedIgnoredLine(id, wt.branch, head, def) : `${id}: ${wt.branch} is not in origin/${def} yet`
   const short = sha.slice(0, 10)
+  // MOD-142 (#231): untracked and git-ignored files in the worktree are not on origin; list them before anything is cleaned up
+  const notes: string[] = []
+  let leftovers: string[] = []
+  const wtState = await run($, ['git', '-C', wt.path, 'status', '--porcelain', '--ignored', '--untracked-files=all'], { cwd: wt.path, timeoutMs: 30000 })
+  if (!wtState.ok || wtState.exitCode !== 0) notes.push(`note: could not list untracked or ignored files in ${wt.path}: ${whyOf(wtState)}`)
+  else leftovers = finishLeftovers(wtState.stdout)
+  if (leftovers.length > 0 && !discard) return finishStopLines(id, wt.path, leftovers).join('\n')
+  if (leftovers.length > 0) notes.push(`note: discarded ${leftovers.length} untracked or ignored files from ${wt.path}`)
   // the root card goes only when the merged card on origin says the same (status aside; a Review section may be extra); a git-ignored card is the only copy and stays (MOD-86)
   if (cardRel && !ignored) {
     const merged = okOut(await run($, ['git', '-C', root, 'show', `${sha}:${cardRel}`], { cwd: root, timeoutMs: 15000 }))
@@ -2868,7 +2878,6 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   }
   const pulled = await run($, ['git', '-C', root, 'pull', '--ff-only'], { cwd: root, timeoutMs: 120000 })
   if (!pulled.ok || pulled.exitCode !== 0) return `${id}: git pull --ff-only failed in the main checkout: ${whyOf(pulled)}; the worktree and branch are left`
-  const notes: string[] = []
   const removed = await run($, ['git', '-C', root, 'worktree', 'remove', wt.path], { cwd: root, timeoutMs: 60000 })
   if (!removed.ok || removed.exitCode !== 0) notes.push(`note: the worktree ${wt.path} was not removed: ${whyOf(removed)}`)
   const dropped = await run($, ['git', '-C', root, 'branch', '-D', wt.branch], { cwd: root, timeoutMs: 15000 })
@@ -7541,7 +7550,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
