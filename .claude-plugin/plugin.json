@@ -32,6 +32,12 @@
       "description": "Brief gate= id to the command the verifier re-runs in the worker's worktree, by argv (no shell); {files} is files.txt; chain with \" && \". No sf, git, gh, network, rm or publish. Ids the map lacks are named \"gate not re-run\". Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
       "default": ""
     },
+    "mergeCheckMap": {
+      "type": "string",
+      "title": "Merge checks (JSON)",
+      "description": "Gate id to the command /delegation merge runs in the worktree before it rebases, for a card whose gate list has that id (a card's own merge_check wins); by argv (no shell), same rules as the gate map; {card}, {sha} and {worktree} are filled in; a non-zero exit refuses the merge. Empty or 0 = the repo file (.chassis-delegation.json), else none; a value here wins over both",
+      "default": ""
+    },
     "probeModels": {
       "type": "boolean",
       "title": "Probe candidate models",
