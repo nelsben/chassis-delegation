@@ -30,7 +30,7 @@ Anthropic's own guidance recommends delegating to fresh-context subagents, writi
 ## How it fits Anthropic's guidance
 
 - **Follows.** Workers get the brief as their only context, with the objective, boundaries and a check to run, each in a fresh context, and done-when statements are written to be graded one at a time. A separate verifier and an optional reviewer judge the work, not the worker, and cheaper models take cheaper cards.
-- **Enforces.** A brief with no scope is refused, and a report with a wrong sha, file list or gate result is refuted. Each attempt has a retry budget and a dollar ceiling; parallel cards may not share files, and no worker or brain pushes to main.
+- **Enforces.** A brief with no scope is refused, and a report with a wrong sha, file list or gate result is refuted. Each attempt has a retry budget; parallel cards may not share files, and no worker or brain pushes to main.
 - **Adds.** A worker's claims are checked against git, which the native output scan does not do, and the per-attempt dollar ceiling covers interactive workers. The retry tier depends on which claim failed, with a ledger line per attempt and a dry run before any spawn.
 
 Sources, and where the mod differs: [docs/alignment.md](docs/alignment.md).
@@ -70,4 +70,4 @@ To load it in VS Code, in the desktop app, or in every session, see [docs/instal
 - [Upgrading](docs/upgrading.md): `/delegation update`, and what to do at each version.
 - [Changelog](CHANGELOG.md).
 
-Version 0.9.29, MIT.
+Version 0.9.30, MIT.
