@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`scopeAmends` decides whether a worker's `scope+=` amend applies on its word (MOD-170).** `apply` (the default, today's behaviour) appends it before verifying; `new-files` appends it only when every path it names is absent at the brief's base and sits in a folder a scope entry already names; `ask` holds every one. A held block is not appended: the row says `amend needs approval: <block> (scopeAmends <mode>) — append it to <brief> to accept, then dispatch verify=<sha>`, and a verdict that refutes only on scope for paths such blocks cover now reads `next=approve the amend (append it to <brief>), then dispatch verify=<sha>; or refuse it` instead of resuming the worker. `forbid+=` applies in every mode, and `applyAmends` off still lists every block and applies none. Set it in the repo file or with `/delegation config scopeAmends`.
 - **The README maps the mod onto Anthropic's subagent guidance (MOD-169).** A new "How it fits Anthropic's guidance" section lists what the mod follows, enforces and adds, and the new [docs/alignment.md](docs/alignment.md) gives each point with its source, the mod doc that shows it, and where the mod differs.
 
 ## 0.9.29 — 2026-10-25

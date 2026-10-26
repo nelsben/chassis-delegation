@@ -51,6 +51,9 @@ import {
 import { briefDrift, briefNames, briefRewrittenLine, briefStaleRefusal, type BriefDrift } from './lib/crossbrief'
 import {
   amendNeedsApproval,
+  amendScopePaths,
+  scopeAmendHeld,
+  type ScopeAmends,
   amendScopeInsideForbid,
   amendInsideForbidLine,
   forbidCovering,
@@ -255,6 +258,7 @@ import {
   advise,
   firstFailedClaim,
   amendApprovalLine,
+  amendHeldLine,
   amendedLine,
   amendMalformedLine,
   amendPendingLine,
@@ -281,7 +285,7 @@ import {
   type Verdict,
   type WorkPresent,
 } from './lib/verify'
-import { briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
+import { BASE_REFS, briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds } from './lib/watch'
 import { allowance, bar, cellDay, dayIndex, dayKey, dayRecord, daySegments, inWindow, pace, parseRecord, rationKey, rationReport, rationText, resetsIn, segments, surplus, type DayRecord, type Window as RationWindow } from './lib/ration'
 import { MOD_VERSION } from './lib/version'
@@ -528,6 +532,7 @@ const attemptKey = async ($: Host, s: SpawnRecord): Promise<string> => attemptKe
 type Config = {
   autoEscalate: boolean
   applyAmends: boolean
+  scopeAmends: ScopeAmends
   defaultBudget: number
   probeModels: boolean
   candidateIds: string[]
@@ -647,6 +652,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
     cfg: {
       autoEscalate: o.autoEscalate === true,
       applyAmends: o.applyAmends !== false,
+      scopeAmends: eff.scopeAmends,
       defaultBudget: budget,
       probeModels: o.probeModels === true,
       candidateIds: parseCandidateIds(str('candidateIds')),
@@ -4389,7 +4395,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   } catch {
     return { verdict: 'unverified', lines: [`note: the brief ${briefPath} could not be read; verify skipped`] }
   }
-  const amendLines = await applyHandbackAmends($, briefPath, briefText, text)
+  const amendLines = await applyHandbackAmends($, briefPath, briefText, text, spawn, parseReport(block).sha)
   // the verifier reads the brief as it now stands: header + amend blocks
   briefText = (await readText($, briefPath)) ?? briefText
   const header = parseHeader(briefText)
@@ -4504,6 +4510,56 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
 }
 
 /**
+ * MOD-170: for each path, whether it exists at the brief's base ('exists'), not ('new'), or git could not
+ * say ('error'; a hold). Read-only git in the worker's tree: `rev-parse --verify --quiet <base>:<path>`,
+ * the base being merge-base(base, the reported sha) so a moving base does not count a later file.
+ */
+async function pathsAtBase($: Host, spawn: SpawnRecord, briefText: string, sha: string | undefined, paths: readonly string[]): Promise<Map<string, 'new' | 'exists' | 'error'>> {
+  const out = new Map<string, 'new' | 'exists' | 'error'>()
+  const fail = () => {
+    for (const p of paths) out.set(p, 'error')
+    return out
+  }
+  if (paths.length === 0) return out
+  try {
+    const header = parseHeader(briefText)
+    if (header?.repo === 'none') return fail()
+    const root = await $.session.root()
+    const other = await adoptRepo($, spawn.task, header)
+    const repo = header?.repo === 'here' ? root : await workerRepo($, spawn, header?.repo, root)
+    const git = async (...args: string[]) => {
+      const r = await run($, ['git', '-C', repo, ...args], { cwd: root, timeoutMs: 15000 })
+      return r.ok ? r : undefined
+    }
+    const briefBase = (header?.fields.base ?? '').trim()
+    let base = (spawn.replay && spawn.base ? spawn.base : '') || (briefBase && isGitRef(briefBase) ? briefBase : '') || (other ? other.baseRef : cfg.baseRef) || ''
+    if (!base) {
+      for (const ref of BASE_REFS) {
+        const r = await git('rev-parse', '--verify', '--quiet', ref)
+        if (r && r.exitCode === 0) {
+          base = ref
+          break
+        }
+      }
+    }
+    if (!base) return fail()
+    let at = base
+    if (sha) {
+      const mb = await git('merge-base', base, sha)
+      const first = mb && mb.exitCode === 0 ? (mb.stdout.split('\n')[0] ?? '').trim() : ''
+      if (first) at = first
+    }
+    for (const p of paths) {
+      const r = await git('rev-parse', '--verify', '--quiet', `${at}:${p}`)
+      out.set(p, !r ? 'error' : r.exitCode === 0 ? 'exists' : r.exitCode === 1 ? 'new' : 'error')
+    }
+    return out
+  } catch {
+    return fail()
+  }
+}
+
+/**
  * The amend protocol: a worker's `[[amend v=1 …]]` blocks are appended to its
  * brief (append-only, in order, a block already there skipped) before the
  * verifier reads it, which then applies and discloses them. Only blocks of
@@ -4513,7 +4569,7 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
  * block held back, or with applyAmends off every new block and how to accept
  * it. The brief header is never rewritten.
  */
-async function applyHandbackAmends($: Host, briefPath: string, briefText: string, text: string): Promise<string[]> {
+async function applyHandbackAmends($: Host, briefPath: string, briefText: string, text: string, spawn: SpawnRecord, sha: string | undefined): Promise<string[]> {
   const found = extractAmendBlocks(text)
   const lines = found.malformed.map(amendMalformedLine)
   if (found.amends.length === 0) return lines
@@ -4528,12 +4584,21 @@ async function applyHandbackAmends($: Host, briefPath: string, briefText: string
   const forbidOf = (a: Amend) => effectiveList(forbidNow, [a], 'forbid').split(',').filter(Boolean)
   const needs = (a: Amend) => amendNeedsApproval(a, forbidOf(a))
   const held = fresh.filter(needs)
-  const apply = fresh.filter(a => !needs(a))
-  const heldLines = held.flatMap(a => {
-    const inside = amendScopeInsideForbid(a, forbidOf(a))
-    const removes = a.ops.some(op => /^(scope|forbid)-=/.test(op))
-    return [...(removes || inside.length === 0 ? [amendApprovalLine(a, briefPath)] : []), ...inside.map(amendInsideForbidLine)]
-  })
+  // MOD-170: scopeAmends decides the rest; a block held by it is listed with how to accept it, and not appended
+  const rest = fresh.filter(a => !needs(a))
+  const mode = cfg.scopeAmends
+  const scopeNow = effectiveList(hdr?.fields.scope ?? hdr?.fields.scope_globs ?? '', parseAmends(briefText).amends, 'scope').split(',').filter(Boolean)
+  const baseState = mode === 'new-files' ? await pathsAtBase($, spawn, briefText, sha, [...new Set(rest.flatMap(amendScopePaths))]) : new Map<string, 'new' | 'exists' | 'error'>()
+  const byMode = rest.filter(a => scopeAmendHeld(a, mode, scopeNow, baseState))
+  const apply = rest.filter(a => !byMode.includes(a))
+  const heldLines = [
+    ...held.flatMap(a => {
+      const inside = amendScopeInsideForbid(a, forbidOf(a))
+      const removes = a.ops.some(op => /^(scope|forbid)-=/.test(op))
+      return [...(removes || inside.length === 0 ? [amendApprovalLine(a, briefPath)] : []), ...inside.map(amendInsideForbidLine)]
+    }),
+    ...byMode.map(a => amendHeldLine(a, mode, briefPath, sha ?? '<sha>')),
+  ]
   if (apply.length === 0) return [...lines, ...heldLines]
   try {
     await $.fs.write(briefPath, appendAmends(briefText, apply.map(a => a.block)).text)

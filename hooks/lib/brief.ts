@@ -329,6 +329,48 @@ export function extractAmendBlocks(text: string): { amends: HandbackAmend[]; mal
 export const amendNeedsApproval = (a: Amend, forbid: readonly string[] = []): boolean =>
   a.ops.some(op => /^(scope|forbid)-=|^ignore\+=/.test(op)) || amendScopeInsideForbid(a, forbid).length > 0
 
+/** MOD-170: whether a worker's `scope+=` applies on its word (apply), only for new files beside paths in scope (new-files), or waits for the lead (ask). */
+export type ScopeAmends = 'apply' | 'new-files' | 'ask'
+export const SCOPE_AMENDS_MODES: readonly ScopeAmends[] = ['apply', 'new-files', 'ask']
+
+/** MOD-170: the paths of a block's `scope+=` operations, in order. */
+export const amendScopePaths = (a: Amend): string[] =>
+  a.ops.filter(op => op.startsWith('scope+=')).flatMap(op => op.slice('scope+='.length).split(',').filter(Boolean))
+
+const hasWildcard = (p: string): boolean => /[*?[]/.test(p)
+
+/**
+ * MOD-170: whether a (literal) path sits in a folder a scope entry already names: the folder of a listed
+ * file, or the folder holding the fixed prefix of a listed glob (`hooks/lib/**` names `hooks/lib/`).
+ * A path that is itself a glob never does.
+ */
+export function inScopeFolder(path: string, scope: readonly string[]): boolean {
+  if (path === '' || hasWildcard(path)) return false
+  const dirOf = (p: string): string => p.slice(0, p.lastIndexOf('/') + 1)
+  const folder = dirOf(path)
+  return scope.some(entry => {
+    if (entry === '') return false
+    const wild = entry.search(/[*?[]/)
+    // a glob names the folder its fixed prefix sits in; a listed file or `dir/` names its own folder
+    const dir = wild < 0 ? (entry.endsWith('/') ? entry : dirOf(entry)) : dirOf(entry.slice(0, wild))
+    if (wild < 0) return dir === folder
+    return dir === '' ? false : folder.startsWith(dir)
+  })
+}
+
+/**
+ * MOD-170: whether a `scope+=` block waits for approval under scopeAmends. `apply`: never; `ask`: always;
+ * `new-files`: unless every path it names is a literal path that did not exist at the base ('new') and
+ * sits in a folder the scope already names. `base` gives each path's state; a path it does not know
+ * (a git error) holds the block. A block with no `scope+=` is never held by this rule.
+ */
+export function scopeAmendHeld(a: Amend, mode: ScopeAmends, scope: readonly string[], base: ReadonlyMap<string, 'new' | 'exists' | 'error'>): boolean {
+  const paths = amendScopePaths(a)
+  if (paths.length === 0 || mode === 'apply') return false
+  if (mode === 'ask') return true
+  return !paths.every(p => !hasWildcard(p) && base.get(p) === 'new' && inScopeFolder(p, scope))
+}
+
 /**
  * The first forbid glob that entirely covers a scope entry, or undefined.
  * Forbid wins over scope, so such an entry can never be touched. Conservative:
