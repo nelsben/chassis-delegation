@@ -6056,3 +6056,71 @@ describe('MOD-92 (#168): concurrent agent.spawn events are decided one at a time
     expect(records(w, 'T-8').map(r => [r.attempt, r.toolUseId])).toEqual([[1, 'toolu_G0000009']])
   })
 })
+
+// MOD-171: /delegation merge prints each amend the brief carried
+describe('MOD-171: merge lists the amends the brief carried', () => {
+  const ID = 'MOD-1'
+  const WT = `${ROOT}-${ID}`
+  const CARD_NAME = `${ID}-a-thing.md`
+  const HEAD = 'def5678def5678def5678def5678def5678def56'
+  const CARD = ['---', `id: ${ID}`, 'title: The thing works', 'domain: mod', 'tier: standard', 'status: queued', 'scope: [hooks/register.ts]', 'gate: validate', '---', '## Why', '', 'Because.', '', '## Done when', '', '- The thing works.', ''].join('\n')
+  const BRIEF_PATH = `${ROOT}/.delegation/briefs/${ID}.brief.md`
+  const BRIEF = [`[[brief v=1 task=${ID} subtask=main purpose=build tier=standard model=sonnet scope=hooks/register.ts]]`, '', 'body', '[[amend v=1 scope+=docs/a.md reason=the doc needed a line]]', '[[amend v=1 scope+=tests/b.ts forbid-=tests/** reason=a test file]]', ''].join('\n')
+  const PORCELAIN = [`worktree ${ROOT}`, 'HEAD 1111111111111111111111111111111111111111', 'branch refs/heads/main', '', `worktree ${WT}`, `HEAD ${HEAD}`, `branch refs/heads/agent/mod/${ID}`, ''].join('\n')
+  const answers = (argv: string[]): RunAnswer | undefined => {
+    const j = argv.join(' ')
+    if (j === `git -C ${ROOT} worktree list --porcelain`) return { exitCode: 0, stdout: PORCELAIN }
+    if (j === `git -C ${ROOT} check-ignore -q -- docs/cards/${CARD_NAME}`) return { exitCode: 1, stdout: '' }
+    if (j === `git -C ${ROOT} rev-parse --abbrev-ref HEAD`) return { exitCode: 0, stdout: 'main\n' }
+    if (j === `git -C ${ROOT} status --porcelain`) return { exitCode: 0, stdout: `?? docs/cards/${CARD_NAME}\n` }
+    if (j === `git -C ${ROOT} remote get-url origin`) return { exitCode: 0, stdout: 'git@github.com:acme/acme-app.git\n' }
+    if (j === `git -C ${WT} rev-parse HEAD`) return { exitCode: 0, stdout: `${HEAD}\n` }
+    return undefined
+  }
+  const setup = (on: Parameters<typeof world>[0], brief?: string) =>
+    world(on, {
+      files: {
+        [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ gateMap: { validate: 'claude plugin validate {worktree}' }, domains: ['mod'], cardDir: 'docs/cards' }),
+        [`${ROOT}/docs/cards/${CARD_NAME}`]: CARD,
+        [`${ROOT}/.delegation/ledger.jsonl`]: JSON.stringify({ task: ID, subtask: 'main', attempt: 1, kind: 'spawn', verdict: 'consistent', sha: 'abc1234', next: 'accept' }) + '\n',
+        ...(brief ? { [BRIEF_PATH]: brief } : {}),
+      },
+      dirs: { [`${ROOT}/docs/cards`]: [CARD_NAME] },
+      store: { [`delegation.tasks.${ID}`]: [{ task: ID, subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'consistent', at: NOW - 60_000, sha: 'abc1234', root: ROOT, sessionId: 'sess-1' }] },
+      run: answers,
+    })
+  const mergeIn = (args: string) => ({ command: 'delegation', args: `merge ${args}`, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+
+  test('red: a brief with two amend blocks prints one line each, in order, before the success line; pr.md gains ## Amends', async ($, on) => {
+    const w = setup(on, BRIEF)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeIn(ID))).text)
+    const lines = out.split('\n')
+    const a = lines.findIndex(l => l.startsWith('amend: '))
+    expect(a).toBeGreaterThanOrEqual(0)
+    expect(lines[a]).toBe('amend: scope+=docs/a.md (the doc needed a line) — check these paths in the diff')
+    expect(lines[a + 1]).toBe('amend: scope+=tests/b.ts forbid-=tests/** (a test file) — check these paths in the diff')
+    expect(a).toBeLessThan(lines.findIndex(l => l.includes('rebased onto')))
+    const pr = w.files.get(`${ROOT}/.delegation/${ID}/pr.md`) ?? ''
+    const at = pr.indexOf('## Amends')
+    expect(at).toBeGreaterThan(pr.indexOf('## Done when'))
+    expect(at).toBeLessThan(pr.indexOf('## Verdict'))
+    expect(pr).toContain('- scope+=docs/a.md (the doc needed a line)')
+    expect(pr).toContain('- scope+=tests/b.ts forbid-=tests/** (a test file)')
+  })
+
+  test('a brief with no amends changes neither output', async ($, on) => {
+    const w = setup(on, BRIEF.split('\n').filter(l => !l.startsWith('[[amend')).join('\n'))
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeIn(ID))).text)
+    expect(out).not.toContain('amend:')
+    expect(w.files.get(`${ROOT}/.delegation/${ID}/pr.md`) ?? '').not.toContain('## Amends')
+  })
+
+  test('--finish prints no amend line', async ($, on) => {
+    setup(on, BRIEF)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeIn(`${ID} --finish`))).text)
+    expect(out).not.toContain('amend:')
+  })
+})

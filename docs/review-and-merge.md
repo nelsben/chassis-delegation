@@ -65,7 +65,8 @@ Checklist, in print order:
 1. **Review.** Pass `--review <text>` or `--review-file <abs path>`. In the worktree it runs `git fetch origin` and `git rebase origin/main` (the `baseRef`). On a conflict it runs `git rebase --abort`: `<ID>: rebase onto origin/main conflicts in <files>; resolve by hand`.
 2. It copies `<cardDir>/<ID>-*.md` into the worktree with `status: merged` and the Review section, and commits `cards: <ID> merged` with a `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer. 
 3. It runs the card's gates into `.delegation/<ID>/merge-gates.txt`. A failure stops: `<ID>: gate <id> failed at <sha>; not pushed`.
-4. **Leak check.** Read `.delegation/<ID>/pr.md` (Done-when, verdict, gates). Remove any product, customer or machine name.
+   When the task's brief holds `[[amend …]]` blocks, merge prints one line per block before its success line, in brief order: `amend: <ops> (<reason>) — check these paths in the diff`. pr.md then carries an `## Amends` section after `## Done when` listing the same blocks. `--finish` prints none, and a brief with no amends changes nothing.
+4. **Leak check.** Read `.delegation/<ID>/pr.md` (Done-when, amends, verdict, gates). Remove any product, customer or machine name.
 5. **Push:** `git -C <worktree> push -u origin agent/<domain>/<ID>`.
 6. **PR create:** `gh pr create --repo <owner/repo> --base main --head agent/<domain>/<ID> --title '<card title>' --body-file <root>/.delegation/<ID>/pr.md`.
 7. **PR merge:** `gh pr merge --repo <owner/repo> agent/<domain>/<ID> --rebase`.

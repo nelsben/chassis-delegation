@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **`/delegation merge` prints each amend the card carried, and the alignment page states the amend design (MOD-171).** When the task's brief holds `[[amend …]]` blocks, merge (and the merge tool) prints `amend: <ops> (<reason>) — check these paths in the diff` for each, in brief order, before its success line, and pr.md gains an `## Amends` section after `## Done when`; with none, nothing changes. docs/alignment.md moves the `scope+=` bullet from "Where it differs" to "Where it makes the guidance a check": `forbid=` is the hard boundary, `scope=` is the plan, and `scopeAmends` holds widening amends for approval.
+
 ### Added
 
 - **`scopeAmends` decides whether a worker's `scope+=` amend applies on its word (MOD-170).** `apply` (the default, today's behaviour) appends it before verifying; `new-files` appends it only when every path it names is absent at the brief's base and sits in a folder a scope entry already names; `ask` holds every one. A held block is not appended: the row says `amend needs approval: <block> (scopeAmends <mode>) — append it to <brief> to accept, then dispatch verify=<sha>`, and a verdict that refutes only on scope for paths such blocks cover now reads `next=approve the amend (append it to <brief>), then dispatch verify=<sha>; or refuse it` instead of resuming the worker. `forbid+=` applies in every mode, and `applyAmends` off still lists every block and applies none. Set it in the repo file or with `/delegation config scopeAmends`.
