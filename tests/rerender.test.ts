@@ -1,10 +1,10 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, sessionStart, commandInput, ROOT, SCRATCH } from './harness'
+import { world, sessionStart, commandInput, spawnInput, ROOT, SCRATCH } from './harness'
 
 // MOD-141 (#232): an existing brief follows the card and the --scope/--forbid flags, unless a worker on the task is live.
 const NAME = 'T-1-the-first-version.md'
-const card = (scope: string, extra = ''): string =>
-  ['---', 'id: T-1', 'title: The first version', 'domain: ops', 'tier: standard', 'status: queued', extra, `scope: [${scope}]`, 'forbid: [vendor/**]', 'red_test: none', 'gate: test', 'budget: 2-attempts', '---', '## Why', '', 'A card.', ''].filter(l => l !== '').join('\n')
+const card = (scope: string, extra = '', budget = 2): string =>
+  ['---', 'id: T-1', 'title: The first version', 'domain: ops', 'tier: standard', 'status: queued', extra, `scope: [${scope}]`, 'forbid: [vendor/**]', 'red_test: none', 'gate: test', `budget: ${budget}-attempts`, '---', '## Why', '', 'A card.', ''].filter(l => l !== '').join('\n')
 const BRIEFS = { briefDir: `${SCRATCH}/briefs` }
 const BRIEF = `${SCRATCH}/briefs/T-1.brief.md`
 const setup = (on: never, cardText = card('src/**, tests/**')) =>
@@ -143,6 +143,33 @@ describe('MOD-141: a brief follows the card and the flags', () => {
     const changed = await dispatch($, 'T-1 --dry-run')
     expect(changed).toContain('rewritten: the card changed')
     expect(header(w)).toContain('scope=src/**,docs/**')
+    expect(header(w)).toContain('budget=4-attempts')
+  })
+
+  test('a card budget raised above the brief is taken: the rewrite names it and the spawn line shows it', { options: BRIEFS }, async ($, on) => {
+    const w = setup(on as never)
+    await $.session.start(sessionStart)
+    await dispatch($, 'T-1 --dry-run')
+    expect(header(w)).toContain('budget=2-attempts')
+    w.files.set(`${ROOT}/agents/tasks/${NAME}`, card('src/**, tests/**', '', 3))
+    const changed = await dispatch($, 'T-1 --dry-run')
+    expect(changed).toContain('rewritten: ')
+    expect(changed).toContain('the card changed')
+    expect(changed).toContain('budget 2→3 attempts')
+    expect(header(w)).toContain('budget=3-attempts')
+    // the spawn line of the same dispatch shows the new budget
+    await $.agent.spawn(spawnInput({ prompt: `${header(w)}\n\nDo it.` }))
+    expect(w.notices.at(-1)).toContain('attempt 1/3')
+  })
+
+  test('a card budget lowered below the brief keeps the brief', { options: BRIEFS }, async ($, on) => {
+    const w = setup(on as never, card('src/**, tests/**', '', 4))
+    await $.session.start(sessionStart)
+    await dispatch($, 'T-1 --dry-run')
+    expect(header(w)).toContain('budget=4-attempts')
+    w.files.set(`${ROOT}/agents/tasks/${NAME}`, card('src/**, tests/**', '', 3))
+    const same = await dispatch($, 'T-1 --dry-run')
+    expect(same).not.toContain('budget 4→')
     expect(header(w)).toContain('budget=4-attempts')
   })
 })

@@ -5765,8 +5765,9 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const folders = { ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}) }
   // MOD-141: an existing worktree or repo=none brief made for this task from its card is re-rendered when the card or the flags would change it
   const candidate = reuse !== undefined && reusedText !== undefined && !replay && !here && reusedHeader?.task === id
-  // the budget= a person raised by hand in the brief is kept (the stop line says the brief is re-read)
-  const headBudget = candidate ? parseBudget(reusedHeader?.budget, budget) : budget
+  // the budget= a person raised by hand in the brief is kept (the stop line says the brief is re-read); MOD-172: a budget raised on the card is taken, the higher of the two
+  const oldBudget = candidate ? parseBudget(reusedHeader?.budget, budget) : budget
+  const headBudget = Math.max(budget, oldBudget)
   const headerFor = (b: string): string => {
     if (here && !reuse) {
       // base=: a sha --base, else baseRef (HEAD pinned to the sha it is at now), else none (the verifier's chain)
@@ -5865,6 +5866,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       if ('stop' in final) return final.stop
       rewriteText = appendAmends(final.text, blocks).text
       rewriteReasons = rewriteReasonsOf(reusedText, rewriteText, scope !== undefined, forbid !== undefined)
+      if (headBudget !== oldBudget) rewriteReasons += `, budget ${oldBudget}→${headBudget} attempts`
       rewritten = true
     }
   }
