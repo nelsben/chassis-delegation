@@ -29,21 +29,9 @@ Anthropic's own guidance recommends delegating to fresh-context subagents, writi
 
 ## How it fits Anthropic's guidance
 
-**Follows**
-- Workers get the brief as their only context, with the objective, boundaries and a check to run.
-- Done-when statements are written to be graded one at a time.
-- A separate verifier and an optional reviewer judge the work, not the worker.
-- Cheaper models take cheaper cards, each worker in a fresh context.
-
-**Enforces**
-- A brief with no scope is refused, and a report with a wrong sha, file list or gate result is refuted.
-- Each attempt has a retry budget and a dollar ceiling.
-- Parallel cards may not share files, and no worker or brain pushes to main.
-
-**Adds**
-- A worker's claims are checked against git, which the native output scan does not do.
-- A per-attempt dollar ceiling for interactive workers.
-- A retry tier that depends on which claim failed, a ledger line per attempt and a dry run before any spawn.
+- **Follows.** Workers get the brief as their only context, with the objective, boundaries and a check to run, each in a fresh context, and done-when statements are written to be graded one at a time. A separate verifier and an optional reviewer judge the work, not the worker, and cheaper models take cheaper cards.
+- **Enforces.** A brief with no scope is refused, and a report with a wrong sha, file list or gate result is refuted. Each attempt has a retry budget and a dollar ceiling; parallel cards may not share files, and no worker or brain pushes to main.
+- **Adds.** A worker's claims are checked against git, which the native output scan does not do, and the per-attempt dollar ceiling covers interactive workers. The retry tier depends on which claim failed, with a ledger line per attempt and a dry run before any spawn.
 
 Sources, and where the mod differs: [docs/alignment.md](docs/alignment.md).
 

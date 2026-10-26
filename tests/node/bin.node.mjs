@@ -8,6 +8,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 const TMP = fileURLToPath(new URL('../.tmp/', import.meta.url))
 const BIN = fileURLToPath(new URL('../../bin/chassis-hook.mjs', import.meta.url))
@@ -266,7 +267,7 @@ describe('MOD-17: pre-bash (PreToolUse on Bash)', () => {
   })
 
   test('a folder that is no repository, a non-Bash call, and input that is not JSON: nothing printed, exit 0', () => {
-    const plain = mkdtempSync(join(TMP, 'plain-'))
+    const plain = mkdtempSync(join(tmpdir(), 'plain-'))
     try {
       expect(hook('pre-bash', bashCall(plain, 'git commit -m x'))).toMatchObject({ code: 0, stdout: '' })
       expect(hook('pre-bash', { ...bashCall(plain, 'git commit -m x'), tool_name: 'Read' })).toMatchObject({ code: 0, stdout: '' })
