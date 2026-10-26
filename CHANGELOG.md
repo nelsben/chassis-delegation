@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A budget raised on the card now reaches its rewritten brief (MOD-172).** A brief rewritten because its card changed took its `budget=` from the old brief alone, so a card changed from 2 to 3 attempts was re-rendered with 2. The rewrite now keeps the higher of the card's budget and the brief's own (a budget raised by hand in the brief still survives), counts a changed budget as a reason to rewrite, and the line reads `rewritten: the card changed, budget 2→3 attempts`; the spawn line shows the new budget.
+
 ### Changed
 
 - **`/delegation merge` prints each amend the card carried, and the alignment page states the amend design (MOD-171).** When the task's brief holds `[[amend …]]` blocks, merge (and the merge tool) prints `amend: <ops> (<reason>) — check these paths in the diff` for each, in brief order, before its success line, and pr.md gains an `## Amends` section after `## Done when`; with none, nothing changes. docs/alignment.md moves the `scope+=` bullet from "Where it differs" to "Where it makes the guidance a check": `forbid=` is the hard boundary, `scope=` is the plan, and `scopeAmends` holds widening amends for approval.
