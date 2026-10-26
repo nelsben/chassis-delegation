@@ -10,6 +10,14 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.29 to 0.9.30
+
+Nothing to do, unless a repo wants the new `scopeAmends` option.
+Added: `scopeAmends` decides whether a worker's `scope+=` amend applies on its word. The default, `apply`, keeps today's behaviour, so nothing changes on update unless a repo sets `new-files` or `ask`.
+Changed: `/delegation merge` prints each amend the card carried, and the README and docs/alignment.md map the mod onto Anthropic's guidance.
+Fixed: a budget raised on the card now reaches its rewritten brief, and the README's front-door section fits its limit again.
+Detail: [CHANGELOG 0.9.30](../CHANGELOG.md).
+
 ### From 0.9.28 to 0.9.29
 
 Changed: `review` now defaults to `on-frontier` and `delegateOnly` to `warn`, so frontier and premium cards get a fresh-context review and the brain guard shows one warning per turn. To turn either off, write `"review": "off"` or `"delegateOnly": "off"` in `.chassis-delegation.json`.
