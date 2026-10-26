@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The README maps the mod onto Anthropic's subagent guidance (MOD-169).** A new "How it fits Anthropic's guidance" section lists what the mod follows, enforces and adds, and the new [docs/alignment.md](docs/alignment.md) gives each point with its source, the mod doc that shows it, and where the mod differs.
+
 ## 0.9.29 — 2026-10-25
 
 ### Changed

@@ -27,6 +27,26 @@ The flow in four diagrams, with what the verifier checks: [docs/how-it-works.md]
 
 Anthropic's own guidance recommends delegating to fresh-context subagents, writing self-contained briefs, asking for evidence rather than claims, and using cheaper models for cheaper work. The same guidance notes that a coordinating agent [sometimes starts doing the work itself](https://code.claude.com/docs/en/agent-teams#wait-for-teammates-to-finish), and its remedy is an instruction telling it to wait. The output scan it describes [does not judge truthfulness](https://code.claude.com/docs/en/sub-agents#subagent-output-scanning), and no published mechanism checks a worker's claims against git or caps what one interactive attempt may spend. This mod exists because the brain forgets to delegate and forgets to pick the right tier, so it turns those recommendations into checks that refuse, queue or refute.
 
+## How it fits Anthropic's guidance
+
+**Follows**
+- Workers get the brief as their only context, with the objective, boundaries and a check to run.
+- Done-when statements are written to be graded one at a time.
+- A separate verifier and an optional reviewer judge the work, not the worker.
+- Cheaper models take cheaper cards, each worker in a fresh context.
+
+**Enforces**
+- A brief with no scope is refused, and a report with a wrong sha, file list or gate result is refuted.
+- Each attempt has a retry budget and a dollar ceiling.
+- Parallel cards may not share files, and no worker or brain pushes to main.
+
+**Adds**
+- A worker's claims are checked against git, which the native output scan does not do.
+- A per-attempt dollar ceiling for interactive workers.
+- A retry tier that depends on which claim failed, a ledger line per attempt and a dry run before any spawn.
+
+Sources, and where the mod differs: [docs/alignment.md](docs/alignment.md).
+
 ## Evidence
 
 - 689 tasks across six repos, from 3 to 20 October 2026.
@@ -51,6 +71,7 @@ To load it in VS Code, in the desktop app, or in every session, see [docs/instal
 
 - [How it works](docs/how-it-works.md): the flow in sequence diagrams, and what the verifier checks.
 - [Evidence](docs/evidence.md): six charts from six repos' ledgers, each with a table and a lesson.
+- [Fit with Anthropic's guidance](docs/alignment.md): where the mod follows, enforces and adds to Anthropic's subagent guidance, and where it differs.
 - [Install and setup](docs/install.md): every way to load the mod, and what `/delegation setup` checks.
 - [Guide](docs/guide.md): the first sixty seconds, what you see, the task card, the dashboard and every command.
 - [Contracts and verification](docs/contracts.md): the brief and report lines, and how a report is checked against git.
