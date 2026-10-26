@@ -7797,7 +7797,7 @@ export const register: Register = (on, opts) => {
     if (!target) return next(e)
     if (target.deny !== undefined) return { deny: target.deny }
     const ran = await next(e)
-    if (ran.deny !== undefined || (ran as { error?: unknown }).error !== undefined) return ran
+    if (ran.deny !== undefined || ran.isError === true) return ran
     // session.send records the resume when the host fires it; only a send it did not record is recorded here, so a resume counts once
     const after = await spawnByAgent($, target.agentId)
     if (after && after.attempt === target.spawn.attempt) await recordResume($, target.spawn, target.records, target.agentId)

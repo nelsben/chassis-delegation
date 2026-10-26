@@ -99,6 +99,14 @@ describe('MOD-175: a SendMessage resume of a briefed worker', () => {
     expect(records(w).map(r => [r.attempt, r.kind])).toEqual([[1, 'spawn'], [2, 'resume']])
   })
 
+  test('tool.call only, the SendMessage call fails (isError): no attempt is recorded', { options: GM }, async ($, on) => {
+    on('tool.call', { tool: 'SendMessage' }, async () => ({ result: 'no such agent', isError: true }) as never)
+    const w = setup(on)
+    await firstRound($, w)
+    await $.tool.call(SEND as never)
+    expect(records(w).map(r => r.attempt)).toEqual([1])
+  })
+
   test('tool.call only with the budget used: the call is refused with the budget message and nothing is recorded', { options: GM }, async ($, on) => {
     let reached = 0
     on('tool.call', { tool: 'SendMessage' }, async () => (reached++, { result: 'queued' }))
