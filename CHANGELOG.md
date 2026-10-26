@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **The README fits its front-door limit again, and the no-repository pre-bash test no longer depends on the checkout's branch (MOD-173).** The "How it fits" section is three bullets, and the test builds its plain folder outside the checkout.
 - **A budget raised on the card now reaches its rewritten brief (MOD-172).** A brief rewritten because its card changed took its `budget=` from the old brief alone, so a card changed from 2 to 3 attempts was re-rendered with 2. The rewrite now keeps the higher of the card's budget and the brief's own (a budget raised by hand in the brief still survives), counts a changed budget as a reason to rewrite, and the line reads `rewritten: the card changed, budget 2→3 attempts`; the spawn line shows the new budget.
 
 ### Changed
