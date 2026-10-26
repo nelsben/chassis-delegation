@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **A `tool.call` hook on `SendMessage` budget-checks and records a resume when `session.send` did not, so a resume is counted once whichever events the host fires (MOD-176).** The guard and budget check are one helper both hooks call; the `tool.call` hook refuses the call with the budget message when the attempts used reach the budget, and records the resume after the call only if the attempt has not already moved. tests/resume.test.ts pins tool.call only, both events in either order, and the refused call.
+
 ### Added
 
 - **An engine test pins what fires when the brain resumes a worker with `SendMessage`, and the internals page states it (MOD-175).** tests/resume.test.ts covers a resume that arrives as a second `agent.spawn`, as a `tool.call` only (which records no attempt until the next hand-back), and as a `session.send` (recorded at the send); docs/internals.md replaces the sentence that said a resume arrives as `agent.spawn`, with the host's source.

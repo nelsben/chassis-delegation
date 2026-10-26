@@ -5352,6 +5352,30 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   return next
 }
 
+/**
+ * MOD-176: the guard and budget check both resume hooks (session.send, and tool.call on SendMessage) share.
+ * `address` is an agent id or a name. Undefined when the message is not to a briefed spawn whose last attempt was judged failed;
+ * else the spawn, its attempt records, the agent id, and a `deny` text when the attempts used already reach the budget.
+ */
+async function resumeTarget($: Host, address: string): Promise<{ spawn: SpawnRecord; records: readonly AttemptRecord[]; agentId: string; deny?: string } | undefined> {
+  const agentId = (await storeGet<string>($, K.agent(address))) ? address : await storeGet<string>($, K.name(address))
+  const spawn = await spawnByAgent($, agentId)
+  if (!agentId || !spawn || spawn.adhoc || spawn.verdictAttempt !== spawn.attempt || !spawn.lastFailed) return undefined
+  const lane = laneOf(spawn)
+  const records = await loadAttempts($, spawn)
+  const attempts = attemptsFor(records, spawn.subtask, lane).length
+  // GH-3: re-read the budget from the brief file named in the record; the record is not rewritten.
+  let budget = spawn.budget
+  if (spawn.briefPath) {
+    try {
+      budget = parseBudget(parseHeader(await $.fs.read(spawn.briefPath))?.budget, spawn.budget)
+    } catch {
+      budget = spawn.budget
+    }
+  }
+  return { spawn, records, agentId, ...(attempts >= budget ? { deny: budgetDenyMessage(taskLabel(spawn.task, spawn.subtask), attempts, spawn.briefPath) } : {}) }
+}
+
 /** The spawn record the store holds for an agent (its pointer, then the record). */
 async function storedSpawnByAgent($: Host, agentId: string | undefined): Promise<SpawnRecord | undefined> {
   if (!agentId) return undefined
@@ -7746,7 +7770,8 @@ export const register: Register = (on, opts) => {
     const to = e.to as unknown
     const address = typeof to === 'string' ? to : (to as { agentId?: string } | undefined)?.agentId
     if (!address) return next(e)
-    const agentId = (await storeGet<string>($, K.agent(address))) ? address : await storeGet<string>($, K.name(address))
+    const target = await resumeTarget($, address)
+    const agentId = target?.agentId ?? (await storeGet<string>($, K.agent(address)) ? address : await storeGet<string>($, K.name(address)))
     // MOD-57: every delivered message to an agent is noted (id and time), whether or not it records a new attempt
     const nx = async (x: typeof e) => {
       const out = await next(x)
@@ -7756,25 +7781,27 @@ export const register: Register = (on, opts) => {
       }
       return out
     }
-    const spawn = await spawnByAgent($, agentId)
-    if (!agentId || !spawn || spawn.adhoc || spawn.verdictAttempt !== spawn.attempt || !spawn.lastFailed) return nx(e)
-    const lane = laneOf(spawn)
-    const records = await loadAttempts($, spawn)
-    const attempts = attemptsFor(records, spawn.subtask, lane).length
-    // GH-3: re-read the budget from the brief file named in the record; the record is not rewritten.
-    let budget = spawn.budget
-    if (spawn.briefPath) {
-      try {
-        budget = parseBudget(parseHeader(await $.fs.read(spawn.briefPath))?.budget, spawn.budget)
-      } catch {
-        budget = spawn.budget
-      }
-    }
-    if (attempts >= budget) return { isDelivered: false, reason: budgetDenyMessage(taskLabel(spawn.task, spawn.subtask), attempts, spawn.briefPath) }
+    if (!target) return nx(e)
+    if (target.deny !== undefined) return { isDelivered: false, reason: target.deny }
     const out = await nx(e)
     if (!out.isDelivered) return out
-    await recordResume($, spawn, records, agentId)
+    await recordResume($, target.spawn, target.records, target.agentId)
     return out
+  })
+
+  // ---- tool.call on SendMessage: a resume the host did not announce as session.send (MOD-176) ----
+  on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
+    const to = (e as unknown as { to?: unknown }).to
+    if (typeof to !== 'string' || !to) return next(e)
+    const target = await resumeTarget($, to)
+    if (!target) return next(e)
+    if (target.deny !== undefined) return { deny: target.deny }
+    const ran = await next(e)
+    if (ran.deny !== undefined || (ran as { error?: unknown }).error !== undefined) return ran
+    // session.send records the resume when the host fires it; only a send it did not record is recorded here, so a resume counts once
+    const after = await spawnByAgent($, target.agentId)
+    if (after && after.attempt === target.spawn.attempt) await recordResume($, target.spawn, target.records, target.agentId)
+    return ran
   })
 
   // ---- session.start: the commands and tools, the repo file, agent types, probes -------

@@ -56,30 +56,63 @@ describe('MOD-175: a SendMessage resume of a briefed worker', () => {
     expect(w.notices.at(-1)).toBe('tier=frontier → opus (escalated) · attempt 2/3')
   })
 
-  test('sequence B (tool.call only): gap: the SendMessage call reaches the hooks but records no attempt, so nothing is counted or budget-checked until the next hand-back', { options: GM }, async ($, on) => {
+  test('sequence B (tool.call only): the SendMessage call records the resume as attempt 2 at the send', { options: GM }, async ($, on) => {
     const reached: unknown[] = []
     on('tool.call', { tool: 'SendMessage' }, async () => (reached.push(1), { result: 'queued' })) // the engine answers tool.call only when a test does
     const w = setup(on)
     await firstRound($, w)
-    expect(await $.tool.call(SEND as never)).toEqual({ result: 'queued' }) // the mod's own tool.call hooks passed it on, none denied it
+    expect(await $.tool.call(SEND as never)).toEqual({ result: 'queued' })
     expect(reached).toHaveLength(1)
     expect(spawnDecisions(w)).toBe(1)
     expect(w.spawns).toHaveLength(1)
-    expect(records(w).map(r => [r.attempt, r.kind])).toEqual([[1, 'spawn']]) // gap: no attempt is recorded at the send, so the budget is not checked and no "started attempt 2" row is posted
+    expect(records(w).map(r => [r.attempt, r.kind, r.lineage, r.verdict])).toEqual([[1, 'spawn', 1, 'refuted'], [2, 'resume', 1, 'pending']])
     await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('2222222')))
-    // counted late, at the hand-back: a judged worker handing back at a new sha is the next attempt (MOD-41)
     expect(attemptsOf(w)).toEqual([[1, 'spawn'], [2, 'resume']])
     expect(records(w).map(r => [r.attempt, r.kind, r.lineage])).toEqual([[1, 'spawn', 1], [2, 'resume', 1]])
   })
 
-  test('sequence B: gap: a resumed worker that hands back at the same sha is not counted at all', { options: GM }, async ($, on) => {
+  test('sequence B: a resumed worker that hands back at the same sha is judged as attempt 2', { options: GM }, async ($, on) => {
     on('tool.call', { tool: 'SendMessage' }, async () => ({ result: 'queued' }))
     const w = setup(on)
     await firstRound($, w)
     await $.tool.call(SEND as never)
     await $.turn.complete(turnInput('agent-4', 'Nothing changed.\n' + REPORT('1111111')))
-    expect(attemptsOf(w)).toEqual([[1, 'spawn']])
-    expect(records(w)).toHaveLength(1)
+    expect(attemptsOf(w)).toEqual([[1, 'spawn'], [2, 'resume']])
+    expect(records(w).map(r => r.attempt)).toEqual([1, 2])
+  })
+
+  test('both events firing, session.send first: one attempt, not two', { options: GM }, async ($, on) => {
+    on('tool.call', { tool: 'SendMessage' }, async () => ({ result: 'queued' }))
+    const w = setup(on)
+    await firstRound($, w)
+    await $.session.send({ to: 'agent-4', text: 'fix it', origin: { kind: 'model' } } as never)
+    await $.tool.call(SEND as never)
+    expect(records(w).map(r => [r.attempt, r.kind])).toEqual([[1, 'spawn'], [2, 'resume']])
+  })
+
+  test('both events firing, tool.call first: one attempt, not two', { options: GM }, async ($, on) => {
+    on('tool.call', { tool: 'SendMessage' }, async () => ({ result: 'queued' }))
+    const w = setup(on)
+    await firstRound($, w)
+    await $.tool.call(SEND as never)
+    await $.session.send({ to: 'agent-4', text: 'fix it', origin: { kind: 'model' } } as never)
+    expect(records(w).map(r => [r.attempt, r.kind])).toEqual([[1, 'spawn'], [2, 'resume']])
+  })
+
+  test('tool.call only with the budget used: the call is refused with the budget message and nothing is recorded', { options: GM }, async ($, on) => {
+    let reached = 0
+    on('tool.call', { tool: 'SendMessage' }, async () => (reached++, { result: 'queued' }))
+    const w = setup(on)
+    await firstRound($, w)
+    await $.tool.call(SEND as never) // attempt 2
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('2222222')))
+    await $.tool.call(SEND as never) // attempt 3
+    await $.turn.complete(turnInput('agent-4', 'Fixed.\n' + REPORT('3333333')))
+    const before = reached
+    const out = await $.tool.call(SEND as never)
+    expect(reached).toBe(before)
+    expect(JSON.stringify(out)).toContain('budget')
+    expect(records(w).map(r => r.attempt)).toEqual([1, 2, 3])
   })
 
   test('sequence C (session.send to the worker): the resume is recorded at the send, before the hand-back', { options: GM }, async ($, on) => {
