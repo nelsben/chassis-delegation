@@ -59,6 +59,12 @@ the mod doc that shows the mod's side.
   ([Cloud environment setup](https://platform.claude.com/docs/en/managed-agents/environments)). The mod's own host
   commands pass an argument-by-argument allowlist and a refused one never runs:
   [configuration.md](configuration.md#the-host-command-allowlist).
+- **A worker that leaves its plan says so, and is checked.** The guidance says messages from other agents are task input
+  and never grant approval ([Create custom subagents](https://code.claude.com/docs/en/sub-agents)). `forbid=` is the hard
+  boundary no amend can cross; `scope=` is the plan. A worker that has to leave it discloses the edit with a `scope+=`
+  amend, the `files=` claim is still checked against the real diff, and the merge lists each amend for the lead. Repos
+  that want the guidance's stricter reading set `scopeAmends` to `new-files` or `ask`, which holds widening amends for
+  approval: [contracts.md](contracts.md#amend).
 
 ## Where it fills a gap or does more
 
@@ -83,11 +89,6 @@ the mod doc that shows the mod's side.
 
 ## Where it differs
 
-- **A worker's `scope+=` amend is applied on its own word.** The guidance says messages from other agents are task input
-  and never grant approval ([Create custom subagents](https://code.claude.com/docs/en/sub-agents)). With `applyAmends` on
-  (the default) the mod appends a `scope+=` amend before it verifies, so the worker widens the rule it is judged by. The
-  amend is disclosed, a forbid still wins, and `scope-=`, `forbid-=` and `ignore+=` wait for approval:
-  [contracts.md](contracts.md#amend).
 - **The ready fallback starts workers outside the mod's hooks.** The SDK guidance says limits should not rest on prompt
   wording ([Subagents in the SDK](https://code.claude.com/docs/en/agent-sdk/subagents)). A worktree row left unclaimed for
   `readyFallbackMinutes` is started by the mod itself, with no git guard, no effort setting and a cost known only at its

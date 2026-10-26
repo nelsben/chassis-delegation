@@ -362,13 +362,14 @@ export function doneChecklist(body: string): string[] {
 }
 
 /** pr.md: the Done-when checklist, the verdict line, the gate results, the trailing generated line. No absolute path survives. */
-export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[] }): string {
+export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[]; amends?: readonly string[] }): string {
   const done = doneChecklist(o.body)
   const text = [
     '## Done when',
     '',
     ...(done.length > 0 ? done : ['- [x] (the card has no Done when section)']),
     '',
+    ...((o.amends ?? []).length > 0 ? ['## Amends', '', ...(o.amends ?? []).map(a => `- ${a}`), ''] : []),
     '## Verdict',
     '',
     o.verdictLine,
@@ -382,6 +383,12 @@ export function prBody(o: { body: string; verdictLine: string; gates: readonly G
   ].join('\n')
   return scrubPaths(text, o.folders)
 }
+
+/** MOD-171: one amend block as the merge lists it: its ops and reason. */
+export const amendSummary = (a: { ops: readonly string[]; reason: string }): string => `${a.ops.join(' ')} (${a.reason})`
+
+/** MOD-171: the line merge prints for each amend the brief carried. */
+export const amendMergeLine = (a: { ops: readonly string[]; reason: string }): string => `amend: ${amendSummary(a)} — check these paths in the diff`
 
 /** A word for a shell line: as it is when plain, else single-quoted. */
 export const shellWord = (s: string): string => (/^[A-Za-z0-9_./:@%+=,-]+$/.test(s) ? s : `'${s.split("'").join("'\\''")}'`)

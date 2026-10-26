@@ -308,6 +308,8 @@ import {
   markMerged,
   MERGE_TOOL,
   mergedLines,
+  amendMergeLine,
+  amendSummary,
   noWorktreeLine,
   ownerRepoOf,
   parseMergeArgs,
@@ -2859,6 +2861,10 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   await writeLog()
   // THE REMOTE BLOCK: pr.md, then the lines the brain runs verbatim
   const prFile = `${outDir}/pr.md`
+  // MOD-171: the amends the task's brief carried, listed for the lead (the brief is the one dispatch wrote for this task)
+  const briefFile = await existingBrief($, root, `${id}.brief.md`)
+  const briefText = briefFile ? await readText($, briefFile) : undefined
+  const amends = briefText ? parseAmends(briefText).amends : []
   let home = ''
   try {
     home = await homeDir($)
@@ -2866,10 +2872,11 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
     home = ''
   }
   const verdictLine = `${id} attempt ${row.attempt ?? '?'}: consistent${row.sha ? ` at ${row.sha}` : ''} · next=accept`
-  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home] }))
+  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary) }))
   const title = card.title || `${id} merged`
   const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id })
   return [
+    ...amends.map(amendMergeLine),
     `${id}: rebased onto ${baseRef}; ${ignored ? cardKeptLocalClause(`${root}/${cardRel}`) : committed ? `card committed as merged (${cardRel})` : 'the worktree already carries the merged card; nothing committed again'}; gates green at ${short}${results.length > 0 ? ` (${results.map(r => r.id).join(', ')})` : ' (the card names no gate)'}${passed.map(c => `; merge check passed (${c})`).join('')}`,
     `pr body: ${prFile} · gate output: ${outDir}/merge-gates.txt${version ? ` · releases v${version}` : ''}`,
     remoteBlock('remote: run these lines verbatim, in order (the mod never pushes nor calls gh):', lines),
