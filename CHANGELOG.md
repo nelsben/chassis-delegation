@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **An engine test pins what fires when the brain resumes a worker with `SendMessage`, and the internals page states it (MOD-175).** tests/resume.test.ts covers a resume that arrives as a second `agent.spawn`, as a `tool.call` only (which records no attempt until the next hand-back), and as a `session.send` (recorded at the send); docs/internals.md replaces the sentence that said a resume arrives as `agent.spawn`, with the host's source.
+
 ## 0.9.30 — 2026-10-25
 
 ### Fixed
