@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.30 to 0.9.31
+
+Nothing to do.
+Added: an engine test pins what fires when a `SendMessage` resume arrives, and the internals page states it.
+Changed: a `tool.call` hook on `SendMessage` counts a resume once, whichever events the host fires.
+Detail: [CHANGELOG 0.9.31](../CHANGELOG.md).
+
 ### From 0.9.29 to 0.9.30
 
 Nothing to do, unless a repo wants the new `scopeAmends` option.
