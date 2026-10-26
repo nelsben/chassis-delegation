@@ -339,6 +339,17 @@
       "description": "Off by default: a verdict row is posted and nothing starts a turn of the brain's own; in the hand-back turn the brain calls the verdict tool, which returns the verdict once it lands. On: after the mod posts a verdict row for a worker's hand-back it also submits that row with its next action (accept, resume, the ready: line, the respawn spawn block) as a turn of the brain's own, so the brain acts without waiting for you to type; never as your words, and the engine queues it while you are mid-prompt",
       "default": false
     },
+    "scopeAmends": {
+      "type": "string",
+      "title": "Scope amends (apply | new-files | ask)",
+      "description": "Whether a worker's request to widen its scope (an amend block with scope+=) applies on its word. apply: appended before verifying, as the applyAmends option says; new-files: appended only when every path it names is a new file, absent at the base, in a folder a scope entry already names; ask: every scope+= block waits for you to append it to the brief and dispatch verify=<sha>. forbid+= always applies; applyAmends off still lists every block and applies none. A value here other than the default wins over the repo file (.chassis-delegation.json)",
+      "options": [
+        "apply",
+        "new-files",
+        "ask"
+      ],
+      "default": "apply"
+    },
     "review": {
       "type": "string",
       "title": "Review (off | on | on-frontier)",

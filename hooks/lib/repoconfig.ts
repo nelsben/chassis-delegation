@@ -13,6 +13,7 @@
 import { DEFAULT_SPEND_BY_TIER } from './cost'
 import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
 import { EMPTY_GATE_KEY } from './gates'
+import { SCOPE_AMENDS_MODES, type ScopeAmends } from './brief'
 import { DEFAULT_EFFORT_BY_TIER, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
 import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, nudgeCardsFor, type EffortNudge } from './nudge'
 
@@ -112,9 +113,11 @@ export type RepoConfig = {
   review?: ReviewMode
   /** MOD-21: the tier the reviewer runs at; unset = one below the worker's. */
   reviewTier?: Tier
+  /** MOD-170: whether a worker's `scope+=` amend applies on its word (apply | new-files | ask); default apply. */
+  scopeAmends?: ScopeAmends
 }
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'scopeAmends'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -146,6 +149,7 @@ export type Effective = {
   review: ReviewMode
   /** '' = one tier below the worker's. */
   reviewTier: Tier | ''
+  scopeAmends: ScopeAmends
   /** Which layer each key came from (settings: the host's /config rows; yours: the user options file). */
   sources: Record<RepoKey, 'default' | 'repo' | 'yours' | 'settings'>
 }
@@ -409,6 +413,11 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         // in /config "off" is the manifest default: unset, so the repo file's value shows through
         else if (strict || v.trim() !== 'off') config.review = v.trim() as ReviewMode
         break
+      case 'scopeAmends':
+        if (typeof v !== 'string' || !(SCOPE_AMENDS_MODES as readonly string[]).includes(v.trim())) errors.push(`scopeAmends${where}: needs apply, new-files or ask (apply is used)`)
+        // in /config "apply" is the manifest default: unset, so the repo file's value shows through
+        else if (strict || v.trim() !== 'apply') config.scopeAmends = v.trim() as ScopeAmends
+        break
       case 'reviewTier':
         if (typeof v !== 'string') errors.push(`reviewTier${where}: not a string (ignored)`)
         else if (v.trim() !== '') {
@@ -527,6 +536,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     issueRepo: pick('issueRepo', ''),
     review: pick('review', 'on-frontier'),
     reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
+    scopeAmends: pick('scopeAmends', 'apply'),
     sources,
   }
 }

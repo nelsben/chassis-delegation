@@ -1,5 +1,8 @@
 import { test, expect, describe } from 'claude-code/testing'
 import {
+  inScopeFolder,
+  scopeAmendHeld,
+  amendScopePaths,
   parseHeader,
   findBriefPath,
   resolveBriefPath,
@@ -337,5 +340,41 @@ describe('MOD-135: findBriefPath and resolveBriefPath', () => {
     expect(resolveBriefPath('./.delegation/briefs/T.brief.md', undefined, '/root/')).toBe('/root/.delegation/briefs/T.brief.md')
     expect(resolveBriefPath('../T.brief.md', '/w', '/root')).toBeUndefined()
     expect(resolveBriefPath('a/../../T.brief.md', undefined, '/root')).toBeUndefined()
+  })
+})
+
+describe('MOD-170: scopeAmends, the folder and glob-prefix rule', () => {
+  const amend = (...paths: string[]) => ({ ops: [`scope+=${paths.join(',')}`], reason: 'r' })
+  const fresh = (...paths: string[]) => new Map(paths.map(p => [p, 'new' as const]))
+  test('a path sits in the folder of a listed file or under the fixed prefix of a listed glob', () => {
+    expect(inScopeFolder('tests/new.test.ts', ['tests/review.test.ts'])).toBe(true)
+    expect(inScopeFolder('hooks/lib/new.ts', ['hooks/lib/**'])).toBe(true)
+    expect(inScopeFolder('hooks/lib/deep/new.ts', ['hooks/lib/**'])).toBe(true)
+    expect(inScopeFolder('hooks/lib/new.ts', ['hooks/lib/*.ts'])).toBe(true)
+    expect(inScopeFolder('docs/', ['docs/'])).toBe(true)
+    expect(inScopeFolder('docs/new.md', ['docs/'])).toBe(true)
+  })
+  test('an unrelated folder, a glob path and a sibling prefix do not qualify', () => {
+    expect(inScopeFolder('src/new.ts', ['tests/review.test.ts'])).toBe(false)
+    expect(inScopeFolder('tests/sub/new.ts', ['tests/review.test.ts'])).toBe(false)
+    expect(inScopeFolder('hooks/libx/new.ts', ['hooks/lib/**'])).toBe(false)
+    expect(inScopeFolder('hooks/lib/*.ts', ['hooks/lib/**'])).toBe(false)
+    expect(inScopeFolder('x.ts', ['**'])).toBe(false)
+  })
+  test('apply never holds, ask always holds a scope+= block, a block without one is never held', () => {
+    expect(scopeAmendHeld(amend('a/x.ts'), 'apply', ['a/**'], new Map())).toBe(false)
+    expect(scopeAmendHeld(amend('a/x.ts'), 'ask', ['a/**'], fresh('a/x.ts'))).toBe(true)
+    expect(scopeAmendHeld({ ops: ['forbid+=b/**'], reason: 'r' }, 'ask', ['a/**'], new Map())).toBe(false)
+    expect(amendScopePaths({ ops: ['scope+=a,b', 'forbid+=c'], reason: 'r' })).toEqual(['a', 'b'])
+  })
+  test('new-files: held unless every path is new at base and in a scope folder; a glob or a git error holds it', () => {
+    const scope = ['hooks/lib/**', 'tests/review.test.ts']
+    expect(scopeAmendHeld(amend('hooks/lib/new.ts'), 'new-files', scope, fresh('hooks/lib/new.ts'))).toBe(false)
+    expect(scopeAmendHeld(amend('tests/new.test.ts'), 'new-files', scope, fresh('tests/new.test.ts'))).toBe(false)
+    expect(scopeAmendHeld(amend('hooks/lib/update.ts'), 'new-files', scope, new Map([['hooks/lib/update.ts', 'exists' as const]]))).toBe(true)
+    expect(scopeAmendHeld(amend('hooks/lib/e.ts'), 'new-files', scope, new Map([['hooks/lib/e.ts', 'error' as const]]))).toBe(true)
+    expect(scopeAmendHeld(amend('hooks/lib/*.ts'), 'new-files', scope, fresh('hooks/lib/*.ts'))).toBe(true)
+    expect(scopeAmendHeld(amend('src/new.ts'), 'new-files', scope, fresh('src/new.ts'))).toBe(true)
+    expect(scopeAmendHeld(amend('hooks/lib/new.ts', 'src/new.ts'), 'new-files', scope, fresh('hooks/lib/new.ts', 'src/new.ts'))).toBe(true)
   })
 })

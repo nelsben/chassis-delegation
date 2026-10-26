@@ -265,6 +265,16 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(delivered(w)).toContain('amend not applied (applyAmends off)')
   })
 
+  test('scopeAmends: ask holds a worker\'s request to widen its scope until the lead appends it', async ($, on) => {
+    const AMEND = '[[amend v=1 scope+=c/x.ts reason=the helper lives there]]'
+    const w = handBackWorld(on)
+    await $.session.start(sessionStart)
+    await set($, 'scopeAmends', 'ask')
+    await handBack($, AMEND + '\n' + REPORT('1234abcd'))
+    expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody')
+    expect(delivered(w)).toContain('(scopeAmends ask)')
+  })
+
   test('review: on sends a clean hand-back to a second checker (next=review)', async ($, on) => {
     const w = handBackWorld(on, { gate: 0 })
     await $.session.start(sessionStart)

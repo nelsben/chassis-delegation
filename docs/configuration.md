@@ -72,7 +72,8 @@ Shows the options in force and where each value came from; works in VS Code.
 | `postFindings` | user | `ask` | `ask`, `auto`, `off`; `/config` only. See [Posting the findings](#posting-the-findings). |
 | `readyFallbackMinutes` | user | `10` | minutes a `ready:` row waits before the mod starts it itself. `0` = off. |
 | `waitStallMin` | user | `20` | minutes without a hand-back before `<id> stalled <n> min; resume or stop it`. `0` = off. |
-| `applyAmends` | user | `true` | append `scope+=` / `forbid+=` blocks to the brief before verifying. |
+| `applyAmends` | user | `true` | append `scope+=` / `forbid+=` blocks to the brief before verifying. Off lists every block and applies none, whatever `scopeAmends` says. |
+| `scopeAmends` | repo | `apply` | `apply`: a worker's `scope+=` applies on its word; `new-files`: only when every path is new at the base and sits in a folder a scope entry names; `ask`: every one waits for you to append it to the brief and `dispatch verify=<sha>`. `forbid+=` always applies. |
 | `defaultBudget` | user | `3` | attempts when the brief names no budget. |
 | `verdictVerbosity` | user | `line` | `line`, `full` (plus claim lines), `silent` (toast). |
 | `briefDir` | user | `""` (`<root>/.delegation/briefs/`) | where briefs go. |

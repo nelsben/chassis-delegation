@@ -334,6 +334,101 @@ describe('tool.call on Agent: report capture and verify', () => {
     expect(row).toContain('amend needs approval: scope+=b/NOTES.md lies inside forbid b/**; scope+= alone does nothing, shrink the forbid')
   })
 
+  // MOD-170: scopeAmends decides whether a scope+= block applies on the worker's word
+  describe('MOD-170: scopeAmends', () => {
+    const AMEND_C = '[[amend v=1 scope+=c/x.ts reason=the helper lives in c]]'
+    const REPORT_C = `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts,c/x.ts]]`
+    const HELD = (mode: string, block = AMEND_C) => `amend needs approval: ${block} (scopeAmends ${mode}) — append it to ${BRIEF} to accept, then dispatch verify=1234abcd`
+    const APPROVE_NEXT = `next=approve the amend (append it to ${BRIEF}), then dispatch verify=1234abcd; or refuse it`
+    // c/x.ts is a changed file; \`existing\` are the paths present at the base, every other path is new there
+    const baseRun = (existing: string[], delta = 'A\ta/x.ts\nM\tc/x.ts\n') => {
+      const inner = nativeRun({ gate: 0, delta })
+      return (argv: string[]): RunAnswer | undefined => {
+        const last = argv[argv.length - 1] ?? ''
+        if (argv[3] === 'rev-parse' && argv.includes('--quiet') && /^[0-9a-f]{40}:/.test(last)) return { exitCode: existing.includes(last.slice(41)) ? 0 : 1, stdout: '' }
+        return inner(argv)
+      }
+    }
+    const repoFile = (mode: string) => ({ [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ scopeAmends: mode }) })
+
+    test('ask: at base, a scope+= for an existing out-of-scope file is held, the verdict refutes on scope and next= says approve-then-verify', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', ...repoFile('ask') }, run: baseRun(['c/x.ts']), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [AMEND_C, REPORT_C].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody')
+      const row = rows(w)[0]?.text ?? ''
+      expect(row).toContain(HELD('ask'))
+      expect(row).not.toContain('amended:')
+      expect(row.split('\n')[0]).toContain('verdict=refuted')
+      expect(row).toContain('claim scope: failed — out-of-scope path: c/x.ts')
+      expect(row.split('\n')[0]).toContain(APPROVE_NEXT)
+      expect(w.sent).toHaveLength(0)
+    })
+
+    for (const [name, files] of [['default', {}], ['spelled out', repoFile('apply')]] as const) {
+      test(`apply (${name}): the block is appended and the verdict is consistent`, { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+        const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', ...files }, run: baseRun(['c/x.ts']), agentId: 'agent-4' })
+        await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+        await $.turn.complete(turnInput('agent-4', [AMEND_C, REPORT_C].join('\n')))
+        expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody\n' + AMEND_C + '\n')
+        expect(rows(w)[0]?.text.split('\n')[0]).toContain('verdict=consistent')
+        expect(rows(w)[0]?.text).toContain('amended: scope+=c/x.ts (reason the helper lives in c)')
+      })
+    }
+
+    const SCOPED = HEADER.replace('scope=a/**', 'scope=a/x.ts,a/sub/**')
+    const reportOf = (...files: string[]) => `[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=${files.join(',')}]]`
+    test('new-files: an existing file in a scoped folder is held', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const Y = '[[amend v=1 scope+=a/y.ts reason=it exists]]'
+      const w = world(on, { files: { [BRIEF]: SCOPED + '\nbody', ...repoFile('new-files') }, run: baseRun(['a/y.ts'], 'A\ta/x.ts\nM\ta/y.ts\n'), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [Y, reportOf('a/x.ts', 'a/y.ts')].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(SCOPED + '\nbody')
+      expect(rows(w)[0]?.text).toContain(HELD('new-files', Y))
+      expect(rows(w)[0]?.text.split('\n')[0]).toContain('next=approve the amend')
+    })
+    test('new-files: a new file beside a scoped file is applied', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const Z = '[[amend v=1 scope+=a/z.ts reason=a new helper]]'
+      const w = world(on, { files: { [BRIEF]: SCOPED + '\nbody', ...repoFile('new-files') }, run: baseRun([], 'A\ta/x.ts\nA\ta/z.ts\n'), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [Z, reportOf('a/x.ts', 'a/z.ts')].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(SCOPED + '\nbody\n' + Z + '\n')
+      expect(rows(w)[0]?.text).toContain('amended: scope+=a/z.ts (reason a new helper)')
+      expect(rows(w)[0]?.text.split('\n')[0]).toContain('verdict=consistent')
+    })
+    test('new-files: a new file in an unrelated folder is held', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const w = world(on, { files: { [BRIEF]: SCOPED + '\nbody', ...repoFile('new-files') }, run: baseRun([]), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [AMEND_C, REPORT_C].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(SCOPED + '\nbody')
+      expect(rows(w)[0]?.text).toContain(HELD('new-files'))
+    })
+
+    test('ask: forbid+= still applies on the worker\'s word', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const F = '[[amend v=1 forbid+=d/** reason=keep out of d]]'
+      const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', ...repoFile('ask') }, run: baseRun([], 'A\ta/x.ts\n'), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [F, REPORT('1234abcd')].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody\n' + F + '\n')
+      expect(rows(w)[0]?.text).toContain('amended: forbid+=d/**')
+    })
+
+    test('a bad scopeAmends value is named in the config errors and apply is used', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', ...repoFile('sometimes') }, run: baseRun(['c/x.ts']), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [AMEND_C, REPORT_C].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody\n' + AMEND_C + '\n')
+    })
+
+    test('applyAmends off stays the master switch whatever scopeAmends says', { options: { verdictVerbosity: 'full', applyAmends: false, ...GM } }, async ($, on) => {
+      const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', ...repoFile('apply') }, run: baseRun([]), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [AMEND_C, REPORT_C].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody')
+      expect(delivered(w)).toContain(`amend not applied (applyAmends off): ${AMEND_C}`)
+    })
+  })
+
   test('applyAmends off: the brief is left alone; the row lists the block and says how to accept it', { options: { verdictVerbosity: 'full', applyAmends: false, ...GM } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: verifierRun, agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
@@ -1996,6 +2091,21 @@ describe('GH-104: spend guards', () => {
     expect(w.spawns).toHaveLength(0)
     await brainSpawn($, out)
     expect(w.spawns[0]?.model).toBe('sonnet')
+  })
+
+  test('MOD-170: the lead appends a held scope+= block, then dispatch verify=<sha> judges the work consistent', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const AMEND_C = '[[amend v=1 scope+=c/x.ts reason=the helper lives in c]]'
+    const run = worker({ gate: 0 })
+    const wide = (argv: string[]): RunAnswer | undefined =>
+      argv[3] === 'diff' ? { exitCode: 0, stdout: argv.includes('--name-status') ? 'M\ta/x.ts\nM\tc/x.ts\n' : 'a/x.ts\nc/x.ts\n' } : run(argv)
+    const w = world(on, { files: { ...files(), [`${ROOT}/.chassis-delegation.json`]: '{"scopeAmends":"ask"}' }, dirs, run: wide })
+    await $.session.start(sessionStart)
+    const refuted = String((await $.command.run(commandInput(`T-4 --verify ${SHORT}`))).text)
+    expect(refuted).toContain('claim scope: failed — out-of-scope path: c/x.ts')
+    w.files.set(BRIEF, HEADER + '\nbody\n' + AMEND_C + '\n')
+    const out = String((await $.command.run(commandInput(`T-4 --verify ${SHORT}`))).text)
+    expect(out).toContain('verdict=consistent task=T-4')
+    expect(out).toContain('amendment: #1 scope+=c/x.ts')
   })
 })
 

@@ -156,6 +156,14 @@ export function advise(input: AdviseInput): Advice {
     if (prove !== '' && input.agentId && input.attempts < input.budget) return { kind: 'resume', next: `resume agent=${input.agentId} — prove: ${prove}` }
     return { kind: 'check', next: 'check by hand — unverified is not a pass' }
   }
+  // MOD-170: a refute on scope alone, every out-of-scope path of it a scope+= the lead has yet to approve: approve, then verify; nothing is resumed or escalated
+  if (input.verdict === 'refuted') {
+    const failedAll = (input.lines ?? []).map(parseClaimLine).filter((c): c is ClaimLine => c?.status === 'failed')
+    const path = failedAll.length === 1 && failedAll[0]?.name === 'scope' ? outOfScopePath(failedAll[0]) : undefined
+    if (path !== undefined && heldScopePaths(input.lines ?? []).includes(path)) {
+      return { kind: 'check', next: `approve the amend (append it to ${input.briefPath ?? 'the brief'}), then dispatch verify=${input.sha ?? '<sha>'}; or refuse it` }
+    }
+  }
   if (input.attempts >= input.budget) return { kind: 'exhausted', next: `stop — ${budgetDenyMessage(input.task, input.attempts)}` }
   // GH-115: a scope or files refute says the brief's globs are wrong, not that the worker was out of its depth
   const failed = input.verdict === 'refuted' ? firstFailedClaim(input.lines ?? []) : undefined
@@ -327,6 +335,21 @@ export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number
 
 /** One line per amend the mod appended to the brief before verifying. */
 export const amendedLine = (a: { ops: readonly string[]; reason: string }): string => `amended: ${a.ops.join(' ')} (reason ${a.reason})`
+
+/** MOD-170: a `scope+=` block held under scopeAmends: the block, the mode, and how to accept it. */
+export const amendHeldLine = (a: { block: string }, mode: string, briefPath: string, sha: string): string =>
+  `amend needs approval: ${a.block} (scopeAmends ${mode}) — append it to ${briefPath} to accept, then dispatch verify=${sha}`
+
+/** MOD-170: the scope+= paths of the blocks held under scopeAmends on a verdict's lines. */
+export function heldScopePaths(lines: readonly string[]): string[] {
+  const out: string[] = []
+  for (const l of lines) {
+    if (!l.startsWith('amend needs approval: ') || !/ \(scopeAmends (?:ask|new-files)\) — /.test(l)) continue
+    const block = l.slice('amend needs approval: '.length).split(' (scopeAmends ')[0] ?? ''
+    for (const m of block.matchAll(/(?:^|\s)scope\+=(\S+)/g)) out.push(...(m[1] ?? '').split(',').filter(Boolean))
+  }
+  return out
+}
 
 /** applyAmends off: the block, verbatim, and how to accept it. */
 export const amendPendingLine = (a: { block: string }, briefPath: string): string =>

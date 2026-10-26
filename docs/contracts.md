@@ -147,12 +147,12 @@ A worker that had to change a file outside its scope says so on its own line, ju
 [[amend v=1 scope+=<path> reason=<one line>]]
 ```
 
-The mod appends it to the brief before verifying, never rewrites the header, and discloses each as `amendment: #n …`.
+The mod appends it to the brief before verifying, never rewrites the header, and discloses each as `amendment: #n …`. `forbid=` is the hard boundary; `scope+=` discloses an edit the worker has already made.
 
 | Field | Values | Meaning | Default | What the verifier does |
 | --- | --- | --- | --- | --- |
 | `v` | `1` | grammar version | required | missing or another version makes the block malformed |
-| `scope+=` | globs | widen scope | none | applied on the worker's word; inside a forbid glob it does nothing and the row says `amend needs approval: scope+=P lies inside forbid Y; …` |
+| `scope+=` | globs | widen scope | none | applied on the worker's word under `scopeAmends` `apply` (the default); `new-files` applies only new files beside paths in scope; `ask` holds every one for approval. A held block is not appended: the row says `amend needs approval: <block> (scopeAmends <mode>) — append it to <brief> to accept, then dispatch verify=<sha>`, and a verdict that refutes only on that scope reads `next=approve the amend (append it to <brief>), then dispatch verify=<sha>; or refuse it` (nothing is resumed). Inside a forbid glob it does nothing and the row says `amend needs approval: scope+=P lies inside forbid Y; …` |
 | `forbid+=` | globs | widen forbid | none | applied on the worker's word |
 | `scope-=` | globs | shrink scope | none | waits for approval; the verdict is the un-amended brief's |
 | `forbid-=` | a forbid entry | shrink forbid | none | waits for approval |
