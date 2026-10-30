@@ -234,6 +234,18 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
 /** What the verifier needs to compare the outside: the listings taken at dispatch, and a way to list a root now. */
 export type OutsideInput = { before: readonly RootListing[]; list: (root: string, since?: number) => Promise<RootListing> }
 
+/** MOD-186: the folder (under the session root) that holds a repo=none card's listing files. */
+export const outsideDirOf = (root: string): string => `${root.replace(/\/+$/, '')}/.delegation/outside`
+/** MOD-186: a scoped task id as a file name: every character outside [A-Za-z0-9._-] becomes `_`. */
+export const outsideFileName = (scopedId: string): string => `${scopedId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`
+export const outsideFilePath = (root: string, scopedId: string): string => `${outsideDirOf(root)}/${outsideFileName(scopedId)}`
+/** MOD-186: true only for a file directly under the session's `.delegation/outside/` folder, with no `..` in it. */
+export function isOutsideFile(root: string, path: string): boolean {
+  if (root.replace(/\/+$/, '') === '') return false
+  const dir = `${outsideDirOf(root)}/`
+  return path.startsWith(dir) && path.length > dir.length && !path.slice(dir.length).includes('/') && !path.includes('..')
+}
+
 /**
  * Lists the roots again (those listed at dispatch and those the scope and forbid name now) and judges
  * the outside delta. Undefined when nothing was recorded at dispatch (a brief that never went through
