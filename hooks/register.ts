@@ -1264,14 +1264,12 @@ let landPending: { text: string; at: number } | undefined
 let landLine: string | undefined
 let parentLine: string | undefined
 
-/** A land, land_plan, card (and, for the parent line, dispatch) call was seen. */
-function landSeen($: Host, tool: 'land' | 'land_plan' | 'card' | 'dispatch') {
+/** A land, land_plan, card, dispatch, verdict or merge call was seen: the turn is driving work, so the prompt nudge clears (MOD-210). The parent line is cleared by all but verdict and merge (a merge finish sets it after). */
+function landSeen($: Host, tool: 'land' | 'land_plan' | 'card' | 'dispatch' | 'verdict' | 'merge') {
   const had = landLine !== undefined || parentLine !== undefined
-  if (tool !== 'dispatch') {
-    landPending = undefined
-    landLine = undefined
-  }
-  parentLine = undefined
+  landPending = undefined
+  landLine = undefined
+  if (tool !== 'verdict' && tool !== 'merge') parentLine = undefined
   if (had) redraw($)
 }
 
@@ -8569,14 +8567,14 @@ export const register: Register = (on, opts) => {
     return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|tree <n>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => (landSeen($, 'card'), { result: await runCard($, e as unknown as Record<string, unknown>) }))
-  on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => ({ result: await runVerdict($, e as unknown as Record<string, unknown>) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => (landSeen($, 'verdict'), { result: await runVerdict($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async ($, e) => ({ result: await runInit($, pathOfCall(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async ($, e) => ({ result: await runSetup($, true, pathOfCall(e)) }))
   // MOD-75: the merge tool, the command's second door
   on('tool.call', { tool: 'mcp__chassis-delegation__land' as never }, async ($, e) => (landSeen($, 'land'), { result: await landWith($, parseLandTool(e as unknown as Record<string, unknown>)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__land_plan' as never }, async ($, e) => (landSeen($, 'land_plan'), { result: await planWith($, parsePlan(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__tree' as never }, async ($, e) => ({ result: await treeWith($, (e as unknown as Record<string, unknown>).issue) }))
-  on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => ({ result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => (landSeen($, 'merge'), { result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
   // MOD-133: the ration bar lives here (the footer row is not drawn on every client); dashboardBand adds the worker line.

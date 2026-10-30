@@ -47,3 +47,28 @@ describe('MOD-201: the nudge line in the band', () => {
     expect(await (await mount($))?.find({ type: 'Text', text: LINE })).toBeUndefined()
   })
 })
+
+describe('MOD-210 (#302): a turn that drives an existing card stays quiet', () => {
+  for (const tool of ['dispatch', 'verdict', 'merge']) {
+    test(`flagged prompt then a ${tool} call: no land line at the turn's end`, { options: { landAuto: true } }, async ($, on) => {
+      world(on)
+      await $.session.start(sessionStart)
+      await $.prompt.submit({ text: PROMPT } as never)
+      try {
+        await $.tool.call({ tool: `mcp__chassis-delegation__${tool}`, task: 'T-9', scope: 'a/**' } as never)
+      } catch {
+        // the call may refuse an unknown card; the hook still saw it
+      }
+      await $.turn.complete({ turnId: 't1', answer: 'ok' } as never)
+      expect(await (await mount($))?.find({ type: 'Text', text: LINE })).toBeUndefined()
+    })
+  }
+
+  test('flagged prompt with none of those calls still shows the line', { options: { landAuto: true } }, async ($, on) => {
+    world(on)
+    await $.session.start(sessionStart)
+    await $.prompt.submit({ text: PROMPT } as never)
+    await $.turn.complete({ turnId: 't1', answer: 'ok' } as never)
+    expect(await (await mount($))?.find({ type: 'Text', text: LINE })).toBeDefined()
+  })
+})
