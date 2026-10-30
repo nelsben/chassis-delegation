@@ -72,7 +72,7 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
 export const LAND_TOOL = {
   name: 'land',
   description:
-    'Files a GitHub issue in this repo for work that came up mid-session, labelled type:<type>, under the parent issue when one is given, and added to the configured Project (the project option). The body is written first under .delegation/landed/ and redacted; the issue number is written back to that file. With dryRun: true it only writes the body and prints the gh line, and files nothing. When the landAuto option is off it also files nothing until it is called again with confirm: true. Nothing is dispatched and no card is written.',
+    'Files a GitHub issue in this repo for work that came up mid-session, labelled type:<type>, under the parent issue when one is given, and added to the configured Project (the project option). The body is written first under .delegation/landed/ and redacted; the issue number is written back to that file. With dryRun: true it only writes the body and prints the gh line, and files nothing. Unless the landAuto option is on (it is off by default) it also files nothing until it is called again with confirm: true. Nothing is dispatched and no card is written.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -83,7 +83,7 @@ export const LAND_TOOL = {
       paths: { type: 'array', items: { type: 'string' }, description: 'Optional: the repo paths the work touches (listed as a scope block in the body).' },
       note: { type: 'string', description: 'Optional: text for the top of the issue body.' },
       dryRun: { type: 'boolean', description: 'true: write the body and print the gh line only; file nothing.' },
-      confirm: { type: 'boolean', description: 'true only after the person has said yes to the issue shown; with the landAuto option off the call files nothing without it. Ignored when landAuto is on.' },
+      confirm: { type: 'boolean', description: 'true only after the person has said yes to the issue shown; unless the landAuto option is on (off by default) the call files nothing without it. Ignored when landAuto is on.' },
     },
     required: ['type', 'title'],
     additionalProperties: false,

@@ -86,7 +86,7 @@ describe('MOD-192: land files the issue itself', () => {
   const ghRun = (create: { exitCode: number; stdout: string; stderr?: string }, add: { exitCode: number; stdout: string; stderr?: string } = { exitCode: 0, stdout: '' }) => async (argv: string[]) =>
     argv[0] === 'gh' ? (argv[2] === 'create' ? create : add) : undefined
 
-  test('files the issue, adds it to the project, writes the number back and names #42', async ($, on) => {
+  test('files the issue, adds it to the project, writes the number back and names #42', { options: { landAuto: true } }, async ($, on) => {
     const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun({ exitCode: 0, stdout: `${URL42}\n` }) })
     await $.session.start(sessionStart)
     const out = text(await tool($, { type: 'bug', title: 'Export drops a row', parent: 9, paths: ['src/export/a.ts'] }))
@@ -103,7 +103,7 @@ describe('MOD-192: land files the issue itself', () => {
     expect(out.includes('nothing was filed or dispatched')).toBe(false)
   })
 
-  test('without a project only gh issue create runs, argv exactly as the brief says', async ($, on) => {
+  test('without a project only gh issue create runs, argv exactly as the brief says', { options: { landAuto: true } }, async ($, on) => {
     const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun({ exitCode: 0, stdout: `${URL42}\n` }) })
     await $.session.start(sessionStart)
     await tool($, { type: 'bug', title: 'T' })
@@ -118,7 +118,7 @@ describe('MOD-192: land files the issue itself', () => {
     expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
   })
 
-  test('a failed create reports the gh line and stderr, and writes nothing back', async ($, on) => {
+  test('a failed create reports the gh line and stderr, and writes nothing back', { options: { landAuto: true } }, async ($, on) => {
     const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun({ exitCode: 1, stdout: '', stderr: 'label type:bug not found' }) })
     await $.session.start(sessionStart)
     const out = text(await tool($, { type: 'bug', title: 'T' }))
@@ -128,7 +128,7 @@ describe('MOD-192: land files the issue itself', () => {
     expect(w.runs.some(r => r.argv[1] === 'project')).toBe(false)
   })
 
-  test('a failed item-add still reports filed and says why it was not added', async ($, on) => {
+  test('a failed item-add still reports filed and says why it was not added', { options: { landAuto: true } }, async ($, on) => {
     const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun({ exitCode: 0, stdout: URL42 }, { exitCode: 1, stdout: '', stderr: 'no such project' }) })
     await $.session.start(sessionStart)
     const out = text(await tool($, { type: 'bug', title: 'T' }))
@@ -164,7 +164,7 @@ describe('MOD-200: land --supersedes', () => {
     expect(LAND_USAGE).toContain('--supersedes')
   })
 
-  test('after a successful file the old issue is closed and the line is reported', async ($, on) => {
+  test('after a successful file the old issue is closed and the line is reported', { options: { landAuto: true } }, async ($, on) => {
     const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: run() })
     await $.session.start(sessionStart)
     const out = text(await tool($, { type: 'bug', title: 'T', note: 'wider scope', supersedes: 7 }))
@@ -174,7 +174,7 @@ describe('MOD-200: land --supersedes', () => {
     expect(w.files.get(`${LANDED}/t.md`) ?? '').toContain('supersedes: #7')
   })
 
-  test('a failed close names the line and gh error; the new issue is still filed', async ($, on) => {
+  test('a failed close names the line and gh error; the new issue is still filed', { options: { landAuto: true } }, async ($, on) => {
     world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: run({ exitCode: 1, stdout: '', stderr: 'no permission' }) })
     await $.session.start(sessionStart)
     const out = text(await tool($, { type: 'bug', title: 'T', note: 'wider scope', supersedes: 7 }))
@@ -320,7 +320,7 @@ describe('MOD-204: land hardening', () => {
   const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
   const gh = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh')
 
-  test('a title holding a redact-list word reaches gh and the dry-run line redacted', { options: { redact: 'globex' } }, async ($, on) => {
+  test('a title holding a redact-list word reaches gh and the dry-run line redacted', { options: { redact: 'globex', landAuto: true } }, async ($, on) => {
     const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: async argv => (argv[0] === 'gh' ? { exitCode: 0, stdout: 'https://github.com/o/r/issues/42\n' } : undefined) })
     await $.session.start(sessionStart)
     const dry = text(await tool($, { type: 'bug', title: 'Globex export drops a row', dryRun: true }))
@@ -444,7 +444,15 @@ describe('MOD-205: landAuto', () => {
     expect(w.runs.filter(r => r.argv[1] === 'issue' && r.argv[2] === 'create')).toHaveLength(1)
   })
 
-  test('on ignores confirm and files', async ($, on) => {
+  test('MOD-208: unset landAuto means off: land files nothing, closing line shown', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T' }))
+    expect(out.split('\n').pop()).toBe(CLOSING)
+    expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
+  })
+
+  test('on ignores confirm and files', { options: { landAuto: true } }, async ($, on) => {
     const w = setup(on)
     await $.session.start(sessionStart)
     const out = text(await tool($, { type: 'bug', title: 'T', confirm: false }))
