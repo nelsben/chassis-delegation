@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Option `landAuto`, default on: off makes `land` show the issue first and file only with `confirm: true` (MOD-205).** Off, the `land` tool and `/delegation land` write the redacted body, print the issue (title, type, parent, the `gh` line) and file nothing, ending `nothing filed: landAuto is off; call land again with confirm: true once the person says yes`; the tool files as before when called with `confirm: true`, and the command with `--confirm`. With it on, `confirm` is ignored. The land nudge reads `lead: propose landing this as an issue (land shows it; file on the person's yes) or say it is not work` when it is off. Turn it off with `/delegation config landAuto off`.
+
 ### Fixed
 
 - **The worker gh guard reads the verb past `-R`/`--repo`/`--hostname` after the noun, and covers more write nouns (MOD-203).** `gh issue -R o/r close 5` and `gh pr --repo o/r merge 3` are now denied like `gh issue close 5`; `--repo=<v>` and other flags consume nothing more. `gh run` (any verb but list, view, watch, download), `gh cache` (any verb but list), `gh codespace|extension|alias|ssh-key|gpg-key` (any verb but list and view) and `gh config set` are writes too; reads still pass.

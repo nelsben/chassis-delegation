@@ -629,6 +629,8 @@ type Config = {
   wakeOnVerdict: boolean
   /** MOD-201: the two one-line leads in the band, for the brain; off records and draws neither. */
   landNudge: boolean
+  /** MOD-205: on files at once; off shows the issue and files only on confirm: true. */
+  landAuto: boolean
   /** MOD-31: ask | auto | off; /config only, never the (public, shared) repo file. */
   postFindings: PostMode
   /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
@@ -727,6 +729,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       issueRepoOwn: issues.own,
       wakeOnVerdict: o.wakeOnVerdict === true,
       landNudge: o.landNudge !== false,
+      landAuto: o.landAuto !== false,
       postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
       waitStallMs: num('waitStallMin', WAIT_STALL_DEFAULT_MIN) * MIN_MS,
@@ -3723,6 +3726,8 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   const closeArgv = (newNumber: string): string[] | undefined => (a.supersedes !== undefined && ownerRepo ? ['gh', 'issue', 'close', String(a.supersedes), '--repo', ownerRepo, '--comment', superseded(Number(newNumber), supersedeNote)] : undefined)
   const supersedeLine = a.supersedes !== undefined && ownerRepo ? [`gh issue close ${a.supersedes} --repo ${ownerRepo} --comment ${shellWord(`superseded by #<new>: ${supersedeNote}`)}`] : []
   if (a.dryRun || !ownerRepo) return [file, ghLine, ...supersedeLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
+  // MOD-205: landAuto off shows the issue and files only when asked again with confirm
+  if (!cfg.landAuto && a.confirm !== true) return [file, `title: ${title}`, `type: ${a.type}`, `parent: ${a.parent ?? 'none'}`, ghLine, ...supersedeLine, ...hintLine, 'nothing filed: landAuto is off; call land again with confirm: true once the person says yes'].join('\n')
   const r = await fileOne($, { root, ownerRepo, file, body, title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
   if ('failed' in r) return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...hintLine].join('\n')
   const projectLines = await addToProject($, root, r.issue.url)
@@ -8245,7 +8250,7 @@ export const register: Register = (on, opts) => {
       // MOD-201: a flagged prompt and no land, land_plan or card call since: the lead goes up
       if (landPending && cfg.landNudge) {
         landPending = undefined
-        landLine = nudgeLine('prompt')
+        landLine = nudgeLine('prompt', cfg.landAuto)
         redraw($)
       }
       await freshSessionGuard($)

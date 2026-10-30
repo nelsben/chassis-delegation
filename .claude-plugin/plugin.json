@@ -345,6 +345,12 @@
       "description": "On by default. Two one-line leads in the band above the prompt, for the brain and not for you: after a prompt of yours that describes a bug, feature or idea and a turn that lands nothing (no land, land_plan or card call), `lead: land this as an issue (land or land_plan) or say it is not work`; and after a merge finish whose parent issue still has open tasks, `lead: parent #<n> has <k> open tasks; land the next or close it`. A land, land_plan, card or dispatch call clears them. Nothing is written to GitHub. Off draws and records neither",
       "default": true
     },
+    "landAuto": {
+      "type": "boolean",
+      "title": "Land files automatically",
+      "description": "On by default: the land tool and /delegation land file the issue at once, on the brain's call. Off: they write the body and show the issue (title, type, parent, the gh line) and file only when called again with confirm: true (--confirm for /delegation land) after your yes; the land nudge then says propose instead of land",
+      "default": true
+    },
     "project": {
       "type": "string",
       "title": "GitHub Project (owner/number)",

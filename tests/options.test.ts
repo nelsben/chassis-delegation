@@ -746,6 +746,16 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.invalidations).toBeGreaterThan(0)
   })
 
+  test('landAuto: off makes land show the issue and file nothing without confirm: true', async ($, on) => {
+    const w = world(on, { skip: ['prompt.submit'], files: { [`${ROOT}/.git/config`]: '[remote "origin"]\n\turl = https://github.com/o/r.git\n' } })
+    await $.session.start(sessionStart)
+    await set($, 'landAuto', 'off')
+    const r = await $.tool.call({ tool: 'mcp__chassis-delegation__land', type: 'bug', title: 'Merge button' } as never)
+    const out = typeof (r as { result?: unknown }).result === 'string' ? ((r as { result?: string }).result as string) : String((r as { text?: string }).text ?? '')
+    expect(out).toContain('nothing filed: landAuto is off')
+    expect(w.runs.some(x => x.argv[0] === 'gh' && x.argv[2] === 'create')).toBe(false)
+  })
+
   test('readyFallbackMinutes: 1 starts a waiting task itself after a minute (the built-in 10)', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.session.start(sessionStart)

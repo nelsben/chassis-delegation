@@ -3,9 +3,9 @@ import { contained } from './scopetree'
 
 export const LAND_TYPES = ['feature', 'epic', 'story', 'task', 'bug', 'spike'] as const
 export type LandType = (typeof LAND_TYPES)[number]
-export const LAND_USAGE = `usage: /delegation land <${LAND_TYPES.join('|')}> <title> [--parent <n>] [--supersedes <n>] [--paths a,b] [--note <text>] [--dry-run]; type is one of ${LAND_TYPES.join(', ')}; --parent and --supersedes are whole numbers 1 or more`
+export const LAND_USAGE = `usage: /delegation land <${LAND_TYPES.join('|')}> <title> [--parent <n>] [--supersedes <n>] [--paths a,b] [--note <text>] [--dry-run] [--confirm]; type is one of ${LAND_TYPES.join(', ')}; --parent and --supersedes are whole numbers 1 or more; --confirm files the issue when the landAuto option is off`
 
-export type LandArgs = { type: LandType; title: string; parent?: number; /** MOD-200: the issue this one replaces; it is closed `superseded by #n` once this is filed. */ supersedes?: number; paths: string[]; note?: string; dryRun?: boolean }
+export type LandArgs = { type: LandType; title: string; parent?: number; /** MOD-200: the issue this one replaces; it is closed `superseded by #n` once this is filed. */ supersedes?: number; paths: string[]; note?: string; dryRun?: boolean; /** MOD-205: with landAuto off, true files; otherwise land only shows the issue. */ confirm?: boolean }
 
 /** Words of the text; a double-quoted run is one word (the quotes dropped). */
 function words(text: string): { w: string; quoted: boolean }[] {
@@ -27,10 +27,17 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
   let paths: string[] = []
   let flag = ''
   let dryRun = false
+  let confirm = false
   for (const { w, quoted } of ws.slice(1)) {
     if (!quoted && w === '--dry-run') {
       if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
       dryRun = true
+      flag = ''
+      continue
+    }
+    if (!quoted && w === '--confirm') {
+      if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
+      confirm = true
       flag = ''
       continue
     }
@@ -57,14 +64,14 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
   const t = title.join(' ').trim()
   if (t === '') return { error: LAND_USAGE }
   const n = note.join(' ').trim()
-  return { type, title: t, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(n !== '' ? { note: n } : {}), ...(dryRun ? { dryRun } : {}) }
+  return { type, title: t, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(n !== '' ? { note: n } : {}), ...(dryRun ? { dryRun } : {}), ...(confirm ? { confirm } : {}) }
 }
 
 /** MOD-192: the land tool, answered by the same function as /delegation land. */
 export const LAND_TOOL = {
   name: 'land',
   description:
-    'Files a GitHub issue in this repo for work that came up mid-session, labelled type:<type>, under the parent issue when one is given, and added to the configured Project (the project option). The body is written first under .delegation/landed/ and redacted; the issue number is written back to that file. With dryRun: true it only writes the body and prints the gh line, and files nothing. Nothing is dispatched and no card is written.',
+    'Files a GitHub issue in this repo for work that came up mid-session, labelled type:<type>, under the parent issue when one is given, and added to the configured Project (the project option). The body is written first under .delegation/landed/ and redacted; the issue number is written back to that file. With dryRun: true it only writes the body and prints the gh line, and files nothing. When the landAuto option is off it also files nothing until it is called again with confirm: true. Nothing is dispatched and no card is written.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -75,6 +82,7 @@ export const LAND_TOOL = {
       paths: { type: 'array', items: { type: 'string' }, description: 'Optional: the repo paths the work touches (listed as a scope block in the body).' },
       note: { type: 'string', description: 'Optional: text for the top of the issue body.' },
       dryRun: { type: 'boolean', description: 'true: write the body and print the gh line only; file nothing.' },
+      confirm: { type: 'boolean', description: 'true only after the person has said yes to the issue shown; with the landAuto option off the call files nothing without it. Ignored when landAuto is on.' },
     },
     required: ['type', 'title'],
     additionalProperties: false,
@@ -99,7 +107,7 @@ export function parseLandTool(input: Record<string, unknown>): LandArgs | { erro
   }
   const paths = Array.isArray(input.paths) ? input.paths.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(p => p !== '') : []
   const note = typeof input.note === 'string' ? input.note.trim() : ''
-  return { type, title, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(note !== '' ? { note } : {}), ...(input.dryRun === true ? { dryRun: true } : {}) }
+  return { type, title, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(note !== '' ? { note } : {}), ...(input.dryRun === true ? { dryRun: true } : {}), ...(input.confirm === true ? { confirm: true } : {}) }
 }
 
 /** MOD-192: the `project` option, `<owner>/<number>`; undefined when it is not that. */
