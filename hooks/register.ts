@@ -205,6 +205,7 @@ import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOf
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
+import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
@@ -6470,7 +6471,29 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   // repo=here when the repo has no origin/main (worktree mode cuts from it); a baseRef alone says nothing about the mode
   const originMain = target ? undefined : await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', 'origin/main'])
   const here = target ? false : !(originMain?.ok && originMain.exitCode === 0)
+  // MOD-188: the open cards under the same parent; the ledger decides "done" (the card status lags)
+  let siblings: { id: string; scope: readonly string[] }[] = []
+  const parentIn = Number(input.parent)
+  if (input.parent !== undefined && Number.isInteger(parentIn) && parentIn >= 1) {
+    const done = new Set<string>()
+    for (const line of ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '').split('\n')) {
+      try {
+        const row = JSON.parse(line) as { task?: unknown; kind?: unknown; how?: unknown } | null
+        if (typeof row?.task === 'string' && [row.kind, row.how].some(m => m === 'accepted' || m === 'merged')) done.add(row.task)
+      } catch {
+        // a line that is not JSON is skipped
+      }
+    }
+    const found: SiblingCard[] = []
+    for (const name of cardNames.filter(n => n.endsWith('.md'))) {
+      const text = await readText($, `${dir}/${name}`)
+      const sib = text === undefined ? undefined : parseCard(text)
+      if (sib && !('error' in sib)) found.push({ id: sib.id, status: sib.status, parent: sib.fields.parent, scope: sib.scope })
+    }
+    siblings = openSiblings(found, parentIn, done)
+  }
   const made = cardsFromFields(input, {
+    siblings,
     domains: target ? target.domains : cfg.domains,
     gateIds: Object.keys(target ? target.gateMap : cfg.gateMap).filter(k => k !== EMPTY_GATE_KEY),
     refusedGates: target ? target.refusedGates : cfg.refusedGates,
