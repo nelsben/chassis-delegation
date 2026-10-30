@@ -185,3 +185,54 @@ describe('MOD-85: a root too big to list is checked by modification time', () =>
     expect(seen).toEqual([1000])
   })
 })
+
+describe('MOD-185: the mod and the lead write in the session checkout, and the outside delta ignores it', () => {
+  const S = '/s/co'
+  const IGN = [`${S}/.delegation`, `${S}/docs/cards`]
+  const e = (path: string, mtimeMs: number, size = 1) => ({ path, size, mtimeMs })
+  const before: RootListing = { root: S, entries: [e('hooks/x.ts', 10), e('.delegation/ledger.jsonl', 10), e('.delegation/briefs/T-1.brief.md', 10)] }
+  const afterMod: RootListing = { root: S, entries: [e('hooks/x.ts', 10), e('.delegation/ledger.jsonl', 20, 2), e('.delegation/briefs/T-1.brief.md', 20, 2), e('docs/cards/T-2-x.md', 20)] }
+  const claim = (after: RootListing, ignore: readonly string[] | undefined, b: RootListing = before) =>
+    outsideClaim({ before: [b], after: [after], scope: ['/out/**'], forbid: [`${S}/**`], ...(ignore ? { ignore } : {}) })
+
+  test('a forbid over the checkout holds when only the ledger, a brief and a new card changed, and names the count', () => {
+    const c = claim(afterMod, IGN)
+    expect(c?.status).toBe('held')
+    expect(c?.detail).toContain('ignored 3 paths the mod and the lead write (.delegation/, docs/cards)')
+  })
+  test('without an ignore list the same listing is refuted as before', () => {
+    expect(claim(afterMod, undefined)?.status).toBe('failed')
+  })
+  test('a real change beside them still fails, naming only that path', () => {
+    const c = claim({ root: S, entries: [...afterMod.entries.filter(x => x.path !== 'hooks/x.ts'), e('hooks/x.ts', 20, 5)] }, IGN)
+    expect(c).toEqual({ status: 'failed', detail: `touches forbid path: ${S}/hooks/x.ts (outside delta)` })
+  })
+  test('a custom cards folder is ignored and docs/cards then is not', () => {
+    const c = claim({ root: S, entries: [...afterMod.entries, e('work/cards/T-3.md', 20)] }, [`${S}/.delegation`, `${S}/work/cards`])
+    expect(c).toEqual({ status: 'failed', detail: `touches forbid path: ${S}/docs/cards/T-2-x.md (outside delta)` })
+    const ok = claim({ root: S, entries: [...before.entries, e('work/cards/T-3.md', 20)] }, [`${S}/.delegation`, `${S}/work/cards`])
+    expect(ok?.detail).toContain('ignored 1 path the mod and the lead write (.delegation/, work/cards)')
+  })
+  test('a sibling folder sharing the prefix is not ignored', () => {
+    const c = claim({ root: S, entries: [...before.entries, e('.delegation-x/a', 20)] }, IGN)
+    expect(c?.status).toBe('failed')
+  })
+  test('nothing ignored leaves the detail unchanged', () => {
+    const c = claim(before, IGN)
+    expect(c?.detail).toBe(`outside delta: nothing changed under ${S}`)
+  })
+  test('the ignore applies in modification-time mode, files and folders alike', () => {
+    const mark: RootListing = { root: S, since: 15, files: 20000 }
+    const after: RootListing = { root: S, entries: [e('.delegation/ledger.jsonl', 20), e('.delegation/briefs/T-1.brief.md', 20), e('docs/cards/T-2-x.md', 20), e('hooks/old.ts', 5)], dirs: [{ path: '.delegation/briefs', mtimeMs: 20 }] }
+    const c = claim(after, IGN, mark)
+    expect(c?.status).toBe('held')
+    expect(c?.detail).toContain('ignored 4 paths the mod and the lead write')
+    expect(c?.detail).toContain('modification time')
+    const bad = claim({ ...after, entries: [...after.entries, e('hooks/x.ts', 20)] }, IGN, mark)
+    expect(bad).toEqual({ status: 'failed', detail: `touches forbid path: ${S}/hooks/x.ts (outside delta)` })
+  })
+  test('outsideCheck passes the ignore list on', async () => {
+    const c = await outsideCheck([], [`${S}/**`], { before: [before], list: async () => afterMod }, IGN)
+    expect(c?.status).toBe('held')
+  })
+})

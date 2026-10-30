@@ -4797,6 +4797,28 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     expect(records(w, 'OPS-9')[0]).toMatchObject({ verdict: 'consistent', metrics: { tris: '1200', len_s: '2.4' } })
   })
 
+  // MOD-185: the mod's own writes in the session checkout are not the worker's
+  test('a forbid over the session checkout still holds after the ledger was written and the brief edited between dispatch and hand-back', { options: OPTIONS }, async ($, on) => {
+    const w = world(on, {
+      files: { [`${ROOT}/agents/tasks/${NAME}`]: CARD.replace('forbid: []', `forbid: [${ROOT}/**]`), '/out/hair/old.txt': 'x', [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ briefTemplate: '/tpl/brief.md' }), '/tpl/brief.md': TEMPLATE },
+      dirs: { [`${ROOT}/agents/tasks`]: [NAME] },
+      trees: ['/out/hair', '/out/notes', ROOT],
+      run,
+      agentId: 'agent-r',
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+    w.files.set(`${ROOT}/.delegation/briefs/OPS-9.brief.md`, 'edited by the lead, longer than before')
+    w.files.set(`${ROOT}/.delegation/ledger.jsonl`, '{"row":1}\n')
+    w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+    await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+    const row = delivered(w)
+    expect(row).toContain('verdict=consistent (no repo) task=OPS-9')
+    expect(row).toContain('ignored ')
+    expect(row).toContain('the mod and the lead write')
+  })
+
   // MOD-163: {worktree} in a repo=none gate is the checkout the worker ran in, not the output folder
   describe('MOD-163: where a repo=none gate runs', () => {
     const WT_OPTIONS = { ...OPTIONS, gateMap: '{"check":"checker {outdir}","wt":"validator {worktree}","both":"scanner {worktree} {outdir}"}' }

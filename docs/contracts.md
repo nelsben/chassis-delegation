@@ -330,6 +330,8 @@ A research card changes no code: its outputs land outside the repo. It is an ord
    judged by modification time against a dispatch watermark (at most 1000000 entries walked, else unchecked). A brief
    never dispatched gets `note: outside delta not checked: …`. Only named folders are watched: forbid what must stay
    untouched.
+   The mod's own `.delegation/` folder and the cards folder in the session checkout are not counted in the outside
+   delta, because the mod and the lead write there during a run; the claim says how many paths it ignored.
 4. **The gate runs against the folder** through `{outdir}`, and the report adds `artefacts=` and `metrics=`.
 
 A `repo: none` gate runs in the output folder, so give its script an absolute path or put it on `PATH`; a `repo: here`

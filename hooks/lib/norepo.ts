@@ -175,7 +175,7 @@ const anyMatch = (path: string, globs: readonly string[], dir = false): boolean 
  * A root that was not listed at one end leaves the claim unchecked unless a
  * failure was found elsewhere. Undefined when no root was listed at all.
  */
-export function outsideClaim(input: { before: readonly RootListing[]; after: readonly RootListing[]; scope: readonly string[]; forbid: readonly string[] }): ClaimResult | undefined {
+export function outsideClaim(input: { before: readonly RootListing[]; after: readonly RootListing[]; scope: readonly string[]; forbid: readonly string[]; /** MOD-185: absolute folder prefixes whose changes are the mod's and the lead's own writes; ignored for scope and forbid alike. */ ignore?: readonly string[] }): ClaimResult | undefined {
   const roots = [...new Set([...input.before.map(l => l.root), ...input.after.map(l => l.root)])]
   if (roots.length === 0) return undefined
   const changed: string[] = []
@@ -210,17 +210,25 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
     }
   }
   const files = [...new Set(changed)].filter(p => !changedDirs.has(p))
-  const paths = [...new Set([...files, ...changedDirs])].sort()
+  const ignoreRoots = (input.ignore ?? []).filter(isAbsolute).map(i => i.replace(/\/+$/, '') || '/')
+  const all = [...new Set([...files, ...changedDirs])].sort()
+  const paths = all.filter(p => !ignoreRoots.some(i => under(p, i)))
+  const ignored = all.length - paths.length
+  const rel = (i: string): string => {
+    const r = roots.find(o => under(i, o) && o !== i)
+    return r === undefined ? i : i.slice(r === '/' ? 1 : r.length + 1)
+  }
+  const ignoredNote = ignored === 0 ? '' : `; ignored ${plural(ignored, 'path')} the mod and the lead write (${(input.ignore ?? []).filter(isAbsolute).map(i => rel(i.replace(/\/+$/, '') || '/') + (/(^|\/)\.delegation$/.test(i.replace(/\/+$/, '')) ? '/' : '')).join(', ')})`
   const bad = paths.flatMap(p => {
     const dir = changedDirs.has(p)
     return anyMatch(p, input.forbid, dir) ? [{ p, why: 'touches forbid path' }] : anyMatch(p, input.scope, dir) ? [] : [{ p, why: 'out-of-scope path' }]
   })
   const first = bad[0]
   if (first) return { status: 'failed', detail: `${first.why}: ${first.p} (outside delta${bad.length > 1 ? `, +${bad.length - 1} more` : ''})` }
-  if (unchecked !== undefined) return { status: 'unchecked', detail: unchecked }
+  if (unchecked !== undefined) return { status: 'unchecked', detail: unchecked + ignoredNote }
   const where = roots.join(', ')
   const by = watched ? ' (checked by modification time)' : ''
-  return { status: 'held', detail: paths.length === 0 ? `outside delta: nothing changed under ${where}${by}` : `outside delta: ${plural(paths.length, 'changed path')} under ${where}, every one within scope and none in forbid${by}` }
+  return { status: 'held', detail: paths.length === 0 ? `outside delta: nothing changed under ${where}${by}${ignoredNote}` : `outside delta: ${plural(paths.length, 'changed path')} under ${where}, every one within scope and none in forbid${by}${ignoredNote}` }
 }
 
 /** What the verifier needs to compare the outside: the listings taken at dispatch, and a way to list a root now. */
@@ -231,7 +239,7 @@ export type OutsideInput = { before: readonly RootListing[]; list: (root: string
  * the outside delta. Undefined when nothing was recorded at dispatch (a brief that never went through
  * /dispatch): the outside is then no part of the scope claim.
  */
-export async function outsideCheck(scope: readonly string[], forbid: readonly string[], outside: OutsideInput | undefined): Promise<ClaimResult | undefined> {
+export async function outsideCheck(scope: readonly string[], forbid: readonly string[], outside: OutsideInput | undefined, ignore?: readonly string[]): Promise<ClaimResult | undefined> {
   if (outside === undefined) return undefined
   // a root an amendment added inside a folder listed at dispatch is covered by that listing
   const roots = outermost([...outside.before.map(l => l.root), ...outsideRoots(scope, forbid)])
@@ -244,7 +252,7 @@ export async function outsideCheck(scope: readonly string[], forbid: readonly st
       after.push({ root, error: String(err) })
     }
   }
-  return outsideClaim({ before: outside.before, after, scope, forbid })
+  return outsideClaim({ before: outside.before, after, scope, forbid, ...(ignore ? { ignore } : {}) })
 }
 
 /** The report's `artefacts=` list: comma-separated paths, `none` and blanks dropped. */

@@ -4476,7 +4476,8 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const absForbid = contract.forbid.filter(isAbsolute)
   const watched = outsideRoots(absScope, absForbid)
   const baseline = await outsideFor($, task, repo)
-  const outside = await outsideCheck(absScope, absForbid, baseline)
+  // MOD-185: the mod's .delegation/ and the cards folder in the session checkout are written during a run, never by the worker
+  const outside = await outsideCheck(absScope, absForbid, baseline, [`${root.replace(/\/+$/, '')}/.delegation`, cardDirPath(root, cfg.cardDir)])
   const artefacts = await artefactsCheck(reportArtefacts(report.artefacts), contract.outdir ?? scopeRoot, path => statArtefact($, path))
   const metrics = reportMetrics(report.metrics)
   // MOD-163: a card with no worktree has one sensible {worktree}: the checkout the worker ran in (the task's other repo per MOD-44)

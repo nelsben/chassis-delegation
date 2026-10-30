@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A `repo=none` card's outside check no longer counts what the mod and the lead write in the session checkout (MOD-185).** A forbid naming the session checkout was refuted by the ledger row at dispatch, a brief the lead edited mid-run or a new card file. Changed paths under the checkout's `.delegation/` folder and its configured cards folder are now ignored for scope and forbid alike, and the claim says `ignored <n> path(s) the mod and the lead write`; every other path is judged as before.
+
 ## 0.9.31 — 2026-10-25
 
 ### Changed
