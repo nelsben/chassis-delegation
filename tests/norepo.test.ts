@@ -15,6 +15,10 @@ import {
   noRepoVerdictText,
   outsideCheck,
   outsideClaim,
+  outsideDirOf,
+  outsideFileName,
+  outsideFilePath,
+  isOutsideFile,
   type RootListing,
 } from '../hooks/lib/norepo'
 
@@ -234,5 +238,25 @@ describe('MOD-185: the mod and the lead write in the session checkout, and the o
   test('outsideCheck passes the ignore list on', async () => {
     const c = await outsideCheck([], [`${S}/**`], { before: [before], list: async () => afterMod }, IGN)
     expect(c?.status).toBe('held')
+  })
+})
+
+describe('MOD-186: a repo=none listing lives in a file under the session .delegation/outside/ folder', () => {
+  const S = '/s/co'
+  test('the file name is the scoped id with every character outside [A-Za-z0-9._-] made _', () => {
+    expect(outsideFileName('OPS-9@/Users/b/my repo')).toBe('OPS-9__Users_b_my_repo.json')
+    expect(outsideFileName('T-1')).toBe('T-1.json')
+  })
+  test('the folder and the path sit under the session root, a trailing slash ignored', () => {
+    expect(outsideDirOf(`${S}/`)).toBe(`${S}/.delegation/outside`)
+    expect(outsideFilePath(S, 'T-1@/o')).toBe(`${S}/.delegation/outside/T-1__o.json`)
+  })
+  test('only a file directly under that folder is one the mod may drop', () => {
+    expect(isOutsideFile(S, `${S}/.delegation/outside/T-1.json`)).toBe(true)
+    expect(isOutsideFile(S, `${S}/.delegation/outside/../ledger.jsonl`)).toBe(false)
+    expect(isOutsideFile(S, `${S}/.delegation/ledger.jsonl`)).toBe(false)
+    expect(isOutsideFile(S, `/elsewhere/.delegation/outside/T-1.json`)).toBe(false)
+    expect(isOutsideFile(S, `${S}/.delegation/outside/a/b.json`)).toBe(false)
+    expect(isOutsideFile('', `/x.json`)).toBe(false)
   })
 })

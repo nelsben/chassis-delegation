@@ -207,7 +207,7 @@ import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
-import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, noRepoVerdict, outdirOf, outsideCheck, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
+import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
@@ -951,8 +951,11 @@ async function pruneOnce($: Host, at: 'start' | 'verdict'): Promise<void> {
     const open = [...live.workers.flatMap(w => [w.label, w.spawn.task]), ...live.pending.map(p => p.task), ...(await readQueue($)).map(q => q.task), ...finalizing.keys()]
     const plan = retentionPlan({ entries, open, now: await now($) })
     let n = 0
+    const outsideFiles = new Map(entries.filter(([k]) => k.startsWith('delegation.outside.')).map(([k, v]) => [k, (v as { file?: unknown } | null)?.file] as const))
     for (const key of plan.delete) {
       try {
+        // MOD-186: a research card's listing file goes with its record
+        if (outsideFiles.has(key)) await dropOutsideFile($, outsideFiles.get(key))
         await $.store.delete(key)
         n += 1
         if (key.startsWith(K.tasks(''))) recordsCache = undefined
@@ -4328,13 +4331,45 @@ async function statArtefact($: Host, path: string): Promise<ArtefactStat> {
   }
 }
 
-/** The listings /dispatch took of a task's absolute roots, with a way to list them again; undefined when none were taken. */
-async function outsideFor($: Host, task: string | undefined, repo?: string): Promise<OutsideInput | undefined> {
+/**
+ * The listings /dispatch took of a task's absolute roots, with a way to list them again; undefined when none were taken.
+ * MOD-186: the listing is read from the file the store record names; a record that still carries `roots` inline
+ * (an older version) is read as before. A file that is gone or unreadable leaves every watched root with a listing
+ * error, so the scope claim is unchecked and names the file.
+ */
+async function outsideFor($: Host, task: string | undefined, repo?: string, watched: readonly string[] = []): Promise<OutsideInput | undefined> {
   if (!task) return undefined
   // MOD-97 (#164): the listing is the card's repo's: another repo's task of the same id never lends it one
   // MOD-117 (#185): and a same-id card of another repo the session started in never lends one either
-  const saved = await storeGet<{ roots?: RootListing[] }>($, K.outside(task, await cardRepo($, repo)))
-  return Array.isArray(saved?.roots) ? { before: saved.roots, list: (root, since) => listRoot($, root, since) } : undefined
+  const saved = await storeGet<{ roots?: RootListing[]; file?: string }>($, K.outside(task, await cardRepo($, repo)))
+  const list = (root: string, since?: number) => listRoot($, root, since)
+  if (Array.isArray(saved?.roots)) return { before: saved.roots, list }
+  if (typeof saved?.file !== 'string') return undefined
+  const file = saved.file
+  const unread = (why: string): OutsideInput => ({ before: (watched.length > 0 ? watched : [file]).map(root => ({ root, error: `the listing file ${file} ${why}` })), list })
+  const text = await readText($, file)
+  if (text === undefined) return unread('is missing or unreadable')
+  try {
+    const parsed = JSON.parse(text) as unknown
+    return Array.isArray(parsed) ? { before: parsed as RootListing[], list } : unread('does not hold a listing')
+  } catch {
+    return unread('does not hold a listing')
+  }
+}
+
+/**
+ * MOD-186: drops a listing file the mod wrote. `$.fs` has no delete, so the file is emptied (a few bytes stay on disk);
+ * only a file directly under the session's `.delegation/outside/` folder is touched. A failure is a debug line, never a stop.
+ */
+async function dropOutsideFile($: Host, file: unknown): Promise<void> {
+  if (typeof file !== 'string') return
+  try {
+    const root = await sessionRootOf($)
+    if (!isOutsideFile(root, file) || !(await exists($, file))) return
+    await $.fs.write(file, '')
+  } catch (err) {
+    debug($, `outside listing file ${file} not removed: ${String(err)}`)
+  }
 }
 
 /** The system temp dir (TMPDIR), or '' when the environment has none. */
@@ -4359,7 +4394,9 @@ async function recordOutside($: Host, task: string, briefPath: string, reused: b
   const key = K.outside(task, await cardRepo($, repo))
   // MOD-97 (#164): a brief that names no outside root leaves no listing behind for its verifier to read
   if (roots.length === 0) {
-    if ((await storeGet<unknown>($, key)) != null) {
+    const had = await storeGet<{ file?: string }>($, key)
+    if (had != null) {
+      await dropOutsideFile($, had.file)
       try {
         await $.store.delete(key)
       } catch (err) {
@@ -4371,8 +4408,20 @@ async function recordOutside($: Host, task: string, briefPath: string, reused: b
   if (reused && (await storeGet<unknown>($, key)) != null) return `outside: the listing of ${roots.join(', ')} taken at the first dispatch stands`
   const listed: RootListing[] = []
   for (const root of roots) listed.push(await listRoot($, root))
-  await storeSet($, key, { at: await now($), briefPath, roots: listed })
   const files = listed.reduce((n, l) => n + ('entries' in l ? l.entries.length : 0), 0)
+  // MOD-186: the listing is a file under the session's .delegation/outside/, so the store holds a pointer only
+  const sessionDir = await sessionRootOf($)
+  const file = sessionDir !== '' ? outsideFilePath(sessionDir, key.slice(K.outside('').length)) : undefined
+  let wrote = false
+  if (file !== undefined) {
+    try {
+      await $.fs.write(file, JSON.stringify(listed))
+      wrote = true
+    } catch (err) {
+      debug($, `outside listing file ${file} not written, the listing stays in the store: ${String(err)}`)
+    }
+  }
+  await storeSet($, key, wrote && file !== undefined ? { at: await now($), briefPath, file, files } : { at: await now($), briefPath, roots: listed })
   const bad = listed.filter((l): l is { root: string; error: string } => 'error' in l)
   const marks = listed.filter((l): l is { root: string; since: number; files: number } => 'since' in l)
   return `outside: listed ${roots.join(', ')} before the run (${files} file${files === 1 ? '' : 's'})${bad.length > 0 ? `; ${bad.map(b => `${b.root} could not be listed: ${b.error}`).join('; ')}, so scope will be unchecked there` : ''}${marks.map(m => `; ${m.root} holds more than ${OUTSIDE_MAX_ENTRIES} files, so changes there will be found by modification time`).join('')}`
@@ -4475,7 +4524,7 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const absScope = contract.scope.filter(isAbsolute)
   const absForbid = contract.forbid.filter(isAbsolute)
   const watched = outsideRoots(absScope, absForbid)
-  const baseline = await outsideFor($, task, repo)
+  const baseline = await outsideFor($, task, repo, watched)
   // MOD-185: the mod's .delegation/ and the cards folder in the session checkout are written during a run, never by the worker
   const outside = await outsideCheck(absScope, absForbid, baseline, [`${root.replace(/\/+$/, '')}/.delegation`, cardDirPath(root, cfg.cardDir)])
   const artefacts = await artefactsCheck(reportArtefacts(report.artefacts), contract.outdir ?? scopeRoot, path => statArtefact($, path))

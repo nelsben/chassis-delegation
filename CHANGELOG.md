@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **A `repo=none` card's outside listing is kept in a file under the session's `.delegation/outside/` folder, not in the store, so several research cards in flight no longer push the store past its 4 MiB cap (MOD-186).** The store key holds only a pointer (`at`, `briefPath`, `file`, `files`); the verdict reads the roots from the file, and a record written by an older version with the roots inline still verifies. A missing or unreadable file leaves the scope claim unchecked, naming the file. When retention prunes the record, the file goes with it (the host's file API has no delete, so the file is emptied).
 - **A `repo=none` card's outside check no longer counts what the mod and the lead write in the session checkout (MOD-185).** A forbid naming the session checkout was refuted by the ledger row at dispatch, a brief the lead edited mid-run or a new card file. Changed paths under the checkout's `.delegation/` folder and its configured cards folder are now ignored for scope and forbid alike, and the claim says `ignored <n> path(s) the mod and the lead write`; every other path is judged as before.
 
 ## 0.9.31 — 2026-10-25

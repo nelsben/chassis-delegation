@@ -94,7 +94,7 @@ Only the engine has tiering, the queue, `maxWorkers`, the respawn ladder, spend 
 | `delegation.tasks.<ID>@<repo>` | every attempt, with `here` and `files` for repo=here, `adhoc: true` for a cardless one, `requestedAlias: fable` when opus spawned, `sha` and `metrics` (the report's `metrics=`) once judged, a reviewer's `review` counts; a `work-present` attempt is kind `verify` |
 | `delegation.recent.<session>` | the verdict lines |
 | `delegation.handoff.<brief>` | the folder `/dispatch` prepared for the Agent call |
-| `delegation.outside.<ID>@<repo>` | the listing of a research card's absolute roots, the "before" of the outside delta |
+| `delegation.outside.<ID>@<repo>` | a pointer (`{ at, briefPath, file, files }`) to the listing of a research card's absolute roots, the "before" of the outside delta; the listing itself is the JSON file under the session's `.delegation/outside/` folder, so several cards in flight never fill the store (a record from an older version may still carry the roots inline, and is read as before) |
 | `delegation.taskRepo.<ID>@<session repo>` | the repo `/dispatch` remembered for the id |
 | `delegation.effort.<ID>@<repo>`, `.classifier.<ID>@<repo>`, `.mergePrep.<ID>@<repo>` | the card's effort, the classifier's call, the merge preparation |
 | `delegation.posted.<ID>@<repo>:<lineage>:<attempt>`, `.postedRow.…` | the attempt's verdict row, posted once |
@@ -107,6 +107,8 @@ Only the engine has tiering, the queue, `maxWorkers`, the respawn ladder, spend 
 - an open task is never touched;
 - over **3.5 MiB**, closed records go too, oldest first, until under **3 MiB**;
 - session-level keys (`delegation.recent`, `.debrief`, `.friction`, `.brain`, `.adhoc`, `.evals`) are kept and capped where written (`recent` 50 lines, `friction` 100, `adhoc` 200, `evals` 100).
+
+A research card's listing file under `.delegation/outside/` goes with its `.outside` record (the host's file API has no delete, so the file is emptied); a failure there is a debug line, never a stop.
 
 A prune writes `store: pruned <n> records (<x> MiB to <y> MiB of 4 MiB)` at session start. `/delegation` shows `store: <x> MiB of 4 MiB`.
 

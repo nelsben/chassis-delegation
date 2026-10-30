@@ -4743,6 +4743,7 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
   ].join('\n')
   const OPTIONS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full' as const, gateMap: '{"check":"checker {outdir}"}' }
   const BRIEF = `${SCRATCH}/briefs/OPS-9.brief.md`
+  const OUTSIDE_FILE = `${ROOT}/.delegation/outside/OPS-9_${ROOT.replace(/[^A-Za-z0-9._-]/g, '_')}.json`
   const run = (argv: string[]): RunAnswer | undefined => (argv[0] === 'checker' ? { exitCode: 0, stdout: 'checked\n' } : undefined)
   const REPORT = (extra: string) => `[[report v=1 task=OPS-9 subtask=main branch=none pr=none sha=none gate=pass red=none files=none ${extra}]]`
   // the harness answers the shipped template with a stub; a template of the test's own shows the sections
@@ -4770,12 +4771,12 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     expect(brief).toContain(`repo=none in ${ROOT}`)
     expect(brief).toContain('Output folder: /out/hair')
     expect(brief).toContain('Scratch: /tmp/td/chassis-delegation/OPS-9 (never in the repo)')
-    expect(w.store.get(`delegation.outside.OPS-9@${ROOT}`)).toMatchObject({
-      roots: [
-        { root: '/out/hair', entries: [{ path: 'old.txt', size: 1, mtimeMs: 0 }] },
-        { root: '/out/notes', entries: [] },
-      ],
-    })
+    // MOD-186: the store holds a pointer; the listing is the file under .delegation/outside/
+    expect(w.store.get(`delegation.outside.OPS-9@${ROOT}`)).toMatchObject({ file: OUTSIDE_FILE, files: 1 })
+    expect(JSON.parse(w.files.get(OUTSIDE_FILE) ?? 'null')).toEqual([
+      { root: '/out/hair', entries: [{ path: 'old.txt', size: 1, mtimeMs: 0 }] },
+      { root: '/out/notes', entries: [] },
+    ])
     await brainSpawn($, out)
     expect(w.spawns[0]).toMatchObject({ cwd: ROOT })
   })
@@ -4898,6 +4899,68 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     expect(row).not.toContain('claim scope: held')
   })
 
+  describe('MOD-186: the listing is a file, not a store value', () => {
+    const forbidCard = CARD.replace('forbid: []', 'forbid: [/secret/**]')
+    const many = (on: Parameters<typeof world>[0], card = forbidCard, extra: Record<string, string> = {}) => {
+      const files: Record<string, string> = { [`${ROOT}/agents/tasks/${NAME}`]: card, [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ briefTemplate: '/tpl/brief.md' }), '/tpl/brief.md': TEMPLATE, '/secret/keep.txt': 'k', ...extra }
+      for (let i = 0; i < 2000; i++) files[`/out/hair/d${i % 20}/some-long-file-name-${i}.txt`] = 'x'
+      return world(on, { files, dirs: { [`${ROOT}/agents/tasks`]: [NAME] }, trees: ['/out/hair', '/out/notes', '/secret'], run, agentId: 'agent-r', store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    }
+
+    test('2000 files: the store value is under 1000 characters and the file holds every entry; a forbid touch is still refuted', { options: OPTIONS }, async ($, on) => {
+      const w = many(on)
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(commandInput('OPS-9'))).text)
+      const saved = w.store.get(`delegation.outside.OPS-9@${ROOT}`)
+      expect(JSON.stringify(saved).length).toBeLessThan(1000)
+      expect(saved).toMatchObject({ file: OUTSIDE_FILE, files: 2001, briefPath: BRIEF })
+      const listed = JSON.parse(w.files.get(OUTSIDE_FILE) ?? '[]') as { root: string; entries: unknown[] }[]
+      expect(listed.find(l => l.root === '/out/hair')?.entries).toHaveLength(2000)
+      await brainSpawn($, out)
+      w.files.set('/secret/keep.txt', 'changed')
+      w.files.set('/out/hair/model.glb', 'glTF')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      expect(delivered(w)).toContain('claim scope: failed — touches forbid path: /secret/keep.txt (outside delta)')
+    })
+
+    test('a store value from an older version, with roots inline and no file, still verifies', { options: OPTIONS }, async ($, on) => {
+      const w = many(on)
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      const listed = JSON.parse(w.files.get(OUTSIDE_FILE) ?? '[]')
+      w.store.set(`delegation.outside.OPS-9@${ROOT}`, { at: 1, briefPath: BRIEF, roots: listed })
+      w.files.delete(OUTSIDE_FILE)
+      w.files.set('/secret/keep.txt', 'changed')
+      w.files.set('/out/hair/model.glb', 'glTF')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      expect(delivered(w)).toContain('claim scope: failed — touches forbid path: /secret/keep.txt (outside delta)')
+    })
+
+    test('a missing listing file leaves the scope claim unchecked, naming the file', { options: OPTIONS }, async ($, on) => {
+      const w = many(on)
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      w.files.delete(OUTSIDE_FILE)
+      w.files.set('/out/hair/model.glb', 'glTF')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      const row = delivered(w)
+      expect(row).toContain('claim scope: unchecked — ')
+      expect(row).toContain(OUTSIDE_FILE)
+      expect(row).not.toContain('claim scope: held')
+    })
+
+    test('a brief that names no outside root drops the key and empties its file', { options: OPTIONS }, async ($, on) => {
+      const w = many(on)
+      await $.session.start(sessionStart)
+      await $.command.run(commandInput('OPS-9'))
+      expect(w.files.get(OUTSIDE_FILE)).toBeTruthy()
+      w.files.set(`${ROOT}/agents/tasks/${NAME}`, CARD.replace('scope: [/out/hair/**, /out/notes/*.md]', 'scope: [hooks/**]'))
+      await $.command.run(commandInput('OPS-9'))
+      expect(w.store.has(`delegation.outside.OPS-9@${ROOT}`)).toBe(false)
+      expect(w.files.get(OUTSIDE_FILE) ?? '').toBe('')
+    })
+  })
+
   describe('MOD-85: a forbid root past 10000 files is watched by modification time', () => {
     const BIG_CARD = CARD.replace('scope: [/out/hair/**, /out/notes/*.md]', 'scope: [/out/hair/**]').replace('forbid: []', 'forbid: [/big/**]')
     const bigSetup = (on: Parameters<typeof world>[0]) => {
@@ -4911,7 +4974,7 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
       await $.session.start(sessionStart)
       const out = String((await $.command.run(commandInput('OPS-9'))).text)
       expect(out).toContain('/big holds more than 10000 files, so changes there will be found by modification time')
-      const saved = w.store.get(`delegation.outside.OPS-9@${ROOT}`) as { roots: Record<string, unknown>[] }
+      const saved = { roots: JSON.parse(w.files.get(OUTSIDE_FILE) ?? '[]') as Record<string, unknown>[] }
       expect(saved.roots.find(r => r.root === '/big')).toEqual({ root: '/big', since: 1_000_000, files: 10001 })
       await brainSpawn($, out)
       w.files.set('/out/hair/model.glb', 'glTF')
@@ -5957,6 +6020,26 @@ describe('MOD-89 (#157, #159): the store stays under the host cap', () => {
     const rows = w.appended.length
     await $.session.start(sessionStart)
     expect(w.appended.slice(rows).some(a => a.text.startsWith('store: pruned'))).toBe(false)
+  })
+
+  test('MOD-186: pruning a closed task\'s outside record empties the listing file it names, and only under .delegation/outside/', async ($, on) => {
+    const old = NOW - 8 * DAY
+    const file = `${ROOT}/.delegation/outside/T-OLD.json`
+    const w = world(on, {
+      files: { [file]: '[{"root":"/x","entries":[]}]', '/elsewhere/keep.json': 'keep' },
+      store: {
+        'delegation.tasks.T-OLD': attemptRec('T-OLD', 'k-old', old, 'consistent'),
+        'delegation.spawn.k-old': spawnRec('k-old', 'T-OLD', old, { verdictAttempt: 1 }),
+        'delegation.outside.T-OLD': { at: old, briefPath: '/b', file, files: 1 },
+        'delegation.tasks.T-ODD': attemptRec('T-ODD', 'k-odd', old, 'consistent'),
+        'delegation.spawn.k-odd': spawnRec('k-odd', 'T-ODD', old, { verdictAttempt: 1 }),
+        'delegation.outside.T-ODD': { at: old, briefPath: '/b', file: '/elsewhere/keep.json', files: 1 },
+      },
+    })
+    await $.session.start(sessionStart)
+    expect([...w.store.keys()].some(k => k.startsWith('delegation.outside.'))).toBe(false)
+    expect(w.files.get(file)).toBe('')
+    expect(w.files.get('/elsewhere/keep.json')).toBe('keep')
   })
 
   test('a spawn record no longer keeps the prompt text', async ($, on) => {
