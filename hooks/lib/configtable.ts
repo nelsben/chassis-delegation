@@ -71,6 +71,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['effortNudge', 'Guards and nudges for the brain', 'Say on a row when a worker hands back cards to judge, and when that is over', 'map', 'repo', ''],
   ['freshSessionTokens', 'Guards and nudges for the brain', 'Suggest a fresh session once this many tokens are in use; 0 turns it off', 'tokens', 'user', 400000],
   ['wakeOnVerdict', 'Guards and nudges for the brain', 'Start a new turn on its own when a worker\'s result has been judged', 'bool', 'user', false],
+  ['landNudge', 'Guards and nudges for the brain', 'Remind the main assistant to file work you describe, and to finish a feature', 'bool', 'user', true],
   ['readyFallbackMinutes', 'Guards and nudges for the brain', 'Minutes before a waiting task is started for you if you have not started it', 'minutes', 'user', 10],
   ['waitStallMin', 'Guards and nudges for the brain', 'Minutes a worker may wait before the mod says it is stalled; 0 turns it off', 'minutes', 'user', 20],
   ['classifierSecondOpinion', 'Guards and nudges for the brain', 'In a dry run, also ask a classifier how hard a task is and show both answers', 'bool', 'user', true],

@@ -276,10 +276,10 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
     expect(await say($, 'modelGlyphs')).not.toContain('in effect')
   })
 
-  test('nothing set: the count line, "all 61 at their defaults", the how-to line, nothing else', async ($, on) => {
+  test('nothing set: the count line, "all 62 at their defaults", the how-to line, nothing else', async ($, on) => {
     bare(on)
     await $.session.start(sessionStart)
-    expect((await say($, '')).split('\n')).toEqual(['chassis-delegation: 61 options, 0 set (0 repo, 0 yours, 0 host, 0 locked)', 'all 61 at their defaults', HOW])
+    expect((await say($, '')).split('\n')).toEqual(['chassis-delegation: 62 options, 0 set (0 repo, 0 yours, 0 host, 0 locked)', 'all 62 at their defaults', HOW])
   })
 
   test('the short view lists only what is set, by group, one line each, with the source; any case finds the name', async ($, on) => {
@@ -288,7 +288,7 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
     expect(await say($, 'maxworkers 4')).toBe('maxWorkers = 4 (yours)')
     expect(await say($, 'DEBRIEFIDLEMINUTES 45')).toBe('debriefIdleMinutes = 45 min (yours)')
     expect((await say($, '')).split('\n')).toEqual([
-      'chassis-delegation: 61 options, 3 set (1 repo, 2 yours, 0 host, 0 locked)',
+      'chassis-delegation: 62 options, 3 set (1 repo, 2 yours, 0 host, 0 locked)',
       'Workers and models',
       ' maxWorkers = 4 (yours)',
       'Checking the work',
