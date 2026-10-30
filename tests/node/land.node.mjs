@@ -112,3 +112,12 @@ describe('MOD-193: parsePlan', () => {
     }
   })
 })
+
+describe('MOD-198: issueLineOf', () => {
+  test('reads the number and url back; the last matching line wins; else undefined', async () => {
+    const { issueLineOf } = await lib()
+    expect(issueLineOf('body\n\nissue: #50 https://github.com/o/r/issues/50\n')).toEqual({ number: 50, url: 'https://github.com/o/r/issues/50' })
+    expect(issueLineOf('issue: #1 https://github.com/o/r/issues/1\nissue: #2 https://github.com/o/r/issues/2\n')).toEqual({ number: 2, url: 'https://github.com/o/r/issues/2' })
+    expect(issueLineOf('no issue here\nissue: #x https://github.com/o/r/issues/5\n')).toBe(undefined)
+  })
+})

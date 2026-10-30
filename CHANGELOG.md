@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A `land_plan` retry with `confirm: true` resumes instead of re-filing (MOD-198).** An item whose landed file already ends in an `issue: #n url` line and whose body is unchanged is reused: it is listed as `already filed #n url title`, its number is taken from that line (the feature's becomes `--parent` for the rest), no `-2` copy is written and no second issue is created. When a create fails, the issues filed so far (this call's and earlier ones) are still added to the Project before the failure text is returned.
+
 ### Added
 
 - **A recorded worker's (or reviewer's) Bash is denied any `gh` command that writes to GitHub (MOD-197).** Closing, editing or filing issues, merging or editing PRs, writing to the Project and a mutating `gh api` are the brain's; reads (`gh issue view`, `gh pr list`) pass. It rides the `gitGuard` switch, and the brain and ad hoc agents are untouched. The merge allowlist now passes the one read-only `gh issue view` shape MOD-195 needs, so `/delegation merge --finish` no longer lifts its merge context around that read.

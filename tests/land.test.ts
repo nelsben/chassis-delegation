@@ -228,4 +228,39 @@ describe('MOD-193: land_plan', () => {
     expect(out).toContain('boom: rate limited')
     expect(gh(w).filter((a: string[]) => a[2] === 'create')).toHaveLength(3)
   })
+
+  test('MOD-198: a retry after a failed create reuses the filed feature, files the rest and adds the first call\'s issues to the project', async ($, on) => {
+    let mode: 'fail' | 'ok' = 'fail'
+    let creates = 0
+    let n = 49
+    const run = async (argv: string[]) => {
+      if (argv[0] !== 'gh') return undefined
+      if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
+      creates++
+      if (mode === 'fail' && creates === 2) return { exitCode: 1, stdout: '', stderr: 'boom: rate limited' }
+      n++
+      return { exitCode: 0, stdout: `https://github.com/o/r/issues/${n}\n` }
+    }
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    const u = (k: number) => `https://github.com/o/r/issues/${k}`
+    const first = text(await planTool($, plan({ confirm: true })))
+    expect(first).toContain('not filed: Fix header')
+    expect(gh(w).filter((a: string[]) => a[1] === 'project')).toEqual([['gh', 'project', 'item-add', '1', '--owner', 'o', '--url', u(50)]])
+    expect(first).toContain('added to project o/1')
+    mode = 'ok'
+    w.runs.length = 0
+    const out = text(await planTool($, plan({ confirm: true })))
+    expect(gh(w).filter((a: string[]) => a[2] === 'create')).toEqual([
+      ['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Fix header', '--label', 'type:task', '--parent', '50', '--body-file', `${LANDED}/fix-header.md`],
+      ['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Fix footer', '--label', 'type:bug', '--parent', '50', '--body-file', `${LANDED}/fix-footer.md`],
+    ])
+    expect([...w.files.keys()].filter(k => k.startsWith(LANDED) && /-2\.md$/.test(k))).toEqual([])
+    const lines = out.split('\n')
+    const at = lines.indexOf(`already filed #50 ${u(50)} Export rework`)
+    expect(at).toBeGreaterThan(-1)
+    expect(lines[at + 1]).toBe(`filed #51 ${u(51)} Fix header`)
+    expect(lines[at + 2]).toBe(`filed #52 ${u(52)} Fix footer`)
+    expect(out).toContain('tree: #50 with 2 tasks')
+  })
 })
