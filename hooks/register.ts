@@ -206,7 +206,7 @@ import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
-import { doneTasks, freeName, issueUrlOf, LAND_TOOL, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
+import { doneTasks, freeName, issueUrlOf, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
@@ -3652,24 +3652,119 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
     : `origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); no gh line to print`
   const hintLine = hint ? [`parent hint: #${hint.parent} (from ${hint.card})`] : []
   if (a.dryRun || !ownerRepo) return [file, ghLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
-  const created = await run($, ['gh', 'issue', 'create', '--repo', ownerRepo, '--title', a.title, '--label', `type:${a.type}`, ...(a.parent !== undefined ? ['--parent', String(a.parent)] : []), '--body-file', file], { cwd: root, timeoutMs: 60000 })
-  const issue = created.ok && created.exitCode === 0 ? issueUrlOf(created.stdout, ownerRepo) : undefined
-  if (!issue) {
-    const why = (created.ok ? created.stderr || created.stdout : created.why).trim().slice(0, 400)
-    return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${why === '' ? '(nothing on stderr)' : why}`, ...hintLine].join('\n')
-  }
+  const r = await fileOne($, { root, ownerRepo, file, body, title: a.title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
+  if ('failed' in r) return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...hintLine].join('\n')
+  return [file, `filed #${r.issue.number} ${r.issue.url}`, ...(await addToProject($, root, r.issue.url)), ...hintLine].join('\n')
+}
+
+/** MOD-193: files one landed body with gh issue create, writes `issue: #n url` back, and adds it to the configured project. Shared by land and land_plan. */
+async function fileOne($: Host, o: { root: string; ownerRepo: string; file: string; body: string; title: string; type: string; parent?: number }): Promise<{ failed: string } | { issue: { url: string; number: number } }> {
+  const created = await run($, ['gh', 'issue', 'create', '--repo', o.ownerRepo, '--title', o.title, '--label', `type:${o.type}`, ...(o.parent !== undefined ? ['--parent', String(o.parent)] : []), '--body-file', o.file], { cwd: o.root, timeoutMs: 60000 })
+  const issue = created.ok && created.exitCode === 0 ? issueUrlOf(created.stdout, o.ownerRepo) : undefined
+  if (!issue) return { failed: (created.ok ? created.stderr || created.stdout : created.why).trim().slice(0, 400) }
   try {
-    await $.fs.write(file, `${body.replace(/\n*$/, '\n')}issue: #${issue.number} ${issue.url}\n`)
+    await $.fs.write(o.file, `${o.body.replace(/\n*$/, '\n')}issue: #${issue.number} ${issue.url}\n`)
   } catch (err) {
-    debug($, `land: issue number not written back to ${file}: ${String(err)}`)
+    debug($, `land: issue number not written back to ${o.file}: ${String(err)}`)
   }
+  return { issue }
+}
+
+/** MOD-193: adds an issue to the configured project; the one line it reports, or none when no project is set. */
+async function addToProject($: Host, root: string, url: string): Promise<string[]> {
   const project = parseProject(cfg.project)
-  let projectLine: string[] = []
-  if (project) {
-    const added = await run($, ['gh', 'project', 'item-add', String(project.number), '--owner', project.owner, '--url', issue.url], { cwd: root, timeoutMs: 60000 })
-    projectLine = added.ok && added.exitCode === 0 ? [`added to project ${project.owner}/${project.number}`] : [`not added to project ${project.owner}/${project.number}: ${(added.ok ? added.stderr || added.stdout : added.why).trim().slice(0, 400)}`]
+  if (!project) return []
+  const added = await run($, ['gh', 'project', 'item-add', String(project.number), '--owner', project.owner, '--url', url], { cwd: root, timeoutMs: 60000 })
+  return added.ok && added.exitCode === 0 ? [`added to project ${project.owner}/${project.number}`] : [`not added to project ${project.owner}/${project.number}: ${(added.ok ? added.stderr || added.stdout : added.why).trim().slice(0, 400)}`]
+}
+
+/**
+ * MOD-193: the land_plan tool. Parses and checks the whole plan first (nothing is written when it errors), writes every body,
+ * and files the tree only with confirm: true: the feature, then each task under it, stopping at the first create that fails.
+ */
+async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<string> {
+  if ('error' in parsed) return parsed.error
+  await loadRepoConfig($)
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const cardDir = cardDirPath(root, cfg.cardDir)
+  const found: LandCard[] = []
+  try {
+    for (const e of await $.fs.list(cardDir)) {
+      if (!e.name.endsWith('.md')) continue
+      const t = await readText($, `${cardDir}/${e.name}`)
+      const c = t === undefined ? undefined : parseCard(t)
+      if (c && !('error' in c)) found.push({ id: c.id, title: c.title, status: c.status, parent: c.fields.parent, scope: c.scope })
+    }
+  } catch {
+    // no card folder: no open cards
   }
-  return [file, `filed #${issue.number} ${issue.url}`, ...projectLine, ...hintLine].join('\n')
+  const open = openCards(found, doneTasks((await readText($, `${root}/${LEDGER_FILE}`)) ?? ''))
+  const wantName = defaultBranchOf((cfg.baseRef ?? '').trim())
+  const def = wantName !== '' && !isSha(wantName) ? wantName : 'main'
+  const rules = await redactRules($)
+  const folder = `${root}/.delegation/landed`
+  const taken = new Set<string>()
+  try {
+    for (const e of await $.fs.list(folder)) taken.add(e.name)
+  } catch {
+    // the folder is not there yet
+  }
+  const used = new Set<string>()
+  const items: { item: PlanItem; isFeature: boolean; file: string; body: string }[] = []
+  for (const [i, item] of [parsed.feature, ...parsed.tasks].entries()) {
+    const body = redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, cards: open.map(c => ({ id: c.id, title: c.title })), defaultBranch: def }), rules)
+    const slug = slugOf(item.title)
+    let name = ''
+    // the same slug file is reused when its content is unchanged and it carries no issue: line
+    for (let n = 1; ; n++) {
+      const cand = n === 1 ? `${slug}.md` : `${slug}-${n}.md`
+      if (used.has(cand)) continue
+      if (!taken.has(cand) && !(await exists($, `${folder}/${cand}`))) {
+        name = cand
+        break
+      }
+      if ((await readText($, `${folder}/${cand}`)) === body) {
+        name = cand
+        break
+      }
+    }
+    used.add(name)
+    items.push({ item, isFeature: i === 0, file: `${folder}/${name}`, body })
+  }
+  for (const it of items) {
+    try {
+      await $.fs.write(it.file, it.body)
+    } catch (err) {
+      return `land_plan: ${it.file} not written: ${String(err)}`
+    }
+  }
+  const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
+  const ownerRepo = ownerRepoOf(origin ?? '')
+  landRepo = ownerRepo ?? ''
+  sessionRoot = root
+  const tree = [`feature: ${parsed.feature.title} [${parsed.feature.paths.join(', ')}]`, ...parsed.tasks.map(t => `  task: ${t.title} [${t.paths.join(', ')}]`)]
+  const written = ['files written:', ...items.map(it => `  ${it.file}`)]
+  if (!parsed.confirm || !ownerRepo) {
+    const why = ownerRepo ? [] : [`origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); nothing can be filed`]
+    return [...tree, ...written, ...why, 'nothing filed: call land_plan again with confirm: true once the person says yes'].join('\n')
+  }
+  const filed: string[] = []
+  const issues: { number: number; url: string; title: string }[] = []
+  let featureNumber = 0
+  for (const [i, it] of items.entries()) {
+    const r = await fileOne($, { root, ownerRepo, file: it.file, body: it.body, title: it.item.title, type: it.item.type, ...(it.isFeature ? {} : { parent: featureNumber }) })
+    if ('failed' in r) {
+      return [...filed, ...items.slice(i).map(x => `not filed: ${x.item.title}`), `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`].join('\n')
+    }
+    if (it.isFeature) featureNumber = r.issue.number
+    filed.push(`filed #${r.issue.number} ${r.issue.url} ${it.item.title}`)
+    issues.push({ ...r.issue, title: it.item.title })
+  }
+  const lines = []
+  for (const i of issues) for (const l of await addToProject($, root, i.url)) lines.push(l.startsWith('added') ? l : `${i.title}: ${l}`)
+  const failures = lines.filter(l => !l.startsWith('added'))
+  const addedLine = lines.length > 0 && failures.length === 0 ? [lines[0] as string] : []
+  return [...tree, ...written, ...filed, ...addedLine, ...failures, `tree: #${featureNumber} with ${parsed.tasks.length} tasks`].join('\n')
 }
 
 async function redactRules($: Host): Promise<RedactRules> {
@@ -8032,6 +8127,11 @@ export const register: Register = (on, opts) => {
     } catch (err) {
       debug($, `the land tool was not registered: ${String(err)}`)
     }
+    try {
+      await $.tool.register({ name: LAND_PLAN_TOOL.name, description: LAND_PLAN_TOOL.description, inputSchema: LAND_PLAN_TOOL.inputSchema })
+    } catch (err) {
+      debug($, `the land_plan tool was not registered: ${String(err)}`)
+    }
     // MOD-28: the load. The templates are read here, once, with the code that renders them.
     await loadedTemplates($)
     // MOD-89: a new session counts its own refused writes, and starts with the store pruned
@@ -8128,6 +8228,7 @@ export const register: Register = (on, opts) => {
   on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async ($, e) => ({ result: await runSetup($, true, pathOfCall(e)) }))
   // MOD-75: the merge tool, the command's second door
   on('tool.call', { tool: 'mcp__chassis-delegation__land' as never }, async ($, e) => ({ result: await landWith($, parseLandTool(e as unknown as Record<string, unknown>)) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__land_plan' as never }, async ($, e) => ({ result: await planWith($, parsePlan(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => ({ result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------

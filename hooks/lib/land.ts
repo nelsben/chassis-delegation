@@ -152,3 +152,81 @@ export function freeName(slug: string, taken: ReadonlySet<string>): string {
   while (taken.has(`${slug}-${n}.md`)) n++
   return `${slug}-${n}.md`
 }
+
+export type PlanItem = { title: string; type: LandType; paths: string[]; note?: string }
+export type Plan = { feature: PlanItem; tasks: PlanItem[]; confirm: boolean }
+
+/** MOD-193: the land_plan tool. */
+export const LAND_PLAN_TOOL = {
+  name: 'land_plan',
+  description:
+    'Lands a settled plan on GitHub as a sub-issue tree: one feature (or epic) and its tasks, each task under the feature, each added to the configured Project. Plan in chat first. Call without confirm to show the tree: every body is written under .delegation/landed/ and nothing is filed. Show that tree to the person, and call again with confirm: true only after the person says yes in their own words. Every task path must sit inside the feature paths, or the whole call is refused before anything is written.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      feature: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'The feature issue title.' },
+          type: { type: 'string', enum: ['feature', 'epic'], description: 'Default feature.' },
+          paths: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'The repo paths the whole feature may touch.' },
+          note: { type: 'string', description: 'Optional: text for the top of the body.' },
+        },
+        required: ['title', 'paths'],
+        additionalProperties: false,
+      },
+      tasks: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 30,
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'The task issue title.' },
+            type: { type: 'string', enum: ['story', 'task', 'bug', 'spike'], description: 'Default task.' },
+            paths: { type: 'array', items: { type: 'string' }, minItems: 1, description: "The repo paths this task touches; each must sit inside the feature's paths." },
+            note: { type: 'string', description: 'Optional: text for the top of the body.' },
+          },
+          required: ['title', 'paths'],
+          additionalProperties: false,
+        },
+      },
+      confirm: { type: 'boolean', description: 'true only after the person has said yes to the tree shown; otherwise the call files nothing.' },
+    },
+    required: ['feature', 'tasks'],
+    additionalProperties: false,
+  },
+} as const
+
+const planItem = (raw: unknown, what: string, types: readonly LandType[], dflt: LandType): PlanItem | string => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return `land_plan: ${what} must be an object`
+  const o = raw as Record<string, unknown>
+  const title = typeof o.title === 'string' ? o.title.replace(/\s+/g, ' ').trim() : ''
+  if (title === '') return `land_plan: ${what} needs a title`
+  let type = dflt
+  if (o.type !== undefined && o.type !== null) {
+    if (typeof o.type !== 'string' || !types.includes(o.type as LandType)) return `land_plan: ${what} "${title}" has type ${JSON.stringify(o.type)}; use one of ${types.join(', ')}`
+    type = o.type as LandType
+  }
+  const paths = Array.isArray(o.paths) ? o.paths.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(p => p !== '') : []
+  if (paths.length === 0) return `land_plan: ${what} "${title}" needs at least one path`
+  const note = typeof o.note === 'string' ? o.note.trim() : ''
+  return { title, type, paths, ...(note !== '' ? { note } : {}) }
+}
+
+/** The land_plan input as a normalised plan, or a one-line error. A task path outside the feature's paths is an error. */
+export function parsePlan(input: unknown): Plan | { error: string } {
+  const o = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
+  const feature = planItem(o.feature, 'feature', ['feature', 'epic'], 'feature')
+  if (typeof feature === 'string') return { error: feature }
+  if (!Array.isArray(o.tasks) || o.tasks.length < 1 || o.tasks.length > 30) return { error: 'land_plan: tasks must be a list of 1 to 30' }
+  const tasks: PlanItem[] = []
+  for (const [i, raw] of o.tasks.entries()) {
+    const t = planItem(raw, `task ${i + 1}`, ['story', 'task', 'bug', 'spike'], 'task')
+    if (typeof t === 'string') return { error: t }
+    const stray = t.paths.find(p => !contained(p, feature.paths))
+    if (stray !== undefined) return { error: `land_plan: task "${t.title}" path ${stray} is outside the feature paths (${feature.paths.join(', ')})` }
+    tasks.push(t)
+  }
+  return { feature, tasks, confirm: o.confirm === true }
+}

@@ -4,6 +4,7 @@
 
 ### Added
 
+- **A `land_plan` tool lands a feature and its tasks as a GitHub sub-issue tree in one call (MOD-193).** Every task's paths are checked inside the feature's paths before anything is written or filed. Without `confirm` it writes the bodies under `.delegation/landed/` and prints the tree; with `confirm: true`, given only after the person says yes in chat, it files the feature, then each task under it, and adds each issue to the Project. A failed create stops the run and lists what was filed. It uses the same allowlist shapes as `land`.
 - **`/delegation land` files the issue itself, and a `land` tool does the same (MOD-192).** After writing the landed body it runs `gh issue create` (label `type:<type>`, `--parent` when given), adds the issue to the Project named by the new `project` option (`<owner>/<number>`) with `gh project item-add`, and writes `issue: #<n> <url>` to the end of the landed file. `--dry-run` (tool: `dryRun`) keeps the print-only behaviour. The allowlist gains exactly two shapes for this, bound to the session's origin repo and the configured project. The `type:*` labels must exist in the repo.
 
 ## 0.9.33 — 2026-10-29

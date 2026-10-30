@@ -76,3 +76,39 @@ describe('MOD-190: open cards, parent hint, slug file', () => {
     expect(freeName('fix-it', new Set(['fix-it.md', 'fix-it-2.md']))).toBe('fix-it-3.md')
   })
 })
+
+describe('MOD-193: parsePlan', () => {
+  const ok = () => ({ feature: { title: ' Big  thing ', paths: ['src/**'] }, tasks: [{ title: 'A', paths: ['src/a.ts'] }, { title: 'B', type: 'bug', paths: ['src/x/b.ts'], note: 'n' }] })
+  test('a good plan is normalised with the default types', async () => {
+    const { parsePlan } = await lib()
+    const p = parsePlan(ok())
+    expect(p.error).toBe(undefined)
+    expect(p.feature).toEqual({ title: 'Big thing', type: 'feature', paths: ['src/**'] })
+    expect(p.tasks.map(t => t.type)).toEqual(['task', 'bug'])
+    expect(p.tasks[1].note).toBe('n')
+    expect(p.confirm).toBe(false)
+    expect(parsePlan({ ...ok(), confirm: true }).confirm).toBe(true)
+  })
+  test('a stray task path names the task, the path and the feature paths', async () => {
+    const { parsePlan } = await lib()
+    const r = parsePlan({ ...ok(), tasks: [{ title: 'Stray', paths: ['docs/z.md'] }] })
+    expect(r.error).toContain('Stray')
+    expect(r.error).toContain('docs/z.md')
+    expect(r.error).toContain('src/**')
+    expect(r.error.includes('\n')).toBe(false)
+  })
+  test('bad shapes are one-line errors', async () => {
+    const { parsePlan } = await lib()
+    const bad = [
+      {}, { ...ok(), feature: { title: '', paths: ['a'] } }, { ...ok(), feature: { title: 'F', paths: [] } },
+      { ...ok(), feature: { title: 'F', type: 'bug', paths: ['src/**'] } }, { ...ok(), tasks: [] },
+      { ...ok(), tasks: Array.from({ length: 31 }, (_, i) => ({ title: `t${i}`, paths: ['src/a'] })) },
+      { ...ok(), tasks: [{ title: 'A', type: 'epic', paths: ['src/a'] }] }, { ...ok(), tasks: [{ title: 'A', paths: [] }] },
+    ]
+    for (const b of bad) {
+      const r = parsePlan(b)
+      expect(typeof r.error).toBe('string')
+      expect(r.error.includes('\n')).toBe(false)
+    }
+  })
+})

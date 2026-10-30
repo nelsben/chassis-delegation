@@ -144,3 +144,88 @@ describe('MOD-192: land files the issue itself', () => {
     expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
   })
 })
+
+describe('MOD-193: land_plan', () => {
+  const planTool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land_plan', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const repoFile = (project?: string) => ({ [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards', ...(project ? { project } : {}) }) })
+  const fake = (failAt?: number) => {
+    let n = 49
+    let creates = 0
+    return async (argv: string[]) => {
+      if (argv[0] !== 'gh') return undefined
+      if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
+      creates++
+      if (creates === failAt) return { exitCode: 1, stdout: '', stderr: 'boom: rate limited' }
+      n++
+      return { exitCode: 0, stdout: `https://github.com/o/r/issues/${n}\n` }
+    }
+  }
+  const plan = (over: Record<string, unknown> = {}) => ({
+    feature: { title: 'Export rework', paths: ['src/export/**'] },
+    tasks: [
+      { title: 'Fix header', paths: ['src/export/a.ts'] },
+      { title: 'Fix footer', type: 'bug', paths: ['src/export/b.ts'] },
+    ],
+    ...over,
+  })
+  const gh = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh')
+
+  test('without confirm: bodies written, no gh, the tree shown', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: fake() })
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan()))
+    expect(gh(w)).toEqual([])
+    expect(w.files.get(`${LANDED}/export-rework.md`) ?? '').toContain('```scope\nsrc/export/**\n```')
+    expect(w.files.get(`${LANDED}/fix-header.md`) ?? '').toContain('```scope\nsrc/export/a.ts\n```')
+    expect(w.files.has(`${LANDED}/fix-footer.md`)).toBe(true)
+    expect(out).toContain('feature: Export rework [src/export/**]')
+    expect(out).toContain('  task: Fix header [src/export/a.ts]')
+    expect(out).toContain('nothing filed: call land_plan again with confirm: true once the person says yes')
+  })
+
+  test('with confirm: feature first, tasks under it, then item-add per issue', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: fake() })
+    await $.session.start(sessionStart)
+    await planTool($, plan())
+    const out = text(await planTool($, plan({ confirm: true })))
+    const u = (n: number) => `https://github.com/o/r/issues/${n}`
+    expect(gh(w)).toEqual([
+      ['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Export rework', '--label', 'type:feature', '--body-file', `${LANDED}/export-rework.md`],
+      ['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Fix header', '--label', 'type:task', '--parent', '50', '--body-file', `${LANDED}/fix-header.md`],
+      ['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Fix footer', '--label', 'type:bug', '--parent', '50', '--body-file', `${LANDED}/fix-footer.md`],
+      ['gh', 'project', 'item-add', '1', '--owner', 'o', '--url', u(50)],
+      ['gh', 'project', 'item-add', '1', '--owner', 'o', '--url', u(51)],
+      ['gh', 'project', 'item-add', '1', '--owner', 'o', '--url', u(52)],
+    ])
+    expect([...w.files.keys()].filter(k => k.startsWith(LANDED))).toHaveLength(3)
+    expect(w.files.get(`${LANDED}/export-rework.md`) ?? '').toContain(`issue: #50 ${u(50)}`)
+    expect(out).toContain(`filed #50 ${u(50)} Export rework`)
+    expect(out).toContain(`filed #52 ${u(52)} Fix footer`)
+    expect(out).toContain('added to project o/1')
+    expect(out).toContain('tree: #50 with 2 tasks')
+  })
+
+  test('a task path outside the feature paths refuses before any gh or write', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: fake() })
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan({ tasks: [{ title: 'Stray one', paths: ['docs/other.md'] }], confirm: true })))
+    expect(out).toContain('Stray one')
+    expect(out).toContain('docs/other.md')
+    expect(out).toContain('src/export/**')
+    expect(gh(w)).toEqual([])
+    expect([...w.files.keys()].some(k => k.startsWith(LANDED))).toBe(false)
+  })
+
+  test('the second create failing lists #50 and #51, names the failed task and stops', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: fake(3) })
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan({ tasks: [{ title: 'T one', paths: ['src/export/a.ts'] }, { title: 'T two', paths: ['src/export/b.ts'] }, { title: 'T three', paths: ['src/export/c.ts'] }], confirm: true })))
+    expect(out).toContain('filed #50')
+    expect(out).toContain('filed #51')
+    expect(out).toContain('not filed: T two')
+    expect(out).toContain('not filed: T three')
+    expect(out).toContain('boom: rate limited')
+    expect(gh(w).filter((a: string[]) => a[2] === 'create')).toHaveLength(3)
+  })
+})
