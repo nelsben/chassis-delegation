@@ -6,6 +6,10 @@
 
 - **`landAuto` now defaults to off (MOD-208, #301).** A fresh install files nothing to GitHub without a yes: the `land` tool and `/delegation land` write the body, show the issue and print `nothing filed: landAuto is off; …`, and file only with `confirm: true` (`--confirm`). The land nudge says propose by default. To turn auto-filing back on, run `/delegation config landAuto on` (or set `landAuto` to true in the plugin options).
 
+### Documentation
+
+- **The card frontmatter and brief header fields the GitHub sync reads, for hand-written cards (MOD-209, #303).** `docs/contracts.md` gains `Fields the GitHub sync reads`: the exact syntax of `issue:`, `parent:`, `parentScope:`, `status:` and the brief's `parent_scope=`, which step reads each (dispatch and verdict comments, merge-finish closes of the task and parent, `scopeAmends within-parent`, `land --supersedes`), where a hand-written line is read differently from a `card` tool one, and a minimal card and header that get the full sync.
+
 ### Fixed
 
 - **A `land_plan` retry is keyed to the plan, not just the title (MOD-207).** Every landed file `land_plan` writes now ends (before any `issue:` line) with a `plan: <key>` line, the feature title's slug plus `-` plus the first 8 hex of a sha-256 of the sorted feature paths. A feature's earlier file is reused only under the same key and while its issue is OPEN; a task's only when its issue is OPEN and a sub-issue of this run's feature (read once with the existing `gh issue view` shape). A later plan with a task or feature of the same title files its own issues instead of attaching to the earlier plan's.
