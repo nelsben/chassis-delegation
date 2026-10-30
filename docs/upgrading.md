@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.35 to 0.9.36
+
+Land still files at once by default; `/delegation config landAuto off` makes it show the issue first and file only on confirm.
+Fixed: the gh guard reads the verb past `-R`/`--repo`, land titles redacted, bodies list only overlapping cards, land_plan retry matches by open issue, status comments not re-posted after a reload.
+Added: `landAuto`, the option that holds a land until the person says yes.
+Detail: [CHANGELOG 0.9.36](../CHANGELOG.md).
+
 ### From 0.9.34 to 0.9.35
 
 Merge `--finish` now closes the task's issue itself (and the parent when it is the last open task), and dispatch and the verdict comment on the card's issue.
