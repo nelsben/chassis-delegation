@@ -168,6 +168,89 @@ When only a forbidden file can fix a gate failure, do not touch it: hand back `g
 `approve the amend (append it to <brief>), then resume agent=<id> to make the fix; or refuse it`; the tier stays, and a
 spent budget still stops.
 
+## Fields the GitHub sync reads
+
+For a repo that writes its own cards and briefs. This is read from the code, not from the `card` tool's output: a
+hand-written card is read by the same parser (`parseCard`) as one the `card` tool writes, so a line that parses is read
+the same. What a hand-written card does not get is the `card` tool's checks on write (below).
+
+Every issue step needs the session root's `origin` to be a GitHub remote (`owner/name`) and the card's file to be named
+`<ID>-<anything>.md` in the card folder (a name that does not start with `<ID>-` is not found). With no GitHub origin
+the steps are silent.
+
+### Card frontmatter
+
+The frontmatter is the block between two `---` lines at the top. A key is `key: value` at the start of a line; a quoted
+value has its quotes removed; a line that is not `key: value` is skipped.
+
+| Key | Syntax | Read by | Hand-written vs the `card` tool |
+| --- | --- | --- | --- |
+| `id` | `id: ID` | everything; a card with no `id` is refused | same |
+| `status` | `status: queued` (or `claimed`) | `/dispatch` takes only `queued` or `claimed`; the retire check and `land` treat `merged` (and `landed`) as done | same; the tool writes `queued` |
+| `issue` | `issue: 12`, a whole number 1 or more, no `#`, no URL | dispatch "started" status comment and verdict comment (once per attempt, on that issue); merge finish: the close of the task issue (`gh issue close 12 --comment "merged in #<pr>"`, or `merged at <sha>`); the PR body's `Refs #<issue>` line (a reference, not a close) | same. `issue: #12` or `issue: abc` is not a whole number, so those steps read no issue and stay silent (no error). `/delegation tree` is looser: it accepts `#12`, so a card can show as matched in the tree and still get no status comment or close |
+| `parent` | `parent: 8`, a whole number 1 or more, no `#` | merge finish: the close of the parent (see below); the open-sibling rule when a new card is cut under that parent; the `land` parent hint; the parent nudge | same parse. The tool also adds the scope of the parent's open sibling cards to `forbid`; a hand-written card gets no such forbid |
+| `parentScope` | `parentScope: [hooks/**, docs/**]`, or a block list, or a scalar split on `,` and `;` | `/dispatch` copies it to the brief header as `parent_scope=` | same parse, and it is read even without `parent`. The tool refuses `parentScope` without `parent` and refuses a `scope` glob outside it; a hand-written card is not checked, so a `scope` outside `parentScope` dispatches |
+| `scope`, `forbid` | `scope: [a/**, b.md]` | the brief's `scope=`, `forbid=` | same |
+
+No other key is read for the sync. (`land --supersedes <n>` reads no card key: it is a command argument, see below.)
+
+**Which step needs which key.**
+
+| Step | Needs |
+| --- | --- |
+| Dispatch status comment ("started" per new or respawned attempt; not on a resume) | `issue` |
+| Verdict comment (one per attempt, on the verdict row) | `issue` |
+| Merge finish, close of the task | `issue` |
+| Merge finish, close of the parent | `issue` and `parent`. The parent's sub-issues are read once (`gh issue view <parent> --json subIssues`); the parent is closed (`all <n> tasks done`) only when every other sub-issue is CLOSED. If the sub-issues cannot be read, the parent is not closed and the block prints the `gh issue close` line to run by hand. A `parent` with no `issue` closes nothing |
+| `scopeAmends within-parent` | the brief header's `parent_scope=`, from `parentScope` |
+| `land --supersedes <n>` | no card; the number is the argument. After the new issue is filed, issue `<n>` is closed `superseded by #<new>: <note or title>`. The landed body gains a `supersedes: #<n>` line |
+
+### Brief header
+
+The header is read the same whether `/dispatch` wrote it or you did (`parseHeader` for amends, the verifier's own read
+for the hand-back). The sync reads one key:
+
+| Key | Syntax | Read by | Hand-written vs the dispatch tool |
+| --- | --- | --- | --- |
+| `parent_scope` | `parent_scope=hooks/**,docs/**`, a comma list, written after `forbid=` | `scopeAmends within-parent`: a `scope+=` amend applies only when every path sits inside it; empty or absent, every amend is held as under `ask` | same read. Dispatch writes it from the card's `parentScope`; if you write the brief by hand, it is not checked against the card. A double-quoted entry (a spaced path) is not unquoted by this read, so keep these globs free of spaces |
+
+The brief carries no issue number: the status comments and closes come from the card, not the brief.
+
+### A minimal example that gets the full sync
+
+Card, `<card folder>/MOD-1-docs-example.md`:
+
+```
+---
+id: MOD-1
+title: Example task
+domain: mod
+tier: standard
+status: queued
+issue: 12
+parent: 8
+parentScope: [docs/**]
+scope: [docs/example.md]
+forbid: []
+red_test: none
+gate: validate
+budget: 2-attempts
+spend: 10
+---
+## Why
+
+...
+```
+
+Brief header, `.delegation/briefs/MOD-1.brief.md`:
+
+```
+[[brief v=1 task=MOD-1 subtask=main purpose=build tier=standard model=sonnet scope=docs/example.md forbid= parent_scope=docs/** red_test="none" gate=validate spend=10 budget=2-attempts report=chassis.report.v1]]
+```
+
+With a GitHub origin this gets: a comment on #12 at each started attempt and each verdict; `scopeAmends within-parent`
+applied against `docs/**`; at merge finish, #12 closed, and #8 closed too when every other sub-issue of #8 is closed.
+
 ## How a report is verified
 
 The worker's tree is the brief's `repo=`, else its worktree, else the session root. The verifier runs read-only git and
