@@ -115,9 +115,11 @@ export type RepoConfig = {
   reviewTier?: Tier
   /** MOD-170: whether a worker's `scope+=` amend applies on its word (apply | new-files | ask); default apply. */
   scopeAmends?: ScopeAmends
+  /** MOD-192: the GitHub Project `/delegation land` adds a new issue to, `<owner>/<number>`; unset = none. */
+  project?: string
 }
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'scopeAmends'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'scopeAmends', 'project'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -150,6 +152,8 @@ export type Effective = {
   /** '' = one tier below the worker's. */
   reviewTier: Tier | ''
   scopeAmends: ScopeAmends
+  /** MOD-192: '' = none. */
+  project: string
   /** Which layer each key came from (settings: the host's /config rows; yours: the user options file). */
   sources: Record<RepoKey, 'default' | 'repo' | 'yours' | 'settings'>
 }
@@ -425,6 +429,13 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
           else errors.push(`reviewTier${where}: needs economy, standard, frontier or premium (ignored)`)
         }
         break
+      case 'project':
+        if (typeof v !== 'string') errors.push(`project${where}: not a string (ignored)`)
+        else if (v.trim() !== '') {
+          if (/^[A-Za-z0-9-]+\/[0-9]{1,9}$/.test(v.trim())) config.project = v.trim()
+          else errors.push(`project${where}: ${JSON.stringify(v)} is not owner/number (ignored)`)
+        }
+        break
       case 'issueRepo':
         if (typeof v !== 'string') errors.push(`issueRepo${where}: not a string (ignored)`)
         else if (v.trim() !== '') {
@@ -537,6 +548,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     review: pick('review', 'on-frontier'),
     reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
     scopeAmends: pick('scopeAmends', 'apply'),
+    project: pick('project', ''),
     sources,
   }
 }

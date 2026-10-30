@@ -206,7 +206,7 @@ import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
-import { doneTasks, freeName, landedBody, openCards, parentHint, parseLandArgs, type LandCard } from './lib/land'
+import { doneTasks, freeName, issueUrlOf, LAND_TOOL, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
@@ -539,6 +539,8 @@ type Config = {
   autoEscalate: boolean
   applyAmends: boolean
   scopeAmends: ScopeAmends
+  /** MOD-192: the GitHub Project land adds issues to, `<owner>/<number>` or ''. */
+  project: string
   defaultBudget: number
   probeModels: boolean
   candidateIds: string[]
@@ -659,6 +661,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       autoEscalate: o.autoEscalate === true,
       applyAmends: o.applyAmends !== false,
       scopeAmends: eff.scopeAmends,
+      project: eff.project,
       defaultBudget: budget,
       probeModels: o.probeModels === true,
       candidateIds: parseCandidateIds(str('candidateIds')),
@@ -838,13 +841,15 @@ let templatesLoad: Promise<LoadedTemplates> | undefined
 /** MOD-3: the folder this copy of the mod loaded from; the one dir `git merge --ff-only origin/main` may run in. */
 let loadedRoot = ''
 let sessionRoot = ''
+/** MOD-192: owner/name of the session root's origin, read from .git/config by land; '' when origin is not GitHub or not read yet. */
+let landRepo = ''
 /** MOD-44: the tasks that work in another local repo, by id: the checkout, its own domains and the gate commands its tasks may run. Filled when a task is dispatched or judged. */
 const taskRepos = new Map<string, { path: string; domains: string[]; gateTemplates: string[][] }>()
 /** MOD-75: the task `/delegation merge` is working on, set only while that command runs (cleared in its finally); the allowlist's merge shapes pass for it alone. */
 let mergeCtx: MergeCtx | undefined
 /** MOD-143: the filled argv of the merge check running now (it passed the gate checker); the allowlist accepts exactly it, only while merge runs it. */
 let mergeCheckArgvs: string[][] = []
-const allowCfg = (): AllowConfig => ({ gateTemplates: [...(taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates), ...mergeCheckArgvs], ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}), ...(mergeCtx ? { merge: mergeCtx } : {}) })
+const allowCfg = (): AllowConfig => ({ gateTemplates: [...(taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates), ...mergeCheckArgvs], ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(landRepo ? { landRepo } : {}), ...(parseProject(cfg.project) ? { project: parseProject(cfg.project) } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}), ...(mergeCtx ? { merge: mergeCtx } : {}) })
 
 // ---- small host helpers (fail-open) ---------------------------------------
 function debug($: Host, text: string) {
@@ -3589,11 +3594,15 @@ async function homeOf($: Host): Promise<string> {
 }
 
 /**
- * MOD-190, `/delegation land <type> <title> [--parent n] [--paths a,b] [--note text]`: writes a redacted issue body under
- * <root>/.delegation/landed/ and prints the gh line. It calls no gh, spawns nothing, writes no card and no brief.
+ * MOD-190/MOD-192, `/delegation land <type> <title> [--parent n] [--paths a,b] [--note text] [--dry-run]` and the land tool: writes a
+ * redacted issue body under <root>/.delegation/landed/, then (unless dry-run) files it with gh issue create, adds it to the
+ * configured project and writes `issue: #n url` to the end of the file. It spawns nothing, writes no card and no brief.
  */
 async function runLand($: Host, text: string): Promise<string> {
-  const a = parseLandArgs(text)
+  return landWith($, parseLandArgs(text))
+}
+
+async function landWith($: Host, a: LandArgs | { error: string }): Promise<string> {
   if ('error' in a) return a.error
   await loadRepoConfig($)
   const root = (await $.session.root()).replace(/\/+$/, '')
@@ -3635,15 +3644,32 @@ async function runLand($: Host, text: string): Promise<string> {
   }
   const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
   const ownerRepo = ownerRepoOf(origin ?? '')
+  landRepo = ownerRepo ?? ''
+  sessionRoot = root
   const hint = a.parent === undefined ? parentHint(a.paths, open) : undefined
-  return [
-    file,
-    ownerRepo
-      ? `gh issue create --repo ${ownerRepo} --title ${shellWord(a.title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
-      : `origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); no gh line to print`,
-    ...(hint ? [`parent hint: #${hint.parent} (from ${hint.card})`] : []),
-    'nothing was filed or dispatched',
-  ].join('\n')
+  const ghLine = ownerRepo
+    ? `gh issue create --repo ${ownerRepo} --title ${shellWord(a.title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
+    : `origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); no gh line to print`
+  const hintLine = hint ? [`parent hint: #${hint.parent} (from ${hint.card})`] : []
+  if (a.dryRun || !ownerRepo) return [file, ghLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
+  const created = await run($, ['gh', 'issue', 'create', '--repo', ownerRepo, '--title', a.title, '--label', `type:${a.type}`, ...(a.parent !== undefined ? ['--parent', String(a.parent)] : []), '--body-file', file], { cwd: root, timeoutMs: 60000 })
+  const issue = created.ok && created.exitCode === 0 ? issueUrlOf(created.stdout, ownerRepo) : undefined
+  if (!issue) {
+    const why = (created.ok ? created.stderr || created.stdout : created.why).trim().slice(0, 400)
+    return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${why === '' ? '(nothing on stderr)' : why}`, ...hintLine].join('\n')
+  }
+  try {
+    await $.fs.write(file, `${body.replace(/\n*$/, '\n')}issue: #${issue.number} ${issue.url}\n`)
+  } catch (err) {
+    debug($, `land: issue number not written back to ${file}: ${String(err)}`)
+  }
+  const project = parseProject(cfg.project)
+  let projectLine: string[] = []
+  if (project) {
+    const added = await run($, ['gh', 'project', 'item-add', String(project.number), '--owner', project.owner, '--url', issue.url], { cwd: root, timeoutMs: 60000 })
+    projectLine = added.ok && added.exitCode === 0 ? [`added to project ${project.owner}/${project.number}`] : [`not added to project ${project.owner}/${project.number}: ${(added.ok ? added.stderr || added.stdout : added.why).trim().slice(0, 400)}`]
+  }
+  return [file, `filed #${issue.number} ${issue.url}`, ...projectLine, ...hintLine].join('\n')
 }
 
 async function redactRules($: Host): Promise<RedactRules> {
@@ -7967,7 +7993,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|land <type> <title> [--dry-run]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -8000,6 +8026,11 @@ export const register: Register = (on, opts) => {
       await $.tool.register({ name: MERGE_TOOL.name, description: MERGE_TOOL.description, inputSchema: MERGE_TOOL.inputSchema })
     } catch (err) {
       debug($, `the merge tool was not registered: ${String(err)}`)
+    }
+    try {
+      await $.tool.register({ name: LAND_TOOL.name, description: LAND_TOOL.description, inputSchema: LAND_TOOL.inputSchema })
+    } catch (err) {
+      debug($, `the land tool was not registered: ${String(err)}`)
     }
     // MOD-28: the load. The templates are read here, once, with the code that renders them.
     await loadedTemplates($)
@@ -8096,6 +8127,7 @@ export const register: Register = (on, opts) => {
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async ($, e) => ({ result: await runInit($, pathOfCall(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async ($, e) => ({ result: await runSetup($, true, pathOfCall(e)) }))
   // MOD-75: the merge tool, the command's second door
+  on('tool.call', { tool: 'mcp__chassis-delegation__land' as never }, async ($, e) => ({ result: await landWith($, parseLandTool(e as unknown as Record<string, unknown>)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => ({ result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------

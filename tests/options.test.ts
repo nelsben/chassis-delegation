@@ -275,6 +275,22 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(delivered(w)).toContain('(scopeAmends ask)')
   })
 
+  test('project: set to owner/number, land adds the new issue to it; anything else is unset', async ($, on) => {
+    const card = ['---', 'id: MOD-1', 'title: Card MOD-1', 'domain: mod', 'tier: standard', 'status: queued', 'scope: [a/**]', 'gate: node', '---', 'body', ''].join('\n')
+    const w = world(on, {
+      files: { [REPO_FILE]: JSON.stringify({ domains: ['mod'], cardDir: 'docs/cards', project: 'not a project' }), [`${ROOT}/docs/cards/MOD-1-a.md`]: card, [`${ROOT}/.git/config`]: '[remote "origin"]\n\turl = https://github.com/o/r.git\n' },
+      dirs: { [`${ROOT}/docs/cards`]: ['MOD-1-a.md'] },
+      run: async argv => (argv[0] === 'gh' && argv[2] === 'create' ? { exitCode: 0, stdout: 'https://github.com/o/r/issues/42\n' } : undefined),
+    })
+    await $.session.start(sessionStart)
+    const land = (t: string) => $.command.run({ command: 'delegation', args: `land task ${t}`, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    await land('One')
+    expect(argvs(w).some(a => a[1] === 'project')).toBe(false) // the repo file's value is not owner/number: unset
+    await set($, 'project', 'o/1')
+    await land('Three')
+    expect(argvs(w).filter(a => a[1] === 'project')).toEqual([['gh', 'project', 'item-add', '1', '--owner', 'o', '--url', 'https://github.com/o/r/issues/42']])
+  })
+
   test('review: on sends a clean hand-back to a second checker (next=review)', async ($, on) => {
     const w = handBackWorld(on, { gate: 0 })
     await $.session.start(sessionStart)

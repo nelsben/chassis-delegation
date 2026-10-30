@@ -21,7 +21,7 @@ describe('MOD-190: /delegation land', () => {
   test('writes the body, prints the gh line and the hint, files nothing', async ($, on) => {
     const w = world(on, { files: { ...files(), ...gitCfg('git@github.com:acme/widgets.git') }, dirs: dirs() })
     await $.session.start(sessionStart)
-    const out = String((await $.command.run(land(`bug "Export drops a row" --paths src/export/a.ts --note "see ${ABS}"`))).text)
+    const out = String((await $.command.run(land(`bug "Export drops a row" --paths src/export/a.ts --note "see ${ABS}" --dry-run`))).text)
     const file = `${LANDED}/export-drops-a-row.md`
     expect(out.split('\n')).toEqual([
       file,
@@ -43,8 +43,8 @@ describe('MOD-190: /delegation land', () => {
   test('a second landing with the same title gets -2; --parent is passed through and no hint is printed', async ($, on) => {
     const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/acme/widgets.git') }, dirs: dirs() })
     await $.session.start(sessionStart)
-    await $.command.run(land('task Same title'))
-    const out = String((await $.command.run(land('task Same title --parent 4 --paths src/export/a.ts'))).text).split('\n')
+    await $.command.run(land('task Same title --dry-run'))
+    const out = String((await $.command.run(land('task Same title --parent 4 --paths src/export/a.ts --dry-run'))).text).split('\n')
     expect(out[0]).toBe(`${LANDED}/same-title-2.md`)
     expect(out[1]).toBe(`gh issue create --repo acme/widgets --title 'Same title' --label type:task --parent 4 --body-file ${LANDED}/same-title-2.md`)
     expect(out.length).toBe(3)
@@ -54,7 +54,7 @@ describe('MOD-190: /delegation land', () => {
   test('an origin that is not GitHub replaces the gh line; the file is still written', async ($, on) => {
     const w = world(on, { files: { ...files(), ...gitCfg('git@example.org:acme/widgets.git') }, dirs: dirs() })
     await $.session.start(sessionStart)
-    const out = String((await $.command.run(land('spike Try it'))).text).split('\n')
+    const out = String((await $.command.run(land('spike Try it --dry-run'))).text).split('\n')
     expect(out[1]).toContain('not a GitHub remote')
     expect(w.files.has(`${LANDED}/try-it.md`)).toBe(true)
   })
@@ -67,5 +67,80 @@ describe('MOD-190: /delegation land', () => {
       expect(out).toContain('feature, epic, story, task, bug, spike')
     }
     expect([...w.files.keys()].some(k => k.startsWith(LANDED))).toBe(false)
+  })
+
+  test('--dry-run parses: the flag is dropped from the title and the type is still checked', async ($, on) => {
+    world(on, { files: files(), dirs: dirs() })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(land('bug --dry-run'))).text)
+    expect(out).toContain('feature, epic, story, task, bug, spike')
+  })
+})
+
+describe('MOD-192: land files the issue itself', () => {
+  const URL42 = 'https://github.com/o/r/issues/42'
+  const tool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const repoFile = (project?: string) => ({ [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards', ...(project ? { project } : {}) }) })
+  const ghRun = (create: { exitCode: number; stdout: string; stderr?: string }, add: { exitCode: number; stdout: string; stderr?: string } = { exitCode: 0, stdout: '' }) => async (argv: string[]) =>
+    argv[0] === 'gh' ? (argv[2] === 'create' ? create : add) : undefined
+
+  test('files the issue, adds it to the project, writes the number back and names #42', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun({ exitCode: 0, stdout: `${URL42}\n` }) })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'Export drops a row', parent: 9, paths: ['src/export/a.ts'] }))
+    const file = `${LANDED}/export-drops-a-row.md`
+    const gh = w.runs.map(r => r.argv).filter(a => a[0] === 'gh')
+    expect(gh).toEqual([
+      ['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Export drops a row', '--label', 'type:bug', '--parent', '9', '--body-file', file],
+      ['gh', 'project', 'item-add', '1', '--owner', 'o', '--url', URL42],
+    ])
+    expect((w.files.get(file) ?? '').trimEnd().split('\n').pop()).toBe(`issue: #42 ${URL42}`)
+    expect(out).toContain(file)
+    expect(out).toContain(`filed #42 ${URL42}`)
+    expect(out).toContain('added to project o/1')
+    expect(out.includes('nothing was filed or dispatched')).toBe(false)
+  })
+
+  test('without a project only gh issue create runs, argv exactly as the brief says', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun({ exitCode: 0, stdout: `${URL42}\n` }) })
+    await $.session.start(sessionStart)
+    await tool($, { type: 'bug', title: 'T' })
+    expect(w.runs.map(r => r.argv).filter(a => a[0] === 'gh')).toEqual([['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'T', '--label', 'type:bug', '--body-file', `${LANDED}/t.md`]])
+  })
+
+  test('dryRun writes the body and prints the line only', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs() })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'task', title: 'Dry one', dryRun: true }))
+    expect(out).toContain('nothing was filed or dispatched')
+    expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
+  })
+
+  test('a failed create reports the gh line and stderr, and writes nothing back', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun({ exitCode: 1, stdout: '', stderr: 'label type:bug not found' }) })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T' }))
+    expect(out).toContain('gh issue create --repo o/r')
+    expect(out).toContain('label type:bug not found')
+    expect((w.files.get(`${LANDED}/t.md`) ?? '').includes('issue: #')).toBe(false)
+    expect(w.runs.some(r => r.argv[1] === 'project')).toBe(false)
+  })
+
+  test('a failed item-add still reports filed and says why it was not added', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun({ exitCode: 0, stdout: URL42 }, { exitCode: 1, stdout: '', stderr: 'no such project' }) })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T' }))
+    expect(out).toContain(`filed #42 ${URL42}`)
+    expect(out).toContain('not added to project o/1: no such project')
+    expect(w.files.get(`${LANDED}/t.md`) ?? '').toContain(`issue: #42 ${URL42}`)
+  })
+
+  test('an origin that is not GitHub behaves as dryRun and says why', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('git@example.org:o/r.git') }, dirs: dirs() })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T' }))
+    expect(out).toContain('not a GitHub remote')
+    expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
   })
 })

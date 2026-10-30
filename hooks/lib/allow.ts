@@ -29,6 +29,10 @@
 //                                                            (MOD-4: is a task's card merged)
 //   gh pr list|view …                                        (no --web)
 //   gh issue create|comment|list, for the configured issueRepo only (MOD-7; the body file under <root>/.delegation/debriefs/)
+//   gh issue create --repo <landRepo> --title <t> --label type:<known> [--parent <n>] --body-file <file under <root>/.delegation/landed/>
+//   gh project item-add <number> --owner <owner> --url https://github.com/<landRepo>/issues/<n>
+//                                                            (MOD-192: /delegation land and the land tool; landRepo is the session root's origin,
+//                                                             <owner> and <number> the configured project; nothing else of gh issue or gh project)
 //   claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
 //   a gate-map command, word for word, `{files}`, `{worktree}` and `{outdir}` filled by absolute paths
 //                                                            (./gates.ts holds what a map may name)
@@ -48,7 +52,7 @@ export type Check = { ok: true } | { ok: false; reason: string }
 /** MOD-44: a task that works in another local repo: the checkout's path, and that repo's own domains when it has them. */
 export type TaskRepo = { path: string; domains?: readonly string[] }
 
-export type AllowConfig = { /** MOD-44: the task ids that name another local repo as theirs, and that repo; `git -C <path> worktree add` passes for those tasks only. */ taskRepos?: Readonly<Record<string, TaskRepo>>; gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string; /** MOD-7: the one repo `gh issue` may name (owner/name); empty or absent = no issue form passes. */ issueRepo?: string; /** MOD-7: the session root, whose .delegation/debriefs/ holds the only body files. */ root?: string; /** MOD-75: set only while `/delegation merge` runs: its local git writes pass, exact shapes bound to this one task; a push, gh, curl, sf or wget never does. */ merge?: MergeCtx }
+export type AllowConfig = { /** MOD-44: the task ids that name another local repo as theirs, and that repo; `git -C <path> worktree add` passes for those tasks only. */ taskRepos?: Readonly<Record<string, TaskRepo>>; gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string; /** MOD-7: the one repo `gh issue` may name (owner/name); empty or absent = no issue form passes. */ issueRepo?: string; /** MOD-7: the session root, whose .delegation/debriefs/ holds the only body files. */ root?: string; /** MOD-192: owner/name of the session root's origin (empty or absent = no land create passes). */ landRepo?: string; /** MOD-192: the configured GitHub Project; absent = no item-add passes. */ project?: { owner: string; number: number }; /** MOD-75: set only while `/delegation merge` runs: its local git writes pass, exact shapes bound to this one task; a push, gh, curl, sf or wget never does. */ merge?: MergeCtx }
 
 const GIT_READ = ['diff', 'merge-base', 'rev-parse', 'status', 'log']
 const GIT_WRITEY_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|-O)/
@@ -212,6 +216,7 @@ function checkWorktreeLock(action: 'lock' | 'unlock', dirs: readonly string[], a
 
 function checkGh(args: readonly string[], allow: AllowConfig): Check {
   if (args[0] === 'issue') return checkGhIssue(args.slice(1), allow)
+  if (args[0] === 'project') return checkGhProject(args.slice(1), allow)
   if (args[0] !== 'pr' || (args[1] !== 'list' && args[1] !== 'view')) return refuse(`gh ${args.slice(0, 2).join(' ')} is not on the list`)
   const bad = args.find(a => a === '--web' || a === '-w')
   return bad ? refuse(`gh pr ${args[1]} ${bad} is not on the list`) : ok
@@ -219,9 +224,12 @@ function checkGh(args: readonly string[], allow: AllowConfig): Check {
 
 const ISSUE_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 /** A body file: absolute, under <root>/.delegation/debriefs/, plain segments. */
-function debriefBodyOk(path: string, root: string | undefined): boolean {
+const debriefBodyOk = (path: string, root: string | undefined): boolean => bodyUnder(path, root, 'debriefs')
+/** MOD-192: a landed body: absolute, under <root>/.delegation/landed/, plain segments, ending .md. */
+const landedBodyOk = (path: string, root: string | undefined): boolean => bodyUnder(path, root, 'landed') && path.endsWith('.md')
+function bodyUnder(path: string, root: string | undefined, folder: string): boolean {
   const r = (root ?? '').replace(/\/+$/, '')
-  const prefix = `${r}/.delegation/debriefs/`
+  const prefix = `${r}/.delegation/${folder}/`
   return r !== '' && ABS_FOLDER.test(path) && path.startsWith(prefix) && path.length > prefix.length && !path.split('/').slice(1).some(seg => seg === '..' || seg === '.' || seg === '') && !path.endsWith('/')
 }
 
@@ -233,13 +241,15 @@ function debriefBodyOk(path: string, root: string | undefined): boolean {
  */
 function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
   const repo = allow.issueRepo ?? ''
-  if (repo === '' || !ISSUE_REPO.test(repo)) return refuse('gh issue is not on the list: no issueRepo is configured')
+  const issueRepoSet = repo !== '' && ISSUE_REPO.test(repo)
   const [verb, ...t] = args
   const shape = (s: string): Check => refuse(`gh issue ${verb ?? ''} is not the exact shape (${s})`.replace('  ', ' '))
   if (verb === 'create') {
-    const exact = t.length === 6 && t[0] === '--repo' && t[1] === repo && t[2] === '--title' && (t[3] ?? '') !== '' && !(t[3] as string).startsWith('-') && t[4] === '--body-file' && debriefBodyOk(t[5] as string, allow.root)
-    return exact ? ok : shape('create --repo <issueRepo> --title <title> --body-file <file under .delegation/debriefs/>')
+    const exact = issueRepoSet && t.length === 6 && t[0] === '--repo' && t[1] === repo && t[2] === '--title' && (t[3] ?? '') !== '' && !(t[3] as string).startsWith('-') && t[4] === '--body-file' && debriefBodyOk(t[5] as string, allow.root)
+    if (exact || landCreateOk(t, allow)) return ok
+    return shape('create --repo <issueRepo> --title <title> --body-file <file under .delegation/debriefs/>; or create --repo <landRepo> --title <title> --label type:<feature|epic|story|task|bug|spike> [--parent <n>] --body-file <file under .delegation/landed/>')
   }
+  if (!issueRepoSet) return refuse('gh issue is not on the list: no issueRepo is configured')
   if (verb === 'comment') {
     const exact = t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === repo && t[3] === '--body-file' && debriefBodyOk(t[4] as string, allow.root)
     return exact ? ok : shape('comment <number> --repo <issueRepo> --body-file <file under .delegation/debriefs/>')
@@ -249,6 +259,35 @@ function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
     return exact ? ok : shape('list --repo <issueRepo> --state all --limit 200 --json number,title,body')
   }
   return refuse(`gh issue ${verb ?? ''} is not on the list`.replace('  ', ' '))
+}
+
+const LAND_LABEL = /^type:(feature|epic|story|task|bug|spike)$/
+/**
+ * MOD-192: the land create, args in exactly this order:
+ *   --repo <landRepo> --title <t> --label type:<known> [--parent <1-9 digits>] --body-file <file under <root>/.delegation/landed/>
+ */
+function landCreateOk(t: readonly string[], allow: AllowConfig): boolean {
+  const repo = allow.landRepo ?? ''
+  if (repo === '' || !ISSUE_REPO.test(repo)) return false
+  const hasParent = t.length === 10
+  if (t.length !== 8 && !hasParent) return false
+  if (t[0] !== '--repo' || t[1] !== repo || t[2] !== '--title' || (t[3] ?? '') === '' || (t[3] as string).startsWith('-')) return false
+  if (t[4] !== '--label' || !LAND_LABEL.test(t[5] as string)) return false
+  if (hasParent && (t[6] !== '--parent' || !/^\d{1,9}$/.test(t[7] as string))) return false
+  const at = hasParent ? 8 : 6
+  return t[at] === '--body-file' && landedBodyOk(t[at + 1] as string, allow.root)
+}
+
+/** MOD-192: gh project item-add <number> --owner <owner> --url https://github.com/<landRepo>/issues/<n>, the configured project only. */
+function checkGhProject(args: readonly string[], allow: AllowConfig): Check {
+  const [verb, ...t] = args
+  const p = allow.project
+  const repo = allow.landRepo ?? ''
+  const shape = 'item-add <number> --owner <owner> --url https://github.com/<landRepo>/issues/<n>, the number and owner the configured project'
+  if (verb !== 'item-add') return refuse(`gh project ${verb ?? ''} is not on the list`.replace('  ', ' '))
+  if (!p || repo === '' || !ISSUE_REPO.test(repo)) return refuse('gh project item-add is not on the list: no project or no GitHub origin is configured')
+  const exact = t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && Number(t[0]) === p.number && t[1] === '--owner' && t[2] === p.owner && t[3] === '--url' && new RegExp(`^https://github\\.com/${repo.replace(/\./g, '\\.')}/issues/\\d{1,9}$`).test(t[4] as string)
+  return exact ? ok : refuse(`gh project item-add is not the exact shape (${shape})`)
 }
 
 /** An absolute folder with no `..` segment and nothing a shell would read. */
