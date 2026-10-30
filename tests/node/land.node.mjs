@@ -39,14 +39,18 @@ describe('MOD-190: landedBody', () => {
     expect(without.includes('## Scope')).toBe(false)
     expect(without.includes('```')).toBe(false)
   })
-  test('the note leads, the open cards are listed, none otherwise', async () => {
+  test('the note leads, and only the open cards whose scope holds a path are listed (MOD-204)', async () => {
     const { landedBody } = await lib()
-    const b = landedBody({ note: 'Seen twice.', paths: [], cards: [{ id: 'MOD-1', title: 'First' }, { id: 'MOD-2', title: 'Second' }], defaultBranch: 'main' })
+    const cards = [{ id: 'MOD-1', title: 'First', scope: ['src/**'] }, { id: 'MOD-2', title: 'Second', scope: ['docs/**'] }, { id: 'MOD-3', title: 'Third', scope: ['src/a.ts'] }]
+    const b = landedBody({ note: 'Seen twice.', paths: ['src/a.ts'], cards, defaultBranch: 'main' })
     expect(b.startsWith('Seen twice.')).toBe(true)
     expect(b).toContain('## Landed from')
-    expect(b).toContain('- MOD-1 First\n- MOD-2 Second')
+    expect(b).toContain('- MOD-1 First\n- MOD-3 Third')
+    expect(b.includes('MOD-2')).toBe(false)
     expect(b).toContain('main')
-    expect(landedBody({ paths: [], cards: [], defaultBranch: 'main' })).toContain('none')
+    expect(landedBody({ paths: ['src/a.ts'], cards: [], defaultBranch: 'main' }).includes('## Landed from')).toBe(false)
+    expect(landedBody({ paths: [], cards, defaultBranch: 'main' }).includes('## Landed from')).toBe(false)
+    expect(landedBody({ paths: ['zzz/q.ts'], cards, defaultBranch: 'main' }).includes('MOD-')).toBe(false)
   })
   test('an absolute path in the note is scrubbed by the redact helper', async () => {
     const { landedBody } = await lib()
