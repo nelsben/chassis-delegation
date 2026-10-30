@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The worker gh guard reads the verb past `-R`/`--repo`/`--hostname` after the noun, and covers more write nouns (MOD-203).** `gh issue -R o/r close 5` and `gh pr --repo o/r merge 3` are now denied like `gh issue close 5`; `--repo=<v>` and other flags consume nothing more. `gh run` (any verb but list, view, watch, download), `gh cache` (any verb but list), `gh codespace|extension|alias|ssh-key|gpg-key` (any verb but list and view) and `gh config set` are writes too; reads still pass.
+
 ## 0.9.35 — 2026-10-30
 
 ### Added
