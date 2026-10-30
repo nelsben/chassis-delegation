@@ -477,3 +477,23 @@ describe('MOD-152 (#246): git worktree lock / unlock, the two exact shapes', () 
     no(unlock(`${X}-T-1`, `${X}-T-1`), { ...ALLOW, merge })
   })
 })
+
+describe('MOD-194: gh issue view', () => {
+  const A: AllowConfig = { ...ALLOW, issueRepo: 'owner/mod', root: '/Users/b/acme-app', landRepo: 'o/r' }
+  const view = (over: Partial<{ n: string; repo: string; json: string }> = {}) => ['gh', 'issue', 'view', over.n ?? '50', '--repo', over.repo ?? 'o/r', '--json', over.json ?? 'number,title,state,labels,body,subIssues']
+  test('the view shape passes', () => {
+    ok(view(), A)
+    ok(view({ n: '123456789' }), A)
+  })
+  test('near-misses are refused', () => {
+    no(view({ json: 'number,title,state,labels,body' }), A)
+    no(view({ json: 'number,title,state,labels,body,subIssues,comments' }), A)
+    no(view({ repo: 'other/r' }), A)
+    no(view({ n: 'x' }), A)
+    no(view({ n: '1234567890' }), A)
+    no([...view(), '--web'], A)
+    no([...view(), '--comments'], A)
+    no(['gh', 'issue', 'view', '50', '--repo', 'o/r', '--web'], A)
+    no(view(), { ...A, landRepo: undefined })
+  })
+})
