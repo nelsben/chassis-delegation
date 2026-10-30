@@ -369,6 +369,17 @@ describe('MOD-86: git check-ignore, the one read shape', () => {
   })
 })
 
+describe('MOD-197: the merge allowlist passes the MOD-194 issue view', () => {
+  const WT = `${R}-MOD-1`
+  const MERGE: AllowConfig = { ...ALLOW, root: R, landRepo: 'o/r', merge: { root: R, worktree: WT, branch: 'agent/mod/MOD-1', baseRef: 'origin/main', id: 'MOD-1' } }
+  test('the exact view passes while merge runs; other gh does not', () => {
+    ok(['gh', 'issue', 'view', '12', '--repo', 'o/r', '--json', 'number,title,state,labels,body,subIssues'], MERGE)
+    no(['gh', 'issue', 'close', '12', '--repo', 'o/r'], MERGE)
+    no(['gh', 'issue', 'view', '12', '--repo', 'o/other', '--json', 'number,title,state,labels,body,subIssues'], MERGE)
+    no(['gh', 'issue', 'view', '12', '--repo', 'o/r', '--json', 'number,title,state,labels,body,subIssues'], { ...MERGE, landRepo: undefined })
+  })
+})
+
 describe('MOD-75: the merge shapes, on only while /delegation merge runs', () => {
   const WT = `${R}-MOD-1`
   const BRANCH = 'agent/mod/MOD-1'

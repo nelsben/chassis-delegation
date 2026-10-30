@@ -265,6 +265,11 @@ A push naming a guarded branch (`origin main`, `HEAD:main`, `--all`) is denied f
 is one with no refspec, `HEAD`, the branch, `<branch>:<x>`, `--all` or `--mirror`. Tag pushes and other branches pass.
 It reads command words, so a heredoc mentioning `git commit` never triggers it.
 
+The same switch (`gitGuard`) guards gh: a recorded worker or reviewer may read GitHub with gh but not write to it
+(`gh issue create|close|edit|comment…`, `gh pr merge|create|edit…`, `gh project item-add…`, a `gh api` with `-X` other
+than GET or any field, and the like), or the plan on GitHub lies. The deny reads `gh guard: <task> may not run <command>;
+gh writes are the brain's (land, merge finish)`. The brain and ad hoc agents are untouched.
+
 ### repo=here: the main checkout
 
 `repo=here` is a git repo with no worktree: for a repo with no `origin`, a nested child repo, or evidence that lives
