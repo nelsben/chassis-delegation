@@ -304,7 +304,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(delivered(w)).toContain('(scopeAmends within-parent)')
   })
 
-  test('project: set to owner/number, land adds the new issue to it; anything else is unset', async ($, on) => {
+  test('project: set to owner/number, land adds the new issue to it; anything else is unset', { options: { landAuto: true } }, async ($, on) => {
     const card = ['---', 'id: MOD-1', 'title: Card MOD-1', 'domain: mod', 'tier: standard', 'status: queued', 'scope: [a/**]', 'gate: node', '---', 'body', ''].join('\n')
     const w = world(on, {
       files: { [REPO_FILE]: JSON.stringify({ domains: ['mod'], cardDir: 'docs/cards', project: 'not a project' }), [`${ROOT}/docs/cards/MOD-1-a.md`]: card, [`${ROOT}/.git/config`]: '[remote "origin"]\n\turl = https://github.com/o/r.git\n' },
@@ -715,7 +715,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.submitted[0]?.text).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
   })
 
-  test('landNudge: a flagged prompt is cleared by a land call, shown at turn end when none came, and off draws and records nothing', async ($, on) => {
+  test('landNudge: a flagged prompt is cleared by a land call, shown at turn end when none came, and off draws and records nothing', { options: { landAuto: true } }, async ($, on) => {
     const w = world(on, { skip: ['prompt.submit'] })
     on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
     await $.session.start(sessionStart)
@@ -754,6 +754,16 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     const out = typeof (r as { result?: unknown }).result === 'string' ? ((r as { result?: string }).result as string) : String((r as { text?: string }).text ?? '')
     expect(out).toContain('nothing filed: landAuto is off')
     expect(w.runs.some(x => x.argv[0] === 'gh' && x.argv[2] === 'create')).toBe(false)
+  })
+
+  test('MOD-208: landAuto on restores filing at once', async ($, on) => {
+    const w = world(on, { skip: ['prompt.submit'], files: { [`${ROOT}/.git/config`]: '[remote "origin"]\n\turl = https://github.com/o/r.git\n' }, run: async (argv: string[]) => (argv[0] === 'gh' ? { exitCode: 0, stdout: 'https://github.com/o/r/issues/7\n' } : undefined) })
+    await $.session.start(sessionStart)
+    await set($, 'landAuto', 'on')
+    const r = await $.tool.call({ tool: 'mcp__chassis-delegation__land', type: 'bug', title: 'Merge button' } as never)
+    const out = typeof (r as { result?: unknown }).result === 'string' ? ((r as { result?: string }).result as string) : String((r as { text?: string }).text ?? '')
+    expect(out).toContain('filed #7')
+    expect(w.runs.some(x => x.argv[0] === 'gh' && x.argv[2] === 'create')).toBe(true)
   })
 
   test('readyFallbackMinutes: 1 starts a waiting task itself after a minute (the built-in 10)', async ($, on) => {

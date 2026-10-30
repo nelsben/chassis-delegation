@@ -23,7 +23,7 @@ describe('MOD-201: describesWork', () => {
 
 describe('MOD-201: nudgeLine', () => {
   test('both forms', () => {
-    expect(nudgeLine('prompt')).toBe('lead: land this as an issue (land or land_plan) or say it is not work')
+    expect(nudgeLine('prompt')).toBe('lead: propose landing this as an issue (land shows it; file on the person\'s yes) or say it is not work')
     expect(nudgeLine('prompt', true)).toBe('lead: land this as an issue (land or land_plan) or say it is not work')
     expect(nudgeLine('parent', { number: 50, open: 2 })).toBe('lead: parent #50 has 2 open tasks; land the next or close it')
   })

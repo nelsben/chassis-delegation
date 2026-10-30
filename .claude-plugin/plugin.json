@@ -348,8 +348,8 @@
     "landAuto": {
       "type": "boolean",
       "title": "Land files automatically",
-      "description": "On by default: the land tool and /delegation land file the issue at once, on the brain's call. Off: they write the body and show the issue (title, type, parent, the gh line) and file only when called again with confirm: true (--confirm for /delegation land) after your yes; the land nudge then says propose instead of land",
-      "default": true
+      "description": "Off by default: the land tool and /delegation land write the body and show the issue (title, type, parent, the gh line) and file only when called again with confirm: true (--confirm for /delegation land) after your yes; the land nudge says propose. On: they file the issue at once, on the brain's call, and the nudge says land",
+      "default": false
     },
     "project": {
       "type": "string",

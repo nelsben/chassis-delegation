@@ -17,7 +17,7 @@ const submit = async ($: any, on: any) => {
 }
 
 describe('MOD-201: the nudge line in the band', () => {
-  test('flagged prompt, turn ends with no land call: the line draws alone, without the live view', async ($, on) => {
+  test('flagged prompt, turn ends with no land call: the line draws alone, without the live view', { options: { landAuto: true } }, async ($, on) => {
     world(on)
     await $.session.start(sessionStart)
     await $.prompt.submit({ text: PROMPT } as never)
@@ -27,7 +27,7 @@ describe('MOD-201: the nudge line in the band', () => {
     expect(await ui?.find({ type: 'Text', text: LINE })).toBeDefined()
   })
 
-  test('with the live view active the line is the last row of the band', async ($, on) => {
+  test('with the live view active the line is the last row of the band', { options: { landAuto: true } }, async ($, on) => {
     const w = world(on)
     await $.session.start(sessionStart)
     w.state.set('chassis-delegation.queue', [{ prompt: '', description: '', subagentType: 'general-purpose', task: 'T-3', at: 1 }])

@@ -729,7 +729,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       issueRepoOwn: issues.own,
       wakeOnVerdict: o.wakeOnVerdict === true,
       landNudge: o.landNudge !== false,
-      landAuto: o.landAuto !== false,
+      landAuto: o.landAuto === true || o.landAuto === 'on',
       postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
       waitStallMs: num('waitStallMin', WAIT_STALL_DEFAULT_MIN) * MIN_MS,
