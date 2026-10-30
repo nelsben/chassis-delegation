@@ -5,6 +5,10 @@
 ### Fixed
 
 - **The worker gh guard reads the verb past `-R`/`--repo`/`--hostname` after the noun, and covers more write nouns (MOD-203).** `gh issue -R o/r close 5` and `gh pr --repo o/r merge 3` are now denied like `gh issue close 5`; `--repo=<v>` and other flags consume nothing more. `gh run` (any verb but list, view, watch, download), `gh cache` (any verb but list), `gh codespace|extension|alias|ssh-key|gpg-key` (any verb but list and view) and `gh config set` are writes too; reads still pass.
+- **Land titles are redacted like the bodies (MOD-204).** `land` and `land_plan` pass every title through the redact rules before the slug, the printed dry-run line and `gh issue create`, so a redact-list word no longer reaches GitHub in a title.
+- **A landed body lists only the open cards that overlap its paths (MOD-204).** Under `## Landed from` only the open cards whose scope holds one of the item's paths appear; the section is left out when none does or the item has no paths, so unrelated work titles no longer leak into public issues.
+- **A `land_plan` retry matches by slug and open issue (MOD-204).** The newest `<slug>.md` or `<slug>-<n>.md` ending in an `issue: #n url` line is reused as `already filed` when that issue is still OPEN (read with `gh issue view`), whatever the body says now; a closed or unreadable issue is filed anew. A card changing between preview and confirm no longer files duplicates.
+- **Status comments are not re-posted after a reload (MOD-204).** A status file under `.delegation/status/` that ends in a `posted:` line is not commented again, for the started and the verdict comment alike; a successful comment appends `posted: <ISO time>`.
 
 ## 0.9.35 — 2026-10-30
 

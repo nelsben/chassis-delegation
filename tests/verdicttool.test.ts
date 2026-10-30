@@ -239,6 +239,30 @@ describe('MOD-200: status comments on the card issue', () => {
     expect(row).toContain('consistent')
   })
 
+  test('MOD-204: a verdict comment already posted in an earlier process is not posted again; a posted line is appended after a comment', { options: { ...GM } }, async ($, on) => {
+    const w = boot(on, 'issue: 77')
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    await call($, { task: 'T-4' })
+    expect(ghComments(w).length).toBe(2)
+    expect((w.files.get(STARTED) ?? '').trimEnd().split('\n').pop()).toMatch(/^posted: \d{4}-\d\d-\d\dT/)
+    expect((w.files.get(VERDICT) ?? '').trimEnd().split('\n').pop()).toMatch(/^posted: \d{4}-\d\d-\d\dT/)
+  })
+
+  test('MOD-204: after a reload (fresh memory, same files) the verdict and started comments are not re-posted', { options: { ...GM } }, async ($, on) => {
+    const w = boot(on, 'issue: 77')
+    const stamp = 'posted: 2026-10-30T00:00:00.000Z'
+    w.files.set(STARTED, `old started\n${stamp}\n`)
+    w.files.set(VERDICT, `old verdict\n${stamp}\n`)
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    await call($, { task: 'T-4' })
+    expect(ghComments(w)).toEqual([])
+    expect(w.files.get(VERDICT)).toBe(`old verdict\n${stamp}\n`)
+  })
+
   test('no issue on the card: nothing is written and no gh runs', { options: { ...GM } }, async ($, on) => {
     const w = boot(on, '')
     await $.session.start(sessionStart)

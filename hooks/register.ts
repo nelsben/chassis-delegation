@@ -852,7 +852,11 @@ let templatesLoad: Promise<LoadedTemplates> | undefined
 /** MOD-3: the folder this copy of the mod loaded from; the one dir `git merge --ff-only origin/main` may run in. */
 let loadedRoot = ''
 let sessionRoot = ''
-/** MOD-192: owner/name of the session root's origin, read from .git/config by land; '' when origin is not GitHub or not read yet. */
+/**
+ * MOD-192: owner/name of the session root's origin, read from .git/config; '' when origin is not GitHub or not read yet.
+ * MOD-204: set by land, land_plan, tree, status comments and merge finish, and it persists for the session. The allowlist passes the
+ * gh close and comment shapes for it; what keeps a worker from those shapes is the worker gh guard, not the allowlist.
+ */
 let landRepo = ''
 /** MOD-44: the tasks that work in another local repo, by id: the checkout, its own domains and the gate commands its tasks may run. Filled when a task is dispatched or judged. */
 const taskRepos = new Map<string, { path: string; domains: string[]; gateTemplates: string[][] }>()
@@ -3682,7 +3686,10 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   // git is not on the allow list outside a merge, so the default branch comes from baseRef and origin from .git/config
   const wantName = defaultBranchOf((cfg.baseRef ?? '').trim())
   const def = wantName !== '' && !isSha(wantName) ? wantName : 'main'
-  const body = redact(landedBody({ ...(a.note !== undefined ? { note: a.note } : {}), ...(a.supersedes !== undefined ? { supersedes: a.supersedes } : {}), paths: a.paths, cards: open.map(c => ({ id: c.id, title: c.title })), defaultBranch: def }), await redactRules($))
+  const rules = await redactRules($)
+  // MOD-204: the title is redacted with the body's rules before the slug, the dry-run line and gh
+  const title = redact(a.title, rules)
+  const body = redact(landedBody({ ...(a.note !== undefined ? { note: a.note } : {}), ...(a.supersedes !== undefined ? { supersedes: a.supersedes } : {}), paths: a.paths, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)
   const folder = `${root}/.delegation/landed`
   let taken = new Set<string>()
   try {
@@ -3690,7 +3697,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   } catch {
     // the folder is not there yet
   }
-  const slug = slugOf(a.title)
+  const slug = slugOf(title)
   let name = freeName(slug, taken)
   while (await exists($, `${folder}/${name}`)) {
     taken.add(name)
@@ -3708,15 +3715,15 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   sessionRoot = root
   const hint = a.parent === undefined ? parentHint(a.paths, open) : undefined
   const ghLine = ownerRepo
-    ? `gh issue create --repo ${ownerRepo} --title ${shellWord(a.title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
+    ? `gh issue create --repo ${ownerRepo} --title ${shellWord(title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
     : `origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); no gh line to print`
   const hintLine = hint ? [`parent hint: #${hint.parent} (from ${hint.card})`] : []
   // MOD-200: the old issue is closed with a comment; the mod never edits it
-  const supersedeNote = (a.note ?? a.title).replace(/\s+/g, ' ').trim()
+  const supersedeNote = (a.note ?? title).replace(/\s+/g, ' ').trim()
   const closeArgv = (newNumber: string): string[] | undefined => (a.supersedes !== undefined && ownerRepo ? ['gh', 'issue', 'close', String(a.supersedes), '--repo', ownerRepo, '--comment', superseded(Number(newNumber), supersedeNote)] : undefined)
   const supersedeLine = a.supersedes !== undefined && ownerRepo ? [`gh issue close ${a.supersedes} --repo ${ownerRepo} --comment ${shellWord(`superseded by #<new>: ${supersedeNote}`)}`] : []
   if (a.dryRun || !ownerRepo) return [file, ghLine, ...supersedeLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
-  const r = await fileOne($, { root, ownerRepo, file, body, title: a.title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
+  const r = await fileOne($, { root, ownerRepo, file, body, title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
   if ('failed' in r) return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...hintLine].join('\n')
   const projectLines = await addToProject($, root, r.issue.url)
   const closing = closeArgv(String(r.issue.number))
@@ -3783,6 +3790,17 @@ async function fileOne($: Host, o: { root: string; ownerRepo: string; file: stri
   return { issue }
 }
 
+/** MOD-204: true when `gh issue view` reads the issue and says it is OPEN; unreadable or closed is false. */
+async function issueIsOpen($: Host, root: string, ownerRepo: string, n: number): Promise<boolean> {
+  const r = await run($, ['gh', 'issue', 'view', String(n), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
+  if (!r.ok || r.exitCode !== 0) return false
+  try {
+    return (JSON.parse(r.stdout) as { state?: unknown } | null)?.state === 'OPEN'
+  } catch {
+    return false
+  }
+}
+
 /** MOD-193: adds an issue to the configured project; the one line it reports, or none when no project is set. */
 async function addToProject($: Host, root: string, url: string): Promise<string[]> {
   const project = parseProject(cfg.project)
@@ -3795,9 +3813,12 @@ async function addToProject($: Host, root: string, url: string): Promise<string[
  * MOD-193: the land_plan tool. Parses and checks the whole plan first (nothing is written when it errors), writes every body,
  * and files the tree only with confirm: true: the feature, then each task under it, stopping at the first create that fails.
  */
-async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<string> {
-  if ('error' in parsed) return parsed.error
+async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promise<string> {
+  if ('error' in parsedIn) return parsedIn.error
   await loadRepoConfig($)
+  const rules = await redactRules($)
+  // MOD-204: every title is redacted with the body's rules before the slug, the printed lines and gh
+  const parsed = { ...parsedIn, feature: { ...parsedIn.feature, title: redact(parsedIn.feature.title, rules) }, tasks: parsedIn.tasks.map(t => ({ ...t, title: redact(t.title, rules) })) }
   const root = (await $.session.root()).replace(/\/+$/, '')
   const cardDir = cardDirPath(root, cfg.cardDir)
   const found: LandCard[] = []
@@ -3814,7 +3835,6 @@ async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<
   const open = openCards(found, doneTasks((await readText($, `${root}/${LEDGER_FILE}`)) ?? ''))
   const wantName = defaultBranchOf((cfg.baseRef ?? '').trim())
   const def = wantName !== '' && !isSha(wantName) ? wantName : 'main'
-  const rules = await redactRules($)
   const folder = `${root}/.delegation/landed`
   const taken = new Set<string>()
   try {
@@ -3822,15 +3842,33 @@ async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<
   } catch {
     // the folder is not there yet
   }
+  const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
+  const ownerRepo = ownerRepoOf(origin ?? '')
   const used = new Set<string>()
   const items: { item: PlanItem; isFeature: boolean; file: string; body: string; filed?: { number: number; url: string } }[] = []
   for (const [i, item] of [parsed.feature, ...parsed.tasks].entries()) {
-    const body = redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, cards: open.map(c => ({ id: c.id, title: c.title })), defaultBranch: def }), rules)
+    const body = redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)
     const slug = slugOf(item.title)
     let name = ''
     let filedAs: { number: number; url: string } | undefined
-    // the same slug file is reused when its content is unchanged; MOD-198: with its issue: line it is reused as already filed
+    // MOD-204: the newest of the slug file and its -<n> copies that ends in an issue: line and whose issue is still OPEN is reused whatever the body says
+    let newest = ''
     for (let n = 1; ; n++) {
+      const cand = n === 1 ? `${slug}.md` : `${slug}-${n}.md`
+      if (used.has(cand)) continue
+      if (!taken.has(cand) && !(await exists($, `${folder}/${cand}`))) break
+      newest = cand
+    }
+    if (newest !== '' && ownerRepo) {
+      const text = await readText($, `${folder}/${newest}`)
+      const prior = text === undefined ? undefined : issueLineOf(text)
+      if (prior && (await issueIsOpen($, root, ownerRepo, prior.number))) {
+        name = newest
+        filedAs = prior
+      }
+    }
+    // otherwise the same slug file is reused when its content is unchanged
+    for (let n = 1; name === ''; n++) {
       const cand = n === 1 ? `${slug}.md` : `${slug}-${n}.md`
       if (used.has(cand)) continue
       if (!taken.has(cand) && !(await exists($, `${folder}/${cand}`))) {
@@ -3840,12 +3878,6 @@ async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<
       const text = await readText($, `${folder}/${cand}`)
       if (text === body) {
         name = cand
-        break
-      }
-      const prior = text === undefined ? undefined : issueLineOf(text)
-      if (text !== undefined && prior && withoutIssueLine(text) === body) {
-        name = cand
-        filedAs = prior
         break
       }
     }
@@ -3860,8 +3892,6 @@ async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<
       return `land_plan: ${it.file} not written: ${String(err)}`
     }
   }
-  const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
-  const ownerRepo = ownerRepoOf(origin ?? '')
   landRepo = ownerRepo ?? ''
   sessionRoot = root
   const tree = [`feature: ${parsed.feature.title} [${parsed.feature.paths.join(', ')}]`, ...parsed.tasks.map(t => `  task: ${t.title} [${t.paths.join(', ')}]`)]
@@ -5649,6 +5679,9 @@ async function commentOnCardIssue($: Host, o: { task: string; fileId: string; at
   const ownerRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '')
   if (!ownerRepo) return []
   const file = statusFile(root, o.fileId, o.attempt, o.kind)
+  // MOD-204: a file that already ends in a posted: line was commented on before (a reload loses the in-memory set)
+  const before = await readText($, file)
+  if (before !== undefined && /^posted: \S+$/.test(before.trimEnd().split('\n').pop() ?? '')) return []
   try {
     await $.fs.write(file, `${redact(o.text, await redactRules($)).replace(/\n*$/, '')}\n`)
   } catch (err) {
@@ -5657,7 +5690,13 @@ async function commentOnCardIssue($: Host, o: { task: string; fileId: string; at
   landRepo = ownerRepo
   sessionRoot = root
   const r = await run($, ['gh', 'issue', 'comment', String(issue), '--repo', ownerRepo, '--body-file', file], { cwd: root, timeoutMs: 30000 })
-  return r.ok && r.exitCode === 0 ? [] : [statusFailure(issue, r.ok ? r.stderr || r.stdout : r.why)]
+  if (!(r.ok && r.exitCode === 0)) return [statusFailure(issue, r.ok ? r.stderr || r.stdout : r.why)]
+  try {
+    await $.fs.write(file, `${redact(o.text, await redactRules($)).replace(/\n*$/, '')}\nposted: ${new Date(await now($)).toISOString()}\n`)
+  } catch (err) {
+    debug($, `status: posted line not written to ${file}: ${String(err)}`)
+  }
+  return []
 }
 
 /** MOD-200: the verdict row, commented on the card's issue once per attempt; the failure line, if any. */
@@ -7927,6 +7966,7 @@ export const register: Register = (on, opts) => {
   finalizing.clear()
   remembered.clear()
   posted.clear()
+  commentedVerdicts.clear()
 
   // ---- agent.spawn: tier, budget, record, drift --------------------------------------
   on('agent.spawn', async ($, e, next) => {

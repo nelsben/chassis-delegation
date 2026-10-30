@@ -33,7 +33,7 @@ describe('MOD-190: /delegation land', () => {
     const body = w.files.get(file) ?? ''
     expect(body).toContain('```scope\nsrc/export/a.ts\n```')
     expect(body).toContain('- MOD-1 Card MOD-1')
-    expect(body).toContain('- MOD-3 Card MOD-3')
+    expect(body.includes('MOD-3')).toBe(false)
     expect(body.includes('MOD-2')).toBe(false)
     expect(body.includes(ABS)).toBe(false)
     expect([...w.files.keys()].filter(k => k.startsWith(`${ROOT}/.delegation/`) && !k.startsWith(LANDED))).toEqual([])
@@ -283,6 +283,7 @@ describe('MOD-193: land_plan', () => {
     let n = 49
     const run = async (argv: string[]) => {
       if (argv[0] !== 'gh') return undefined
+      if (argv[2] === 'view') return { exitCode: 0, stdout: JSON.stringify({ number: Number(argv[3]), state: 'OPEN' }) }
       if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
       creates++
       if (mode === 'fail' && creates === 2) return { exitCode: 1, stdout: '', stderr: 'boom: rate limited' }
@@ -310,5 +311,100 @@ describe('MOD-193: land_plan', () => {
     expect(lines[at + 1]).toBe(`filed #51 ${u(51)} Fix header`)
     expect(lines[at + 2]).toBe(`filed #52 ${u(52)} Fix footer`)
     expect(out).toContain('tree: #50 with 2 tasks')
+  })
+})
+
+describe('MOD-204: land hardening', () => {
+  const tool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land', ...input } as never)
+  const planTool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land_plan', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const gh = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh')
+
+  test('a title holding a redact-list word reaches gh and the dry-run line redacted', { options: { redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: async argv => (argv[0] === 'gh' ? { exitCode: 0, stdout: 'https://github.com/o/r/issues/42\n' } : undefined) })
+    await $.session.start(sessionStart)
+    const dry = text(await tool($, { type: 'bug', title: 'Globex export drops a row', dryRun: true }))
+    expect(dry.includes('Globex')).toBe(false)
+    await tool($, { type: 'bug', title: 'Globex export drops a row' })
+    const create = gh(w).find((a: string[]) => a[2] === 'create')
+    expect(create[create.indexOf('--title') + 1].includes('Globex')).toBe(false)
+    expect(create[create.indexOf('--title') + 1]).toContain('export drops a row')
+    expect([...w.files.keys()].some(k => k.toLowerCase().includes('globex'))).toBe(false)
+  })
+
+  test('a land_plan title holding a redact-list word is redacted before gh', { options: { redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: async argv => (argv[0] === 'gh' ? { exitCode: 0, stdout: 'https://github.com/o/r/issues/50\n' } : undefined) })
+    await $.session.start(sessionStart)
+    await planTool($, { feature: { title: 'Globex rework', paths: ['src/export/**'] }, tasks: [{ title: 'Fix header', paths: ['src/export/a.ts'] }], confirm: true })
+    const titles = gh(w).filter((a: string[]) => a[2] === 'create').map((a: string[]) => a[a.indexOf('--title') + 1])
+    expect(titles.length).toBe(2)
+    expect(titles.some((t: string) => t.includes('Globex'))).toBe(false)
+  })
+
+  test('the body lists only the open cards whose scope holds a path, and no section without a path', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs() })
+    await $.session.start(sessionStart)
+    await $.command.run(land('task With paths --paths src/export/a.ts --dry-run'))
+    await $.command.run(land('task Without paths --dry-run'))
+    await $.command.run(land('task Elsewhere --paths other/z.ts --dry-run'))
+    const withPaths = w.files.get(`${LANDED}/with-paths.md`) ?? ''
+    expect(withPaths).toContain('## Landed from')
+    expect(withPaths).toContain('- MOD-1 Card MOD-1')
+    expect(withPaths.includes('MOD-3')).toBe(false)
+    for (const n of ['without-paths', 'elsewhere']) {
+      const b = w.files.get(`${LANDED}/${n}.md`) ?? ''
+      expect(b.includes('## Landed from')).toBe(false)
+      expect(b.includes('MOD-')).toBe(false)
+    }
+  })
+
+  test('a retry after a partial failure reuses the filed items even when the open cards changed', async ($, on) => {
+    let creates = 0
+    let n = 49
+    let fail = true
+    let views = 0
+    const run = async (argv: string[]) => {
+      if (argv[0] !== 'gh') return undefined
+      if (argv[2] === 'view') {
+        views++
+        return { exitCode: 0, stdout: JSON.stringify({ number: Number(argv[3]), state: 'OPEN' }) }
+      }
+      if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
+      creates++
+      if (fail && creates === 3) return { exitCode: 1, stdout: '', stderr: 'boom' }
+      n++
+      return { exitCode: 0, stdout: `https://github.com/o/r/issues/${n}\n` }
+    }
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    const input = { feature: { title: 'Export rework', paths: ['src/export/**'] }, tasks: [{ title: 'Fix header', paths: ['src/export/a.ts'] }, { title: 'Fix footer', paths: ['src/export/b.ts'] }], confirm: true }
+    await planTool($, input)
+    expect(creates).toBe(3)
+    // between the calls the overlapping card changes its title
+    w.files.set(`${CARDS}/MOD-1-a.md`, card('MOD-1', 'queued', 'src/export/**', 'parent: 9').replace('title: Card MOD-1', 'title: A renamed card'))
+    fail = false
+    const out = text(await planTool($, input))
+    expect(creates).toBe(4)
+    expect(views).toBeGreaterThan(0)
+    expect(out).toContain('already filed #50')
+    expect(out).toContain('already filed #51')
+    expect([...w.files.keys()].filter(k => k.startsWith(LANDED) && /(export-rework|fix-header)-\d\.md$/.test(k))).toEqual([])
+  })
+
+  test('a closed issue is filed anew', async ($, on) => {
+    let n = 49
+    const run = async (argv: string[]) => {
+      if (argv[0] !== 'gh') return undefined
+      if (argv[2] === 'view') return { exitCode: 0, stdout: JSON.stringify({ number: Number(argv[3]), state: 'CLOSED' }) }
+      if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
+      n++
+      return { exitCode: 0, stdout: `https://github.com/o/r/issues/${n}\n` }
+    }
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    const input = { feature: { title: 'Export rework', paths: ['src/export/**'] }, tasks: [{ title: 'Fix header', paths: ['src/export/a.ts'] }], confirm: true }
+    await planTool($, input)
+    await planTool($, input)
+    expect(gh(w).filter((a: string[]) => a[2] === 'create').length).toBe(4)
   })
 })

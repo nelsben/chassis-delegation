@@ -136,13 +136,15 @@ export function withoutIssueLine(text: string): string {
   return `${lines.join('\n').replace(/\n*$/, '')}\n`
 }
 
-/** The Markdown issue body: the note, the scope block when paths were given, and where it was landed from. Redact it before it is written. */
-export function landedBody(o: { note?: string; supersedes?: number; paths: readonly string[]; cards: readonly { id: string; title: string }[]; defaultBranch: string }): string {
+/** The Markdown issue body: the note, the scope block when paths were given, and the open cards that overlap those paths. Redact it before it is written. */
+export function landedBody(o: { note?: string; supersedes?: number; paths: readonly string[]; cards: readonly { id: string; title: string; scope?: readonly string[] }[]; defaultBranch: string }): string {
   const parts: string[] = []
   if (o.note && o.note.trim() !== '') parts.push(o.note.trim())
   if (o.supersedes !== undefined) parts.push(`supersedes: #${o.supersedes}`)
   if (o.paths.length > 0) parts.push(`## Scope\n\n\`\`\`scope\n${o.paths.join('\n')}\n\`\`\``)
-  parts.push(`## Landed from\n\nOpen cards:\n\n${o.cards.length > 0 ? o.cards.map(c => `- ${c.id} ${c.title}`.trimEnd()).join('\n') : 'none'}\n\nDefault branch: ${o.defaultBranch}`)
+  // MOD-204: only the open cards whose scope holds one of the paths; no section when none does or there are no paths
+  const overlap = o.cards.filter(c => o.paths.some(p => contained(p, c.scope ?? [])))
+  if (overlap.length > 0) parts.push(`## Landed from\n\nOpen cards:\n\n${overlap.map(c => `- ${c.id} ${c.title}`.trimEnd()).join('\n')}\n\nDefault branch: ${o.defaultBranch}`)
   return `${parts.join('\n\n')}\n`
 }
 
