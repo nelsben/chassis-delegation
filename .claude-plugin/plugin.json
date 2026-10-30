@@ -347,12 +347,13 @@
     },
     "scopeAmends": {
       "type": "string",
-      "title": "Scope amends (apply | new-files | ask)",
-      "description": "Whether a worker's request to widen its scope (an amend block with scope+=) applies on its word. apply: appended before verifying, as the applyAmends option says; new-files: appended only when every path it names is a new file, absent at the base, in a folder a scope entry already names; ask: every scope+= block waits for you to append it to the brief and dispatch verify=<sha>. forbid+= always applies; applyAmends off still lists every block and applies none. A value here other than the default wins over the repo file (.chassis-delegation.json)",
+      "title": "Scope amends (apply | new-files | ask | within-parent)",
+      "description": "Whether a worker's request to widen its scope (an amend block with scope+=) applies on its word. apply: appended before verifying, as the applyAmends option says; new-files: appended only when every path it names is a new file, absent at the base, in a folder a scope entry already names; ask: every scope+= block waits for you to append it to the brief and dispatch verify=<sha>; within-parent: appended only when every path it names sits inside the parent issue's scope (the brief's parent_scope=, written from a card cut under a parent), otherwise it waits as under ask, and a brief with no parent_scope= waits every time. forbid+= always applies; applyAmends off still lists every block and applies none. A value here other than the default wins over the repo file (.chassis-delegation.json)",
       "options": [
         "apply",
         "new-files",
-        "ask"
+        "ask",
+        "within-parent"
       ],
       "default": "apply"
     },

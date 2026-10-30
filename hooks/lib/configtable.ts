@@ -32,7 +32,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['mergeCheckMap', 'Checking the work', 'A command run before a task is merged, for each check name a task lists', 'map', 'repo', ''],
   ['gateTimeoutMinutes', 'Checking the work', 'Minutes the checker and a merge let one check command run before they stop it', 'minutes', 'repo', 9],
   ['applyAmends', 'Checking the work', 'Accept a worker\'s request to add files it may or may not touch; removals ask you', 'bool', 'user', true],
-  ['scopeAmends', 'Checking the work', 'Whether a worker\'s request to widen its scope applies on its word: apply, new-files or ask', 'choice', 'repo', 'apply', ['apply', 'new-files', 'ask']],
+  ['scopeAmends', 'Checking the work', 'When a worker\'s scope widening applies: apply, new-files, ask or within-parent', 'choice', 'repo', 'apply', ['apply', 'new-files', 'ask', 'within-parent']],
   ['review', 'Checking the work', 'Have a second, read-only agent check what a worker says it did', 'choice', 'repo', 'on-frontier', ['off', 'on', 'on-frontier']],
   ['reviewTier', 'Checking the work', 'How capable the second checker is; empty means one level below the worker', 'tier', 'repo', ''],
   ['verdictVerbosity', 'Checking the work', 'How much detail shows when a worker\'s result is judged', 'choice', 'user', 'line', ['line', 'full', 'silent']],

@@ -200,7 +200,7 @@ export function globMatches(path: string, glob: string): boolean {
 export const pathMatchesAny = (path: string, globs: readonly string[]): boolean => globs.some(g => g !== '' && globMatches(path, g))
 
 export type BriefContract =
-  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; base?: string; gate?: string; redTest?: string; /** MOD-22: the brief's outdir=. */ outdir?: string; /** MOD-120: the brief's scratch=, the one absolute place a red= may lie outside the tree. */ scratch?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
+  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; /** MOD-196: the brief's parent_scope=, [] when none. */ parentScope: string[]; base?: string; gate?: string; redTest?: string; /** MOD-22: the brief's outdir=. */ outdir?: string; /** MOD-120: the brief's scratch=, the one absolute place a red= may lie outside the tree. */ scratch?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
   | { ok: false; line: string }
 
 /** True when a scope= reads as prose: two or more words and no entry shaped like a path or glob. */
@@ -229,6 +229,7 @@ export function briefContract(briefText: string): BriefContract {
   const forbidGlobs = csv(f.forbid_globs)
   const forbid = forbidGlobs.length > 0 ? forbidGlobs : csv(f.forbid)
   const ignore = csv(f.ignore)
+  const parentScope = csv(f.parent_scope)
   const base = (f.base ?? '').trim()
   if (base !== '' && !isGitRef(base)) {
     return { ok: false, line: `refuse: BRIEF-BAD-BASE — base= ("${base.slice(0, 60)}") is not a git ref; name a branch, HEAD or a sha.` }
@@ -247,6 +248,7 @@ export function briefContract(briefText: string): BriefContract {
       ...(scopeProse ? { scopeProse: true as const } : {}),
       forbid,
       ignore,
+      parentScope,
       ...(base ? { base } : {}),
       ...(gate ? { gate } : {}),
       ...redTest,
@@ -264,6 +266,7 @@ export function briefContract(briefText: string): BriefContract {
     ...(scopeProse ? { scopeProse: true as const } : {}),
     forbid: csv(effectiveList(forbid.join(','), amends.amends, 'forbid')),
     ignore: csv(effectiveList(ignore.join(','), amends.amends, 'ignore')),
+    parentScope,
     ...(base ? { base } : {}),
     ...(gate ? { gate } : {}),
     ...redTest,
@@ -624,7 +627,7 @@ export function verifyCardless(input: { repo: string; report: Report; baseRef?: 
   )
 }
 
-const CARDLESS_CONTRACT: BriefContract = { ok: true, scope: [], forbid: [], ignore: [], lines: [], amendments: 0 }
+const CARDLESS_CONTRACT: BriefContract = { ok: true, scope: [], forbid: [], ignore: [], parentScope: [], lines: [], amendments: 0 }
 
 export async function verifyNative(input: NativeInput, io: NativeIo): Promise<NativeResult> {
   const cardless = input.cardless === true

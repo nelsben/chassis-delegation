@@ -23,6 +23,8 @@ export type Card = {
   redTest: string
   scope: string[]
   forbid: string[]
+  /** MOD-196: the parent issue's scope block (`parentScope: [hooks/**]`), written into the brief header as parent_scope=. */
+  parentScope: string[]
   budget?: string
   /** GH-106: the card's `spend:` ceiling in dollars, as written. */
   spend?: string
@@ -173,6 +175,7 @@ export function parseCard(text: string): Card | { error: string } {
     redTest: asText(f.red_test).trim(),
     scope: asList(f.scope),
     forbid: asList(f.forbid),
+    parentScope: asList(f.parentScope),
     budget: asText(f.budget).trim() || undefined,
     spend: asText(f.spend).trim() || undefined,
     repo: asText(f.repo).trim() || undefined,
@@ -247,6 +250,8 @@ export function renderHeader(input: {
   return (
     `[[brief v=1 task=${c.id} subtask=main purpose=build tier=${input.tier} model=${input.alias}` +
     ` scope=${listForHeader(scope.map(oneLine))} forbid=${listForHeader(forbid.map(oneLine))}` +
+    // MOD-196: the parent's scope, after forbid=, for scopeAmends within-parent
+    (c.parentScope.length > 0 ? ` parent_scope=${listForHeader(c.parentScope.map(oneLine))}` : '') +
     // MOD-98: a spaced path in scope would read as prose to the verifier, so the same list is also given as globs
     (scope.some(isSpacedPath) && scope.every(e => !/\s/.test(e) || isSpacedPath(e)) ? ` scope_globs=${listForHeader(scope.map(oneLine))}` : '') +
     ` red_test="${oneLine(c.redTest).replace(/"/g, "'")}" gate=${c.gate.join(',')}${here}` +

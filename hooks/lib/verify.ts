@@ -344,7 +344,7 @@ export const amendHeldLine = (a: { block: string }, mode: string, briefPath: str
 export function heldScopePaths(lines: readonly string[]): string[] {
   const out: string[] = []
   for (const l of lines) {
-    if (!l.startsWith('amend needs approval: ') || !/ \(scopeAmends (?:ask|new-files)\) — /.test(l)) continue
+    if (!l.startsWith('amend needs approval: ') || !/ \(scopeAmends (?:ask|new-files|within-parent)\) — /.test(l)) continue
     const block = l.slice('amend needs approval: '.length).split(' (scopeAmends ')[0] ?? ''
     for (const m of block.matchAll(/(?:^|\s)scope\+=(\S+)/g)) out.push(...(m[1] ?? '').split(',').filter(Boolean))
   }

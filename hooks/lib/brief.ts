@@ -7,9 +7,10 @@
 // quote, so field-looking text inside the quotes stays in the value.
 
 import { globMatches } from './verify-native'
+import { contained } from './scopetree'
 
 export const BRIEF_FIELDS = [
-  'v', 'task', 'subtask', 'purpose', 'tier', 'model', 'scope', 'forbid', 'scope_globs', 'forbid_globs',
+  'v', 'task', 'subtask', 'purpose', 'tier', 'model', 'scope', 'forbid', 'parent_scope', 'scope_globs', 'forbid_globs',
   'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'outdir', 'scratch', 'resources', 'allow', 'context', 'note',
 ] as const
 
@@ -43,7 +44,7 @@ export type AmendParse = { amends: Amend[]; malformed?: string }
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** MOD-98: the header fields that hold a comma list of paths or globs, where an entry may be written in double quotes. */
-export const LIST_FIELDS = ['scope', 'forbid', 'scope_globs', 'forbid_globs', 'ignore'] as const
+export const LIST_FIELDS = ['scope', 'forbid', 'parent_scope', 'scope_globs', 'forbid_globs', 'ignore'] as const
 
 /**
  * MOD-98: a list entry that is a path or glob holding a space (`Old Stuff/**`, `My Docs/n.md`), as opposed to prose
@@ -330,8 +331,12 @@ export const amendNeedsApproval = (a: Amend, forbid: readonly string[] = []): bo
   a.ops.some(op => /^(scope|forbid)-=|^ignore\+=/.test(op)) || amendScopeInsideForbid(a, forbid).length > 0
 
 /** MOD-170: whether a worker's `scope+=` applies on its word (apply), only for new files beside paths in scope (new-files), or waits for the lead (ask). */
-export type ScopeAmends = 'apply' | 'new-files' | 'ask'
-export const SCOPE_AMENDS_MODES: readonly ScopeAmends[] = ['apply', 'new-files', 'ask']
+export type ScopeAmends = 'apply' | 'new-files' | 'ask' | 'within-parent'
+export const SCOPE_AMENDS_MODES: readonly ScopeAmends[] = ['apply', 'new-files', 'ask', 'within-parent']
+
+/** MOD-196: the brief header's parent_scope= globs, or [] when the header names none. */
+export const parentScopeOf = (briefText: string): string[] =>
+  (parseHeader(briefText)?.fields.parent_scope ?? '').split(',').map(s => s.trim()).filter(Boolean)
 
 /** MOD-170: the paths of a block's `scope+=` operations, in order. */
 export const amendScopePaths = (a: Amend): string[] =>
@@ -361,13 +366,16 @@ export function inScopeFolder(path: string, scope: readonly string[]): boolean {
 /**
  * MOD-170: whether a `scope+=` block waits for approval under scopeAmends. `apply`: never; `ask`: always;
  * `new-files`: unless every path it names is a literal path that did not exist at the base ('new') and
- * sits in a folder the scope already names. `base` gives each path's state; a path it does not know
+ * sits in a folder the scope already names. `within-parent` (MOD-196): unless the brief's parent_scope= is non-empty
+ * and every path sits inside it (scopetree's `contained`). `base` gives each path's state; a path it does not know
  * (a git error) holds the block. A block with no `scope+=` is never held by this rule.
  */
-export function scopeAmendHeld(a: Amend, mode: ScopeAmends, scope: readonly string[], base: ReadonlyMap<string, 'new' | 'exists' | 'error'>): boolean {
+export function scopeAmendHeld(a: Amend, mode: ScopeAmends, scope: readonly string[], base: ReadonlyMap<string, 'new' | 'exists' | 'error'>, parentScope: readonly string[] = []): boolean {
   const paths = amendScopePaths(a)
   if (paths.length === 0 || mode === 'apply') return false
   if (mode === 'ask') return true
+  // MOD-196: within-parent applies only when the parent's scope is known and every path sits inside it; no parent scope behaves as ask
+  if (mode === 'within-parent') return !(parentScope.length > 0 && paths.every(p => contained(p, parentScope)))
   return !paths.every(p => !hasWildcard(p) && base.get(p) === 'new' && inScopeFolder(p, scope))
 }
 

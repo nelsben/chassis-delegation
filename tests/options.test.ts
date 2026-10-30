@@ -275,6 +275,35 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(delivered(w)).toContain('(scopeAmends ask)')
   })
 
+  test('MOD-196 scopeAmends within-parent from /config holds a scope+= block when the brief carries no parent_scope', async ($, on) => {
+    const AMEND = '[[amend v=1 scope+=c/x.ts reason=the helper lives there]]'
+    const w = handBackWorld(on)
+    await $.session.start(sessionStart)
+    await set($, 'scopeAmends', 'within-parent')
+    await handBack($, AMEND + '\n' + REPORT('1234abcd'))
+    expect(w.files.get(BRIEF)).toBe(HEADER + '\nbody')
+    expect(delivered(w)).toContain('(scopeAmends within-parent)')
+  })
+
+  test('MOD-196 scopeAmends within-parent from the repo file applies a block inside the brief parent_scope', async ($, on) => {
+    const AMEND = '[[amend v=1 scope+=c/x.ts reason=the helper lives there]]'
+    const H = HEADER.replace(' gate=prettier', ' parent_scope=c/** gate=prettier')
+    const w = handBackWorld(on, { files: { [BRIEF]: H + '\nbody', [REPO_FILE]: JSON.stringify({ scopeAmends: 'within-parent', gateMap: { prettier: 'npx prettier --check {files}' } }) } })
+    await $.session.start(sessionStart)
+    await handBack($, AMEND + '\n' + REPORT('1234abcd'))
+    expect(w.files.get(BRIEF)).toContain(AMEND)
+  })
+
+  test('MOD-196 scopeAmends within-parent from the repo file holds a block that escapes the brief parent_scope', async ($, on) => {
+    const AMEND = '[[amend v=1 scope+=d/x.ts reason=the helper lives there]]'
+    const H = HEADER.replace(' gate=prettier', ' parent_scope=c/** gate=prettier')
+    const w = handBackWorld(on, { files: { [BRIEF]: H + '\nbody', [REPO_FILE]: JSON.stringify({ scopeAmends: 'within-parent', gateMap: { prettier: 'npx prettier --check {files}' } }) } })
+    await $.session.start(sessionStart)
+    await handBack($, AMEND + '\n' + REPORT('1234abcd'))
+    expect(w.files.get(BRIEF)).toBe(H + '\nbody')
+    expect(delivered(w)).toContain('(scopeAmends within-parent)')
+  })
+
   test('project: set to owner/number, land adds the new issue to it; anything else is unset', async ($, on) => {
     const card = ['---', 'id: MOD-1', 'title: Card MOD-1', 'domain: mod', 'tier: standard', 'status: queued', 'scope: [a/**]', 'gate: node', '---', 'body', ''].join('\n')
     const w = world(on, {

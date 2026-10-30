@@ -53,6 +53,7 @@ import {
   amendNeedsApproval,
   amendScopePaths,
   scopeAmendHeld,
+  parentScopeOf,
   type ScopeAmends,
   amendScopeInsideForbid,
   amendInsideForbidLine,
@@ -4896,7 +4897,7 @@ async function applyHandbackAmends($: Host, briefPath: string, briefText: string
   const mode = cfg.scopeAmends
   const scopeNow = effectiveList(hdr?.fields.scope ?? hdr?.fields.scope_globs ?? '', parseAmends(briefText).amends, 'scope').split(',').filter(Boolean)
   const baseState = mode === 'new-files' ? await pathsAtBase($, spawn, briefText, sha, [...new Set(rest.flatMap(amendScopePaths))]) : new Map<string, 'new' | 'exists' | 'error'>()
-  const byMode = rest.filter(a => scopeAmendHeld(a, mode, scopeNow, baseState))
+  const byMode = rest.filter(a => scopeAmendHeld(a, mode, scopeNow, baseState, parentScopeOf(briefText)))
   const apply = rest.filter(a => !byMode.includes(a))
   const heldLines = [
     ...held.flatMap(a => {
