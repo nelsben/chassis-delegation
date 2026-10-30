@@ -557,6 +557,14 @@ describe('MOD-75: the merge command\'s pure parts (the allowlist shapes are in t
     expect(body).toContain('- [x] hooks/x.ts and ~/notes.md hold')
     expect(body).not.toContain('/Users/')
   })
+  test('pr.md carries Refs #n above the generated line for a card with issue, and never a closing word', () => {
+    const base = { body: '## Done when\n\n- It works.\n', verdictLine: 'v', gates: [], folders: [WT, ROOT] }
+    const body = prBody({ ...base, issue: 12 })
+    expect(body).toContain('Refs #12\n\n')
+    expect(body.indexOf('Refs #12')).toBeLessThan(body.indexOf('Generated with'))
+    expect(body).not.toMatch(/\b(closes|fixes|resolves)\s+#?\d/i)
+    expect(prBody(base)).not.toContain('Refs')
+  })
   test('a merged task leaves the running and pending lines', () => {
     const merged = [{ task: 'MOD-1', sha: 'abc', at: 0 }]
     expect(labelIsMerged('MOD-1', merged)).toBe(true)

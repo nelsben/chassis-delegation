@@ -80,6 +80,10 @@ Checklist, in print order:
 9. **Delete the branch:** `git push origin --delete agent/<domain>/<ID>`. The answer ends `<ID> merged at <sha>`.
 10. **Release extras**, only when `hooks/lib/version.ts` changed: `git tag -a v<version> -m v<version>`, `git push origin v<version>`, and `git -C <loaded clone> pull --ff-only` when the mod loads from another checkout. The last line is `release v<version>: run the block above, then reload the window`.
 
+### A card with an issue
+
+A card whose frontmatter has `issue: <n>` (the card tool writes it, and `parent:`, since MOD-188) adds two things. pr.md gains a line `Refs #<n>` directly above the generated line; it never says Closes, Fixes or Resolves. And `--finish` prints, first in its block, `gh issue close <n> --repo <owner/repo> --comment 'merged in #<pr>'` (`merged at <sha7>` when the PR number is not known). The close is printed rather than left to a closing keyword because those fire only on the default branch, and some repos merge into a long-lived integration branch. With `parent: <p>` as well, the block ends with a shell comment, `# parent #<p>: gh issue view <p> --repo <owner/repo> --json subIssuesSummary; close it by hand when every task is done`. The mod never closes a parent and never runs gh itself: a feature whose current tasks are done is often not finished. A card with neither line changes nothing.
+
 ### Merge checks
 
 A card can name a check that merge runs at the branch head, so a rule about the proof sits beside the proof. Two places name one:
