@@ -367,7 +367,7 @@ describe('MOD-204: land hardening', () => {
       if (argv[0] !== 'gh') return undefined
       if (argv[2] === 'view') {
         views++
-        return { exitCode: 0, stdout: JSON.stringify({ number: Number(argv[3]), state: 'OPEN' }) }
+        return { exitCode: 0, stdout: JSON.stringify({ number: Number(argv[3]), state: 'OPEN', subIssues: [{ number: 51, title: 'Fix header', state: 'OPEN' }] }) }
       }
       if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
       creates++
@@ -461,5 +461,128 @@ describe('MOD-205: landAuto', () => {
     expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
     const out2 = String((await $.command.run(land('bug T --confirm'))).text)
     expect(out2).toContain(`filed #42 ${URL42}`)
+  })
+})
+
+// MOD-207: land resume is keyed to the plan; preview runs no gh; confirm reuses the preview file.
+describe('MOD-207: land resume keyed to the plan', () => {
+  const planTool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land_plan', ...input } as never)
+  const landTool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const gh = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh')
+  const creates = (w: any) => gh(w).filter((a: string[]) => a[2] === 'create')
+  // a tiny GitHub: create numbers from 50 and records --parent; view answers state and subIssues
+  const sim = (opts: { failCreateAt?: number } = {}) => {
+    let n = 49
+    let made = 0
+    const issues = new Map<number, { title: string; state: string; parent?: number }>()
+    const run = async (argv: string[]) => {
+      if (argv[0] !== 'gh') return undefined
+      if (argv[2] === 'view') {
+        const num = Number(argv[3])
+        const it = issues.get(num)
+        if (!it) return { exitCode: 1, stdout: '', stderr: 'not found' }
+        const subIssues = [...issues.entries()].filter(([, v]) => v.parent === num).map(([k, v]) => ({ number: k, title: v.title, state: v.state }))
+        return { exitCode: 0, stdout: JSON.stringify({ number: num, title: it.title, state: it.state, labels: [], body: '', subIssues }) }
+      }
+      if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
+      made++
+      if (made === opts.failCreateAt) return { exitCode: 1, stdout: '', stderr: 'boom' }
+      n++
+      const p = argv.indexOf('--parent')
+      issues.set(n, { title: argv[argv.indexOf('--title') + 1] as string, state: 'OPEN', ...(p >= 0 ? { parent: Number(argv[p + 1]) } : {}) })
+      return { exitCode: 0, stdout: `https://github.com/o/r/issues/${n}\n` }
+    }
+    return { run, issues }
+  }
+  const setup = (on: any, run: any) => world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run })
+  const planA = (over: Record<string, unknown> = {}) => ({ feature: { title: 'Export rework', paths: ['src/export/**'] }, tasks: [{ title: 'Fix header', paths: ['src/export/a.ts'] }, { title: 'Fix footer', paths: ['src/export/b.ts'] }], confirm: true, ...over })
+
+  test('two plans with different features and a task of the same title: the second files a new task', async ($, on) => {
+    const g = sim()
+    const w = setup(on, g.run)
+    await $.session.start(sessionStart)
+    await planTool($, planA())
+    w.runs.length = 0
+    const out = text(await planTool($, { feature: { title: 'Import rework', paths: ['src/import/**'] }, tasks: [{ title: 'Fix header', paths: ['src/import/a.ts'] }], confirm: true }))
+    expect(creates(w)).toHaveLength(2)
+    expect(creates(w)[1]).toEqual(['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Fix header', '--label', 'type:task', '--parent', '53', '--body-file', `${LANDED}/fix-header-2.md`])
+    expect(out.includes('already filed')).toBe(false)
+  })
+
+  test('two features with the same title and different paths: the second files a new feature', async ($, on) => {
+    const g = sim()
+    const w = setup(on, g.run)
+    await $.session.start(sessionStart)
+    await planTool($, planA())
+    w.runs.length = 0
+    const out = text(await planTool($, { feature: { title: 'Export rework', paths: ['src/export/sub/**'] }, tasks: [{ title: 'Fix header', paths: ['src/export/sub/a.ts'] }], confirm: true }))
+    expect(creates(w)).toHaveLength(2)
+    expect(creates(w)[0]).toEqual(['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Export rework', '--label', 'type:feature', '--body-file', `${LANDED}/export-rework-2.md`])
+    expect(out.includes('already filed')).toBe(false)
+    expect(w.files.get(`${LANDED}/export-rework-2.md`) ?? '').toMatch(/^plan: export-rework-[0-9a-f]{8}$/m)
+  })
+
+  test('a partial-failure retry of the same plan reuses its filed items', async ($, on) => {
+    const g = sim({ failCreateAt: 3 })
+    const w = setup(on, g.run)
+    await $.session.start(sessionStart)
+    const first = text(await planTool($, planA()))
+    expect(first).toContain('not filed: Fix footer')
+    w.runs.length = 0
+    const out = text(await planTool($, planA()))
+    expect(out).toContain('already filed #50')
+    expect(out).toContain('already filed #51')
+    expect(creates(w)).toEqual([['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Fix footer', '--label', 'type:task', '--parent', '50', '--body-file', `${LANDED}/fix-footer.md`]])
+    expect(gh(w).filter((a: string[]) => a[2] === 'view')).toHaveLength(1)
+  })
+
+  test('a land_plan preview runs no gh and says may reuse', async ($, on) => {
+    const g = sim()
+    const w = setup(on, g.run)
+    await $.session.start(sessionStart)
+    await planTool($, planA())
+    w.runs.length = 0
+    const out = text(await planTool($, planA({ confirm: false })))
+    expect(gh(w)).toEqual([])
+    expect(out).toContain('may reuse #50 (checked on confirm)')
+    expect(out).toContain('may reuse #51 (checked on confirm)')
+  })
+
+  test('every landed plan file carries the plan: line before the issue: line', async ($, on) => {
+    const g = sim()
+    const w = setup(on, g.run)
+    await $.session.start(sessionStart)
+    await planTool($, planA())
+    const lines = (w.files.get(`${LANDED}/fix-header.md`) ?? '').trimEnd().split('\n')
+    expect(lines[lines.length - 1]).toMatch(/^issue: #51 /)
+    expect(lines[lines.length - 2]).toMatch(/^plan: export-rework-[0-9a-f]{8}$/)
+  })
+
+  test('land preview then confirm leaves exactly one landed file and files from it', { options: { landAuto: false } }, async ($, on) => {
+    const g = sim()
+    const w = setup(on, g.run)
+    await $.session.start(sessionStart)
+    await landTool($, { type: 'bug', title: 'Export drops a row', paths: ['src/export/a.ts'] })
+    const out = text(await landTool($, { type: 'bug', title: 'Export drops a row', paths: ['src/export/a.ts'], confirm: true }))
+    expect([...w.files.keys()].filter(k => k.startsWith(LANDED))).toEqual([`${LANDED}/export-drops-a-row.md`])
+    expect(creates(w)).toHaveLength(1)
+    expect(creates(w)[0]?.at(-1)).toBe(`${LANDED}/export-drops-a-row.md`)
+    expect(out).toContain('filed #50')
+  })
+
+  test('land confirm after a timed-out create with an OPEN issue on the file reports already filed and creates nothing', { options: { landAuto: false } }, async ($, on) => {
+    const g = sim()
+    g.issues.set(42, { title: 'Export drops a row', state: 'OPEN' })
+    const w = setup(on, g.run)
+    await $.session.start(sessionStart)
+    await landTool($, { type: 'bug', title: 'Export drops a row' })
+    const file = `${LANDED}/export-drops-a-row.md`
+    w.files.set(file, `${w.files.get(file) ?? ''}issue: #42 https://github.com/o/r/issues/42\n`)
+    w.runs.length = 0
+    const out = text(await landTool($, { type: 'bug', title: 'Export drops a row', confirm: true }))
+    expect(out).toContain('already filed #42 https://github.com/o/r/issues/42')
+    expect(creates(w)).toHaveLength(0)
+    expect([...w.files.keys()].filter(k => k.startsWith(LANDED))).toEqual([file])
   })
 })
