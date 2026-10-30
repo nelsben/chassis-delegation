@@ -715,6 +715,37 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.submitted[0]?.text).toContain('chassis-delegation: T-4 attempt 1/3 consistent')
   })
 
+  test('landNudge: a flagged prompt is cleared by a land call, shown at turn end when none came, and off draws and records nothing', async ($, on) => {
+    const w = world(on, { skip: ['prompt.submit'] })
+    on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
+    await $.session.start(sessionStart)
+    const LINE = 'lead: land this as an issue (land or land_plan) or say it is not work'
+    const drawn = async () => {
+      try {
+        const ui = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: bandProps() } as never)
+        return (await ui.find({ type: 'Text', text: LINE })) !== undefined
+      } catch {
+        return false
+      }
+    }
+    const PROMPT = 'the merge button is broken on dark mode'
+    await $.prompt.submit({ text: PROMPT } as never)
+    await $.tool.call({ tool: 'mcp__chassis-delegation__land', type: 'bug', title: 'Merge button', dryRun: true } as never)
+    await $.turn.complete(mainTurn())
+    expect(await drawn()).toBe(false)
+    await $.prompt.submit({ text: PROMPT } as never)
+    await $.turn.complete(mainTurn())
+    expect(await drawn()).toBe(true)
+    await set($, 'landNudge', 'off')
+    expect(await drawn()).toBe(false)
+    await $.prompt.submit({ text: PROMPT } as never)
+    await $.turn.complete(mainTurn())
+    expect(await drawn()).toBe(false)
+    await set($, 'landNudge', 'on')
+    expect(await drawn()).toBe(false) // nothing was recorded while off
+    expect(w.invalidations).toBeGreaterThan(0)
+  })
+
   test('readyFallbackMinutes: 1 starts a waiting task itself after a minute (the built-in 10)', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.session.start(sessionStart)

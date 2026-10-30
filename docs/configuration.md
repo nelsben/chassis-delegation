@@ -69,6 +69,7 @@ Shows the options in force and where each value came from; works in VS Code.
 | `reviewTier` | repo | `""` (one below the worker, not below economy) | `economy`, `standard`, `frontier`, `premium`: the reviewer's tier. |
 | `autoEscalate` | user | `false` | perform the resume instead of advising it. |
 | `wakeOnVerdict` | user | `false` | on: a verdict row also starts a brain turn. |
+| `landNudge` | user | `true` | one band line for the brain: a prompt that describes work and a turn that lands nothing, and a merge finish whose parent has open tasks. Off draws and records neither. |
 | `postFindings` | user | `ask` | `ask`, `auto`, `off`; `/config` only. See [Posting the findings](#posting-the-findings). |
 | `readyFallbackMinutes` | user | `10` | minutes a `ready:` row waits before the mod starts it itself. `0` = off. |
 | `waitStallMin` | user | `20` | minutes without a hand-back before `<id> stalled <n> min; resume or stop it`. `0` = off. |

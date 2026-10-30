@@ -56,17 +56,44 @@ function rationRow(p: PaneTable, r: Ration, scheme: Scheme): RenderNode {
 }
 
 /** MOD-133: the band with the ration bar alone: the bar row, then `[ details ]`. No worker figures. */
-export function rationBandTree(p: PaneTable, r: Ration, scheme: Scheme, onDetails: () => void): RenderNode {
+export function rationBandTree(p: PaneTable, r: Ration, scheme: Scheme, onDetails: () => void, nudge?: string): RenderNode {
   const { Box, Button } = p.t
-  return (
-    <Box key="dash-band" flexDirection="row" gap={1}>
+  const row = (
+    <Box key={nudge ? 'band-ration' : 'dash-band'} flexDirection="row" gap={1}>
       {rationRow(p, r, scheme)}
       <Button key="details" label="details" hotkey="d" variant="primary" onPress={onDetails} />
     </Box>
   )
+  if (!nudge) return row
+  return (
+    <Box key="dash-band" flexDirection="column">
+      {row}
+      {nudgeRow(p, nudge, scheme)}
+    </Box>
+  )
 }
 
-export function bandTree(p: PaneTable, v: LiveView, scheme: Scheme, columns: number, onDetails: () => void, ration?: Ration): RenderNode {
+/** MOD-201: one lead line for the brain, the last row of the band; never counted against capLines. */
+function nudgeRow(p: PaneTable, line: string, scheme: Scheme): RenderNode {
+  const { Text } = p.t
+  return (
+    <Text key="band-nudge" wrap="truncate-end" color={scheme === 'dark' ? '#d9a441' : '#9a6a00'}>
+      {line}
+    </Text>
+  )
+}
+
+/** MOD-201: the band when only the nudge line is due: that one row. */
+export function nudgeBandTree(p: PaneTable, line: string, scheme: Scheme): RenderNode {
+  const { Box } = p.t
+  return (
+    <Box key="dash-band" flexDirection="column">
+      {nudgeRow(p, line, scheme)}
+    </Box>
+  )
+}
+
+export function bandTree(p: PaneTable, v: LiveView, scheme: Scheme, columns: number, onDetails: () => void, ration?: Ration, nudge?: string): RenderNode {
   const { Box, Text, Button } = p.t
   return (
     <Box key="dash-band" flexDirection="column" hover={{ scope: DASH_SCOPE }}>
@@ -79,6 +106,7 @@ export function bandTree(p: PaneTable, v: LiveView, scheme: Scheme, columns: num
       <Box key="dash-card" flexDirection="column" display="none" hover={{ scope: DASH_SCOPE, display: 'flex' }}>
         {liveBlocks(p, v, scheme, Math.max(10, columns - 2), false)}
       </Box>
+      {nudge ? nudgeRow(p, nudge, scheme) : null}
     </Box>
   )
 }

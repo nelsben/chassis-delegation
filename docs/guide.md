@@ -200,6 +200,10 @@ To see the work across repos, use one GitHub Project that you own as the view. S
 
 While parents are in use, set `/delegation config scopeAmends within-parent`. A card cut with `parentScope` carries it into the brief as `parent_scope=`; a worker's `scope+=` then applies on its word only when every path sits inside that scope, and anything that escapes it waits for your approval. `ask` holds every scope amend instead, and a brief with no `parent_scope=` waits every time under `within-parent`.
 
+### Land nudge
+
+Two one-line leads sit in the band above the prompt, for the brain and not for you. After a prompt of yours that describes a bug, feature or idea, if the turn ends without a `land`, `land_plan` or `card` call, the band says `lead: land this as an issue (land or land_plan) or say it is not work`. After a merge finish whose parent issue still has open tasks, it says `lead: parent #<n> has <k> open tasks; land the next or close it`. A later land, land_plan or card call clears the first; land, land_plan, card or dispatch clears the second. Nothing is written to GitHub. Turn them off with `/delegation config landNudge off`.
+
 ## Commands and tools
 
 | Name | Who calls it | What it does |

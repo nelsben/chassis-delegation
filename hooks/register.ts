@@ -15,7 +15,8 @@ import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from 
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { callKind, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
 import { saysWaiting, waitStep, WAIT_STALL_DEFAULT_MIN, type WaitState } from './lib/waitstate'
-import { bandTree, rationBandTree } from './lib/band'
+import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
+import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
 import { paneTree, type PaneTable, type PaneView } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
@@ -626,6 +627,8 @@ type Config = {
   issueRepoOwn: boolean
   /** MOD-15: a verdict row is followed by a `$.prompt.submit`, a turn of the brain's own. MOD-64: off unless the option is true. */
   wakeOnVerdict: boolean
+  /** MOD-201: the two one-line leads in the band, for the brain; off records and draws neither. */
+  landNudge: boolean
   /** MOD-31: ask | auto | off; /config only, never the (public, shared) repo file. */
   postFindings: PostMode
   /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
@@ -723,6 +726,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       issueRepo: issues.repo,
       issueRepoOwn: issues.own,
       wakeOnVerdict: o.wakeOnVerdict === true,
+      landNudge: o.landNudge !== false,
       postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
       waitStallMs: num('waitStallMin', WAIT_STALL_DEFAULT_MIN) * MIN_MS,
@@ -1244,6 +1248,24 @@ async function setLastVerdict($: Host, v: DelegationVerdict) {
     // as above
   }
   redraw($)
+}
+
+// ---- MOD-201: the land nudge ---------------------------------------------------------
+/** A person's prompt that described work, waiting for the turn's end: first 80 characters and the time. */
+let landPending: { text: string; at: number } | undefined
+/** The nudge lines the band shows: the prompt one, and the parent one a merge finish set. */
+let landLine: string | undefined
+let parentLine: string | undefined
+
+/** A land, land_plan, card (and, for the parent line, dispatch) call was seen. */
+function landSeen($: Host, tool: 'land' | 'land_plan' | 'card' | 'dispatch') {
+  const had = landLine !== undefined || parentLine !== undefined
+  if (tool !== 'dispatch') {
+    landPending = undefined
+    landLine = undefined
+  }
+  parentLine = undefined
+  if (had) redraw($)
 }
 
 // ---- GH-112: the live dashboard (the band above the prompt and the pane) -----------
@@ -3005,6 +3027,12 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   if (cardIssue !== undefined && cardParent !== undefined && closeRepo) {
     const v = await run($, ['gh', 'issue', 'view', String(cardParent), '--repo', closeRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
     if (v.ok && v.exitCode === 0) siblings = siblingsOf(v.stdout)
+  }
+  // MOD-201: a finish that leaves the parent with open tasks sets the lead; one that closes it sets none
+  if (cfg.landNudge && cardIssue !== undefined && cardParent !== undefined) {
+    const left = parentNudge(cardParent, cardIssue, siblings)
+    parentLine = left ? nudgeLine('parent', left) : undefined
+    redraw($)
   }
   // MOD-200: the mod runs the task close itself, and the parent close when every other sibling is closed
   const closed: { task?: CloseResult; parent?: CloseResult } = {}
@@ -8174,6 +8202,12 @@ export const register: Register = (on, opts) => {
       }
       driveTurnCalls = 0
       driveWatch = emptyWatch()
+      // MOD-201: a flagged prompt and no land, land_plan or card call since: the lead goes up
+      if (landPending && cfg.landNudge) {
+        landPending = undefined
+        landLine = nudgeLine('prompt')
+        redraw($)
+      }
       await freshSessionGuard($)
       // GH-113: the brain's own turn, priced apart from the workers'
       if (e.usage) {
@@ -8214,6 +8248,13 @@ export const register: Register = (on, opts) => {
     // MOD-15: the mod's own wake-up is not the person's correction
     const ours = e.origin?.kind === 'plugin' && e.origin.name === PLUGIN
     if (!ours && isCorrection(e.text)) void noteFriction($, { kind: 'correction', detail: e.text.slice(0, 200), at: await now($) })
+    // MOD-201: the person's next prompt clears a shown line; one that describes work is remembered until the turn ends
+    if (!ours) {
+      const had = landLine !== undefined
+      landLine = undefined
+      landPending = cfg.landNudge && describesWork(e.text) ? { text: e.text.slice(0, 80), at: await now($) } : undefined
+      if (had) redraw($)
+    }
     return next(e)
   })
 
@@ -8374,7 +8415,7 @@ export const register: Register = (on, opts) => {
   on('command.run', { command: 'dispatch' }, async ($, e) => ({ text: await runDispatch($, parseDispatchArgs(e.args)) }))
   // The literal is DISPATCH_TOOL_NAME, written out so the validator reads it; `as never` because the
   // declared tool-name union (built-ins + the MCP servers connected at the last load) does not hold a plugin's own tool.
-  on('tool.call', { tool: 'mcp__chassis-delegation__dispatch' as never }, async ($, e) => ({ result: await runDispatch($, parseDispatchTool(e as unknown as Record<string, unknown>)) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__dispatch' as never }, async ($, e) => (landSeen($, 'dispatch'), { result: await runDispatch($, parseDispatchTool(e as unknown as Record<string, unknown>)) }))
 
   // ---- /delegation [init] and the init tool: one function (5B) ----------------------
   on('command.run', { command: 'delegation' }, async ($, e) => {
@@ -8416,13 +8457,13 @@ export const register: Register = (on, opts) => {
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
     return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|tree <n>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
-  on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => (landSeen($, 'card'), { result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => ({ result: await runVerdict($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async ($, e) => ({ result: await runInit($, pathOfCall(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async ($, e) => ({ result: await runSetup($, true, pathOfCall(e)) }))
   // MOD-75: the merge tool, the command's second door
-  on('tool.call', { tool: 'mcp__chassis-delegation__land' as never }, async ($, e) => ({ result: await landWith($, parseLandTool(e as unknown as Record<string, unknown>)) }))
-  on('tool.call', { tool: 'mcp__chassis-delegation__land_plan' as never }, async ($, e) => ({ result: await planWith($, parsePlan(e)) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__land' as never }, async ($, e) => (landSeen($, 'land'), { result: await landWith($, parseLandTool(e as unknown as Record<string, unknown>)) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__land_plan' as never }, async ($, e) => (landSeen($, 'land_plan'), { result: await planWith($, parsePlan(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__tree' as never }, async ($, e) => ({ result: await treeWith($, (e as unknown as Record<string, unknown>).issue) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => ({ result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
@@ -8434,12 +8475,14 @@ export const register: Register = (on, opts) => {
       const ration = await rationPane($)
       const view = cfg.dashboardBand ? (await liveModel($)).view : undefined
       const live = view && isActive(view) ? view : undefined
-      if (!ration && !live) return next(e)
+      const nudge = cfg.landNudge ? (landLine ?? parentLine) : undefined
+      if (!ration && !live && !nudge) return next(e)
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
       const scheme = pickScheme(e)
       const details = () => void $.ui.open({ id: DASH_PANE, title: 'Delegation', focus: true })
-      if (live) return bandTree(p, live, scheme, e.props.bodyColumns, details, ration) as never
-      return rationBandTree(p, ration!, scheme, details) as never
+      if (live) return bandTree(p, live, scheme, e.props.bodyColumns, details, ration, nudge) as never
+      if (ration) return rationBandTree(p, ration, scheme, details, nudge) as never
+      return nudgeBandTree(p, nudge!, scheme) as never
     } catch (err) {
       debug($, `band not drawn: ${String(err)}`)
       return next(e)
