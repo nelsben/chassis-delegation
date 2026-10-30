@@ -380,6 +380,45 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(out).toContain('refused --discard without --finish')
   })
 
+  // ---- MOD-195: finish closes the feature when its last task closes ---------------------------
+  describe('MOD-195: the parent close line', () => {
+    const ISSUE_CARD = CARD.replace('status: queued', 'status: queued\nissue: 52\nparent: 50')
+    const VIEW = ['gh', 'issue', 'view', '50', '--repo', 'acme/acme-app', '--json', 'number,title,state,labels,body,subIssues']
+    const parentView = (first: string, view: Answers = () => undefined) =>
+      landed(markMerged(ISSUE_CARD), argv => {
+        const o = view(argv)
+        if (o) return o
+        if (is(argv, ...VIEW)) return { exitCode: 0, stdout: JSON.stringify({ number: 50, title: 'F', state: 'OPEN', labels: [], body: '', subIssues: { nodes: [{ number: 51, title: 'a', state: first }, { number: 52, title: 'b', state: 'OPEN' }], totalCount: 2 } }) }
+        return undefined
+      })
+    const finish = async ($: never, on: never, run: Answers) => {
+      const w = world(on, { files: { ...files(), [CARD_PATH]: ISSUE_CARD }, dirs, store, run })
+      await ($ as any).session.start(sessionStart)
+      await ($ as any).command.run(mergeCmd(ID))
+      const out = String((await ($ as any).command.run(mergeCmd(`${ID} --finish`))).text)
+      return { w, lines: blockOf(out) }
+    }
+
+    test('every other task closed: the parent close line follows the task close line, and the view passed the allowlist', async ($, on) => {
+      const { w, lines } = await finish($ as never, on as never, parentView('CLOSED'))
+      expect(lines[0]).toMatch(/^gh issue close 52 --repo acme\/acme-app --comment '(merged in #\d+|merged at 9999999)'$/)
+      expect(lines[1]).toBe("gh issue close 50 --repo acme/acme-app --comment 'all 2 tasks done'")
+      expect(w.runs.map(r => r.argv)).toContainEqual(VIEW)
+    })
+
+    test('a sibling still open: the comment line names it and no parent close line is printed', async ($, on) => {
+      const { lines } = await finish($ as never, on as never, parentView('OPEN'))
+      expect(lines).toContain('# parent #50: 1 of 2 tasks still open (#51)')
+      expect(lines.some(l => l.startsWith('gh issue close 50'))).toBe(false)
+    })
+
+    test('the view fails: today\'s comment line', async ($, on) => {
+      const { lines } = await finish($ as never, on as never, parentView('CLOSED', argv => (is(argv, ...VIEW) ? { exitCode: 1, stdout: '' } : undefined)))
+      expect(lines.at(-1)).toBe('# parent #50: gh issue view 50 --repo acme/acme-app --json subIssuesSummary; close it by hand when every task is done')
+      expect(lines.some(l => l.startsWith('gh issue close 50'))).toBe(false)
+    })
+  })
+
   test('no argv the command runs, prepare or finish, is a push, gh, curl or sf', async ($, on) => {
     const w = world(on, { files: files(), dirs, store, run: landed() })
     await $.session.start(sessionStart)
