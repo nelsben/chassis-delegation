@@ -1,5 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { world, spawnInput, workerCall, SCRATCH } from './harness'
+import { ghWrites } from '../hooks/lib/ghguard'
 
 // MOD-197: a recorded worker's gh writes are denied; the brain's pass.
 describe('MOD-197: the gh guard on Bash', () => {
@@ -31,5 +32,10 @@ describe('MOD-197: the gh guard on Bash', () => {
     await boot($, on, 'T-9', 'agent-9')
     const r = await $.tool.call({ tool: 'Bash', command: 'gh issue close 5' } as never)
     expect((r as { deny?: string }).deny).toBeUndefined()
+  })
+
+  test('MOD-200: ghWrites still lists the comment and close the mod now runs itself', () => {
+    expect(ghWrites('gh issue comment 5 --repo o/r --body-file /r/.delegation/status/T-1-attempt-1-started.md')).toContain('gh issue comment')
+    expect(ghWrites('gh issue close 5 --repo o/r --comment done')).toContain('gh issue close')
   })
 })

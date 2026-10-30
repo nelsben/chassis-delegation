@@ -201,3 +201,66 @@ describe('MOD-64: the brain is told to use the verdict tool when wakes are off',
     expect(openItemLines([item], 65_000, false)).toEqual(['BE-1: verifying frontier/opus 01:05 — the verdict lands on its own'])
   })
 })
+
+// MOD-200: a started attempt and a verdict are said on the card's issue.
+describe('MOD-200: status comments on the card issue', () => {
+  const CARD_DIR = `${ROOT}/agents/tasks`
+  const card = (extra: string) => ['---', 'id: T-4', 'title: A task', 'domain: frontend', 'tier: standard', 'status: queued', 'scope: [a/**]', 'gate: prettier', ...(extra ? [extra] : []), '---', '## Done when', '', '- It works.', ''].join('\n')
+  const origin = `[remote "origin"]\n\turl = https://github.com/o/r.git\n`
+  const STARTED = `${ROOT}/.delegation/status/T-4-attempt-1-started.md`
+  const VERDICT = `${ROOT}/.delegation/status/T-4-attempt-1-verdict.md`
+  const ghComments = (w: { runs: { argv: string[] }[] }) => w.runs.map(r => r.argv).filter(a => a[0] === 'gh')
+  const boot = (on: any, extra: string, gh: (argv: string[]) => RunAnswer | undefined = () => undefined) => {
+    const slot: { sleep: (ms: number) => Promise<void> } = { sleep: async () => undefined }
+    const inner = repo(slot, 0)
+    const w = world(on, {
+      files: { [BRIEF]: HEADER + '\nbody', [`${CARD_DIR}/T-4-x.md`]: card(extra), [`${ROOT}/.git/config`]: origin },
+      dirs: { [CARD_DIR]: ['T-4-x.md'] },
+      run: async argv => (argv[0] === 'gh' ? gh(argv) ?? { exitCode: 0, stdout: '' } : inner(argv)),
+      agentId: 'agent-4',
+    })
+    slot.sleep = ms => w.clock.sleep(ms)
+    return w
+  }
+
+  test('a started attempt comments on the issue, and the verdict does too, once', { options: { ...GM } }, async ($, on) => {
+    const w = boot(on, 'issue: 77')
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    expect(w.files.get(STARTED)).toContain('attempt 1/3 started · standard')
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    const row = resultText(await call($, { task: 'T-4' }))
+    await call($, { task: 'T-4' })
+    expect(w.files.get(VERDICT)).toContain('T-4 attempt 1/3 consistent')
+    expect(ghComments(w)).toEqual([
+      ['gh', 'issue', 'comment', '77', '--repo', 'o/r', '--body-file', STARTED],
+      ['gh', 'issue', 'comment', '77', '--repo', 'o/r', '--body-file', VERDICT],
+    ])
+    expect(row).toContain('consistent')
+  })
+
+  test('no issue on the card: nothing is written and no gh runs', { options: { ...GM } }, async ($, on) => {
+    const w = boot(on, '')
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    await call($, { task: 'T-4' })
+    expect(ghComments(w)).toEqual([])
+    expect(w.files.has(STARTED)).toBe(false)
+    expect(w.files.has(VERDICT)).toBe(false)
+  })
+
+  test('a failed comment adds one status line to the verdict result and is not retried', { options: { ...GM } }, async ($, on) => {
+    const w = boot(on, 'issue: 77', () => ({ exitCode: 1, stdout: '', stderr: 'HTTP 502' }))
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    const out = resultText(await call($, { task: 'T-4' }))
+    expect(out).toContain('status: comment on #77 failed: HTTP 502')
+    expect(out.match(/status: comment on #77 failed/g)?.length).toBe(2)
+    expect(ghComments(w).length).toBe(2)
+    const again = resultText(await call($, { task: 'T-4' }))
+    expect(ghComments(w).length).toBe(2)
+    expect(again).not.toContain('status:')
+  })
+})

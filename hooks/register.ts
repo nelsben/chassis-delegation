@@ -294,6 +294,7 @@ import { BASE_REFS, briefContract, briefWantsRed, verifyCardless, verifyNative, 
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds } from './lib/watch'
 import { allowance, bar, cellDay, dayIndex, dayKey, dayRecord, daySegments, inWindow, pace, parseRecord, rationKey, rationReport, rationText, resetsIn, segments, surplus, type DayRecord, type Window as RationWindow } from './lib/ration'
 import { MOD_VERSION } from './lib/version'
+import { startedComment, statusFailure, statusFile, superseded, verdictComment } from './lib/status'
 import {
   cardDiff,
   cardKeptLocalClause,
@@ -304,6 +305,8 @@ import {
   defaultBranchOf,
   dirtyWorktreeLine,
   finishLines,
+  closesOf,
+  type CloseResult,
   siblingsOf,
   labelIsMerged,
   lastLines,
@@ -2997,19 +3000,37 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const closeRepo = cardIssue !== undefined ? ownerRepoOf(okOut(await run($, ['git', '-C', root, 'remote', 'get-url', 'origin'], { cwd: root, timeoutMs: 15000 })) ?? '') : undefined
   // MOD-195: the parent's sub-issues, read with the MOD-194 shape (MOD-197: the merge allowlist passes that one view once landRepo is the origin's)
   let siblings: { number: number; state: string }[] | undefined
+  // MOD-200: the close and comment shapes are bound to this repo while the merge runs
+  if (cardIssue !== undefined && closeRepo) landRepo = closeRepo
   if (cardIssue !== undefined && cardParent !== undefined && closeRepo) {
-    landRepo = closeRepo
     const v = await run($, ['gh', 'issue', 'view', String(cardParent), '--repo', closeRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
     if (v.ok && v.exitCode === 0) siblings = siblingsOf(v.stdout)
+  }
+  // MOD-200: the mod runs the task close itself, and the parent close when every other sibling is closed
+  const closed: { task?: CloseResult; parent?: CloseResult } = {}
+  const closedLines: string[] = []
+  const plan = closesOf({ ...(cardIssue !== undefined ? { issue: cardIssue } : {}), ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(closeRepo ? { ownerRepo: closeRepo } : {}), sha, ...(pr ? { pr: Number(pr) } : {}), ...(siblings ? { siblings } : {}) })
+  const closeOne = async (c: { issue: number; comment: string }): Promise<CloseResult> => {
+    const r = await run($, ['gh', 'issue', 'close', String(c.issue), '--repo', closeRepo as string, '--comment', c.comment], { cwd: root, timeoutMs: 60000 })
+    if (r.ok && r.exitCode === 0) {
+      closedLines.push(`closed #${c.issue}`)
+      return { ok: true }
+    }
+    return { ok: false, why: (r.ok ? r.stderr || r.stdout : r.why).trim().replace(/\s+/g, ' ').slice(0, 200) || 'no output' }
+  }
+  if (plan.task && closeRepo) {
+    closed.task = await closeOne(plan.task)
+    if (closed.task.ok && plan.parent) closed.parent = await closeOne(plan.parent)
   }
   return [
     `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${ignored ? 'root card kept (git-ignored), ' : cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
     ...notes,
+    ...closedLines,
     remoteBlock('remote: run these lines verbatim (the mod never pushes):', finishLines({
       branch: wt.branch,
       ...(version ? { version } : {}),
       ...(loadedClone ? { loadedClone } : {}),
-      ...(cardIssue !== undefined && closeRepo ? { issue: cardIssue, ownerRepo: closeRepo, sha, ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(siblings ? { siblings } : {}), ...(pr ? { pr: Number(pr) } : {}) } : {}),
+      ...(cardIssue !== undefined && closeRepo ? { issue: cardIssue, ownerRepo: closeRepo, sha, ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(siblings ? { siblings } : {}), ...(pr ? { pr: Number(pr) } : {}), closed } : {}),
     })),
     `${id} merged at ${sha}`,
     ...(version ? [`release v${version}: run the block above, then reload the window`] : []),
@@ -3633,7 +3654,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   // git is not on the allow list outside a merge, so the default branch comes from baseRef and origin from .git/config
   const wantName = defaultBranchOf((cfg.baseRef ?? '').trim())
   const def = wantName !== '' && !isSha(wantName) ? wantName : 'main'
-  const body = redact(landedBody({ ...(a.note !== undefined ? { note: a.note } : {}), paths: a.paths, cards: open.map(c => ({ id: c.id, title: c.title })), defaultBranch: def }), await redactRules($))
+  const body = redact(landedBody({ ...(a.note !== undefined ? { note: a.note } : {}), ...(a.supersedes !== undefined ? { supersedes: a.supersedes } : {}), paths: a.paths, cards: open.map(c => ({ id: c.id, title: c.title })), defaultBranch: def }), await redactRules($))
   const folder = `${root}/.delegation/landed`
   let taken = new Set<string>()
   try {
@@ -3662,10 +3683,24 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
     ? `gh issue create --repo ${ownerRepo} --title ${shellWord(a.title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
     : `origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); no gh line to print`
   const hintLine = hint ? [`parent hint: #${hint.parent} (from ${hint.card})`] : []
-  if (a.dryRun || !ownerRepo) return [file, ghLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
+  // MOD-200: the old issue is closed with a comment; the mod never edits it
+  const supersedeNote = (a.note ?? a.title).replace(/\s+/g, ' ').trim()
+  const closeArgv = (newNumber: string): string[] | undefined => (a.supersedes !== undefined && ownerRepo ? ['gh', 'issue', 'close', String(a.supersedes), '--repo', ownerRepo, '--comment', superseded(Number(newNumber), supersedeNote)] : undefined)
+  const supersedeLine = a.supersedes !== undefined && ownerRepo ? [`gh issue close ${a.supersedes} --repo ${ownerRepo} --comment ${shellWord(`superseded by #<new>: ${supersedeNote}`)}`] : []
+  if (a.dryRun || !ownerRepo) return [file, ghLine, ...supersedeLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
   const r = await fileOne($, { root, ownerRepo, file, body, title: a.title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
   if ('failed' in r) return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...hintLine].join('\n')
-  return [file, `filed #${r.issue.number} ${r.issue.url}`, ...(await addToProject($, root, r.issue.url)), ...hintLine].join('\n')
+  const projectLines = await addToProject($, root, r.issue.url)
+  const closing = closeArgv(String(r.issue.number))
+  let supersedeLines: string[] = []
+  if (closing && a.supersedes !== undefined) {
+    const c = await run($, closing, { cwd: root, timeoutMs: 60000 })
+    supersedeLines =
+      c.ok && c.exitCode === 0
+        ? [`closed #${a.supersedes} as superseded by #${r.issue.number}`]
+        : [`gh issue close failed; the line it tried: ${closing.slice(0, 6).join(' ')} --comment ${shellWord(closing[7] as string)}`, `gh said: ${(c.ok ? c.stderr || c.stdout : c.why).trim().slice(0, 400) || '(nothing on stderr)'}`]
+  }
+  return [file, `filed #${r.issue.number} ${r.issue.url}`, ...projectLines, ...supersedeLines, ...hintLine].join('\n')
 }
 
 /** MOD-194: the tree tool and /delegation tree <n>: one gh issue view, printed as done / in flight / planned. Read-only; writes no file. */
@@ -5532,7 +5567,10 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
   for (;;) {
     const found = await verdictNow($, parsed.task, parsed.subtask)
     if (found.kind === 'none') return noSuchAttempt(label)
-    if (found.kind === 'judged') return found.text
+    if (found.kind === 'judged') {
+      const lines = [...drainStatus(parsed.task), ...(await commentVerdict($, parsed.task, parsed.subtask, found.text))]
+      return lines.length > 0 ? `${found.text}\n${lines.join('\n')}` : found.text
+    }
     if (waited >= limit) return stillVerifying(label, parsed.waitSeconds)
     const step = Math.min(POLL_MS, limit - waited)
     if (!(await pauseOffBudget($, step))) return stillVerifying(label, parsed.waitSeconds)
@@ -5555,8 +5593,72 @@ function nudgeDownNow(): string | undefined {
   return nudgeDown(cfg.effortNudge)
 }
 
+// ---- MOD-200: status comments on the card's GitHub issue ---------------------------------------
+/** Failure lines of comments made in hooks that return no text (the spawn hook), shown by the task's next dispatch or verdict result. */
+const pendingStatus = new Map<string, string[]>()
+const drainStatus = (task: string): string[] => {
+  const lines = pendingStatus.get(task) ?? []
+  pendingStatus.delete(task)
+  return lines
+}
+const commentedVerdicts = new Set<string>()
+
+/**
+ * One comment on the issue the card names (`issue:` a whole number), when the session root's origin is a GitHub owner/name:
+ * the body is redacted, written under .delegation/status/, then `gh issue comment` runs once. Silent without an issue or a
+ * GitHub origin; a failed comment is one line (never retried).
+ */
+async function commentOnCardIssue($: Host, o: { task: string; fileId: string; attempt: number; kind: 'started' | 'verdict'; text: string }): Promise<string[]> {
+  await loadRepoConfig($)
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const cardDir = cardDirPath(root, cfg.cardDir)
+  const name = await cardNameIn($, cardDir, o.task)
+  if (!name) return []
+  const text = await readText($, `${cardDir}/${name}`)
+  const card = text === undefined ? undefined : parseCard(text)
+  const issue = card && !('error' in card) ? issueRef(card.fields.issue) : undefined
+  if (issue === undefined) return []
+  const ownerRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '')
+  if (!ownerRepo) return []
+  const file = statusFile(root, o.fileId, o.attempt, o.kind)
+  try {
+    await $.fs.write(file, `${redact(o.text, await redactRules($)).replace(/\n*$/, '')}\n`)
+  } catch (err) {
+    return [statusFailure(issue, `body not written: ${String(err)}`)]
+  }
+  landRepo = ownerRepo
+  sessionRoot = root
+  const r = await run($, ['gh', 'issue', 'comment', String(issue), '--repo', ownerRepo, '--body-file', file], { cwd: root, timeoutMs: 30000 })
+  return r.ok && r.exitCode === 0 ? [] : [statusFailure(issue, r.ok ? r.stderr || r.stdout : r.why)]
+}
+
+/** MOD-200: the verdict row, commented on the card's issue once per attempt; the failure line, if any. */
+async function commentVerdict($: Host, task: string, subtask: string, row: string): Promise<string[]> {
+  try {
+    const { repo } = await refOf($, task)
+    const attempt = attemptsFor(await loadAttempts($, { task, repo }), subtask).at(-1)?.attempt
+    if (attempt === undefined) return []
+    const key = `${task}/${subtask}/${attempt}`
+    if (commentedVerdicts.has(key)) return []
+    commentedVerdicts.add(key)
+    return await commentOnCardIssue($, { task, fileId: taskLabel(task, subtask).replace(/\//g, '-'), attempt, kind: 'verdict', text: verdictComment(row) })
+  } catch (err) {
+    debug($, `status: verdict comment skipped: ${String(err)}`)
+    return []
+  }
+}
+
 /** MOD-74: the row for a briefed worker that has started (or resumed); verdictVerbosity=silent posts none. MOD-114: with its effort and, when due, the down nudge. */
 async function postStarted($: Host, i: { label: string; task: string; repo?: string | undefined; alias: string; tier: Tier; attempt: number; budget: number; kind: StartKind }) {
+  // MOD-200: a started or respawned (not resumed) attempt is said on the card's issue, whatever the row verbosity
+  if (i.kind !== 'resumed') {
+    try {
+      const lines = await commentOnCardIssue($, { task: i.task, fileId: i.label.replace(/\//g, '-'), attempt: i.attempt, kind: 'started', text: startedComment({ id: i.task, attempt: i.attempt, budget: i.budget, tier: i.tier, alias: i.alias }) })
+      if (lines.length > 0) pendingStatus.set(i.task, [...(pendingStatus.get(i.task) ?? []), ...lines])
+    } catch (err) {
+      debug($, `status: started comment skipped: ${String(err)}`)
+    }
+  }
   if (!postsRows(cfg.verbosity)) return
   const effort = effortFor(i.tier, await storeGet<string>($, K.effort(i.task, await cardRepo($, i.repo))), cfg.effortByTier)
   // a resume of a nudged task is not the end of its judgment: no down nudge on it
@@ -5973,7 +6075,10 @@ async function inlineBrief($: Host, prompt: string, header: BriefHeader): Promis
  */
 async function runDispatch($: Host, parsed: DispatchArgs): Promise<string> {
   // MOD-12: nothing drains here; the slot check reads the live workers, and a queued task is the brain's to spawn
-  return dispatchOnce($, parsed)
+  const out = await dispatchOnce($, parsed)
+  // MOD-200: a started comment that failed in the spawn hook is said by the task's next dispatch result
+  const status = parsed.error === undefined && parsed.verify === undefined ? drainStatus(parsed.id) : []
+  return status.length > 0 ? `${out}\n${status.join('\n')}` : out
 }
 
 async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {

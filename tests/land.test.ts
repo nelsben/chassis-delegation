@@ -1,6 +1,7 @@
 // MOD-190: /delegation land writes a redacted issue body under .delegation/landed/ and prints the gh line; it files and dispatches nothing.
 import { test, expect, describe } from 'claude-code/testing'
 import { world, sessionStart, ROOT } from './harness'
+import { LAND_USAGE, parseLandArgs, parseLandTool } from '../hooks/lib/land'
 
 const land = (args: string) => ({ command: 'delegation', args: `land ${args}`, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
 const ABS = `/${'home'}/someone/x.ts`
@@ -141,6 +142,53 @@ describe('MOD-192: land files the issue itself', () => {
     await $.session.start(sessionStart)
     const out = text(await tool($, { type: 'bug', title: 'T' }))
     expect(out).toContain('not a GitHub remote')
+    expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
+  })
+})
+
+describe('MOD-200: land --supersedes', () => {
+  const URL42 = 'https://github.com/o/r/issues/42'
+  const tool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const run = (close: { exitCode: number; stdout: string; stderr?: string } = { exitCode: 0, stdout: '' }) => async (argv: string[]) =>
+    argv[0] !== 'gh' ? undefined : argv[2] === 'create' ? { exitCode: 0, stdout: `${URL42}\n` } : argv[2] === 'close' ? close : { exitCode: 0, stdout: '' }
+  const CLOSE = ['gh', 'issue', 'close', '7', '--repo', 'o/r', '--comment', 'superseded by #42: wider scope']
+
+  test('both parse forms carry supersedes, the usage line names it', () => {
+    expect((parseLandArgs('bug T --supersedes 7') as { supersedes?: number }).supersedes).toBe(7)
+    expect((parseLandTool({ type: 'bug', title: 'T', supersedes: 7 }) as { supersedes?: number }).supersedes).toBe(7)
+    expect('error' in parseLandArgs('bug T --supersedes 0')).toBe(true)
+    expect('error' in parseLandArgs('bug T --supersedes x')).toBe(true)
+    expect('error' in parseLandArgs('bug T --supersedes')).toBe(true)
+    expect('error' in parseLandTool({ type: 'bug', title: 'T', supersedes: 1.5 })).toBe(true)
+    expect(LAND_USAGE).toContain('--supersedes')
+  })
+
+  test('after a successful file the old issue is closed and the line is reported', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: run() })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T', note: 'wider scope', supersedes: 7 }))
+    expect(out).toContain(`filed #42 ${URL42}`)
+    expect(out).toContain('closed #7 as superseded by #42')
+    expect(w.runs.map(r => r.argv)).toContainEqual(CLOSE)
+    expect(w.files.get(`${LANDED}/t.md`) ?? '').toContain('supersedes: #7')
+  })
+
+  test('a failed close names the line and gh error; the new issue is still filed', async ($, on) => {
+    world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: run({ exitCode: 1, stdout: '', stderr: 'no permission' }) })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T', note: 'wider scope', supersedes: 7 }))
+    expect(out).toContain(`filed #42 ${URL42}`)
+    expect(out).toContain(CLOSE.join(' ').replace('superseded by #42: wider scope', "'superseded by #42: wider scope'"))
+    expect(out).toContain('no permission')
+    expect(out).not.toContain('closed #7')
+  })
+
+  test('dryRun prints the close line and runs nothing', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: run() })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T', note: 'wider scope', supersedes: 7, dryRun: true }))
+    expect(out).toContain('gh issue close 7 --repo o/r')
     expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
   })
 })

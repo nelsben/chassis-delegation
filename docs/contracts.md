@@ -270,6 +270,14 @@ The same switch (`gitGuard`) guards gh: a recorded worker or reviewer may read G
 than GET or any field, and the like), or the plan on GitHub lies. The deny reads `gh guard: <task> may not run <command>;
 gh writes are the brain's (land, merge finish)`. The brain and ad hoc agents are untouched.
 
+The mod's own gh writes pass its allowlist as exact shapes, each bound to the session root's GitHub origin (`landRepo`); extra arguments, another repo or a body file elsewhere are refused with the shape text:
+
+- `gh issue create --repo <landRepo> --title <t> --label type:<known> [--parent <n>] --body-file <file under .delegation/landed/>` and `gh project item-add <number> --owner <owner> --url https://github.com/<landRepo>/issues/<n>` (MOD-192: `land`, `land_plan`).
+- `gh issue comment <1-9 digits> --repo <landRepo> --body-file <file under .delegation/status/>` (MOD-200: the started and verdict comments).
+- `gh issue close <1-9 digits> --repo <landRepo> --comment <text not starting with ->` (MOD-200: merge finish and `land --supersedes`).
+
+The two MOD-200 shapes also pass while `/delegation merge` runs, beside the one read-only `gh issue view`; every other gh is still refused then. There is no `gh issue edit` shape, and the Project is never written beyond the item-add.
+
 ### repo=here: the main checkout
 
 `repo=here` is a git repo with no worktree: for a repo with no `origin`, a nested child repo, or evidence that lives
