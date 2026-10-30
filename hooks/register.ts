@@ -202,6 +202,7 @@ import {
   type EvalTier,
 } from './lib/evaltrigger'
 import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
+import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
@@ -2994,20 +2995,12 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const loaded = $.plugin.root.replace(/\/+$/, '')
   const loadedClone = version && loaded !== root && (await exists($, `${loaded}/.git`)) ? loaded : undefined
   const closeRepo = cardIssue !== undefined ? ownerRepoOf(okOut(await run($, ['git', '-C', root, 'remote', 'get-url', 'origin'], { cwd: root, timeoutMs: 15000 })) ?? '') : undefined
-  // MOD-195: the parent's sub-issues, read with the MOD-194 shape; the merge allowlist refuses gh, so it is lifted for this one read
+  // MOD-195: the parent's sub-issues, read with the MOD-194 shape (MOD-197: the merge allowlist passes that one view once landRepo is the origin's)
   let siblings: { number: number; state: string }[] | undefined
   if (cardIssue !== undefined && cardParent !== undefined && closeRepo) {
-    const savedCtx = mergeCtx
-    const savedRepo = landRepo
-    mergeCtx = undefined
     landRepo = closeRepo
-    try {
-      const v = await run($, ['gh', 'issue', 'view', String(cardParent), '--repo', closeRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
-      if (v.ok && v.exitCode === 0) siblings = siblingsOf(v.stdout)
-    } finally {
-      mergeCtx = savedCtx
-      landRepo = savedRepo
-    }
+    const v = await run($, ['gh', 'issue', 'view', String(cardParent), '--repo', closeRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
+    if (v.ok && v.exitCode === 0) siblings = siblingsOf(v.stdout)
   }
   return [
     `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${ignored ? 'root card kept (git-ignored), ' : cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
@@ -7884,6 +7877,21 @@ export const register: Register = (on, opts) => {
       }
     }
     return next(e)
+  })
+
+  // ---- MOD-197: the gh guard on Bash ---------------------------------------------------
+  // On with the git guard. A recorded worker or reviewer may read GitHub with gh, never write
+  // to it; the brain (no agentId) and ad hoc agents pass untouched.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (!cfg.gitGuard || !e.agentId) return next(e)
+    const command = typeof e.command === 'string' ? e.command : ''
+    const writes = ghWrites(command)
+    if (writes.length === 0) return next(e)
+    const worker = await spawnByAgent($, e.agentId)
+    if (!worker || worker.adhoc) return next(e)
+    const deny = `gh guard: ${taskLabel(worker.task, worker.subtask)} may not run ${writes.join(', ')}; gh writes are the brain's (land, merge finish)`
+    debug($, `${deny} — ${command.slice(0, 160)}`)
+    return { deny }
   })
 
   // ---- MOD-16: a recorded worker's Bash runs with its own identity ----------------

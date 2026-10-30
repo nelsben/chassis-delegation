@@ -86,6 +86,8 @@ Glob rules for `scope` and `forbid`:
 
 The worker reads the brief alone: the card's header, Why and Done when, and the domain's lessons file. None of the conversation that produced the card reaches it, so the card must carry every decision the brain does not want the worker to make. A Done when line that says `sensible`, `appropriate`, `as needed` or `the existing one` leaves a judgment call the worker makes alone, and the brain reads about it in the hand-back. A detailed card costs the same to dispatch as a thin one, so name the fallback and the target.
 
+A worker may read GitHub with `gh` but not write to it: it never closes, edits or files issues, merges or edits PRs, or writes to the Project. The mod denies those commands (`gh guard: <task> may not run …; gh writes are the brain's`) while `gitGuard` is on. Hand the brain what the issue needs and it does the write.
+
 Before: `- Handle errors appropriately.`
 After: `- A failed save returns HTTP 500 with the body {"error": "save-failed"}; a missing record returns 404 and writes nothing.`
 

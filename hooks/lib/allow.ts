@@ -34,6 +34,8 @@
 //                                                            (MOD-192: /delegation land and the land tool; landRepo is the session root's origin,
 //                                                             <owner> and <number> the configured project; nothing else of gh issue or gh project)
 //   gh issue view <1-9 digits> --repo <landRepo> --json number,title,state,labels,body,subIssues
+//                                                            (MOD-197: this one shape also passes while /delegation merge runs, ahead of
+//                                                             the remote refusal; every other gh is still refused then)
 //                                                            (MOD-194: the tree tool and /delegation tree; read-only, args in exactly that order)
 //   claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
 //   a gate-map command, word for word, `{files}`, `{worktree}` and `{outdir}` filled by absolute paths
@@ -83,6 +85,7 @@ export function checkArgv(argv: readonly string[], allow: AllowConfig = {}): Che
   if (cmd === undefined) return refuse('empty argv')
   if (allow.merge) {
     // MOD-75: while the merge command runs, the remote refusal comes ahead of everything, then its exact shapes
+    if (isMergeIssueView(argv, allow)) return ok
     if (isRemoteArgv(argv)) return refuse('the merge command never pushes, nor runs gh, curl, sf or wget')
     if (isMergeShape(argv, allow.merge)) return ok
   }
@@ -346,6 +349,13 @@ export type MergeCtx = { root: string; worktree: string; branch: string; baseRef
 
 /** The subject of the merged-card commit, the only commit message that passes. */
 export const mergedSubject = (id: string): string => `cards: ${id} merged`
+
+/** MOD-197: the one gh the merge command runs, the MOD-194 read-only issue view of the parent (MOD-195), landRepo set. */
+const isMergeIssueView = (argv: readonly string[], allow: AllowConfig): boolean => {
+  const lr = allow.landRepo ?? ''
+  const [cmd, a, b, n, r, repo, j, fields, ...more] = argv
+  return cmd === 'gh' && a === 'issue' && b === 'view' && more.length === 0 && lr !== '' && ISSUE_REPO.test(lr) && /^\d{1,9}$/.test(n ?? '') && r === '--repo' && repo === lr && j === '--json' && fields === 'number,title,state,labels,body,subIssues'
+}
 
 /** An argv the merge command may never run: a push, gh, curl, sf or wget. */
 export const isRemoteArgv = (argv: readonly string[]): boolean => {
