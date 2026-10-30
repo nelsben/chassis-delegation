@@ -15,10 +15,12 @@ export function describesWork(text: string): boolean {
 }
 
 /** The line for the band. */
-export function nudgeLine(kind: 'prompt'): string
+export function nudgeLine(kind: 'prompt', landAuto?: boolean): string
 export function nudgeLine(kind: 'parent', parent: { number: number; open: number }): string
-export function nudgeLine(kind: 'prompt' | 'parent', parent?: { number: number; open: number }): string {
-  if (kind === 'prompt' || !parent) return 'lead: land this as an issue (land or land_plan) or say it is not work'
+export function nudgeLine(kind: 'prompt' | 'parent', arg?: { number: number; open: number } | boolean): string {
+  const parent = typeof arg === 'object' ? arg : undefined
+  // MOD-205: with landAuto off, land shows the issue and files on the person's yes
+  if (kind === 'prompt' || !parent) return arg === false ? "lead: propose landing this as an issue (land shows it; file on the person's yes) or say it is not work" : 'lead: land this as an issue (land or land_plan) or say it is not work'
   return `lead: parent #${parent.number} has ${parent.open} open tasks; land the next or close it`
 }
 

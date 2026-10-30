@@ -38,6 +38,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['verdictVerbosity', 'Checking the work', 'How much detail shows when a worker\'s result is judged', 'choice', 'user', 'line', ['line', 'full', 'silent']],
   ['ledgerFile', 'Checking the work', 'Keep a log of every spawn and judged attempt inside the repo', 'bool', 'user', true],
   ['baseRef', 'Checking the work', 'The branch or commit that a worker\'s changes are compared against', 'text', 'repo', ''],
+  ['landAuto', 'Debriefs', 'File an issue as soon as land is called; off shows it first and files on your yes', 'bool', 'user', true],
   ['project', 'Debriefs', 'The GitHub board that issues filed by land are added to, as owner/number', 'text', 'repo', ''],
   ['ignore', 'Checking the work', 'Files and folders left out when checking a worker that shares your checkout', 'list', 'repo', ''],
   ['briefDir', 'Where things go', 'The folder where worker instructions are saved', 'text', 'user', ''],

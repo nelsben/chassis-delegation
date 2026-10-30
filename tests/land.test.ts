@@ -1,7 +1,7 @@
 // MOD-190: /delegation land writes a redacted issue body under .delegation/landed/ and prints the gh line; it files and dispatches nothing.
 import { test, expect, describe } from 'claude-code/testing'
 import { world, sessionStart, ROOT } from './harness'
-import { LAND_USAGE, parseLandArgs, parseLandTool } from '../hooks/lib/land'
+import { LAND_USAGE, LAND_TOOL, parseLandArgs, parseLandTool } from '../hooks/lib/land'
 
 const land = (args: string) => ({ command: 'delegation', args: `land ${args}`, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
 const ABS = `/${'home'}/someone/x.ts`
@@ -406,5 +406,60 @@ describe('MOD-204: land hardening', () => {
     await planTool($, input)
     await planTool($, input)
     expect(gh(w).filter((a: string[]) => a[2] === 'create').length).toBe(4)
+  })
+})
+
+describe('MOD-205: landAuto', () => {
+  const URL42 = 'https://github.com/o/r/issues/42'
+  const tool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const ghRun = async (argv: string[]) => (argv[0] === 'gh' ? { exitCode: 0, stdout: `${URL42}\n` } : undefined)
+  const CLOSING = 'nothing filed: landAuto is off; call land again with confirm: true once the person says yes'
+  const setup = (on: any) => world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: ghRun })
+
+  test('the tool schema and parser carry confirm; the usage names --confirm', () => {
+    expect((LAND_TOOL.inputSchema.properties as Record<string, { type: string }>).confirm?.type).toBe('boolean')
+    expect((parseLandTool({ type: 'bug', title: 'T', confirm: true }) as { confirm?: boolean }).confirm).toBe(true)
+    expect((parseLandTool({ type: 'bug', title: 'T' }) as { confirm?: boolean }).confirm).toBeUndefined()
+    expect((parseLandArgs('bug T --confirm') as { confirm?: boolean }).confirm).toBe(true)
+    expect(LAND_USAGE).toContain('--confirm')
+  })
+
+  test('off without confirm: body written, issue shown, no gh issue create, closing line', { options: { landAuto: false } }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'Export drops a row', parent: 9, paths: ['src/export/a.ts'] }))
+    expect(out).toContain(`${LANDED}/export-drops-a-row.md`)
+    expect(out).toContain('gh issue create --repo o/r')
+    expect(out.split('\n').pop()).toBe(CLOSING)
+    expect(w.files.has(`${LANDED}/export-drops-a-row.md`)).toBe(true)
+    expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
+  })
+
+  test('off with confirm: true files as today', { options: { landAuto: false } }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T', confirm: true }))
+    expect(out).toContain(`filed #42 ${URL42}`)
+    expect(w.runs.filter(r => r.argv[1] === 'issue' && r.argv[2] === 'create')).toHaveLength(1)
+  })
+
+  test('on ignores confirm and files', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T', confirm: false }))
+    expect(out).toContain(`filed #42 ${URL42}`)
+    expect(out.includes(CLOSING)).toBe(false)
+    expect(w.runs.filter(r => r.argv[2] === 'create')).toHaveLength(1)
+  })
+
+  test('off: /delegation land files nothing without --confirm, and files with it', { options: { landAuto: false } }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(land('bug T'))).text)
+    expect(out.split('\n').pop()).toBe(CLOSING)
+    expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
+    const out2 = String((await $.command.run(land('bug T --confirm'))).text)
+    expect(out2).toContain(`filed #42 ${URL42}`)
   })
 })
