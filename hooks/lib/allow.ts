@@ -33,6 +33,8 @@
 //   gh project item-add <number> --owner <owner> --url https://github.com/<landRepo>/issues/<n>
 //                                                            (MOD-192: /delegation land and the land tool; landRepo is the session root's origin,
 //                                                             <owner> and <number> the configured project; nothing else of gh issue or gh project)
+//   gh issue view <1-9 digits> --repo <landRepo> --json number,title,state,labels,body,subIssues
+//                                                            (MOD-194: the tree tool and /delegation tree; read-only, args in exactly that order)
 //   claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
 //   a gate-map command, word for word, `{files}`, `{worktree}` and `{outdir}` filled by absolute paths
 //                                                            (./gates.ts holds what a map may name)
@@ -248,6 +250,11 @@ function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
     const exact = issueRepoSet && t.length === 6 && t[0] === '--repo' && t[1] === repo && t[2] === '--title' && (t[3] ?? '') !== '' && !(t[3] as string).startsWith('-') && t[4] === '--body-file' && debriefBodyOk(t[5] as string, allow.root)
     if (exact || landCreateOk(t, allow)) return ok
     return shape('create --repo <issueRepo> --title <title> --body-file <file under .delegation/debriefs/>; or create --repo <landRepo> --title <title> --label type:<feature|epic|story|task|bug|spike> [--parent <n>] --body-file <file under .delegation/landed/>')
+  }
+  if (verb === 'view') {
+    const lr = allow.landRepo ?? ''
+    const exact = lr !== '' && ISSUE_REPO.test(lr) && t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === lr && t[3] === '--json' && t[4] === 'number,title,state,labels,body,subIssues'
+    return exact ? ok : shape('view <number> --repo <landRepo> --json number,title,state,labels,body,subIssues')
   }
   if (!issueRepoSet) return refuse('gh issue is not on the list: no issueRepo is configured')
   if (verb === 'comment') {

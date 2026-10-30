@@ -206,6 +206,7 @@ import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
+import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { doneTasks, freeName, issueUrlOf, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
@@ -3655,6 +3656,45 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   const r = await fileOne($, { root, ownerRepo, file, body, title: a.title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
   if ('failed' in r) return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...hintLine].join('\n')
   return [file, `filed #${r.issue.number} ${r.issue.url}`, ...(await addToProject($, root, r.issue.url)), ...hintLine].join('\n')
+}
+
+/** MOD-194: the tree tool and /delegation tree <n>: one gh issue view, printed as done / in flight / planned. Read-only; writes no file. */
+async function treeWith($: Host, issue: unknown): Promise<string> {
+  const n = typeof issue === 'number' ? issue : typeof issue === 'string' && /^\d+$/.test(issue.trim()) ? Number(issue) : NaN
+  if (!Number.isInteger(n) || n < 1 || n > 999999999) return 'tree: the issue must be a whole number, 1 or more (/delegation tree <n>)'
+  await loadRepoConfig($)
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
+  const ownerRepo = ownerRepoOf(origin ?? '')
+  landRepo = ownerRepo ?? ''
+  sessionRoot = root
+  if (!ownerRepo) return `tree: origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'})`
+  const cardDir = cardDirPath(root, cfg.cardDir)
+  const cards: TreeCard[] = []
+  try {
+    for (const e of await $.fs.list(cardDir)) {
+      if (!e.name.endsWith('.md')) continue
+      const t = await readText($, `${cardDir}/${e.name}`)
+      const c = t === undefined ? undefined : parseCard(t)
+      if (c && !('error' in c)) {
+        const m = /^#?(\d{1,9})\b/.exec(String(c.fields.issue ?? '').trim())
+        cards.push({ id: c.id, status: c.status, ...(m ? { issue: Number(m[1]) } : {}) })
+      }
+    }
+  } catch {
+    // no card folder: no cards
+  }
+  const done = doneTasks((await readText($, `${root}/${LEDGER_FILE}`)) ?? '')
+  const r = await run($, ['gh', 'issue', 'view', String(n), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
+  if (!r.ok) return `tree: gh did not run: ${r.why.trim().slice(0, 400)}`
+  if (r.exitCode !== 0) return `tree: gh issue view failed: ${(r.stderr || r.stdout).trim().slice(0, 400) || '(nothing on stderr)'}`
+  let json: unknown
+  try {
+    json = JSON.parse(r.stdout)
+  } catch {
+    return 'tree: gh printed something that is not JSON'
+  }
+  return treeText(treeOf(json, cards.filter(c => c.status !== 'merged'), done))
 }
 
 /** MOD-193: files one landed body with gh issue create, writes `issue: #n url` back, and adds it to the configured project. Shared by land and land_plan. */
@@ -8088,7 +8128,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|land <type> <title> [--dry-run]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|land <type> <title> [--dry-run]|tree <n>|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -8131,6 +8171,11 @@ export const register: Register = (on, opts) => {
       await $.tool.register({ name: LAND_PLAN_TOOL.name, description: LAND_PLAN_TOOL.description, inputSchema: LAND_PLAN_TOOL.inputSchema })
     } catch (err) {
       debug($, `the land_plan tool was not registered: ${String(err)}`)
+    }
+    try {
+      await $.tool.register({ name: TREE_TOOL.name, description: TREE_TOOL.description, inputSchema: TREE_TOOL.inputSchema })
+    } catch (err) {
+      debug($, `the tree tool was not registered: ${String(err)}`)
     }
     // MOD-28: the load. The templates are read here, once, with the code that renders them.
     await loadedTemplates($)
@@ -8196,6 +8241,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'lesson' || arg.startsWith('lesson ')) return { text: await runLesson($, arg.slice('lesson'.length)) }
     if (arg === 'config' || arg.startsWith('config ')) return { text: await runConfig($, arg.slice('config'.length)) }
     if (arg === 'land' || arg.startsWith('land ')) return { text: await runLand($, arg.slice('land'.length)) }
+    if (arg === 'tree' || arg.startsWith('tree ')) return { text: await treeWith($, arg.slice('tree'.length).trim()) }
     if (arg === 'ration') return { text: await rationReportText($) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'merge' || arg.startsWith('merge ')) return { text: await runMerge($, parseMergeArgs(arg.slice('merge'.length))) }
@@ -8220,7 +8266,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|tree <n>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => ({ result: await runVerdict($, e as unknown as Record<string, unknown>) }))
@@ -8229,6 +8275,7 @@ export const register: Register = (on, opts) => {
   // MOD-75: the merge tool, the command's second door
   on('tool.call', { tool: 'mcp__chassis-delegation__land' as never }, async ($, e) => ({ result: await landWith($, parseLandTool(e as unknown as Record<string, unknown>)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__land_plan' as never }, async ($, e) => ({ result: await planWith($, parsePlan(e)) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__tree' as never }, async ($, e) => ({ result: await treeWith($, (e as unknown as Record<string, unknown>).issue) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => ({ result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
