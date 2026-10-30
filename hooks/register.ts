@@ -291,7 +291,7 @@ import {
   type Verdict,
   type WorkPresent,
 } from './lib/verify'
-import { BASE_REFS, briefContract, briefWantsRed, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
+import { BASE_REFS, briefContract, briefWantsRed, isMalformedReport, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds } from './lib/watch'
 import { allowance, bar, cellDay, dayIndex, dayKey, dayRecord, daySegments, inWindow, pace, parseRecord, rationKey, rationReport, rationText, resetsIn, segments, surplus, type DayRecord, type Window as RationWindow } from './lib/ration'
 import { MOD_VERSION } from './lib/version'
@@ -495,6 +495,8 @@ type SpawnRecord = {
   briefPath?: string
   /** Why a spawn with no brief file has none (GH-6): what its inline header lacks, or why its brief could not be written. */
   noBrief?: string
+  /** MOD-211: the report line judged malformed (no sha=) at this attempt; a different one resent is judged on the same attempt, uncharged. */
+  malformed?: string
   // MOD-89: no `prompt`: nothing read it back, and at about 1.4 KB a record it was most of the store (#157).
   // A record written before keeps it; the brief path, the key (the tool_use_id) and the description are what is read.
   description: string
@@ -5112,9 +5114,11 @@ const reportTaskOf = (task: string | undefined): string | undefined => {
  */
 async function briefForReport($: Host, spawn: SpawnRecord, report: ReturnType<typeof parseReport>): Promise<SpawnRecord | undefined> {
   if (!spawn.adhoc || (spawn.briefPath !== undefined && spawn.noBrief === undefined)) return undefined
-  const task = reportTaskOf(report.task)
+  // MOD-211: a report naming no task takes the task of the brief header its spawn named (the brief file the prompt points at)
+  const hinted = spawn.briefPath !== undefined ? parseHeader((await readText($, spawn.briefPath)) ?? '') : undefined
+  const task = reportTaskOf(report.task) ?? reportTaskOf(hinted?.task)
   if (task === undefined) return undefined
-  const subtask = reportTaskOf(report.subtask) ?? 'main'
+  const subtask = reportTaskOf(report.subtask) ?? reportTaskOf(hinted?.subtask) ?? 'main'
   const name = subtask === 'main' ? `${task}.brief.md` : inlineBriefFileName(task, subtask)
   if (name === undefined) return undefined
   const root = (await $.session.root()).replace(/\/+$/, '')
@@ -5296,13 +5300,16 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const { fallback: _fallback, ...spawnIn } = given
   // MOD-21: a reviewer's hand-back is read for its [[review]] block, not checked as a worker's report
   if (spawnIn.review) return finalizeReview($, spawnIn, text, measured)
-  if (spawnIn.verdictAttempt === spawnIn.attempt && spawnIn.verdictBlock) return renderedOf(spawnIn)
+  // MOD-211: a malformed verdict is cached for the same report line only; a resent line is judged again on the same attempt
+  const block = extractReport(text)
+  const resent = (s: SpawnRecord): boolean => s.malformed !== undefined && s.malformed !== block
+  if (spawnIn.verdictAttempt === spawnIn.attempt && spawnIn.verdictBlock && !resent(spawnIn)) return renderedOf(spawnIn)
   // A caller may hold a record read before an earlier fire stored its verdict.
   const stored = await storeGet<SpawnRecord>($, K.spawn(spawnIn.key))
-  if (stored && stored.attempt === spawnIn.attempt && stored.verdictAttempt === spawnIn.attempt && stored.verdictBlock) return renderedOf(stored)
-  let spawn = spawnIn
+  if (stored && stored.attempt === spawnIn.attempt && stored.verdictAttempt === spawnIn.attempt && stored.verdictBlock && !resent(stored)) return renderedOf(stored)
+  const { malformed: _malformed, ...spawnClean } = spawnIn
+  let spawn: SpawnRecord = spawnClean
   const tokens = measured.tokens
-  const block = extractReport(text)
   const report = block ? parseReport(block) : undefined
   // MOD-56: a worker's hand-back with no report that names a usage limit
   const rateLimit = !spawn.adhoc ? detectRateLimit(text) : undefined
@@ -5458,6 +5465,9 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
       review: reviewDue(cfg.review, spawn.tier) && !noRepo && !spawn.replay,
     })
   }
+  // MOD-211 (#271): a report line with no sha= is a line to resend, not a failed attempt: nothing is charged and nothing is resumed or escalated
+  const malformed = !spawn.adhoc && block !== undefined && verdict === 'refuted' && isMalformedReport(lines)
+  if (malformed) advice = { kind: 'check', next: `resend the report line with the fields named below (not a failed attempt: attempt ${spawn.attempt} stays open)` }
   // MOD-150: a refuted or unverified hand-back whose commits are all on the base already is not resumed or escalated
   if (!spawn.adhoc && spawn.briefPath && report?.sha && (advice.kind === 'resume' || advice.kind === 'respawn') && (verdict === 'refuted' || verdict === 'unverified')) {
     const briefText = await readText($, spawn.briefPath)
@@ -5487,7 +5497,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   }
   // a prove resume (GH-1 item 5) counts against the budget as a failing verdict's resume does
   const prove = advice.kind === 'resume' && isProveResume(verdict, report?.gate)
-  spawn = { ...spawn, verdictAttempt: spawn.attempt, lastFailed: isFailing(verdict, report?.gate) || prove }
+  spawn = { ...spawn, verdictAttempt: spawn.attempt, lastFailed: isFailing(verdict, report?.gate) || prove, ...(malformed && block !== undefined ? { malformed: block } : {}) }
   await storeSet($, K.spawn(spawn.key), spawn)
 
   let next = advice.next
@@ -5531,7 +5541,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + downClause
   const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
-  await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line })
+  const { malformed: _old, ...latestClean } = latest
+  await storeSet($, K.spawn(spawn.key), { ...latestClean, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line, ...(malformed && block !== undefined ? { malformed: block } : {}) })
   await setWorkers($, list => list.map(w => (w.task === spawn.task && w.subtask === spawn.subtask && w.attempt === spawn.attempt ? { ...w, verdict } : w)))
   await setLastVerdict($, { task: shownLabel, attempt: shownAttempt, verdict, next, at: t, text: full })
   // a cardless hand-back is posted, kept and ledgered like any other (GH-1 item 2)
@@ -5864,6 +5875,17 @@ async function claimPost($: Host, spawn: SpawnRecord): Promise<boolean> {
 async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: string): Promise<SpawnRecord> {
   if (spawn.adhoc || spawn.review || spawn.verdictAttempt !== spawn.attempt) return spawn
   const block = extractReport(text)
+  // MOD-211: a different report line after a malformed one reopens the same attempt (no new attempt, nothing charged)
+  if (spawn.malformed !== undefined) {
+    if (block === undefined || block === spawn.malformed) return spawn
+    const { malformed: _m, verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, ...open } = spawn
+    const key = await attemptKey($, spawn)
+    posted.delete(key)
+    await storeSet($, K.posted(key), false)
+    await storeSet($, K.postedRow(key), '')
+    await storeSet($, K.spawn(spawn.key), { ...open, lastFailed: false })
+    return { ...open, lastFailed: false }
+  }
   const sha = block ? parseReport(block)?.sha : undefined
   if (!sha) return spawn
   const records = await loadAttempts($, spawn)
@@ -5910,7 +5932,8 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
 async function resumeTarget($: Host, address: string): Promise<{ spawn: SpawnRecord; records: readonly AttemptRecord[]; agentId: string; deny?: string } | undefined> {
   const agentId = (await storeGet<string>($, K.agent(address))) ? address : await storeGet<string>($, K.name(address))
   const spawn = await spawnByAgent($, agentId)
-  if (!agentId || !spawn || spawn.adhoc || spawn.verdictAttempt !== spawn.attempt || !spawn.lastFailed) return undefined
+  // MOD-211: a malformed report line is resent on the same attempt: that message is no resume and spends no attempt
+  if (!agentId || !spawn || spawn.adhoc || spawn.verdictAttempt !== spawn.attempt || !spawn.lastFailed || spawn.malformed !== undefined) return undefined
   const lane = laneOf(spawn)
   const records = await loadAttempts($, spawn)
   const attempts = attemptsFor(records, spawn.subtask, lane).length

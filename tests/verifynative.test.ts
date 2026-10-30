@@ -1,5 +1,6 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { parseReport } from '../hooks/lib/brief'
+import { world, spawnInput, turnInput, ROOT, type RunAnswer } from './harness'
 import { BASE_REFS, briefContract, filesClaim, ignoredLine, nameStatusDelta, NO_BRIEF_REASON, pathMatchesAny, porcelainPaths, prNumber, redClaim, redTestCommand, RED_NO_MARKER_HINT, subtractDelta, verifyCardless, verifyNative, type ExecOut, type RedEvidence } from '../hooks/lib/verify-native'
 
 const REPO = '/w/repo-T-1'
@@ -694,5 +695,99 @@ describe('MOD-120 (#199 item 3): a red log under the brief\'s scratch= is read l
     const refused = await verifyNative(input({ report: report({ red: path }) }), io(happy(), { [path]: RED_TEXT }))
     expect(refused.verdict).toBe('refuted')
     expect(refused.lines.find(l => l.startsWith('claim red:'))).toContain('scratch=')
+  })
+})
+
+// MOD-211 (#271): a report line missing its contract fields is named malformed, not filed as a fabrication
+describe('MOD-211: a malformed report line', () => {
+  test('card= and id= stand for task=; task= wins', () => {
+    expect(parseReport('[[report v=1 card=T-7 gate=pass]]').task).toBe('T-7')
+    expect(parseReport('[[report v=1 id=T-8 gate=pass]]').task).toBe('T-8')
+    expect(parseReport('[[report v=1 task=T-1 card=T-7 gate=pass]]').task).toBe('T-1')
+    expect(parseReport('[[report v=1 card= id=T-8 gate=pass]]').task).toBe('T-8')
+  })
+  test('no sha: refuted as malformed, naming every missing field and the line to resend, never fabrication', async () => {
+    const t = io(happy())
+    const r = await verifyNative(input({ report: parseReport('[[report v=1 card=T-1 gate=pass commits=3]]') }), t)
+    expect(r.verdict).toBe('refuted')
+    const sha = r.lines.find(l => l.startsWith('claim sha:')) ?? ''
+    expect(sha).toContain('failed — malformed report: missing sha=')
+    for (const f of ['branch=', 'files=', 'red=']) expect(sha).toContain(f)
+    expect(sha).toContain('[[report v=1 task=T-1 subtask=main branch=<branch> pr=none sha=<short sha> gate=pass|fail red=<path> files=<comma-separated paths>]]')
+    expect(r.lines.join('\n')).not.toContain('fabrication')
+  })
+  test('an empty sha= is the same; fields present are not named missing', async () => {
+    const t = io(happy())
+    const r = await verifyNative(input({ report: parseReport(`[[report v=1 task=T-1 branch=agent/ops/T-1 sha= gate=pass red=${RED_PATH} files=src/a.ts]]`) }), t)
+    const sha = r.lines.find(l => l.startsWith('claim sha:')) ?? ''
+    expect(sha).toContain('malformed report: missing sha=')
+    expect(sha).not.toContain('missing sha=, ')
+    expect(r.lines.join('\n')).not.toContain('fabrication')
+  })
+  test('a present sha that does not exist still says fabrication', async () => {
+    const t = io(happy({ [git('rev-parse', '--verify', '--quiet', 'a1b2c3d^{commit}')]: exit(1) }))
+    const r = await verifyNative(input(), t)
+    expect(r.lines.join('\n')).toContain('(fabrication)')
+    expect(r.lines.join('\n')).not.toContain('malformed report')
+  })
+  test('repo=none and cardless reports: a cardless one with no sha is malformed too, naming no red=', async () => {
+    const t = io(happy())
+    const r = await verifyCardless({ repo: REPO, report: parseReport('[[report v=1 card=T-1 gate=pass]]') }, t)
+    const sha = r.lines.find(l => l.startsWith('claim sha:')) ?? ''
+    expect(sha).toContain('malformed report: missing sha=')
+    expect(sha).not.toContain('red=<path>')
+  })
+})
+
+const NO_RUN_MB = 'b'.repeat(40)
+const fullSha = (sha: string) => sha.padEnd(40, '0')
+const gitRun = (o: { gate?: number; delta?: string } = {}) => {
+  let head = ''
+  return (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npx') return { exitCode: o.gate ?? 0, stdout: 'ok\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) {
+      head = fullSha(last.slice(0, -'^{commit}'.length))
+      return { exitCode: 0, stdout: `${head}\n` }
+    }
+    if (sub[0] === 'rev-parse' && sub[1] === '--verify') return { exitCode: 0, stdout: `${last === 'origin/main' ? NO_RUN_MB : head}\n` }
+    if (sub[0] === 'rev-parse' && last === 'HEAD' && sub[1] !== '--abbrev-ref') return { exitCode: 0, stdout: `${head}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${NO_RUN_MB}\n` }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: o.delta ?? 'A\ta/x.ts\n' }
+    return undefined
+  }
+}
+const hdr = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]`
+const GM2 = { gateMap: '{"prettier":"npx prettier --check {files}"}', verdictVerbosity: 'full' }
+const rows2 = (w: { appended: { type: string; text: string }[]; logs: string[] }) =>
+  [...w.appended.filter(a => a.type === 'user').map(a => a.text), ...w.logs].filter(t => t.startsWith('chassis-delegation: verdict='))
+const recs = (w: { store: Map<string, unknown> }, task: string) => (w.store.get(`delegation.tasks.${task}@${ROOT}`) ?? []) as Record<string, unknown>[]
+const B1 = `${ROOT}/.delegation/briefs/T-1.brief.md`
+const GOOD = '[[report v=1 task=T-1 subtask=main branch=agent/frontend/T-1 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
+
+describe('MOD-211: the malformed report in a session', () => {
+  test('card= with a known brief id records under that task, not adhoc', { options: GM2 }, async ($, on) => {
+    const w = world(on, { files: { [B1]: hdr('T-1') + '\nbody' }, run: gitRun(), agentId: 'agent-1', classify: 'standard' })
+    await $.agent.spawn(spawnInput({ prompt: 'Fix it.' }))
+    await $.turn.complete(turnInput('agent-1', 'Done.\n' + GOOD.replace('task=T-1', 'card=T-1')))
+    expect(rows2(w)[0] ?? '').toContain('verdict=consistent task=T-1 attempt=1/3')
+    expect(recs(w, 'T-1')[0]).toMatchObject({ verdict: 'consistent', briefPath: B1 })
+  })
+  test('no sha: malformed, no fabrication, one attempt; the resent good report is consistent on attempt 1', { options: GM2 }, async ($, on) => {
+    const w = world(on, { files: { [B1]: hdr('T-1') + '\nbody' }, run: gitRun(), agentId: 'agent-1' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is ${B1}. Read it whole, then follow it exactly.` }))
+    await $.turn.complete(turnInput('agent-1', 'Done.\n[[report v=1 card=T-1 gate=pass commits=3]]'))
+    const first = rows2(w)[0] ?? ''
+    expect(first).toContain('verdict=refuted task=T-1 attempt=1/3')
+    expect(first).toContain('malformed report: missing sha=')
+    expect(first).not.toContain('fabrication')
+    expect(first).toContain('resend the report')
+    await $.turn.complete(turnInput('agent-1', 'Resent.\n' + GOOD))
+    const all = rows2(w)
+    expect(all[all.length - 1] ?? '').toContain('verdict=consistent task=T-1 attempt=1/3')
+    expect(recs(w, 'T-1')).toHaveLength(1)
+    expect(recs(w, 'T-1')[0]).toMatchObject({ attempt: 1, verdict: 'consistent' })
   })
 })

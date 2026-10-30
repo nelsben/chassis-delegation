@@ -18,7 +18,7 @@ export const BRIEF_FIELDS = [
  * `red=` (GH-20): the red test's failing output, a path relative to the worker's tree, or `none`.
  * `artefacts=` and `metrics=` (MOD-22): what a research card delivered outside the repo, and numbers worth recording.
  */
-export const REPORT_FIELDS = ['v', 'task', 'subtask', 'branch', 'pr', 'sha', 'gate', 'red', 'files', 'artefacts', 'metrics', 'tokens', 'note'] as const
+export const REPORT_FIELDS = ['v', 'task', 'card', 'id', 'subtask', 'branch', 'pr', 'sha', 'gate', 'red', 'files', 'artefacts', 'metrics', 'tokens', 'note'] as const
 
 export type BriefHeader = {
   /** The header as written, `[[brief` to `]]`. */
@@ -506,7 +506,10 @@ export function extractReport(text: string): string | undefined {
 
 export function parseReport(block: string): Report {
   const body = block.replace(/^\[\[report/, '').replace(/\]\]$/, '').replace(/\s+/g, ' ').trim()
-  return parseFields(body, REPORT_FIELDS) as Report
+  const r = parseFields(body, REPORT_FIELDS) as Report
+  // MOD-211 (#271): card= and id= are read for task= (task= wins; an empty one is skipped)
+  const task = [r.task, r.card, r.id].find(v => v !== undefined && v.trim() !== '')
+  return task !== undefined ? { ...r, task: task.trim() } : r
 }
 
 /** `budget=<n>-attempts` → n (n ≥ 1); anything else (`frontier-60m`, absent) → the fallback. */
