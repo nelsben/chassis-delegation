@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.33 to 0.9.34
+
+`/delegation land` now files the issue itself (use `--dry-run` for the old print-only behaviour), and workers can no longer run gh writes.
+Added: the `land` tool and filing, the `project` option, `land_plan`, `tree`, the parent close line at finish, `scopeAmends` within-parent, the gh guard, and the `land_plan` resume.
+See the guide's Planning on GitHub section.
+Detail: [CHANGELOG 0.9.34](../CHANGELOG.md).
+
 ### From 0.9.32 to 0.9.33
 
 Nothing changes for a card that names no issue or parent.
