@@ -13,7 +13,7 @@
 //   gh issue create|close|reopen|edit|delete|transfer|comment|lock|unlock|pin|unpin|develop
 //   gh pr create|merge|close|reopen|edit|comment|review|ready
 //   gh project <anything but list|view|item-list|field-list>
-//   gh label|release|repo|secret|variable|workflow|ruleset|gist <a verb other than list|view>
+//   gh label|release|repo|secret|variable|workflow|ruleset|gist <a verb other than list|view> (gh repo also reads with clone)
 //   gh run <anything but list|view|watch|download>; gh cache <anything but list>
 //   gh codespace|extension|alias|ssh-key|gpg-key <a verb other than list|view>; gh config set
 //   gh api with -X/--method other than GET, or any -f/-F/--field/--raw-field/--input
@@ -29,6 +29,8 @@ const ISSUE_WRITES = new Set(['create', 'close', 'reopen', 'edit', 'delete', 'tr
 const PR_WRITES = new Set(['create', 'merge', 'close', 'reopen', 'edit', 'comment', 'review', 'ready'])
 const PROJECT_READS = new Set(['list', 'view', 'item-list', 'field-list'])
 const READ_ONLY_VERBS = new Set(['list', 'view'])
+// MOD-207: gh repo clone only copies a repo down; create, delete, edit, fork, rename, archive, sync and the rest stay writes
+const REPO_READS = new Set(['list', 'view', 'clone'])
 const VERB_NOUNS = new Set(['label', 'release', 'repo', 'secret', 'variable', 'workflow', 'ruleset', 'gist', 'codespace', 'extension', 'alias', 'ssh-key', 'gpg-key'])
 const RUN_READS = new Set(['list', 'view', 'watch', 'download'])
 const FIELD_FLAGS = new Set(['-f', '-F', '--field', '--raw-field', '--input'])
@@ -111,7 +113,7 @@ export function ghWrites(command: string): string[] {
     } else if (noun === 'config') {
       if (verb === 'set') out.push('gh config set')
     } else if (VERB_NOUNS.has(noun)) {
-      if (verb !== undefined && !READ_ONLY_VERBS.has(verb)) out.push(`gh ${noun} ${verb}`)
+      if (verb !== undefined && !(noun === 'repo' ? REPO_READS : READ_ONLY_VERBS).has(verb)) out.push(`gh ${noun} ${verb}`)
     }
   }
   return out

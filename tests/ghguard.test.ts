@@ -68,4 +68,12 @@ describe('MOD-197: the gh guard on Bash', () => {
     expect(ghWrites('gh config get editor')).toEqual([])
     expect(ghWrites('gh config list')).toEqual([])
   })
+
+  test('MOD-207: gh repo clone and view are reads; create, delete, edit, fork, rename, archive and sync stay writes', () => {
+    expect(ghWrites('gh repo clone o/r')).toEqual([])
+    expect(ghWrites('gh repo clone o/r /tmp/x -- --depth 1')).toEqual([])
+    expect(ghWrites('gh repo view o/r')).toEqual([])
+    expect(ghWrites('gh repo list')).toEqual([])
+    for (const v of ['create', 'delete', 'edit', 'fork', 'rename', 'archive', 'sync']) expect(ghWrites(`gh repo ${v} o/r`)).toEqual([`gh repo ${v}`])
+  })
 })

@@ -210,7 +210,7 @@ import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { doneTasks, freeName, issueLineOf, issueUrlOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
+import { doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
@@ -3701,21 +3701,51 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
     // the folder is not there yet
   }
   const slug = slugOf(title)
-  let name = freeName(slug, taken)
-  while (await exists($, `${folder}/${name}`)) {
-    taken.add(name)
-    name = freeName(slug, taken)
-  }
-  const file = `${folder}/${name}`
-  try {
-    await $.fs.write(file, body)
-  } catch (err) {
-    return `land: ${file} not written: ${String(err)}`
-  }
   const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
   const ownerRepo = ownerRepoOf(origin ?? '')
   landRepo = ownerRepo ?? ''
   sessionRoot = root
+  // MOD-207: the newest <slug>[-n].md whose body is this body (an issue: line aside) is this landing's file; a copy with no issue: line is reused, one with an issue: line is a resume
+  let name = ''
+  let alreadyFiled: { number: number; url: string } | undefined
+  let mayBeFiled: { number: number; url: string } | undefined
+  const filing = cfg.landAuto || a.confirm === true
+  if (!a.dryRun && ownerRepo) {
+    let same: { name: string; text: string } | undefined
+    for (let n = 1; ; n++) {
+      const cand = n === 1 ? `${slug}.md` : `${slug}-${n}.md`
+      if (!taken.has(cand) && !(await exists($, `${folder}/${cand}`))) break
+      const text = await readText($, `${folder}/${cand}`)
+      if (text !== undefined && withoutIssueLine(text) === body) same = { name: cand, text }
+    }
+    if (same) {
+      const prior = issueLineOf(same.text)
+      if (!prior) name = same.name
+      else if (!filing) {
+        name = same.name
+        mayBeFiled = prior
+      } else if (await issueIsOpen($, root, ownerRepo, prior.number)) {
+        name = same.name
+        alreadyFiled = prior
+      }
+    }
+  }
+  if (name === '') {
+    name = freeName(slug, taken)
+    while (await exists($, `${folder}/${name}`)) {
+      taken.add(name)
+      name = freeName(slug, taken)
+    }
+  }
+  const file = `${folder}/${name}`
+  if (!alreadyFiled && !mayBeFiled) {
+    try {
+      await $.fs.write(file, body)
+    } catch (err) {
+      return `land: ${file} not written: ${String(err)}`
+    }
+  }
+  if (alreadyFiled) return [file, `already filed #${alreadyFiled.number} ${alreadyFiled.url}`].join('\n')
   const hint = a.parent === undefined ? parentHint(a.paths, open) : undefined
   const ghLine = ownerRepo
     ? `gh issue create --repo ${ownerRepo} --title ${shellWord(title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
@@ -3727,7 +3757,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   const supersedeLine = a.supersedes !== undefined && ownerRepo ? [`gh issue close ${a.supersedes} --repo ${ownerRepo} --comment ${shellWord(`superseded by #<new>: ${supersedeNote}`)}`] : []
   if (a.dryRun || !ownerRepo) return [file, ghLine, ...supersedeLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
   // MOD-205: landAuto off shows the issue and files only when asked again with confirm
-  if (!cfg.landAuto && a.confirm !== true) return [file, `title: ${title}`, `type: ${a.type}`, `parent: ${a.parent ?? 'none'}`, ghLine, ...supersedeLine, ...hintLine, 'nothing filed: landAuto is off; call land again with confirm: true once the person says yes'].join('\n')
+  if (!cfg.landAuto && a.confirm !== true) return [file, `title: ${title}`, `type: ${a.type}`, `parent: ${a.parent ?? 'none'}`, ghLine, ...supersedeLine, ...hintLine, ...(mayBeFiled ? [`may already be filed #${mayBeFiled.number} ${mayBeFiled.url} (checked on confirm)`] : []), 'nothing filed: landAuto is off; call land again with confirm: true once the person says yes'].join('\n')
   const r = await fileOne($, { root, ownerRepo, file, body, title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
   if ('failed' in r) return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...hintLine].join('\n')
   const projectLines = await addToProject($, root, r.issue.url)
@@ -3795,15 +3825,21 @@ async function fileOne($: Host, o: { root: string; ownerRepo: string; file: stri
   return { issue }
 }
 
+/** MOD-207: the one allowlisted `gh issue view` read: the issue's state and its sub-issues; undefined when it cannot be read. */
+async function viewIssue($: Host, root: string, ownerRepo: string, n: number): Promise<{ state: string; subs: { number: number; state: string }[] } | undefined> {
+  const r = await run($, ['gh', 'issue', 'view', String(n), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
+  if (!r.ok || r.exitCode !== 0) return undefined
+  try {
+    const json = JSON.parse(r.stdout) as { state?: unknown } | null
+    return { state: typeof json?.state === 'string' ? json.state.toUpperCase() : '', subs: subIssuesOf(json) }
+  } catch {
+    return undefined
+  }
+}
+
 /** MOD-204: true when `gh issue view` reads the issue and says it is OPEN; unreadable or closed is false. */
 async function issueIsOpen($: Host, root: string, ownerRepo: string, n: number): Promise<boolean> {
-  const r = await run($, ['gh', 'issue', 'view', String(n), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
-  if (!r.ok || r.exitCode !== 0) return false
-  try {
-    return (JSON.parse(r.stdout) as { state?: unknown } | null)?.state === 'OPEN'
-  } catch {
-    return false
-  }
+  return (await viewIssue($, root, ownerRepo, n))?.state === 'OPEN'
 }
 
 /** MOD-193: adds an issue to the configured project; the one line it reports, or none when no project is set. */
@@ -3850,13 +3886,18 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
   const ownerRepo = ownerRepoOf(origin ?? '')
   const used = new Set<string>()
-  const items: { item: PlanItem; isFeature: boolean; file: string; body: string; filed?: { number: number; url: string } }[] = []
+  // MOD-207: every landed file of this plan ends with the plan key; a feature's prior file is reused only under the same key
+  const key = planKey(parsed.feature.title, parsed.feature.paths)
+  const items: { item: PlanItem; isFeature: boolean; file: string; body: string; filed?: { number: number; url: string }; mayReuse?: { number: number; url: string }; write: boolean }[] = []
+  // the sub-issues of this run's feature, read once; undefined while the feature is new or not yet read
+  let featureSubs: { number: number; state: string }[] | undefined
   for (const [i, item] of [parsed.feature, ...parsed.tasks].entries()) {
-    const body = redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)
+    const body = `${redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)}plan: ${key}\n`
     const slug = slugOf(item.title)
     let name = ''
     let filedAs: { number: number; url: string } | undefined
-    // MOD-204: the newest of the slug file and its -<n> copies that ends in an issue: line and whose issue is still OPEN is reused whatever the body says
+    let mayReuse: { number: number; url: string } | undefined
+    // the newest of the slug file and its -<n> copies that ends in an issue: line may be this run's item already filed
     let newest = ''
     for (let n = 1; ; n++) {
       const cand = n === 1 ? `${slug}.md` : `${slug}-${n}.md`
@@ -3867,12 +3908,36 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
     if (newest !== '' && ownerRepo) {
       const text = await readText($, `${folder}/${newest}`)
       const prior = text === undefined ? undefined : issueLineOf(text)
-      if (prior && (await issueIsOpen($, root, ownerRepo, prior.number))) {
-        name = newest
-        filedAs = prior
+      if (prior && text !== undefined) {
+        if (i === 0) {
+          // a feature is reused only under the same plan key and while its issue is OPEN
+          if (planLineOf(text) === key) {
+            if (!parsed.confirm) {
+              name = newest
+              mayReuse = prior
+            } else {
+              const view = await viewIssue($, root, ownerRepo, prior.number)
+              if (view?.state === 'OPEN') {
+                name = newest
+                filedAs = prior
+                featureSubs = view.subs
+              }
+            }
+          }
+        } else if (!parsed.confirm) {
+          name = newest
+          mayReuse = prior
+        } else if (featureSubs) {
+          // a task is reused only when it is a sub-issue of this run's feature and OPEN
+          const sub = featureSubs.find(x => x.number === prior.number)
+          if (sub && (sub.state !== '' ? sub.state.toUpperCase() === 'OPEN' : await issueIsOpen($, root, ownerRepo, prior.number))) {
+            name = newest
+            filedAs = prior
+          }
+        }
       }
     }
-    // otherwise the same slug file is reused when its content is unchanged
+    // otherwise the same slug file is reused when it has no issue: line and its content is unchanged
     for (let n = 1; name === ''; n++) {
       const cand = n === 1 ? `${slug}.md` : `${slug}-${n}.md`
       if (used.has(cand)) continue
@@ -3887,10 +3952,10 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
       }
     }
     used.add(name)
-    items.push({ item, isFeature: i === 0, file: `${folder}/${name}`, body, ...(filedAs ? { filed: filedAs } : {}) })
+    items.push({ item, isFeature: i === 0, file: `${folder}/${name}`, body, write: !filedAs && !mayReuse, ...(filedAs ? { filed: filedAs } : {}), ...(mayReuse ? { mayReuse } : {}) })
   }
   for (const it of items) {
-    if (it.filed) continue
+    if (!it.write) continue
     try {
       await $.fs.write(it.file, it.body)
     } catch (err) {
@@ -3899,8 +3964,9 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   }
   landRepo = ownerRepo ?? ''
   sessionRoot = root
-  const tree = [`feature: ${parsed.feature.title} [${parsed.feature.paths.join(', ')}]`, ...parsed.tasks.map(t => `  task: ${t.title} [${t.paths.join(', ')}]`)]
-  const written = ['files written:', ...items.map(it => `  ${it.file}`)]
+  const reuseNote = (it: (typeof items)[number]) => (it.mayReuse ? ` may reuse #${it.mayReuse.number} (checked on confirm)` : '')
+  const tree = [`feature: ${parsed.feature.title} [${parsed.feature.paths.join(', ')}]${reuseNote(items[0] as (typeof items)[number])}`, ...parsed.tasks.map((t, k) => `  task: ${t.title} [${t.paths.join(', ')}]${reuseNote(items[k + 1] as (typeof items)[number])}`)]
+  const written = ['files written:', ...items.filter(it => it.write).map(it => `  ${it.file}`)]
   if (!parsed.confirm || !ownerRepo) {
     const why = ownerRepo ? [] : [`origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); nothing can be filed`]
     return [...tree, ...written, ...why, 'nothing filed: call land_plan again with confirm: true once the person says yes'].join('\n')

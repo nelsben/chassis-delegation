@@ -125,3 +125,25 @@ describe('MOD-198: issueLineOf', () => {
     expect(issueLineOf('no issue here\nissue: #x https://github.com/o/r/issues/5\n')).toBe(undefined)
   })
 })
+
+describe('MOD-207: planKey', () => {
+  test('the title slug, a dash, the first 8 hex of sha256 of the sorted paths joined by commas', async () => {
+    const { planKey } = await lib()
+    const { createHash } = await import('node:crypto')
+    const hex = (t) => createHash('sha256').update(t).digest('hex').slice(0, 8)
+    expect(planKey('Export rework', ['src/b/**', 'src/a/**'])).toBe(`export-rework-${hex('src/a/**,src/b/**')}`)
+    expect(planKey('Export rework', ['src/a/**', 'src/b/**'])).toBe(planKey('Export rework', ['src/b/**', 'src/a/**']))
+    expect(planKey('Export rework', ['src/a/**'])).not.toBe(planKey('Export rework', ['src/b/**']))
+    expect(planKey('Export rework', ['x'])).toMatch(/^export-rework-[0-9a-f]{8}$/)
+  })
+})
+
+describe('MOD-207: subIssuesOf', () => {
+  test('reads a list or a nodes object; skips rows without a number', async () => {
+    const { subIssuesOf } = await lib()
+    expect(subIssuesOf({ subIssues: [{ number: 5, state: 'OPEN' }, { title: 'x' }] })).toEqual([{ number: 5, state: 'OPEN' }])
+    expect(subIssuesOf({ subIssues: { nodes: [{ number: 6, state: 'CLOSED' }] } })).toEqual([{ number: 6, state: 'CLOSED' }])
+    expect(subIssuesOf({})).toEqual([])
+    expect(subIssuesOf(null)).toEqual([])
+  })
+})

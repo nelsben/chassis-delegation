@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A `land_plan` retry is keyed to the plan, not just the title (MOD-207).** Every landed file `land_plan` writes now ends (before any `issue:` line) with a `plan: <key>` line, the feature title's slug plus `-` plus the first 8 hex of a sha-256 of the sorted feature paths. A feature's earlier file is reused only under the same key and while its issue is OPEN; a task's only when its issue is OPEN and a sub-issue of this run's feature (read once with the existing `gh issue view` shape). A later plan with a task or feature of the same title files its own issues instead of attaching to the earlier plan's.
+- **`land_plan` without `confirm` runs no gh (MOD-207).** An item with an earlier `issue:` line prints `may reuse #n (checked on confirm)` and is checked on the confirm call.
+- **`land` on confirm reuses its preview file and resumes (MOD-207).** With landAuto off, the confirm call reuses the newest `<slug>[-n].md` that has no `issue:` line and the same body, instead of writing a `-2` copy; when the newest file with that body ends in an `issue:` line whose issue is OPEN, `land` reports `already filed #n url` and files nothing (resume after a create that timed out). landAuto on keeps its behaviour apart from the same resume check.
+- **The gh guard reads `gh repo clone` and `gh repo view` as reads (MOD-207).** `gh repo create|delete|edit|fork|rename|archive|sync` stay writes.
+
 ## 0.9.36 — 2026-10-30
 
 ### Added
