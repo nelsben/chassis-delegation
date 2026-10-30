@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`/delegation land` files the issue itself, and a `land` tool does the same (MOD-192).** After writing the landed body it runs `gh issue create` (label `type:<type>`, `--parent` when given), adds the issue to the Project named by the new `project` option (`<owner>/<number>`) with `gh project item-add`, and writes `issue: #<n> <url>` to the end of the landed file. `--dry-run` (tool: `dryRun`) keeps the print-only behaviour. The allowlist gains exactly two shapes for this, bound to the session's origin repo and the configured project. The `type:*` labels must exist in the repo.
+
 ## 0.9.33 — 2026-10-29
 
 ### Added

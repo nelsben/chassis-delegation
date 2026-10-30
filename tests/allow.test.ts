@@ -238,6 +238,65 @@ describe('MOD-7: the two issue forms, for the configured issueRepo only', () => 
   })
 })
 
+describe('MOD-192: gh issue create (land) and gh project item-add', () => {
+  const X = '/Users/b/acme-app'
+  const A: AllowConfig = { ...ALLOW, issueRepo: 'owner/mod', root: X, landRepo: 'o/r', project: { owner: 'o', number: 1 } }
+  const F = `${X}/.delegation/landed/export-drops-a-row.md`
+  const create = (over: Partial<Record<string, string | string[]>> = {}) => {
+    const v = { repo: 'o/r', title: 'Export drops a row', label: 'type:bug', file: F, ...over }
+    return ['gh', 'issue', 'create', '--repo', v.repo as string, '--title', v.title as string, '--label', v.label as string, ...((over.parent as string[] | undefined) ?? []), '--body-file', v.file as string]
+  }
+  const add = (num = '1', owner = 'o', url = 'https://github.com/o/r/issues/42') => ['gh', 'project', 'item-add', num, '--owner', owner, '--url', url]
+  test('the land create shape passes, with and without --parent, for every known type', () => {
+    ok(create(), A)
+    ok(create({ parent: ['--parent', '9'] }), A)
+    for (const t of ['feature', 'epic', 'story', 'task', 'bug', 'spike']) ok(create({ label: `type:${t}` }), A)
+  })
+  test('the item-add shape passes for the configured owner and number', () => {
+    ok(add(), A)
+  })
+  test('the MOD-7 debrief shapes still pass beside them', () => {
+    ok(['gh', 'issue', 'create', '--repo', 'owner/mod', '--title', 'T', '--body-file', `${X}/.delegation/debriefs/a.md`], A)
+  })
+  test('near-misses of create are refused', () => {
+    no(create({ repo: 'other/r' }), A)
+    no(create({ label: 'type:chore' }), A)
+    no(create({ label: 'bug' }), A)
+    no(create({ file: `${X}/README.md` }), A)
+    no(create({ file: `${X}/.delegation/landed/../x.md` }), A)
+    no(create({ file: `${X}/.delegation/landed/a.txt` }), A)
+    no(create({ file: `/other/.delegation/landed/a.md` }), A)
+    no(create({ title: '' }), A)
+    no(create({ title: '--web' }), A)
+    no(create({ parent: ['--parent', 'x'] }), A)
+    no(create({ parent: ['--parent', '1234567890'] }), A)
+    no([...create(), '--assignee', 'me'], A)
+    no([...create(), '--web'], A)
+    no(['gh', 'issue', 'create', '--repo', 'o/r', '--label', 'type:bug', '--title', 'T', '--body-file', F], A)
+  })
+  test('without landRepo the land create shape is refused; without a project item-add is', () => {
+    no(create(), { ...A, landRepo: undefined })
+    no(add(), { ...A, project: undefined })
+  })
+  test('near-misses of item-add are refused', () => {
+    no(add('2'), A)
+    no(add('1', 'x'), A)
+    no(add('1', 'o', 'https://github.com/other/r/issues/42'), A)
+    no(add('1', 'o', 'https://github.com/o/r/issues/x'), A)
+    no(add('1', 'o', 'https://github.com/o/r/pull/42'), A)
+    no([...add(), '--format', 'json'], A)
+    no(['gh', 'project', 'item-delete', '1', '--owner', 'o'], A)
+    no(['gh', 'project', 'list', '--owner', 'o'], A)
+  })
+  test('a create that matches neither shape names both', () => {
+    const c = checkArgv(create({ repo: 'other/r' }), A)
+    expect(c.ok).toBe(false)
+    const reason = c.ok ? '' : c.reason
+    expect(reason).toContain('.delegation/debriefs/')
+    expect(reason).toContain('.delegation/landed/')
+  })
+})
+
 describe('MOD-44: git -C <another repo> worktree add, for a task that names that repo only', () => {
   const X = '/Users/b/acme-app'
   const OTHER = '/Users/b/other'

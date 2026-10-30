@@ -177,7 +177,7 @@ An issue states what a worker may touch in two fenced blocks in its body, with t
 
 A card with `issue:` gets `Refs #n` in its `pr.md` (never Closes) and the merge finish prints the `gh issue close` line for it. A parent is never closed by the mod: finish prints a pointer to its sub-issue progress, and you close it by hand when every task is done.
 
-`/delegation land <type> <title> [--parent <n>] [--paths a,b] [--note <text>]` parks work that comes up mid-session without starting it. It writes a redacted issue body under `.delegation/landed/` (the note, a `scope` block from `--paths`, and the open cards it was landed from) and prints the one `gh issue create` line to run. When no `--parent` is given and a path falls inside an open card's scope, it prints a `parent hint`. It files nothing, dispatches nothing and calls no `gh`.
+`/delegation land <type> <title> [--parent <n>] [--paths a,b] [--note <text>] [--dry-run]` and the `land` tool (the same function) file work that comes up mid-session as a GitHub issue without starting it. It writes a redacted issue body under `.delegation/landed/` (the note, a `scope` block from `--paths`, and the open cards it was landed from), then runs `gh issue create` with the label `type:<type>` (and `--parent` when given), reads the new issue's url, adds it to the Project named by the `project` option when one is set, and writes `issue: #<n> <url>` to the end of the landed file. When no `--parent` is given and a path falls inside an open card's scope, it prints a `parent hint`. It dispatches nothing. With `--dry-run` (the tool's `dryRun: true`) it keeps the old behaviour: the body is written and the one `gh issue create` line is printed for you to run, and `gh` is not called. If `gh issue create` fails, the result names the file, the line tried and gh's error, and nothing is written back; if only the add to the Project fails, the issue is still reported as filed. The `type:*` labels below must exist in the repo, or `gh issue create` fails.
 
 Create the type labels once per repo, with the owner and name of your repo in place of `acme/widgets`:
 
@@ -190,7 +190,7 @@ gh label create type:bug --repo acme/widgets
 gh label create type:spike --repo acme/widgets
 ```
 
-To see the work across repos, use one GitHub Project that you own as the view. The mod never writes to it.
+To see the work across repos, use one GitHub Project that you own as the view. Set `/delegation config project <owner>/<number>` and `land` adds each issue it files to that Project (`gh project item-add`); nothing else of the Project is read or written, and with the option unset the mod never touches it.
 
 While parents are in use, set `/delegation config scopeAmends ask`. An applied scope amend is not checked against the parent's scope, so asking keeps a worker from widening past it unseen.
 
