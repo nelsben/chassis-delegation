@@ -209,7 +209,7 @@ import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { doneTasks, freeName, issueUrlOf, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
+import { doneTasks, freeName, issueLineOf, issueUrlOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
@@ -3760,12 +3760,13 @@ async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<
     // the folder is not there yet
   }
   const used = new Set<string>()
-  const items: { item: PlanItem; isFeature: boolean; file: string; body: string }[] = []
+  const items: { item: PlanItem; isFeature: boolean; file: string; body: string; filed?: { number: number; url: string } }[] = []
   for (const [i, item] of [parsed.feature, ...parsed.tasks].entries()) {
     const body = redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, cards: open.map(c => ({ id: c.id, title: c.title })), defaultBranch: def }), rules)
     const slug = slugOf(item.title)
     let name = ''
-    // the same slug file is reused when its content is unchanged and it carries no issue: line
+    let filedAs: { number: number; url: string } | undefined
+    // the same slug file is reused when its content is unchanged; MOD-198: with its issue: line it is reused as already filed
     for (let n = 1; ; n++) {
       const cand = n === 1 ? `${slug}.md` : `${slug}-${n}.md`
       if (used.has(cand)) continue
@@ -3773,15 +3774,23 @@ async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<
         name = cand
         break
       }
-      if ((await readText($, `${folder}/${cand}`)) === body) {
+      const text = await readText($, `${folder}/${cand}`)
+      if (text === body) {
         name = cand
+        break
+      }
+      const prior = text === undefined ? undefined : issueLineOf(text)
+      if (text !== undefined && prior && withoutIssueLine(text) === body) {
+        name = cand
+        filedAs = prior
         break
       }
     }
     used.add(name)
-    items.push({ item, isFeature: i === 0, file: `${folder}/${name}`, body })
+    items.push({ item, isFeature: i === 0, file: `${folder}/${name}`, body, ...(filedAs ? { filed: filedAs } : {}) })
   }
   for (const it of items) {
+    if (it.filed) continue
     try {
       await $.fs.write(it.file, it.body)
     } catch (err) {
@@ -3801,20 +3810,29 @@ async function planWith($: Host, parsed: ReturnType<typeof parsePlan>): Promise<
   const filed: string[] = []
   const issues: { number: number; url: string; title: string }[] = []
   let featureNumber = 0
+  // MOD-198: every issue filed so far, this call's and an earlier call's, goes to the project; the lines say how that went
+  const projectLines = async (): Promise<string[]> => {
+    const lines: string[] = []
+    for (const i of issues) for (const l of await addToProject($, root, i.url)) lines.push(l.startsWith('added') ? l : `${i.title}: ${l}`)
+    const failures = lines.filter(l => !l.startsWith('added'))
+    return [...(lines.length > 0 && failures.length === 0 ? [lines[0] as string] : []), ...failures]
+  }
   for (const [i, it] of items.entries()) {
+    if (it.filed) {
+      if (it.isFeature) featureNumber = it.filed.number
+      filed.push(`already filed #${it.filed.number} ${it.filed.url} ${it.item.title}`)
+      issues.push({ ...it.filed, title: it.item.title })
+      continue
+    }
     const r = await fileOne($, { root, ownerRepo, file: it.file, body: it.body, title: it.item.title, type: it.item.type, ...(it.isFeature ? {} : { parent: featureNumber }) })
     if ('failed' in r) {
-      return [...filed, ...items.slice(i).map(x => `not filed: ${x.item.title}`), `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`].join('\n')
+      return [...filed, ...items.slice(i).map(x => `not filed: ${x.item.title}`), `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...(await projectLines())].join('\n')
     }
     if (it.isFeature) featureNumber = r.issue.number
     filed.push(`filed #${r.issue.number} ${r.issue.url} ${it.item.title}`)
     issues.push({ ...r.issue, title: it.item.title })
   }
-  const lines = []
-  for (const i of issues) for (const l of await addToProject($, root, i.url)) lines.push(l.startsWith('added') ? l : `${i.title}: ${l}`)
-  const failures = lines.filter(l => !l.startsWith('added'))
-  const addedLine = lines.length > 0 && failures.length === 0 ? [lines[0] as string] : []
-  return [...tree, ...written, ...filed, ...addedLine, ...failures, `tree: #${featureNumber} with ${parsed.tasks.length} tasks`].join('\n')
+  return [...tree, ...written, ...filed, ...(await projectLines()), `tree: #${featureNumber} with ${parsed.tasks.length} tasks`].join('\n')
 }
 
 async function redactRules($: Host): Promise<RedactRules> {

@@ -107,6 +107,24 @@ export function issueUrlOf(stdout: string, ownerRepo: string): { url: string; nu
   return undefined
 }
 
+const ISSUE_LINE = /^issue: #(\d+) (https:\/\/github\.com\/\S+\/issues\/\d+)$/
+
+/** MOD-198: the last `issue: #n url` line of a landed file, else undefined. */
+export function issueLineOf(text: string): { number: number; url: string } | undefined {
+  for (const line of text.split('\n').reverse()) {
+    const m = ISSUE_LINE.exec(line)
+    if (m) return { number: Number(m[1]), url: m[2] as string }
+  }
+  return undefined
+}
+
+/** MOD-198: the landed text with its trailing `issue:` line (and the blank lines after it) removed. */
+export function withoutIssueLine(text: string): string {
+  const lines = text.replace(/\n*$/, '').split('\n')
+  if (lines.length > 0 && ISSUE_LINE.test(lines[lines.length - 1] as string)) lines.pop()
+  return `${lines.join('\n').replace(/\n*$/, '')}\n`
+}
+
 /** The Markdown issue body: the note, the scope block when paths were given, and where it was landed from. Redact it before it is written. */
 export function landedBody(o: { note?: string; paths: readonly string[]; cards: readonly { id: string; title: string }[]; defaultBranch: string }): string {
   const parts: string[] = []
