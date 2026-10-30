@@ -399,23 +399,42 @@ describe('MOD-75: /delegation merge <id>', () => {
       return { w, lines: blockOf(out) }
     }
 
-    test('every other task closed: the parent close line follows the task close line, and the view passed the allowlist', async ($, on) => {
-      const { w, lines } = await finish($ as never, on as never, parentView('CLOSED'))
-      expect(lines[0]).toMatch(/^gh issue close 52 --repo acme\/acme-app --comment '(merged in #\d+|merged at 9999999)'$/)
-      expect(lines[1]).toBe("gh issue close 50 --repo acme/acme-app --comment 'all 2 tasks done'")
+    const CLOSE_TASK = (w: { runs: { argv: string[] }[] }) => w.runs.map(r => r.argv).filter(a => a[0] === 'gh' && a[2] === 'close')
+
+    test('MOD-200: every other task closed: finish runs the task close and the parent close itself, and reports both', async ($, on) => {
+      const w = world(on, { files: { ...files(), [CARD_PATH]: ISSUE_CARD }, dirs, store, run: parentView('CLOSED') })
+      await $.session.start(sessionStart)
+      await $.command.run(mergeCmd(ID))
+      const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+      const closes = CLOSE_TASK(w)
+      expect(closes[0]).toEqual(['gh', 'issue', 'close', '52', '--repo', 'acme/acme-app', '--comment', closes[0]?.[7] as string])
+      expect(closes[0]?.[7]).toMatch(/^(merged in #\d+|merged at 9999999)$/)
+      expect(closes[1]).toEqual(['gh', 'issue', 'close', '50', '--repo', 'acme/acme-app', '--comment', 'all 2 tasks done'])
+      expect(out).toContain('closed #52')
+      expect(out).toContain('closed #50')
+      expect(blockOf(out).some(l => l.startsWith('gh issue close'))).toBe(false)
       expect(w.runs.map(r => r.argv)).toContainEqual(VIEW)
     })
 
-    test('a sibling still open: the comment line names it and no parent close line is printed', async ($, on) => {
-      const { lines } = await finish($ as never, on as never, parentView('OPEN'))
-      expect(lines).toContain('# parent #50: 1 of 2 tasks still open (#51)')
-      expect(lines.some(l => l.startsWith('gh issue close 50'))).toBe(false)
+    test('MOD-200: a failed close keeps the old line in the block with the reason after it, and reports no closed line for it', async ($, on) => {
+      const w = world(on, { files: { ...files(), [CARD_PATH]: ISSUE_CARD }, dirs, store, run: parentView('CLOSED', argv => (argv[0] === 'gh' && argv[2] === 'close' && argv[3] === '52' ? { exitCode: 1, stdout: '', stderr: 'HTTP 403' } : undefined)) })
+      await $.session.start(sessionStart)
+      await $.command.run(mergeCmd(ID))
+      const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+      const lines = blockOf(out)
+      expect(lines[0]).toMatch(/^gh issue close 52 --repo acme\/acme-app --comment '(merged in #\d+|merged at 9999999)' \(close failed: HTTP 403\)$/)
+      expect(out).not.toContain('closed #52')
+      // the parent is not closed behind a task close that failed: its line stays for the brain
+      expect(lines).toContain("gh issue close 50 --repo acme/acme-app --comment 'all 2 tasks done'")
+      expect(out).not.toContain('closed #50')
+      expect(CLOSE_TASK(w).length).toBe(1)
     })
 
     test('the view fails: today\'s comment line', async ($, on) => {
-      const { lines } = await finish($ as never, on as never, parentView('CLOSED', argv => (is(argv, ...VIEW) ? { exitCode: 1, stdout: '' } : undefined)))
+      const { w, lines } = await finish($ as never, on as never, parentView('CLOSED', argv => (is(argv, ...VIEW) ? { exitCode: 1, stdout: '' } : undefined)))
       expect(lines.at(-1)).toBe('# parent #50: gh issue view 50 --repo acme/acme-app --json subIssuesSummary; close it by hand when every task is done')
       expect(lines.some(l => l.startsWith('gh issue close 50'))).toBe(false)
+      expect(w.runs.some(r => r.argv[0] === 'gh' && r.argv[2] === 'close' && r.argv[3] === '50')).toBe(false)
     })
   })
 

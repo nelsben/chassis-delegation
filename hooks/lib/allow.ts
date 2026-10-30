@@ -33,6 +33,10 @@
 //   gh project item-add <number> --owner <owner> --url https://github.com/<landRepo>/issues/<n>
 //                                                            (MOD-192: /delegation land and the land tool; landRepo is the session root's origin,
 //                                                             <owner> and <number> the configured project; nothing else of gh issue or gh project)
+//   gh issue comment <1-9 digits> --repo <landRepo> --body-file <file under <root>/.delegation/status/>
+//   gh issue close <1-9 digits> --repo <landRepo> --comment <text not starting with ->
+//                                                            (MOD-200: dispatch, the verdict, merge finish and land --supersedes write status to
+//                                                             the card's issue; both also pass while /delegation merge runs; no gh issue edit)
 //   gh issue view <1-9 digits> --repo <landRepo> --json number,title,state,labels,body,subIssues
 //                                                            (MOD-197: this one shape also passes while /delegation merge runs, ahead of
 //                                                             the remote refusal; every other gh is still refused then)
@@ -42,7 +46,7 @@
 //                                                            (./gates.ts holds what a map may name)
 // <id> is a dispatchable task id, <PREFIX>-<number>[letter]: BE-101, OPS-195b.
 // Notably refused: sf, curl, git push|commit|reset|checkout, any other git
-// global option (-c, --exec-path, --git-dir …), gh pr merge|create, gh issue edit|close|delete, and any
+// global option (-c, --exec-path, --git-dir …), gh pr merge|create, gh issue edit|delete (close and comment only in the exact MOD-200 shapes), and any
 // script or package command the gate map does not name exactly.
 
 import { fillPlaceholders, gateCommandTemplates, matchesAnyTemplate } from './gates'
@@ -259,16 +263,35 @@ function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
     const exact = lr !== '' && ISSUE_REPO.test(lr) && t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === lr && t[3] === '--json' && t[4] === 'number,title,state,labels,body,subIssues'
     return exact ? ok : shape('view <number> --repo <landRepo> --json number,title,state,labels,body,subIssues')
   }
+  if (verb === 'close') return statusCloseOk(t, allow) ? ok : shape('close <number> --repo <landRepo> --comment <text not starting with ->')
+  if (verb === 'comment' && statusCommentOk(t, allow)) return ok
   if (!issueRepoSet) return refuse('gh issue is not on the list: no issueRepo is configured')
   if (verb === 'comment') {
     const exact = t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === repo && t[3] === '--body-file' && debriefBodyOk(t[4] as string, allow.root)
-    return exact ? ok : shape('comment <number> --repo <issueRepo> --body-file <file under .delegation/debriefs/>')
+    return exact ? ok : shape('comment <number> --repo <issueRepo> --body-file <file under .delegation/debriefs/>; or comment <number> --repo <landRepo> --body-file <file under .delegation/status/>')
   }
   if (verb === 'list') {
     const exact = t.join(' ') === `--repo ${repo} --state all --limit 200 --json number,title,body`
     return exact ? ok : shape('list --repo <issueRepo> --state all --limit 200 --json number,title,body')
   }
   return refuse(`gh issue ${verb ?? ''} is not on the list`.replace('  ', ' '))
+}
+
+/** MOD-200: a status body: absolute, under <root>/.delegation/status/, plain segments. */
+const statusBodyOk = (path: string, root: string | undefined): boolean => bodyUnder(path, root, 'status')
+const landRepoOf = (allow: AllowConfig): string => {
+  const lr = allow.landRepo ?? ''
+  return lr !== '' && ISSUE_REPO.test(lr) ? lr : ''
+}
+/** MOD-200: `<number> --repo <landRepo> --body-file <file under .delegation/status/>` (the args after `comment`). */
+const statusCommentOk = (t: readonly string[], allow: AllowConfig): boolean => {
+  const lr = landRepoOf(allow)
+  return lr !== '' && t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === lr && t[3] === '--body-file' && statusBodyOk(t[4] as string, allow.root)
+}
+/** MOD-200: `<number> --repo <landRepo> --comment <text not starting with ->` (the args after `close`). */
+const statusCloseOk = (t: readonly string[], allow: AllowConfig): boolean => {
+  const lr = landRepoOf(allow)
+  return lr !== '' && t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === lr && t[3] === '--comment' && (t[4] ?? '') !== '' && !(t[4] as string).startsWith('-')
 }
 
 const LAND_LABEL = /^type:(feature|epic|story|task|bug|spike)$/
@@ -354,6 +377,7 @@ export const mergedSubject = (id: string): string => `cards: ${id} merged`
 const isMergeIssueView = (argv: readonly string[], allow: AllowConfig): boolean => {
   const lr = allow.landRepo ?? ''
   const [cmd, a, b, n, r, repo, j, fields, ...more] = argv
+  if (cmd === 'gh' && a === 'issue' && (b === 'close' || b === 'comment')) return (b === 'close' ? statusCloseOk : statusCommentOk)(argv.slice(3), allow)
   return cmd === 'gh' && a === 'issue' && b === 'view' && more.length === 0 && lr !== '' && ISSUE_REPO.test(lr) && /^\d{1,9}$/.test(n ?? '') && r === '--repo' && repo === lr && j === '--json' && fields === 'number,title,state,labels,body,subIssues'
 }
 

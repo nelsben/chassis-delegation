@@ -431,11 +431,23 @@ export function siblingsOf(stdout: string): { number: number; state: string }[] 
   return out.length > 0 ? out : undefined
 }
 
-export function finishLines(o: { branch: string; version?: string; loadedClone?: string; issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string; /** MOD-195: the parent's sub-issues as read; absent = the hand-check comment. */ siblings?: readonly { number: number; state: string }[] }): string[] {
-  const close =
-    o.issue !== undefined && o.ownerRepo
-      ? [`gh issue close ${o.issue} --repo ${o.ownerRepo} --comment ${shellWord(o.pr !== undefined ? `merged in #${o.pr}` : `merged at ${(o.sha ?? '').slice(0, 7)}`)}`]
-      : []
+/** MOD-200: how a close the mod ran came out: done, or why it failed. */
+export type CloseResult = { ok: true } | { ok: false; why: string }
+
+/** MOD-200: the closes finish runs itself: the task, and the parent when every other sibling is CLOSED. Comment text only; no I/O. */
+export function closesOf(o: { issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string; siblings?: readonly { number: number; state: string }[] }): { task?: { issue: number; comment: string }; parent?: { issue: number; comment: string } } {
+  if (o.issue === undefined || !o.ownerRepo) return {}
+  const task = { issue: o.issue, comment: o.pr !== undefined ? `merged in #${o.pr}` : `merged at ${(o.sha ?? '').slice(0, 7)}` }
+  const open = (o.siblings ?? []).filter(x => x.number !== o.issue && x.state.toUpperCase() !== 'CLOSED')
+  const parent = o.parent !== undefined && o.siblings !== undefined && open.length === 0 ? { issue: o.parent, comment: `all ${o.siblings.length} tasks done` } : undefined
+  return { task, ...(parent ? { parent } : {}) }
+}
+
+/** The lines of the remote block after a merge finish. MOD-200: a close in `closed` that succeeded is left out; one that failed keeps its line with `(close failed: <why>)`. */
+export function finishLines(o: { branch: string; version?: string; loadedClone?: string; issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string; /** MOD-195: the parent's sub-issues as read; absent = the hand-check comment. */ siblings?: readonly { number: number; state: string }[]; /** MOD-200: the closes the mod ran itself. */ closed?: { task?: CloseResult; parent?: CloseResult } }): string[] {
+  const shown = (r: CloseResult | undefined, line: string): string[] => (r?.ok === true ? [] : [r ? `${line} (close failed: ${r.why})` : line])
+  const plan = closesOf(o)
+  const close = plan.task ? shown(o.closed?.task, `gh issue close ${plan.task.issue} --repo ${o.ownerRepo} --comment ${shellWord(plan.task.comment)}`) : []
   const open = (o.siblings ?? []).filter(x => x.number !== o.issue && x.state.toUpperCase() !== 'CLOSED').map(x => x.number).sort((a, b) => a - b)
   const parent =
     o.issue !== undefined && o.parent !== undefined && o.ownerRepo
@@ -445,10 +457,7 @@ export function finishLines(o: { branch: string; version?: string; loadedClone?:
           ? []
           : [`# parent #${o.parent}: ${open.length} of ${o.siblings.length} tasks still open (${open.map(n => `#${n}`).join(', ')})`]
       : []
-  const parentClose =
-    o.issue !== undefined && o.parent !== undefined && o.ownerRepo && o.siblings !== undefined && open.length === 0
-      ? [`gh issue close ${o.parent} --repo ${o.ownerRepo} --comment ${shellWord(`all ${o.siblings.length} tasks done`)}`]
-      : []
+  const parentClose = plan.parent ? shown(o.closed?.parent, `gh issue close ${plan.parent.issue} --repo ${o.ownerRepo} --comment ${shellWord(plan.parent.comment)}`) : []
   return [
     ...close,
     ...parentClose,

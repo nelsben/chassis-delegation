@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { checkArgv, checkGateCommand, refusedLine, type AllowConfig } from '../hooks/lib/allow'
+import { checkArgv, checkGateCommand, isRemoteArgv, refusedLine, type AllowConfig } from '../hooks/lib/allow'
 import { gateTemplatesOf, resolveGateRuns, fillFiles } from '../hooks/lib/gates'
 import { parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
 
@@ -366,6 +366,57 @@ describe('MOD-86: git check-ignore, the one read shape', () => {
     no(['git', '-C', R, 'check-ignore', '--', 'a'])
     no(['git', '-C', R, 'check-ignore', '-q', '--', '-v'])
     no(['git', 'check-ignore', '-q', '--', 'a'])
+  })
+})
+
+describe('MOD-200: gh issue comment and close on the landRepo', () => {
+  const X = '/Users/b/acme-app'
+  const A: AllowConfig = { ...ALLOW, issueRepo: 'owner/mod', root: X, landRepo: 'o/r' }
+  const F = `${X}/.delegation/status/MOD-1-attempt-1-started.md`
+  const comment = (over: Partial<Record<string, string>> = {}) => {
+    const v = { n: '12', repo: 'o/r', file: F, ...over }
+    return ['gh', 'issue', 'comment', v.n as string, '--repo', v.repo as string, '--body-file', v.file as string]
+  }
+  const close = (over: Partial<Record<string, string>> = {}) => {
+    const v = { n: '12', repo: 'o/r', text: 'merged in #5', ...over }
+    return ['gh', 'issue', 'close', v.n as string, '--repo', v.repo as string, '--comment', v.text as string]
+  }
+  test('both exact shapes pass', () => {
+    ok(comment(), A)
+    ok(close(), A)
+    ok(close({ text: 'all 3 tasks done' }), A)
+  })
+  test('the MOD-7 debrief comment still passes', () => {
+    ok(['gh', 'issue', 'comment', '3', '--repo', 'owner/mod', '--body-file', `${X}/.delegation/debriefs/a.md`], A)
+  })
+  test('comment refusals', () => {
+    no(comment({ repo: 'other/r' }), A)
+    no([...comment(), '--web'], A)
+    no(comment({ file: `${X}/.delegation/debriefs/a.md` }), A)
+    no(comment({ file: `${X}/.delegation/status/../x.md` }), A)
+    no(comment({ file: `/other/.delegation/status/a.md` }), A)
+    no(comment({ n: 'x' }), A)
+    no(comment(), { ...A, landRepo: undefined })
+  })
+  test('close refusals', () => {
+    no(close({ repo: 'other/r' }), A)
+    no([...close(), '--reason', 'completed'], A)
+    no(close({ text: '--web' }), A)
+    no(close({ n: '1234567890' }), A)
+    no(['gh', 'issue', 'close', '12', '--repo', 'o/r'], A)
+    no(close(), { ...A, landRepo: undefined })
+    no(['gh', 'issue', 'edit', '12', '--repo', 'o/r', '--add-label', 'x'], A)
+  })
+  test('both pass while merge runs, and nothing else of gh does', () => {
+    const WT = `${X}-MOD-1`
+    const MERGE: AllowConfig = { ...A, merge: { root: X, worktree: WT, branch: 'agent/mod/MOD-1', baseRef: 'origin/main', id: 'MOD-1' } }
+    ok(close(), MERGE)
+    ok(comment(), MERGE)
+    no(close({ repo: 'o/other' }), MERGE)
+    no(close(), { ...MERGE, landRepo: undefined })
+    no([...close(), '--reason', 'x'], MERGE)
+    no(['gh', 'pr', 'merge', '3'], MERGE)
+    expect(isRemoteArgv(['gh', 'issue', 'edit', '1'])).toBe(true)
   })
 })
 

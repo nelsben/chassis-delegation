@@ -3,9 +3,9 @@ import { contained } from './scopetree'
 
 export const LAND_TYPES = ['feature', 'epic', 'story', 'task', 'bug', 'spike'] as const
 export type LandType = (typeof LAND_TYPES)[number]
-export const LAND_USAGE = `usage: /delegation land <${LAND_TYPES.join('|')}> <title> [--parent <n>] [--paths a,b] [--note <text>] [--dry-run]; type is one of ${LAND_TYPES.join(', ')}; --parent is a whole number 1 or more`
+export const LAND_USAGE = `usage: /delegation land <${LAND_TYPES.join('|')}> <title> [--parent <n>] [--supersedes <n>] [--paths a,b] [--note <text>] [--dry-run]; type is one of ${LAND_TYPES.join(', ')}; --parent and --supersedes are whole numbers 1 or more`
 
-export type LandArgs = { type: LandType; title: string; parent?: number; paths: string[]; note?: string; dryRun?: boolean }
+export type LandArgs = { type: LandType; title: string; parent?: number; /** MOD-200: the issue this one replaces; it is closed `superseded by #n` once this is filed. */ supersedes?: number; paths: string[]; note?: string; dryRun?: boolean }
 
 /** Words of the text; a double-quoted run is one word (the quotes dropped). */
 function words(text: string): { w: string; quoted: boolean }[] {
@@ -23,18 +23,19 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
   const title: string[] = []
   const note: string[] = []
   let parent: number | undefined
+  let supersedes: number | undefined
   let paths: string[] = []
   let flag = ''
   let dryRun = false
   for (const { w, quoted } of ws.slice(1)) {
     if (!quoted && w === '--dry-run') {
-      if (flag === '--parent' || flag === '--paths') return { error: LAND_USAGE }
+      if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
       dryRun = true
       flag = ''
       continue
     }
-    if (!quoted && /^--(parent|paths|note)$/.test(w)) {
-      if (flag === '--parent' || flag === '--paths') return { error: LAND_USAGE }
+    if (!quoted && /^--(parent|paths|note|supersedes)$/.test(w)) {
+      if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
       flag = w
       continue
     }
@@ -42,17 +43,21 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
       if (!/^[0-9]+$/.test(w) || Number(w) < 1) return { error: LAND_USAGE }
       parent = Number(w)
       flag = ''
+    } else if (flag === '--supersedes') {
+      if (!/^[0-9]+$/.test(w) || Number(w) < 1) return { error: LAND_USAGE }
+      supersedes = Number(w)
+      flag = ''
     } else if (flag === '--paths') {
       paths = w.split(',').map(p => p.trim()).filter(p => p !== '')
       flag = ''
     } else if (flag === '--note') note.push(w)
     else title.push(w)
   }
-  if (flag === '--parent' || flag === '--paths') return { error: LAND_USAGE }
+  if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
   const t = title.join(' ').trim()
   if (t === '') return { error: LAND_USAGE }
   const n = note.join(' ').trim()
-  return { type, title: t, ...(parent !== undefined ? { parent } : {}), paths, ...(n !== '' ? { note: n } : {}), ...(dryRun ? { dryRun } : {}) }
+  return { type, title: t, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(n !== '' ? { note: n } : {}), ...(dryRun ? { dryRun } : {}) }
 }
 
 /** MOD-192: the land tool, answered by the same function as /delegation land. */
@@ -66,6 +71,7 @@ export const LAND_TOOL = {
       type: { type: 'string', enum: [...LAND_TYPES], description: 'The issue type; becomes the label type:<type>.' },
       title: { type: 'string', description: 'The issue title.' },
       parent: { type: 'number', description: 'Optional: the parent issue number, a whole number 1 or more.' },
+      supersedes: { type: 'number', description: 'Optional: the number of the issue this one replaces, a whole number 1 or more. Once this is filed the old issue is closed with `superseded by #<new>: <note or title>`; the old issue is never edited.' },
       paths: { type: 'array', items: { type: 'string' }, description: 'Optional: the repo paths the work touches (listed as a scope block in the body).' },
       note: { type: 'string', description: 'Optional: text for the top of the issue body.' },
       dryRun: { type: 'boolean', description: 'true: write the body and print the gh line only; file nothing.' },
@@ -86,9 +92,14 @@ export function parseLandTool(input: Record<string, unknown>): LandArgs | { erro
     if (typeof input.parent !== 'number' || !Number.isInteger(input.parent) || input.parent < 1) return { error: LAND_USAGE }
     parent = input.parent
   }
+  let supersedes: number | undefined
+  if (input.supersedes !== undefined && input.supersedes !== null) {
+    if (typeof input.supersedes !== 'number' || !Number.isInteger(input.supersedes) || input.supersedes < 1) return { error: LAND_USAGE }
+    supersedes = input.supersedes
+  }
   const paths = Array.isArray(input.paths) ? input.paths.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(p => p !== '') : []
   const note = typeof input.note === 'string' ? input.note.trim() : ''
-  return { type, title, ...(parent !== undefined ? { parent } : {}), paths, ...(note !== '' ? { note } : {}), ...(input.dryRun === true ? { dryRun: true } : {}) }
+  return { type, title, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(note !== '' ? { note } : {}), ...(input.dryRun === true ? { dryRun: true } : {}) }
 }
 
 /** MOD-192: the `project` option, `<owner>/<number>`; undefined when it is not that. */
@@ -126,9 +137,10 @@ export function withoutIssueLine(text: string): string {
 }
 
 /** The Markdown issue body: the note, the scope block when paths were given, and where it was landed from. Redact it before it is written. */
-export function landedBody(o: { note?: string; paths: readonly string[]; cards: readonly { id: string; title: string }[]; defaultBranch: string }): string {
+export function landedBody(o: { note?: string; supersedes?: number; paths: readonly string[]; cards: readonly { id: string; title: string }[]; defaultBranch: string }): string {
   const parts: string[] = []
   if (o.note && o.note.trim() !== '') parts.push(o.note.trim())
+  if (o.supersedes !== undefined) parts.push(`supersedes: #${o.supersedes}`)
   if (o.paths.length > 0) parts.push(`## Scope\n\n\`\`\`scope\n${o.paths.join('\n')}\n\`\`\``)
   parts.push(`## Landed from\n\nOpen cards:\n\n${o.cards.length > 0 ? o.cards.map(c => `- ${c.id} ${c.title}`.trimEnd()).join('\n') : 'none'}\n\nDefault branch: ${o.defaultBranch}`)
   return `${parts.join('\n\n')}\n`

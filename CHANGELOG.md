@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **GitHub is kept current: status comments, merge finish closes, and `land --supersedes` (MOD-200).** Dispatch comments `attempt 1/2 started · standard sonnet · card <ID>` on the card's `issue:` when a worker starts, and the verdict comments the verdict row; both bodies are redacted files under `.delegation/status/`, nothing runs for a card without an issue, and a failed comment adds one `status: comment on #n failed: ...` line and is not retried. Merge `--finish` now runs the task close (`merged in #<pr>`) and, when every other sibling is closed, the parent close itself, reports `closed #n`, and keeps the old printed line, marked `(close failed: ...)`, for a close that failed. `land` gains `supersedes` (`--supersedes <n>`): the new issue is filed with a `supersedes: #<old>` line and the old one is closed with `superseded by #<new>: <note or title>`. The allowlist gains exactly two shapes, `gh issue comment <n> --repo <landRepo> --body-file <file under .delegation/status/>` and `gh issue close <n> --repo <landRepo> --comment <text>`, which also pass while merge runs. Workers stay denied every gh write, and the mod writes nothing to the Project beyond the item-add.
+
 ## 0.9.34 — 2026-10-30
 
 ### Fixed
