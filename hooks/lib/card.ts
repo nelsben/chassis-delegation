@@ -12,6 +12,7 @@ import { scopeLooksProse, yamlScalar } from './dispatch'
 import { gateCommandTemplates } from './gates'
 import { matchGlob } from './norepo'
 import { mergeCheckRefusal } from './repoconfig'
+import { strayGlob } from './scopetree'
 import { tierOf, type Tier } from './tier'
 import { globMatches } from './verify-native'
 
@@ -29,6 +30,8 @@ export type CardCtx = {
   here?: boolean
   /** MOD-44: the checked absolute path of the other local repo this card is for; `domains`, `gateIds` and `spendByTier` are then that repo's. */
   repoPath?: string
+  /** MOD-188: the open cards under the same parent (register.ts reads the card folder and the ledger); used only when the input names a parent. */
+  siblings?: readonly { id: string; scope: readonly string[] }[]
 }
 
 /** MOD-22: where the worker runs: in its own worktree (the default), in the session's checkout, or with no repo at all. */
@@ -95,6 +98,10 @@ export const CARD_TOOL = {
           additionalProperties: false,
         },
       },
+      issue: { type: 'number', description: "The task's GitHub issue number in this repo (a whole number, 1 or more); not with lanes, one issue per card" },
+      parent: { type: 'number', description: 'The issue number this task hangs under (a whole number, 1 or more); the card gains the scope globs of its open sibling cards under the same parent as forbid' },
+      parentScope: { type: 'array', items: { type: 'string' }, description: "The parent issue's scope block, repo-relative globs; every scope glob of the card must sit inside it. Needs parent" },
+      parentForbid: { type: 'array', items: { type: 'string' }, description: "The parent issue's forbid block, repo-relative globs, added to the card's forbid. Needs parent" },
       dispatch: { type: 'boolean', description: 'Dispatch right after writing the card, instead of the dry run (default false)' },
     },
     required: ['title', 'why', 'doneWhen', 'redTest'],
@@ -130,6 +137,13 @@ const inList = (e: string): string => (isSpacedPath(e) ? `"${e}"` : e)
 
 /** The title as a file-name slug: lower case, at most six words joined by `-`. */
 export const slugOf = (title: string): string => (title.toLowerCase().match(/[a-z0-9]+/g) ?? []).slice(0, 6).join('-') || 'task'
+
+/** MOD-188: an issue number: absent, or a whole number 1 or more. */
+function issueNumber(key: 'issue' | 'parent', v: unknown): number | undefined | { error: string } {
+  if (v === undefined) return undefined
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : Number.NaN
+  return Number.isInteger(n) && n >= 1 ? n : { error: `${key} must be a whole number, 1 or more (the GitHub issue number)` }
+}
 
 function globs(key: 'scope' | 'forbid', v: unknown, required: boolean): string[] | { error: string } {
   if (v === undefined && !required) return []
@@ -170,10 +184,30 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
 
   const scope = globs('scope', input.scope, true)
   if ('error' in scope) return scope
-  const forbid = globs('forbid', input.forbid, false)
-  if ('error' in forbid) return forbid
+  const ownForbid = globs('forbid', input.forbid, false)
+  if ('error' in ownForbid) return ownForbid
   const resources = resourceNames(input.resources)
   if ('error' in resources) return resources
+  // MOD-188: the issue tree
+  const issue = issueNumber('issue', input.issue)
+  if (typeof issue === 'object') return issue
+  const parent = issueNumber('parent', input.parent)
+  if (typeof parent === 'object') return parent
+  if (parent === undefined && (input.parentScope !== undefined || input.parentForbid !== undefined)) return { error: 'parentScope and parentForbid need parent: the issue number the task hangs under' }
+  const parentScope = globs('scope', input.parentScope, false)
+  if ('error' in parentScope) return { error: parentScope.error.replace(/^scope/, 'parentScope') }
+  const parentForbid = globs('forbid', input.parentForbid, false)
+  if ('error' in parentForbid) return { error: parentForbid.error.replace(/^forbid/, 'parentForbid') }
+  if (parent !== undefined && input.parentScope !== undefined) {
+    const stray = strayGlob(scope, parentScope)
+    if (stray !== undefined) return { error: `scope ${stray} is outside parent #${parent}'s scope (${parentScope.join(', ')})` }
+  }
+  const siblings = parent === undefined ? [] : (ctx.siblings ?? [])
+  for (const sib of siblings) {
+    const pair = scopeOverlap(scope, sib.scope)
+    if (pair) return { error: `scope ${pair.mine} overlaps open sibling ${sib.id} under parent #${parent}; wait for it to merge, or narrow the scope` }
+  }
+  const forbid = [...new Set([...ownForbid, ...parentForbid, ...siblings.flatMap(s => s.scope)])]
   const allow = resourceNames(input.allow, 'allow', 'live-reads')
   if ('error' in allow) return allow
 
@@ -240,7 +274,7 @@ title: ${yamlScalar(title)}
 domain: ${domain}
 tier: ${tier}
 status: queued
-${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
+${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
 forbid: [${forbid.map(inList).join(', ')}]
 ${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
 gate: ${gate.join(', ')}
@@ -270,6 +304,7 @@ export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): N
     return 'error' in one ? one : [one]
   }
   const raw = input.lanes
+  if (input.issue !== undefined) return { error: 'issue belongs to one card; drop it when lanes are given (one issue per card)' }
   if (!Array.isArray(raw) || raw.length === 0) return { error: 'lanes must be a list of { title, scope, doneWhen? }, one per worker' }
   if (input.scope !== undefined) return { error: 'scope belongs to each lane when lanes are given (lanes: [{ title, scope }]); drop the shared scope' }
   const lanes: { title: string; scope: string[]; doneWhen?: string[] }[] = []

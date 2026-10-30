@@ -352,3 +352,12 @@ output folder) and done-when (the shared statements first, then the lane's own; 
 is refused, naming both. The dry run prints every lane's header; `dispatch: true` dispatches each in order, one spawn
 block per lane, and the queue keeps lanes sharing a resource apart. For a notes file every lane wants, forbid it in all
 of them and merge it yourself.
+
+**Parent scope.** The `card` tool also takes `issue` (the task's GitHub issue), `parent` (the issue it hangs under),
+`parentScope` and `parentForbid` (the parent's scope and forbid blocks); the last two need `parent`, and `issue` is
+refused with `lanes`. The card frontmatter gains `issue: <n>` and `parent: <n>` after `status:`, only when given. With
+`parentScope`, every scope glob must be contained in it, or the card is refused naming the first stray: a parent glob
+equals the child's, or ends in `/**` with the child under that folder, or the child is one literal path the parent glob
+matches. The written card's forbid is the caller's forbid, then `parentForbid`, then the scope globs of every open sibling
+(a card with the same `parent:` that is not `status: merged` and has no `accepted` or `merged` ledger row). A sibling
+scope that overlaps the new card's own scope is not forbidden; the card is refused instead, until that sibling merges.

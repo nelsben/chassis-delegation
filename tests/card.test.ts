@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { CARD_TOOL, cardFromFields, cardSummary, donePaths, forbidCollisions, redTestWarnings, type CardCtx } from '../hooks/lib/card'
+import { CARD_TOOL, cardFromFields, cardsFromFields, cardSummary, donePaths, forbidCollisions, redTestWarnings, type CardCtx } from '../hooks/lib/card'
 import { parseCard } from '../hooks/lib/dispatch'
 
 const ctx = (over: Partial<CardCtx> = {}): CardCtx => ({
@@ -381,5 +381,59 @@ describe('MOD-98: card tool paper cuts (#160)', () => {
       'warning: forbid docs/** matches scope docs/a.md',
       'warning: forbid covers paths done-when names: docs/z.md (docs/**)',
     ])
+  })
+})
+
+describe('MOD-188: issue, parent, parentScope, parentForbid', () => {
+  const tree = { issue: 12, parent: 7, parentScope: ['src/export/**', 'tests/**'], scope: ['src/export/a.ts'] }
+  const forbidOf = (text: string): string => /^forbid: (.*)$/m.exec(text)?.[1] ?? ''
+
+  test('a card with none of the new fields renders as before', () => {
+    const r = ok(cardFromFields(input(), ctx({ siblings: [{ id: 'OPS-9', scope: ['x/**'] }] })))
+    expect(r.text).not.toContain('issue:')
+    expect(r.text).not.toContain('parent:')
+    expect(r.forbid).toEqual([])
+  })
+  test('issue and parent are written after status, only when given', () => {
+    const r = ok(cardFromFields(input(tree), ctx()))
+    expect(r.text).toContain('status: queued\nissue: 12\nparent: 7\nscope:')
+  })
+  test('issue and parent must be whole numbers 1 or more; parentScope and parentForbid need parent', () => {
+    expect(cardFromFields(input({ issue: 0 }), ctx())).toEqual({ error: 'issue must be a whole number, 1 or more (the GitHub issue number)' })
+    expect(cardFromFields(input({ parent: 1.5 }), ctx())).toEqual({ error: 'parent must be a whole number, 1 or more (the GitHub issue number)' })
+    const r = cardFromFields(input({ parentScope: ['src/**'] }), ctx())
+    expect('error' in r && r.error).toContain('need parent')
+    const f = cardFromFields(input({ parentForbid: ['src/**'] }), ctx())
+    expect('error' in f && f.error).toContain('need parent')
+  })
+  test('a scope glob outside the parent scope is refused, naming the first stray', () => {
+    const r = cardFromFields(input({ ...tree, scope: ['src/export/a.ts', 'src/exporter.ts', 'docs/**'] }), ctx())
+    expect(r).toEqual({ error: "scope src/exporter.ts is outside parent #7's scope (src/export/**, tests/**)" })
+  })
+  test('with no parentScope no containment check runs', () => {
+    ok(cardFromFields(input({ parent: 7, scope: ['anything/**'] }), ctx()))
+  })
+  test('forbid is the caller forbid, parentForbid and open sibling scopes, deduplicated in that order', () => {
+    const r = ok(cardFromFields(input({ ...tree, forbid: ['docs/**', 'x/**'], parentForbid: ['x/**', 'lock/**'] }), ctx({ siblings: [{ id: 'OPS-3', scope: ['lib/**', 'docs/**'] }] })))
+    expect(r.forbid).toEqual(['docs/**', 'x/**', 'lock/**', 'lib/**'])
+    expect(forbidOf(r.text)).toBe('[docs/**, x/**, lock/**, lib/**]')
+  })
+  test('no siblings given (a merged or ledger-accepted one is dropped by the caller) adds nothing', () => {
+    expect(ok(cardFromFields(input(tree), ctx({ siblings: [] }))).forbid).toEqual([])
+  })
+  test('siblings are ignored without parent', () => {
+    expect(ok(cardFromFields(input(), ctx({ siblings: [{ id: 'OPS-3', scope: ['lib/**'] }] }))).forbid).toEqual([])
+  })
+  test('an open sibling whose scope overlaps is refused, naming the first overlap', () => {
+    const r = cardFromFields(input(tree), ctx({ siblings: [{ id: 'OPS-3', scope: ['src/export/**'] }] }))
+    expect(r).toEqual({ error: 'scope src/export/a.ts overlaps open sibling OPS-3 under parent #7; wait for it to merge, or narrow the scope' })
+  })
+  test('issue is refused with lanes; parent applies to every lane', () => {
+    const lanes = [{ title: 'A', scope: ['src/export/a/**'] }, { title: 'B', scope: ['src/other/**'] }]
+    const base = { title: 'T', why: 'W', doneWhen: ['d'], redTest: 'none', lanes }
+    const a = cardsFromFields({ ...base, issue: 3 }, ctx())
+    expect('error' in a && a.error).toContain('one issue per card')
+    const b = cardsFromFields({ ...base, parent: 7, parentScope: ['src/export/**'] }, ctx())
+    expect(b).toEqual({ error: "scope src/other/** is outside parent #7's scope (src/export/**)" })
   })
 })

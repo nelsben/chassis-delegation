@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The card tool takes `issue`, `parent`, `parentScope` and `parentForbid` (MOD-188).** A card records its GitHub issue and parent issue (`issue:` and `parent:` after `status:`); with `parentScope` every scope glob must sit inside it, and forbid gains `parentForbid` and the scopes of the open sibling cards under the same parent (the ledger decides who is done). A sibling scope that overlaps the card's own is refused. See [Parent scope](docs/contracts.md).
+
 ## 0.9.32 — 2026-10-29
 
 ### Fixed
