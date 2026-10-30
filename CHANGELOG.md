@@ -4,6 +4,7 @@
 
 ### Added
 
+- **A card with `issue:` gets `Refs #n` in its PR body and a printed `gh issue close` line at merge finish, with a parent pointer when it has `parent:` (MOD-189).** The close line comes first in the finish block (`--comment 'merged in #<pr>'`, else `merged at <sha7>`); the parent gets a shell comment pointing at its sub-issue progress, never a close. pr.md never carries Closes, Fixes or Resolves. A card with neither field is unchanged. See [Review and merge](docs/review-and-merge.md).
 - **The card tool takes `issue`, `parent`, `parentScope` and `parentForbid` (MOD-188).** A card records its GitHub issue and parent issue (`issue:` and `parent:` after `status:`); with `parentScope` every scope glob must sit inside it, and forbid gains `parentForbid` and the scopes of the open sibling cards under the same parent (the ledger decides who is done). A sibling scope that overlaps the card's own is refused. See [Parent scope](docs/contracts.md).
 
 ## 0.9.32 — 2026-10-29

@@ -318,6 +318,7 @@ import {
   finishStopLines,
   parseMergeTool,
   prBody,
+  issueRef,
   pushLines,
   readsMerged,
   remoteBlock,
@@ -2876,7 +2877,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
     home = ''
   }
   const verdictLine = `${id} attempt ${row.attempt ?? '?'}: consistent${row.sha ? ` at ${row.sha}` : ''} · next=accept`
-  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary) }))
+  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary), ...(issueRef(card.fields.issue) !== undefined ? { issue: issueRef(card.fields.issue) as number } : {}) }))
   const title = card.title || `${id} merged`
   const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id })
   return [
@@ -2895,6 +2896,11 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const cardRel = name ? `${cardDir}/${name}` : undefined
   mergeCtx = { root, worktree: wt.path, branch: wt.branch, baseRef: `origin/${def}`, id, ...(cardRel ? { cardRel } : {}) }
   const ignored = cardRel !== undefined && (await isIgnored($, root, cardRel))
+  // MOD-189: the card's issue and parent, read before the root card goes
+  const finishCardText = cardRel ? ((await readText($, `${root}/${cardRel}`)) ?? (await readText($, `${wt.path}/${cardRel}`))) : undefined
+  const finishCard = finishCardText ? parseCard(finishCardText) : undefined
+  const cardIssue = finishCard && !('error' in finishCard) ? issueRef(finishCard.fields.issue) : undefined
+  const cardParent = finishCard && !('error' in finishCard) ? issueRef(finishCard.fields.parent) : undefined
   const fetched = await run($, ['git', '-C', root, 'fetch', 'origin'], { cwd: root, timeoutMs: 120000 })
   if (!fetched.ok || fetched.exitCode !== 0) return `${id}: git fetch origin failed in the main checkout: ${whyOf(fetched)}`
   const head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
@@ -2977,10 +2983,16 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   // the loaded clone pulls too, when it is a git checkout other than this one
   const loaded = $.plugin.root.replace(/\/+$/, '')
   const loadedClone = version && loaded !== root && (await exists($, `${loaded}/.git`)) ? loaded : undefined
+  const closeRepo = cardIssue !== undefined ? ownerRepoOf(okOut(await run($, ['git', '-C', root, 'remote', 'get-url', 'origin'], { cwd: root, timeoutMs: 15000 })) ?? '') : undefined
   return [
     `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${ignored ? 'root card kept (git-ignored), ' : cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
     ...notes,
-    remoteBlock('remote: run these lines verbatim (the mod never pushes):', finishLines({ branch: wt.branch, ...(version ? { version } : {}), ...(loadedClone ? { loadedClone } : {}) })),
+    remoteBlock('remote: run these lines verbatim (the mod never pushes):', finishLines({
+      branch: wt.branch,
+      ...(version ? { version } : {}),
+      ...(loadedClone ? { loadedClone } : {}),
+      ...(cardIssue !== undefined && closeRepo ? { issue: cardIssue, ownerRepo: closeRepo, sha, ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(pr ? { pr: Number(pr) } : {}) } : {}),
+    })),
     `${id} merged at ${sha}`,
     ...(version ? [`release v${version}: run the block above, then reload the window`] : []),
   ].join('\n')

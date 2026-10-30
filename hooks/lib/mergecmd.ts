@@ -362,7 +362,7 @@ export function doneChecklist(body: string): string[] {
 }
 
 /** pr.md: the Done-when checklist, the verdict line, the gate results, the trailing generated line. No absolute path survives. */
-export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[]; amends?: readonly string[] }): string {
+export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[]; amends?: readonly string[]; issue?: number }): string {
   const done = doneChecklist(o.body)
   const text = [
     '## Done when',
@@ -378,10 +378,17 @@ export function prBody(o: { body: string; verdictLine: string; gates: readonly G
     '',
     ...(o.gates.length > 0 ? o.gates.map(g => `- ${g.id} (\`${g.label}\`): ${g.ok ? 'pass' : 'fail'}`) : ['- (the card names no gate)']),
     '',
+    ...(o.issue !== undefined ? [`Refs #${o.issue}`, ''] : []),
     GENERATED,
     '',
   ].join('\n')
   return scrubPaths(text, o.folders)
+}
+
+/** MOD-189: a card's `issue:` or `parent:` value as an issue number: a whole number 1 or more, else undefined. */
+export const issueRef = (v: unknown): number | undefined => {
+  const t = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : ''
+  return /^[1-9]\d*$/.test(t) ? Number(t) : undefined
 }
 
 /** MOD-171: one amend block as the merge lists it: its ops and reason. */
@@ -405,10 +412,20 @@ export function pushLines(o: { worktree: string; branch: string; ownerRepo: stri
   ]
 }
 
-export function finishLines(o: { branch: string; version?: string; loadedClone?: string }): string[] {
+export function finishLines(o: { branch: string; version?: string; loadedClone?: string; issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string }): string[] {
+  const close =
+    o.issue !== undefined && o.ownerRepo
+      ? [`gh issue close ${o.issue} --repo ${o.ownerRepo} --comment ${shellWord(o.pr !== undefined ? `merged in #${o.pr}` : `merged at ${(o.sha ?? '').slice(0, 7)}`)}`]
+      : []
+  const parent =
+    o.issue !== undefined && o.parent !== undefined && o.ownerRepo
+      ? [`# parent #${o.parent}: gh issue view ${o.parent} --repo ${o.ownerRepo} --json subIssuesSummary; close it by hand when every task is done`]
+      : []
   return [
+    ...close,
     `git push origin --delete ${o.branch}`,
     ...(o.version ? [`git tag -a v${o.version} -m v${o.version}`, `git push origin v${o.version}`, ...(o.loadedClone ? [`git -C ${o.loadedClone} pull --ff-only`] : [])] : []),
+    ...parent,
   ]
 }
 
