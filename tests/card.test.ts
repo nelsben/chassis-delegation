@@ -396,7 +396,13 @@ describe('MOD-188: issue, parent, parentScope, parentForbid', () => {
   })
   test('issue and parent are written after status, only when given', () => {
     const r = ok(cardFromFields(input(tree), ctx()))
-    expect(r.text).toContain('status: queued\nissue: 12\nparent: 7\nscope:')
+    expect(r.text).toContain('status: queued\nissue: 12\nparent: 7\nparentScope: [src/export/**, tests/**]\nscope:')
+  })
+  test('MOD-196: parentScope is written after parent, in the list style of scope', () => {
+    const r = ok(cardFromFields(input({ parent: 50, parentScope: ['hooks/**'], scope: ['hooks/lib/a.ts'] }), ctx()))
+    expect(r.text).toContain('parent: 50\nparentScope: [hooks/**]\nscope:')
+    const n = ok(cardFromFields(input({ parent: 50, scope: ['hooks/lib/a.ts'] }), ctx()))
+    expect(n.text).not.toContain('parentScope:')
   })
   test('issue and parent must be whole numbers 1 or more; parentScope and parentForbid need parent', () => {
     expect(cardFromFields(input({ issue: 0 }), ctx())).toEqual({ error: 'issue must be a whole number, 1 or more (the GitHub issue number)' })

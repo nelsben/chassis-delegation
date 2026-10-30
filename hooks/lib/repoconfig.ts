@@ -418,7 +418,7 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         else if (strict || v.trim() !== 'off') config.review = v.trim() as ReviewMode
         break
       case 'scopeAmends':
-        if (typeof v !== 'string' || !(SCOPE_AMENDS_MODES as readonly string[]).includes(v.trim())) errors.push(`scopeAmends${where}: needs apply, new-files or ask (apply is used)`)
+        if (typeof v !== 'string' || !(SCOPE_AMENDS_MODES as readonly string[]).includes(v.trim())) errors.push(`scopeAmends${where}: needs apply, new-files, ask or within-parent (apply is used)`)
         // in /config "apply" is the manifest default: unset, so the repo file's value shows through
         else if (strict || v.trim() !== 'apply') config.scopeAmends = v.trim() as ScopeAmends
         break

@@ -29,6 +29,7 @@ Optional fields go after `gate=` and before `spend=`, in this order: `repo=`, `b
 | `model` | a `tierMap` alias | the tier's alias at dispatch | `tierMap` | the spawn keeps the Agent call's model when it is this alias, else the tier decides |
 | `scope` | globs, or prose | paths the worker may change | required | every changed path must match one; prose leaves the scope claim unchecked; no `scope=` refuses the brief |
 | `forbid` | globs | paths it must not change; forbid wins over scope | none | a changed path inside one fails scope |
+| `parent_scope` | globs | the parent issue's scope, written after `forbid=` from a card's `parentScope:` | none | read by `scopeAmends within-parent` to decide which `scope+=` amends apply |
 | `scope_globs` | globs | replaces a prose `scope=` | none | checked in its place |
 | `forbid_globs` | globs | replaces a prose `forbid=` | none | checked in its place |
 | `red_test` | a command, `none`, empty | the test that fails before the fix | none | set: the red claim is checked; dispatch warns when a path in it is outside scope or inside forbid |
@@ -152,7 +153,7 @@ The mod appends it to the brief before verifying, never rewrites the header, and
 | Field | Values | Meaning | Default | What the verifier does |
 | --- | --- | --- | --- | --- |
 | `v` | `1` | grammar version | required | missing or another version makes the block malformed |
-| `scope+=` | globs | widen scope | none | applied on the worker's word under `scopeAmends` `apply` (the default); `new-files` applies only new files beside paths in scope; `ask` holds every one for approval. A held block is not appended: the row says `amend needs approval: <block> (scopeAmends <mode>) — append it to <brief> to accept, then dispatch verify=<sha>`, and a verdict that refutes only on that scope reads `next=approve the amend (append it to <brief>), then dispatch verify=<sha>; or refuse it` (nothing is resumed). Inside a forbid glob it does nothing and the row says `amend needs approval: scope+=P lies inside forbid Y; …` |
+| `scope+=` | globs | widen scope | none | applied on the worker's word under `scopeAmends` `apply` (the default); `new-files` applies only new files beside paths in scope; `ask` holds every one for approval; `within-parent` applies a block only when the brief header carries `parent_scope=<globs>` (the card's `parentScope:`, written after `forbid=`) and every path sits inside it, and holds the rest like `ask`. Without `parent_scope=` it holds every block. A held block is not appended: the row says `amend needs approval: <block> (scopeAmends <mode>) — append it to <brief> to accept, then dispatch verify=<sha>`, and a verdict that refutes only on that scope reads `next=approve the amend (append it to <brief>), then dispatch verify=<sha>; or refuse it` (nothing is resumed). Inside a forbid glob it does nothing and the row says `amend needs approval: scope+=P lies inside forbid Y; …` |
 | `forbid+=` | globs | widen forbid | none | applied on the worker's word |
 | `scope-=` | globs | shrink scope | none | waits for approval; the verdict is the un-amended brief's |
 | `forbid-=` | a forbid entry | shrink forbid | none | waits for approval |
@@ -355,7 +356,7 @@ of them and merge it yourself.
 
 **Parent scope.** The `card` tool also takes `issue` (the task's GitHub issue), `parent` (the issue it hangs under),
 `parentScope` and `parentForbid` (the parent's scope and forbid blocks); the last two need `parent`, and `issue` is
-refused with `lanes`. The card frontmatter gains `issue: <n>` and `parent: <n>` after `status:`, only when given. With
+refused with `lanes`. The card frontmatter gains `issue: <n>` and `parent: <n>` after `status:`, only when given, and `parentScope: [<globs>]` right after `parent:` when `parentScope` was given; the brief then carries `parent_scope=` (see `scopeAmends within-parent`). With
 `parentScope`, every scope glob must be contained in it, or the card is refused naming the first stray: a parent glob
 equals the child's, or ends in `/**` with the child under that folder, or the child is one literal path the parent glob
 matches. The written card's forbid is the caller's forbid, then `parentForbid`, then the scope globs of every open sibling
