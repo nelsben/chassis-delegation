@@ -10,6 +10,14 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.36 to 0.9.37
+
+Land now shows the issue first and files only on confirm by default; `/delegation config landAuto on` restores filing at once.
+Fixed: land_plan retry keyed to the plan, land_plan preview runs no gh, land confirm reuses its preview and resumes, gh repo clone and view are reads, the land nudge stays quiet on dispatch/verdict/merge turns, a malformed report is matched to its task and named malformed instead of fabrication.
+Changed: `landAuto` now defaults to off.
+Documentation: `Fields the GitHub sync reads` in docs/contracts.md.
+Detail: [CHANGELOG 0.9.37](../CHANGELOG.md).
+
 ### From 0.9.35 to 0.9.36
 
 Land still files at once by default; `/delegation config landAuto off` makes it show the issue first and file only on confirm.
