@@ -38,4 +38,34 @@ describe('MOD-197: the gh guard on Bash', () => {
     expect(ghWrites('gh issue comment 5 --repo o/r --body-file /r/.delegation/status/T-1-attempt-1-started.md')).toContain('gh issue comment')
     expect(ghWrites('gh issue close 5 --repo o/r --comment done')).toContain('gh issue close')
   })
+
+  test('MOD-203: the verb is read past -R/--repo/--hostname after the noun', () => {
+    expect(ghWrites('gh issue -R o/r close 5')).toEqual(['gh issue close'])
+    expect(ghWrites('gh pr --repo o/r merge 3 --rebase')).toEqual(['gh pr merge'])
+    expect(ghWrites('gh issue --repo=o/r close 5')).toEqual(['gh issue close'])
+    expect(ghWrites('gh issue --hostname h -R o/r close 5')).toEqual(['gh issue close'])
+    expect(ghWrites('gh pr -R o/r --web merge 3')).toEqual(['gh pr merge'])
+    expect(ghWrites('gh issue -R o/r view 5')).toEqual([])
+    expect(ghWrites('gh pr --repo o/r list')).toEqual([])
+  })
+
+  test('MOD-203: run, cache and the other write nouns', () => {
+    expect(ghWrites('gh run cancel 9')).toEqual(['gh run cancel'])
+    expect(ghWrites('gh run rerun 9')).toEqual(['gh run rerun'])
+    expect(ghWrites('gh run delete 9')).toEqual(['gh run delete'])
+    expect(ghWrites('gh run list')).toEqual([])
+    expect(ghWrites('gh run view 9')).toEqual([])
+    expect(ghWrites('gh run watch 9')).toEqual([])
+    expect(ghWrites('gh run download 9')).toEqual([])
+    expect(ghWrites('gh cache delete --all')).toEqual(['gh cache delete'])
+    expect(ghWrites('gh cache list')).toEqual([])
+    for (const n of ['codespace', 'extension', 'alias', 'ssh-key', 'gpg-key']) {
+      expect(ghWrites(`gh ${n} delete x`)).toEqual([`gh ${n} delete`])
+      expect(ghWrites(`gh ${n} list`)).toEqual([])
+      expect(ghWrites(`gh ${n} view`)).toEqual([])
+    }
+    expect(ghWrites('gh config set editor vim')).toEqual(['gh config set'])
+    expect(ghWrites('gh config get editor')).toEqual([])
+    expect(ghWrites('gh config list')).toEqual([])
+  })
 })

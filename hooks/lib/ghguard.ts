@@ -14,6 +14,8 @@
 //   gh pr create|merge|close|reopen|edit|comment|review|ready
 //   gh project <anything but list|view|item-list|field-list>
 //   gh label|release|repo|secret|variable|workflow|ruleset|gist <a verb other than list|view>
+//   gh run <anything but list|view|watch|download>; gh cache <anything but list>
+//   gh codespace|extension|alias|ssh-key|gpg-key <a verb other than list|view>; gh config set
 //   gh api with -X/--method other than GET, or any -f/-F/--field/--raw-field/--input
 
 import { tokenize } from './gitguard'
@@ -27,7 +29,8 @@ const ISSUE_WRITES = new Set(['create', 'close', 'reopen', 'edit', 'delete', 'tr
 const PR_WRITES = new Set(['create', 'merge', 'close', 'reopen', 'edit', 'comment', 'review', 'ready'])
 const PROJECT_READS = new Set(['list', 'view', 'item-list', 'field-list'])
 const READ_ONLY_VERBS = new Set(['list', 'view'])
-const VERB_NOUNS = new Set(['label', 'release', 'repo', 'secret', 'variable', 'workflow', 'ruleset', 'gist'])
+const VERB_NOUNS = new Set(['label', 'release', 'repo', 'secret', 'variable', 'workflow', 'ruleset', 'gist', 'codespace', 'extension', 'alias', 'ssh-key', 'gpg-key'])
+const RUN_READS = new Set(['list', 'view', 'watch', 'download'])
 const FIELD_FLAGS = new Set(['-f', '-F', '--field', '--raw-field', '--input'])
 
 /** The write a `gh api` call makes (a phrase naming it), or undefined for a read. */
@@ -80,7 +83,17 @@ export function ghWrites(command: string): string[] {
     }
     const noun = words[j]
     const rest = words.slice(j + 1)
-    const verb = rest.find(w => !w.startsWith('-'))
+    // The verb is the first word past the noun that is not an option; -R/--repo/--hostname
+    // take the next word, any other flag (--flag=v, -x) takes nothing more.
+    let verb: string | undefined
+    for (let m = 0; m < rest.length; m += 1) {
+      const w = rest[m] as string
+      if (GH_OPT_ARG.has(w)) m += 1
+      else if (!w.startsWith('-')) {
+        verb = w
+        break
+      }
+    }
     if (noun === undefined) continue
     if (noun === 'api') {
       const w = apiWrite(rest)
@@ -91,6 +104,12 @@ export function ghWrites(command: string): string[] {
       if (verb !== undefined && PR_WRITES.has(verb)) out.push(`gh pr ${verb}`)
     } else if (noun === 'project') {
       if (verb !== undefined && !PROJECT_READS.has(verb)) out.push(`gh project ${verb}`)
+    } else if (noun === 'run') {
+      if (verb !== undefined && !RUN_READS.has(verb)) out.push(`gh run ${verb}`)
+    } else if (noun === 'cache') {
+      if (verb !== undefined && verb !== 'list') out.push(`gh cache ${verb}`)
+    } else if (noun === 'config') {
+      if (verb === 'set') out.push('gh config set')
     } else if (VERB_NOUNS.has(noun)) {
       if (verb !== undefined && !READ_ONLY_VERBS.has(verb)) out.push(`gh ${noun} ${verb}`)
     }
