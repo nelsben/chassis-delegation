@@ -244,7 +244,7 @@ describe('MOD-185: the mod and the lead write in the session checkout, and the o
 describe('MOD-186: a repo=none listing lives in a file under the session .delegation/outside/ folder', () => {
   const S = '/s/co'
   test('the file name is the scoped id with every character outside [A-Za-z0-9._-] made _', () => {
-    expect(outsideFileName('OPS-9@/Users/b/my repo')).toBe('OPS-9__Users_b_my_repo.json')
+    expect(outsideFileName('OPS-9@/srv/my repo')).toBe('OPS-9__srv_my_repo.json')
     expect(outsideFileName('T-1')).toBe('T-1.json')
   })
   test('the folder and the path sit under the session root, a trailing slash ignored', () => {
