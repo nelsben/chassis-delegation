@@ -93,6 +93,30 @@ export type NativeInput = {
 }
 
 /** The reason a cardless verify gives for the claims only a brief can check. */
+/** MOD-211 (#271): the start of the sha claim's detail when the report line has no sha=. */
+export const MALFORMED_REPORT = 'malformed report:'
+
+/** MOD-211: true when a verdict's lines hold the malformed-report refutation (no attempt is charged for it). */
+export const isMalformedReport = (lines: readonly string[]): boolean => lines.some(l => l.startsWith(`claim sha: failed — ${MALFORMED_REPORT}`))
+
+/**
+ * MOD-211: the detail of a sha claim for a report with no sha=: every contract field the line lacks, and the exact
+ * line to resend. `wantsRed` is true when the brief asks for red evidence; a cardless report has no brief to ask.
+ */
+export function malformedReportDetail(report: Report, o: { here: boolean; cardless: boolean; wantsRed: boolean }): string {
+  const blank = (v: string | undefined) => (v ?? '').trim() === ''
+  const missing = [
+    'sha=',
+    ...(!o.here && blank(report.branch) ? ['branch='] : []),
+    ...(blank(report.files) ? ['files='] : []),
+    ...(blank(report.gate) && !o.cardless ? ['gate='] : []),
+    ...(!o.cardless && o.wantsRed && blank(report.red) ? ['red='] : []),
+  ]
+  const task = (report.task ?? '').trim() || '<task>'
+  const shape = `[[report v=1 task=${task} subtask=main branch=<branch> pr=none sha=<short sha> gate=pass|fail${o.cardless || !o.wantsRed ? '' : ' red=<path>'} files=<comma-separated paths>]]`
+  return `${MALFORMED_REPORT} missing ${missing.join(', ')} — the report line must carry task=, branch=, sha=, gate=${o.cardless || !o.wantsRed ? '' : ', red='} and files=; resend it as ${shape}`
+}
+
 export const NO_BRIEF_REASON = 'no brief: no scope=/gate=/red_test= to check against'
 
 
@@ -676,6 +700,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
 
   // 2. the sha exists and is on the branch (a sha that does not exist is the fabrication case)
   if (treeSha) claim('sha', 'held', `sha=${sha}: the delta is the working tree (git status: staged, unstaged and untracked)`)
+  else if (sha === '') claim('sha', 'failed', malformedReportDetail(report, { here, cardless, wantsRed: briefWantsRed(contract.redTest) }))
   else if (!full) claim('sha', 'failed', `sha '${sha}' does not exist in ${repo} (fabrication)`)
   else if (here) claim('sha', 'held', `${full.slice(0, 9)} resolves in ${repo}`)
   else if (branchRef) {
