@@ -412,17 +412,46 @@ export function pushLines(o: { worktree: string; branch: string; ownerRepo: stri
   ]
 }
 
-export function finishLines(o: { branch: string; version?: string; loadedClone?: string; issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string }): string[] {
+/** MOD-195: the sub-issues in `gh issue view --json subIssues` output (a nodes object or a plain array); undefined when unparsable. */
+export function siblingsOf(stdout: string): { number: number; state: string }[] | undefined {
+  let j: { subIssues?: unknown }
+  try {
+    j = JSON.parse(stdout) as { subIssues?: unknown }
+  } catch {
+    return undefined
+  }
+  const v = j?.subIssues
+  const list = Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : undefined
+  if (!list) return undefined
+  const out: { number: number; state: string }[] = []
+  for (const s of list) {
+    const o = s as { number?: unknown; state?: unknown } | null
+    if (o && typeof o.number === 'number') out.push({ number: o.number, state: typeof o.state === 'string' ? o.state : '' })
+  }
+  return out.length > 0 ? out : undefined
+}
+
+export function finishLines(o: { branch: string; version?: string; loadedClone?: string; issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string; /** MOD-195: the parent's sub-issues as read; absent = the hand-check comment. */ siblings?: readonly { number: number; state: string }[] }): string[] {
   const close =
     o.issue !== undefined && o.ownerRepo
       ? [`gh issue close ${o.issue} --repo ${o.ownerRepo} --comment ${shellWord(o.pr !== undefined ? `merged in #${o.pr}` : `merged at ${(o.sha ?? '').slice(0, 7)}`)}`]
       : []
+  const open = (o.siblings ?? []).filter(x => x.number !== o.issue && x.state.toUpperCase() !== 'CLOSED').map(x => x.number).sort((a, b) => a - b)
   const parent =
     o.issue !== undefined && o.parent !== undefined && o.ownerRepo
-      ? [`# parent #${o.parent}: gh issue view ${o.parent} --repo ${o.ownerRepo} --json subIssuesSummary; close it by hand when every task is done`]
+      ? o.siblings === undefined
+        ? [`# parent #${o.parent}: gh issue view ${o.parent} --repo ${o.ownerRepo} --json subIssuesSummary; close it by hand when every task is done`]
+        : open.length === 0
+          ? []
+          : [`# parent #${o.parent}: ${open.length} of ${o.siblings.length} tasks still open (${open.map(n => `#${n}`).join(', ')})`]
+      : []
+  const parentClose =
+    o.issue !== undefined && o.parent !== undefined && o.ownerRepo && o.siblings !== undefined && open.length === 0
+      ? [`gh issue close ${o.parent} --repo ${o.ownerRepo} --comment ${shellWord(`all ${o.siblings.length} tasks done`)}`]
       : []
   return [
     ...close,
+    ...parentClose,
     `git push origin --delete ${o.branch}`,
     ...(o.version ? [`git tag -a v${o.version} -m v${o.version}`, `git push origin v${o.version}`, ...(o.loadedClone ? [`git -C ${o.loadedClone} pull --ff-only`] : [])] : []),
     ...parent,

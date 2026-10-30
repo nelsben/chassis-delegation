@@ -27,4 +27,23 @@ describe('MOD-189: finishLines with an issue', () => {
     expect(finishLines({ branch: 'b' })).toEqual(['git push origin --delete b'])
     expect(finishLines({ branch: 'b', issue: 12 })).toEqual(['git push origin --delete b'])
   })
+  test('MOD-195: siblings all closed but the task: the parent close line follows the task close line', async () => {
+    const { finishLines } = await lib()
+    const out = finishLines({ branch: 'b', issue: 12, parent: 7, ownerRepo: 'acme/widgets', pr: 34, siblings: [{ number: 11, state: 'closed' }, { number: 12, state: 'OPEN' }] })
+    expect(out).toEqual([
+      "gh issue close 12 --repo acme/widgets --comment 'merged in #34'",
+      "gh issue close 7 --repo acme/widgets --comment 'all 2 tasks done'",
+      'git push origin --delete b',
+    ])
+  })
+  test('MOD-195: a sibling still open: the comment names the open ones, no close line', async () => {
+    const { finishLines } = await lib()
+    const out = finishLines({ branch: 'b', issue: 12, parent: 7, ownerRepo: 'acme/widgets', pr: 34, siblings: [{ number: 10, state: 'OPEN' }, { number: 11, state: 'OPEN' }, { number: 12, state: 'OPEN' }] })
+    expect(out.at(-1)).toBe('# parent #7: 2 of 3 tasks still open (#10, #11)')
+    expect(out.some(l => l.startsWith('gh issue close 7 '))).toBe(false)
+  })
+  test('MOD-195: no siblings given: today\'s comment line', async () => {
+    const { finishLines } = await lib()
+    expect(finishLines({ branch: 'b', issue: 12, parent: 7, ownerRepo: 'acme/widgets', pr: 34 }).at(-1)).toBe('# parent #7: gh issue view 7 --repo acme/widgets --json subIssuesSummary; close it by hand when every task is done')
+  })
 })

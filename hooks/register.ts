@@ -302,6 +302,7 @@ import {
   defaultBranchOf,
   dirtyWorktreeLine,
   finishLines,
+  siblingsOf,
   labelIsMerged,
   lastLines,
   latestVerdictRow,
@@ -2992,6 +2993,21 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const loaded = $.plugin.root.replace(/\/+$/, '')
   const loadedClone = version && loaded !== root && (await exists($, `${loaded}/.git`)) ? loaded : undefined
   const closeRepo = cardIssue !== undefined ? ownerRepoOf(okOut(await run($, ['git', '-C', root, 'remote', 'get-url', 'origin'], { cwd: root, timeoutMs: 15000 })) ?? '') : undefined
+  // MOD-195: the parent's sub-issues, read with the MOD-194 shape; the merge allowlist refuses gh, so it is lifted for this one read
+  let siblings: { number: number; state: string }[] | undefined
+  if (cardIssue !== undefined && cardParent !== undefined && closeRepo) {
+    const savedCtx = mergeCtx
+    const savedRepo = landRepo
+    mergeCtx = undefined
+    landRepo = closeRepo
+    try {
+      const v = await run($, ['gh', 'issue', 'view', String(cardParent), '--repo', closeRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
+      if (v.ok && v.exitCode === 0) siblings = siblingsOf(v.stdout)
+    } finally {
+      mergeCtx = savedCtx
+      landRepo = savedRepo
+    }
+  }
   return [
     `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${ignored ? 'root card kept (git-ignored), ' : cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
     ...notes,
@@ -2999,7 +3015,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
       branch: wt.branch,
       ...(version ? { version } : {}),
       ...(loadedClone ? { loadedClone } : {}),
-      ...(cardIssue !== undefined && closeRepo ? { issue: cardIssue, ownerRepo: closeRepo, sha, ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(pr ? { pr: Number(pr) } : {}) } : {}),
+      ...(cardIssue !== undefined && closeRepo ? { issue: cardIssue, ownerRepo: closeRepo, sha, ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(siblings ? { siblings } : {}), ...(pr ? { pr: Number(pr) } : {}) } : {}),
     })),
     `${id} merged at ${sha}`,
     ...(version ? [`release v${version}: run the block above, then reload the window`] : []),
