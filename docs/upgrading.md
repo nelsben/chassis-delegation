@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.34 to 0.9.35
+
+Merge `--finish` now closes the task's issue itself (and the parent when it is the last open task), and dispatch and the verdict comment on the card's issue.
+Added: status comments, finish closes, `land --supersedes`, the land nudge and its `landNudge` option.
+See the guide's Planning on GitHub section.
+Detail: [CHANGELOG 0.9.35](../CHANGELOG.md).
+
 ### From 0.9.33 to 0.9.34
 
 `/delegation land` now files the issue itself (use `--dry-run` for the old print-only behaviour), and workers can no longer run gh writes.
