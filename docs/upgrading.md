@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.32 to 0.9.33
+
+Nothing changes for a card that names no issue or parent.
+Added: the card tool takes `issue`, `parent`, `parentScope` and `parentForbid`; a card with `issue:` gets `Refs #n` in its PR body and a printed `gh issue close` line at finish; `/delegation land` writes an issue body under `.delegation/landed/` without starting work.
+See the guide's Planning on GitHub section.
+Detail: [CHANGELOG 0.9.33](../CHANGELOG.md).
+
 ### From 0.9.31 to 0.9.32
 
 Nothing changes for a repo that never uses `repo=none` cards. A research card dispatched before the update still verifies.
