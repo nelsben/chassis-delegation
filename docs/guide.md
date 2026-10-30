@@ -160,6 +160,40 @@ Spend samples every 15 seconds while a worker is live or queued, else every 60 (
 Tokens, cost and by-model bars update from `turn.complete` events, when a run ends.
 A screen with no mod panes (VS Code) gets the blocks as markdown text.
 
+## Planning on GitHub
+
+Work can be planned as GitHub issues at six levels, and only the last of them becomes a card. The levels are optional downward: a bug or a spike can stand alone, and a task can hang straight under a feature.
+
+| Level | What it is |
+| --- | --- |
+| `feature` | A thing a user can do that they could not before. |
+| `epic` | A body of work that spans several stories. |
+| `story` | One user-visible slice, small enough to finish in a short run of tasks. |
+| `task` | The leaf: one change a worker can build and verify. Only a task becomes a card. |
+| `bug` | Something that is broken; it can be a leaf itself. |
+| `spike` | A question to answer, not a change to ship. |
+
+An issue states what a worker may touch in two fenced blocks in its body, with the info strings `scope` and `forbid`, one repo-relative path or glob per line. When you make the task's card, pass the issue's number and its parent's: the card tool takes `issue`, `parent`, `parentScope` and `parentForbid`. Every scope glob of the card must sit inside the parent's scope, the parent's forbid is added to the card's forbid, and so is the scope of every open sibling card under the same parent; a card whose scope overlaps an open sibling is refused until that sibling merges. The exact rules are in [Parent scope](contracts.md).
+
+A card with `issue:` gets `Refs #n` in its `pr.md` (never Closes) and the merge finish prints the `gh issue close` line for it. A parent is never closed by the mod: finish prints a pointer to its sub-issue progress, and you close it by hand when every task is done.
+
+`/delegation land <type> <title> [--parent <n>] [--paths a,b] [--note <text>]` parks work that comes up mid-session without starting it. It writes a redacted issue body under `.delegation/landed/` (the note, a `scope` block from `--paths`, and the open cards it was landed from) and prints the one `gh issue create` line to run. When no `--parent` is given and a path falls inside an open card's scope, it prints a `parent hint`. It files nothing, dispatches nothing and calls no `gh`.
+
+Create the type labels once per repo, with the owner and name of your repo in place of `acme/widgets`:
+
+```
+gh label create type:feature --repo acme/widgets
+gh label create type:epic --repo acme/widgets
+gh label create type:story --repo acme/widgets
+gh label create type:task --repo acme/widgets
+gh label create type:bug --repo acme/widgets
+gh label create type:spike --repo acme/widgets
+```
+
+To see the work across repos, use one GitHub Project that you own as the view. The mod never writes to it.
+
+While parents are in use, set `/delegation config scopeAmends ask`. An applied scope amend is not checked against the parent's scope, so asking keeps a worker from widening past it unseen.
+
 ## Commands and tools
 
 | Name | Who calls it | What it does |
@@ -173,6 +207,7 @@ A screen with no mod panes (VS Code) gets the blocks as markdown text.
 | `/delegation config [all \| <group> \| <field> [<value> \| default] \| repo <field> <value>]` | you | shows or sets options (see [/delegation config](configuration.md#delegation-config)) |
 | `/delegation dashboard` | you | opens the pane (see [Dashboard](#dashboard)) |
 | `/delegation merge <ID> [--review <text> \| --review-file <abs path>]` | you, or the brain after a consistent/accept verdict | rebases, commits the card as merged, runs the gates, writes `.delegation/<ID>/pr.md`, prints the push and PR block (see [Merging a card](review-and-merge.md#merging-a-card)) |
+| `/delegation land <type> <title> [--parent <n>] [--paths a,b] [--note <text>]` | you | writes a redacted issue body under `.delegation/landed/` and prints the `gh issue create` line; files and dispatches nothing |
 | `/delegation merge <ID> --finish` | you, or the brain after the PR landed | checks the branch is in origin, pulls, removes the worktree and branch, writes the `merged` ledger row, prints the cleanup block |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--repo <abs path>\|--force-overlap]` | you | brief, worktree, tier, spawn block (see **Spawn** under [The contracts](contracts.md#the-contracts)); `--here` shares your checkout (see [repo=here](contracts.md#repohere-the-main-checkout)) |
 | `/dispatch <ID> --verify <sha>` | you, or the brain after a `work present` row | runs the verifier on the worktree at that sha, spawns nothing (see **Look before you respawn** under [How a report is verified](contracts.md#how-a-report-is-verified)) |

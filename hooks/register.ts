@@ -206,7 +206,8 @@ import { handbackMessages, workerSaid } from './lib/handback'
 import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
-import { CARD_TOOL, cardsFromFields, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
+import { doneTasks, freeName, landedBody, openCards, parentHint, parseLandArgs, type LandCard } from './lib/land'
+import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
@@ -322,6 +323,7 @@ import {
   pushLines,
   readsMerged,
   remoteBlock,
+  shellWord,
   statusPaths,
   touchesVersion,
   twinIn,
@@ -3584,6 +3586,64 @@ async function homeOf($: Host): Promise<string> {
   } catch {
     return ''
   }
+}
+
+/**
+ * MOD-190, `/delegation land <type> <title> [--parent n] [--paths a,b] [--note text]`: writes a redacted issue body under
+ * <root>/.delegation/landed/ and prints the gh line. It calls no gh, spawns nothing, writes no card and no brief.
+ */
+async function runLand($: Host, text: string): Promise<string> {
+  const a = parseLandArgs(text)
+  if ('error' in a) return a.error
+  await loadRepoConfig($)
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const cardDir = cardDirPath(root, cfg.cardDir)
+  const found: LandCard[] = []
+  try {
+    for (const e of await $.fs.list(cardDir)) {
+      if (!e.name.endsWith('.md')) continue
+      const t = await readText($, `${cardDir}/${e.name}`)
+      const c = t === undefined ? undefined : parseCard(t)
+      if (c && !('error' in c)) found.push({ id: c.id, title: c.title, status: c.status, parent: c.fields.parent, scope: c.scope })
+    }
+  } catch {
+    // no card folder: no open cards
+  }
+  const open = openCards(found, doneTasks((await readText($, `${root}/${LEDGER_FILE}`)) ?? ''))
+  // git is not on the allow list outside a merge, so the default branch comes from baseRef and origin from .git/config
+  const wantName = defaultBranchOf((cfg.baseRef ?? '').trim())
+  const def = wantName !== '' && !isSha(wantName) ? wantName : 'main'
+  const body = redact(landedBody({ ...(a.note !== undefined ? { note: a.note } : {}), paths: a.paths, cards: open.map(c => ({ id: c.id, title: c.title })), defaultBranch: def }), await redactRules($))
+  const folder = `${root}/.delegation/landed`
+  let taken = new Set<string>()
+  try {
+    taken = new Set((await $.fs.list(folder)).map(e => e.name))
+  } catch {
+    // the folder is not there yet
+  }
+  const slug = slugOf(a.title)
+  let name = freeName(slug, taken)
+  while (await exists($, `${folder}/${name}`)) {
+    taken.add(name)
+    name = freeName(slug, taken)
+  }
+  const file = `${folder}/${name}`
+  try {
+    await $.fs.write(file, body)
+  } catch (err) {
+    return `land: ${file} not written: ${String(err)}`
+  }
+  const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
+  const ownerRepo = ownerRepoOf(origin ?? '')
+  const hint = a.parent === undefined ? parentHint(a.paths, open) : undefined
+  return [
+    file,
+    ownerRepo
+      ? `gh issue create --repo ${ownerRepo} --title ${shellWord(a.title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
+      : `origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); no gh line to print`,
+    ...(hint ? [`parent hint: #${hint.parent} (from ${hint.card})`] : []),
+    'nothing was filed or dispatched',
+  ].join('\n')
 }
 
 async function redactRules($: Host): Promise<RedactRules> {
@@ -8004,6 +8064,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'debrief post' || arg.startsWith('debrief post ')) return { text: await runDebriefPost($, arg.slice('debrief post'.length)) }
     if (arg === 'lesson' || arg.startsWith('lesson ')) return { text: await runLesson($, arg.slice('lesson'.length)) }
     if (arg === 'config' || arg.startsWith('config ')) return { text: await runConfig($, arg.slice('config'.length)) }
+    if (arg === 'land' || arg.startsWith('land ')) return { text: await runLand($, arg.slice('land'.length)) }
     if (arg === 'ration') return { text: await rationReportText($) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'merge' || arg.startsWith('merge ')) return { text: await runMerge($, parseMergeArgs(arg.slice('merge'.length))) }
@@ -8028,7 +8089,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => ({ result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => ({ result: await runVerdict($, e as unknown as Record<string, unknown>) }))
