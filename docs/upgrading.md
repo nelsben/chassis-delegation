@@ -10,6 +10,12 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.31 to 0.9.32
+
+Nothing changes for a repo that never uses `repo=none` cards. A research card dispatched before the update still verifies.
+Fixed: a `repo=none` card's outside listing is kept in a file under `.delegation/outside/`, not in the store, so research cards in flight no longer fill the store's cap. The outside check also ignores the mod's and the lead's own writes in the session checkout.
+Detail: [CHANGELOG 0.9.32](../CHANGELOG.md).
+
 ### From 0.9.30 to 0.9.31
 
 Nothing to do.
