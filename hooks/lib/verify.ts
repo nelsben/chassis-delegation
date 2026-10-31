@@ -322,15 +322,22 @@ export function syntheticReport(r: { task: string; subtask: string; branch: stri
   )
 }
 
+/** MOD-219: the words a verdict row carries when its gate was not re-run (the recorded pass stood in). */
+export const GATE_REUSED = 'gate reused (recorded pass, not re-run)'
+
+/** MOD-219: whether the verifier's lines say the card's gate was swapped for the `_empty` gate (no changed files), so the suite was not re-run. */
+export const gateReusedIn = (lines: readonly string[]): boolean => lines.some(l => /^gate: .* \u2192 _empty /.test(l))
+
 /**
  * The verdict row's first line. `usd` (the attempt's cost, 2 decimals) and the
  * resolved `model` show when known; `next=` stays last because it runs to the
  * end of the line.
  */
-export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[] }): string =>
+export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateReused?: boolean }): string =>
   `chassis-delegation: verdict=${v.verdict} task=${v.task} attempt=${v.attempt}/${v.budget}` +
   (v.usd !== undefined && Number.isFinite(v.usd) ? ` usd=${v.usdApprox ? '~' : ''}${v.usd.toFixed(2)}` : '') +
   (v.model ? ` model=${v.model}` : '') +
+  (v.gateReused ? ` · ${GATE_REUSED}` : '') +
   (v.allow && v.allow.length > 0 ? ` · allow=${v.allow.join(',')} · next=${v.next}` : ` next=${v.next}`)
 
 /** One line per amend the mod appended to the brief before verifying. */

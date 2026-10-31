@@ -16,13 +16,13 @@ describe('MOD-131: per-tier slots in the spawn hook', () => {
     await $.agent.spawn(spawnInput({ prompt: brief('T-1', 'frontier'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2', 'frontier'), tool_use_id: 'toolu_B0000002' }))
     const third = await $.agent.spawn(spawnInput({ prompt: brief('T-3', 'frontier'), tool_use_id: 'toolu_C0000003' }))
-    expect(third.deny).toBe('queued: T-3 — the mod will tell you when a frontier slot frees (2 live: T-1, T-2; 1 queued: T-3; limit: maxWorkersByTier.frontier 2 from the host options)')
+    expect(third.deny).toBe('queued: T-3 — the mod will tell you when a frontier slot frees (2 live: T-1, T-2; 1 queued: T-3; limit: maxWorkersByTier.frontier 2 from the host options) — queued: position 1 of 1 (frontier cap 2 running)')
     const std = await $.agent.spawn(spawnInput({ prompt: brief('T-4', 'standard'), tool_use_id: 'toolu_D0000004' }))
     expect(std.deny).toBeUndefined()
     expect(w.spawns).toHaveLength(3)
     // asked again: it keeps its place and the line names the tier
     const again = await $.agent.spawn(spawnInput({ prompt: brief('T-3', 'frontier'), tool_use_id: 'toolu_E0000003' }))
-    expect(again.deny).toMatch(/^queued: T-3 — the mod will tell you when a frontier slot frees; already queued since \d\d:\d\d \(position 1\); limit: maxWorkersByTier\.frontier 2 from the host options$/)
+    expect(again.deny).toMatch(/^queued: T-3 — the mod will tell you when a frontier slot frees; already queued since \d\d:\d\d \(position 1\); limit: maxWorkersByTier\.frontier 2 from the host options — queued: position 1 of 1 \(frontier cap 2 running\)$/)
   })
 
   test('with the total full the deny is the unchanged one', { options: { maxWorkers: 2, maxWorkersByTier: '{"frontier":2}' } }, async ($, on) => {
@@ -83,7 +83,7 @@ describe('MOD-145 (#234): a queued dispatch names where its worker limit came fr
     await $.session.start(sessionStart)
     await $.agent.spawn(spawnInput({ prompt: brief('T-1', 'standard'), tool_use_id: 'toolu_A0000001' }))
     const second = await $.agent.spawn(spawnInput({ prompt: brief('T-2', 'standard'), tool_use_id: 'toolu_B0000002' }))
-    expect(second.deny).toMatch(/limit: maxWorkersByTier\.standard 1 from the repo file\)$/)
+    expect(second.deny).toMatch(/limit: maxWorkersByTier\.standard 1 from the repo file\) — queued: position 1 of 1 \(standard cap 1 running\)$/)
   })
 
   test('/delegation reads the source of the limit', { options: {} }, async ($, on) => {

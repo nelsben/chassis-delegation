@@ -1660,7 +1660,7 @@ describe('GH-101: the queue never holds a phantom', () => {
     await $.agent.spawn(spawnInput({ prompt: brief('T-9'), tool_use_id: 'toolu_D0000009' }))
     expect(w.spawns).toHaveLength(3)
     expect(queueOf(w)).toEqual([])
-    expect(w.toasts.some(t => /^started queued T-9 \(waited \d+ min\)$/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /^T-9 started after \d+ min in queue$/.test(t))).toBe(true)
   })
 
   test('(b) a second dispatch of a queued task says already queued and queues nothing more', BRIEFS, async ($, on) => {

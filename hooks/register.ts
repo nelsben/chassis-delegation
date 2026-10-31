@@ -285,6 +285,7 @@ import {
   scratchFor,
   syntheticReport,
   verdictLine,
+  gateReusedIn,
   verifyAdvice,
   workPresentDeny,
   workPresentLine,
@@ -1971,9 +1972,11 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
     const entered = enqueue(queue, item)
     // MOD-44: a task for another local repo shows that repo's folder name beside it
     const shown = withRepoName(label, item.repo, sessionRoot)
+    // MOD-219: where a tier-capped lane stands in the queue, and which cap holds it
+    const capHeld = (position: number, of: number) => (slotTier ? { position, of, cap: cfg.maxWorkersByTier[slotTier] ?? 0 } : undefined)
     if (entered.existing) {
       const kept = entered.existing
-      return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position, slotTier, limit) }
+      return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position, slotTier, limit, capHeld(kept.position, queue.length)) }
     }
     await writeQueue($, entered.queue)
     if (blocked) {
@@ -1981,7 +1984,7 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
       return { deny: resourceDeny(shown, blocked.resource, blocked.holder) }
     }
     debug($, slotTier ? `queued ${label}: ${heldByTier[slotTier] ?? 0} workers hold the ${cfg.maxWorkersByTier[slotTier]} ${slotTier} slots` : `queued ${label}: ${holders.length} workers hold the ${cfg.maxWorkers} slots`)
-    return { deny: queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot)), slotTier, limit) }
+    return { deny: queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot)), slotTier, limit, capHeld(queuedIndex(entered.queue, item.task, item.subtask ?? 'main') + 1, entered.queue.length)) }
   })
 }
 
@@ -5776,7 +5779,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const workLine = work ? workPresentLine(work) : undefined
   // MOD-124: the exceptions the brief allowed ride on the row
   const allow = spawn.adhoc ? [] : await allowIdsOf($, spawn)
-  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next, allow }) + downClause, workLine ? [workLine, ...lines] : lines)
+  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next, allow, gateReused: gateReusedIn(lines) }) + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
   const tail = from ? fallbackTail(from) : undefined
@@ -7903,7 +7906,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       const held = await dropQueued($, task, subtask)
       if (held) {
         fromQueue = true
-        $.ui.toast(`started queued ${label} (waited ${waitedMinutes(held.at, t)} min)`)
+        $.ui.toast(`${label} started after ${waitedMinutes(held.at, t)} min in queue`)
       }
     }
 
