@@ -314,6 +314,7 @@ import {
   labelIsMerged,
   lastLines,
   latestVerdictRow,
+  reviewAcceptedAttempt,
   mainBranchLine,
   mergeTarget,
   mainDirtyLine,
@@ -5878,6 +5879,9 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
  */
 type VerdictNow = { kind: 'none' } | { kind: 'wait' } | { kind: 'judged'; text: string }
 
+/** MOD-231: the verdict tool's answer for an attempt whose review said next=accept. */
+const reviewedAcceptLine = (label: string, attempt: number): string => `${PLUGIN}: ${label} attempt ${attempt} consistent · next=accept (reviewed)`
+
 async function verdictNow($: Host, task: string, subtask: string): Promise<VerdictNow> {
   const label = taskLabel(task, subtask)
   // MOD-97: the id alone is the repo its dispatch remembered (else the session's); the attempt and the worker are that repo's
@@ -5892,6 +5896,8 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<Verdi
     return verdictFromLedger($, task, subtask)
   }
   if (latest.verdict === 'pending') return { kind: 'wait' }
+  // MOD-231: a review of this attempt that said next=accept is the answer: the verdict stands as next=accept, with no new review block
+  if (latest.verdict === 'consistent' && reviewAcceptedAttempt(await ledgerText($), task) === latest.attempt) return { kind: 'judged', text: reviewedAcceptLine(label, latest.attempt) }
   const spawn = (await spawnByAgent($, latest.agentId)) ?? (latest.toolUseId ? await storeGet<SpawnRecord>($, K.spawn(latest.toolUseId)) : undefined)
   if (!spawn || spawn.attempt !== latest.attempt || spawn.task !== task || spawn.subtask !== subtask) return { kind: 'judged', text: `${PLUGIN}: ${label} attempt ${latest.attempt} ${latest.verdict}` }
   // the verdict is patched into the attempt record before its row is stored
@@ -5920,6 +5926,7 @@ async function verdictFromLedger($: Host, task: string, subtask: string): Promis
   const row = text === '' ? undefined : latestSpawnRow(text, { task, subtask })
   if (!row) return { kind: 'none' }
   const done = verdictAfter(text, row)
+  if (done && readVerdict(done.verdict) === 'consistent' && reviewAcceptedAttempt(text, task) === row.attempt) return { kind: 'judged', text: reviewedAcceptLine(taskLabel(task, subtask), row.attempt) }
   if (done) return { kind: 'judged', text: ledgerJudgedLine(PLUGIN, taskLabel(task, subtask), row.attempt, done.verdict, done.next) }
   if (row.agentId && (await agentList($)).some(a => a.id === row.agentId && a.status === 'running')) return { kind: 'wait' }
   const spawn = await ledgerSpawn($, { task, subtask }, text)

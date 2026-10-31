@@ -168,6 +168,19 @@ describe('MOD-94 (#157): a hand-back whose spawn record did not land still gets 
   })
 })
 
+describe('MOD-231: the verdict tool after a review that said next=accept', () => {
+  test('(e) consistent next=review then reviewed next=accept: the tool names next=accept and offers no spawn block', async ($, on) => {
+    const verified = { task: 'T-4', subtask: 'main', attempt: 1, kind: 'spawn', sha: '1234abcd', verdict: 'consistent', next: 'review', agentId: 'agent-4' }
+    const reviewed = { task: 'T-4', subtask: 'main', attempt: 1, kind: 'review', verdict: 'reviewed', next: 'accept' }
+    world(on, { files: { [LEDGER]: [SPAWN_ROW, verified, reviewed].map(r => JSON.stringify(r)).join('\n') + '\n' } })
+    const out = resultText(await $.tool.call({ tool: VERDICT, task: 'T-4' } as never))
+    expect(out).toContain('T-4 attempt 1 consistent')
+    expect(out).toContain('next=accept')
+    expect(out).not.toContain('next=review')
+    expect(out).not.toContain('```')
+  })
+})
+
 describe('MOD-94: every reader of the ledger reads past a spawn row', () => {
   const VERDICT_ROW = { task: 'T-4', subtask: 'main', attempt: 1, kind: 'spawn', sha: '1234abcd', verdict: 'consistent', next: 'accept', agentId: 'agent-4' }
   const SPAWN_2 = { ...SPAWN_ROW, attempt: 2, lineage: 2, agentId: 'agent-5', toolUseId: 'toolu_02ABCDEFGH', at: NOW }

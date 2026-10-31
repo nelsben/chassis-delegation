@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`merge` accepts a task whose verifier said `next=review` and whose review then said `next=accept` (MOD-231).** `latestVerdictRow` skipped the accepting review row and fell back to the consistent row, whose `next` was `review`, so a reviewed-and-accepted task was refused. A newest review row with `next=accept` now stands for the consistent row it reviewed (same attempt), read as `consistent · next=accept` with that row's attempt and sha; a review with any other `next` still blocks, and a consistent `next=review` row with no review still refuses. The verdict tool agrees: after such a review it names `next=accept` and offers no new review block.
+
 ## 0.9.39 — 2026-10-31
 
 ### Fixed

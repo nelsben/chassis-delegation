@@ -98,6 +98,10 @@ export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha
  * next=accept stands aside for the worker's row it reviewed; one that says anything else is the answer.
  */
 export function latestVerdictRow(ledger: string, task: string): VerdictRow | undefined {
+  return resolveRows(verdictRows(ledger, task))
+}
+
+function verdictRows(ledger: string, task: string): VerdictRow[] {
   const rows: VerdictRow[] = []
   for (const line of ledger.split('\n')) {
     if (line.trim() === '') continue
@@ -111,12 +115,41 @@ export function latestVerdictRow(ledger: string, task: string): VerdictRow | und
     if (r.subtask !== undefined && r.subtask !== 'main') continue
     rows.push({ verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}), ...(typeof r.attempt === 'number' ? { attempt: r.attempt } : {}), ...(typeof r.sha === 'string' ? { sha: r.sha } : {}), ...(typeof r.kind === 'string' ? { kind: r.kind } : {}) })
   }
+  return rows
+}
+
+function resolveRows(rows: VerdictRow[]): VerdictRow | undefined {
   for (let i = rows.length - 1; i >= 0; i--) {
     const r = rows[i] as VerdictRow
-    if (r.kind === 'review' && isAccept(r.next)) continue
+    if (r.kind === 'review' && isAccept(r.next)) {
+      // MOD-231: a review that accepts stands for the consistent row it reviewed (the latest non-review row of its attempt), now next=accept
+      const reviewed = reviewedRow(rows, i)
+      if (reviewed && readVerdict(reviewed.verdict) === 'consistent') return { ...reviewed, next: 'accept' }
+      continue
+    }
     return r
   }
   return undefined
+}
+
+/** MOD-231: the latest non-review row before `at` that belongs to the review row's attempt (any, when the review names none). */
+function reviewedRow(rows: VerdictRow[], at: number): VerdictRow | undefined {
+  const review = rows[at] as VerdictRow
+  for (let j = at - 1; j >= 0; j--) {
+    const r = rows[j] as VerdictRow
+    if (r.kind === 'review') continue
+    if (review.attempt === undefined || r.attempt === review.attempt) return r
+  }
+  return undefined
+}
+
+/** MOD-231: the attempt whose consistent row the task's newest ledger row, a review with next=accept, accepted; undefined otherwise. */
+export function reviewAcceptedAttempt(ledger: string, task: string): number | undefined {
+  const rows = verdictRows(ledger, task)
+  const last = rows[rows.length - 1]
+  if (!last || last.kind !== 'review' || !isAccept(last.next)) return undefined
+  const row = resolveRows(rows)
+  return row && readVerdict(row.verdict) === 'consistent' ? row.attempt : undefined
 }
 
 const isAccept = (next: string | undefined): boolean => next !== undefined && /^accept\b/.test(next.trim())
