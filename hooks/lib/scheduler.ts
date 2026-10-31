@@ -84,9 +84,9 @@ export const startingOthers = (starting: Iterable<string>, label: string): strin
 export const queuedDeny = (task: string, live: readonly string[], queued: readonly string[], tier?: Tier, limit?: string, held?: { position: number; of: number; cap: number }): string =>
   `${QUEUED_PREFIX}${task} — ${slotFrees(tier)} (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')}${limit ? `; limit: ${limit}` : ''})${tierQueueText(tier, held)}`
 
-/** MOD-219: ` — queued: position 3 of 7 (frontier cap 2 running)` for a lane a tier cap holds; empty otherwise. */
+/** MOD-219/MOD-222: ` — queued: position 3 of 7 (frontier cap 2 running)` for a lane a tier cap holds, ` (maxWorkers 2 running)` for one the total cap holds; empty with no `held`. */
 export const tierQueueText = (tier?: Tier, held?: { position: number; of: number; cap: number }): string =>
-  tier && held ? ` — queued: position ${held.position} of ${held.of} (${tier} cap ${held.cap} running)` : ''
+  held ? ` — queued: position ${held.position} of ${held.of} (${tier ? `${tier} cap` : 'maxWorkers'} ${held.cap} running)` : ''
 
 /** HH:MM of a queue row's time, as the clock on the wall reads it. */
 export const clockText = (at: number): string => {

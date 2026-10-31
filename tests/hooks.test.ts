@@ -1697,7 +1697,7 @@ describe('GH-101: the queue never holds a phantom', () => {
     const w = world(on, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: brief('BE-310'), tool_use_id: 'toolu_A0000001' }))
     const res = await $.agent.spawn(spawnInput({ prompt: brief('BE-314'), tool_use_id: 'toolu_B0000002' }))
-    expect(res.deny).toBe('queued: BE-314 — the mod will tell you when a slot frees (1 live: BE-310; 1 queued: BE-314; limit: maxWorkers 1 from the host options)')
+    expect(res.deny).toBe('queued: BE-314 — the mod will tell you when a slot frees (1 live: BE-310; 1 queued: BE-314; limit: maxWorkers 1 from the host options) — queued: position 1 of 1 (maxWorkers 1 running)')
     expect(w.spawns).toHaveLength(1)
   })
 })
@@ -3587,7 +3587,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(records(w, 'BE-101')[0]).toMatchObject({ task: 'BE-101', attempt: 1, kind: 'spawn', lineage: 1, tier: 'frontier', alias: 'opus', source: 'brief', verdict: 'pending', agentId: 'agent-1', toolUseId: 'toolu_BRAIN0001', briefPath: BRIEF })
     // the slot is held: with maxWorkers 1 another briefed spawn waits
     const other = await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-2 subtask=main tier=standard]]\nDo it.', tool_use_id: 'toolu_BRAIN0002' }))
-    expect(other.deny).toBe('queued: T-2 — the mod will tell you when a slot frees (1 live: BE-101; 1 queued: T-2; limit: maxWorkers 1 from the host options)')
+    expect(other.deny).toBe('queued: T-2 — the mod will tell you when a slot frees (1 live: BE-101; 1 queued: T-2; limit: maxWorkers 1 from the host options) — queued: position 1 of 1 (maxWorkers 1 running)')
     // a second brain spawn of the same brief while attempt 1 runs
     const second = await brainSpawn($, text, { tool_use_id: 'toolu_BRAIN0003' })
     expect(second.deny).toBe('chassis-delegation: BE-101 not spawned — already running as attempt 1 (agent agent-1); wait for its hand-back')

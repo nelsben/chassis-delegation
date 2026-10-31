@@ -34,6 +34,22 @@ describe('MOD-219: a lane held by a tier cap says its position', () => {
   })
 })
 
+describe('MOD-222: a lane held by the total maxWorkers cap says its position', () => {
+  test('maxWorkers 1, no tier caps, 3 dispatches: positions 1 of 2 and 2 of 2; a repeat shows its place', async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await $.session.start(sessionStart)
+    await $.command.run({ command: 'delegation', args: 'config maxWorkers 1', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    const second = await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
+    const third = await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_C0000003' }))
+    expect(second.deny).toContain(' — queued: position 1 of 1 (maxWorkers 1 running)')
+    expect(third.deny).toContain(' — queued: position 2 of 2 (maxWorkers 1 running)')
+    expect(w.spawns).toHaveLength(1)
+    const again = await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_D0000002' }))
+    expect(again.deny).toMatch(/already queued since \d\d:\d\d \(position 1\).* — queued: position 1 of 2 \(maxWorkers 1 running\)$/)
+  })
+})
+
 describe('MOD-219: a verdict says when its gate was reused', () => {
   const v = { verdict: 'consistent' as const, task: 'T-1', attempt: 1, budget: 2, next: 'accept' }
   test('the row carries the words; a re-run gate does not', () => {
