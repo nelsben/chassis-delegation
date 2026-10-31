@@ -54,6 +54,7 @@ You were started by the brain's own Agent call: the mod that dispatched you reco
 {{#lessons}}
 - The Lessons section after the card is this repo's own rules for this domain, learned from earlier cards; it binds like the Rules above.
 {{/lessons}}
+- If you must stop while your own background job runs, print a pause line, not a report, as the last line of that message: `[[pause v=1 task={{id}} reason=<one line>]]`. A pause is not an attempt; your real report line comes when the work is done. A third pause in one attempt is charged as an attempt, and a stop with neither line is charged.
 - Keep any single foreground wait under 5 minutes; kill anything hung and say so.
 - Your identity: the mod already exports `CHASSIS_SESSION_ID={{id}}-a<attempt>` (`{{id}}.<subtask>-a<attempt>` for a subtask other than main), `CHASSIS_TASK` and `CHASSIS_ATTEMPT` in every Bash call you make, so a lock keyed on the session id tells you from your sibling workers; do not set them yourself.
 {{extra}}

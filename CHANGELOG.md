@@ -9,6 +9,7 @@
 
 ### Added
 
+- **A worker that stops while its own background job runs is paused, not charged (MOD-226, #270).** The report contract gains a pause line, `[[pause v=1 task=<id> reason=<one line>]]`, named in the brief template. `verdict` on a hand-back that holds a pause line and no report line records a pause: no attempt is opened or charged (the attempt stays open, so a later real report is still that attempt), and the row says `paused`, names the wait (the MOD-99 text, `waiting on its own background job`), and gives `next=resume` with the reason. A hand-back with neither line is charged as before. A third pause in one attempt is charged as a `no-report` attempt, with `pause cap: …` on the row; a resume resets the count. Each pause is a ledger row (`kind: pause`).
 - **A busy machine is named as such (MOD-230, #323).** Dispatch adds `<k> lanes share the engine gate; it runs one at a time: expect verdict waits` when 3 or more live or queued briefed lanes have an engine gate. A verifier gate that is red or times out while the 1-minute load is at least twice the core count adds `machine loaded (load <x> on <n> cores): may be load, not the change; re-run with /dispatch <ID> --verify <sha> once it drops` to the verdict; the verdict itself is unchanged and a failed load read adds nothing. The load is read through `sysctl -n vm.loadavg hw.ncpu` and `nproc` (the two new exact allowlist entries) or `/proc/loadavg`. The brief template tells workers to re-run a gate that fails with timeouts once before handing back gate=fail.
 
 ### Changed

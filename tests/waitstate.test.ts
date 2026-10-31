@@ -131,3 +131,47 @@ describe('MOD-99: a waiting worker wakes the brain once per state', () => {
     expect(w.submitted).toHaveLength(1)
   })
 })
+
+// MOD-226 (#270): a worker that stops while its own background job runs prints a pause line; that is a pause, not a charged attempt.
+const PAUSE = '[[pause v=1 task=T-4 reason=bench running in the background, back when it ends]]'
+
+describe('MOD-226: a pause line is a pause, not an attempt', () => {
+  const setup = async ($: never, on: never) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo, agentId: 'agent-4' })
+    await ($ as { agent: { spawn: (x: never) => Promise<unknown> } }).agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    return w
+  }
+  const texts = (w: { submitted: { text: string }[] }) => w.submitted.map(s => s.text)
+
+  test('pause then report = attempt 1, nothing charged', { options: { ...OPTS } }, async ($, on) => {
+    const w = await setup($ as never, on as never)
+    await $.turn.complete(turnInput('agent-4', 'Bench started.\n' + PAUSE, undefined, 'turn-p1'))
+    const first = texts(w).join('\n')
+    expect(first).toContain('paused')
+    expect(first).toContain('next=resume')
+    expect(first).toContain('bench running in the background')
+    expect(first).toContain('T-4 waiting on its own background job')
+    expect(first).not.toContain('no-report')
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT, undefined, 'turn-final'))
+    const last = texts(w).at(-1) ?? ''
+    expect(last).toContain('T-4 attempt 1')
+    expect(last).not.toContain('attempt 2')
+  })
+
+  test('a stop with neither line is charged as before', { options: { ...OPTS } }, async ($, on) => {
+    const w = await setup($ as never, on as never)
+    await $.turn.complete(turnInput('agent-4', 'I stopped here.'))
+    expect(texts(w).join('\n')).toContain('no-report')
+    expect(texts(w).join('\n')).not.toContain('paused')
+  })
+
+  test('the third pause in one attempt is charged, with a row saying why', { options: { ...OPTS } }, async ($, on) => {
+    const w = await setup($ as never, on as never)
+    for (let i = 1; i <= 2; i++) await $.turn.complete(turnInput('agent-4', `Still running (${i}).\n` + PAUSE, undefined, `turn-p${i}`))
+    expect(texts(w).join('\n')).not.toContain('no-report')
+    await $.turn.complete(turnInput('agent-4', 'Still running (3).\n' + PAUSE, undefined, 'turn-p3'))
+    const last = texts(w).at(-1) ?? ''
+    expect(last).toContain('no-report')
+    expect(last).toContain('pause cap')
+  })
+})

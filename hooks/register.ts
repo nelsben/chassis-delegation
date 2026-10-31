@@ -14,7 +14,7 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { callKind, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
-import { saysWaiting, waitStep, WAIT_STALL_DEFAULT_MIN, type WaitState } from './lib/waitstate'
+import { extractPause, pauseCapLine, pauseRow, PAUSE_CAP, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
 import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
 import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
@@ -512,6 +512,10 @@ type SpawnRecord = {
   noBrief?: string
   /** MOD-211: the report line judged malformed (no sha=) at this attempt; a different one resent is judged on the same attempt, uncharged. */
   malformed?: string
+  /** MOD-226: pauses taken in the current attempt (a resume resets it). */
+  pauses?: number
+  /** MOD-226: fingerprint of the hand-back judged a pause; a different hand-back reopens the same attempt. */
+  pausedAs?: string
   // MOD-89: no `prompt`: nothing read it back, and at about 1.4 KB a record it was most of the store (#157).
   // A record written before keeps it; the brief path, the key (the tool_use_id) and the description are what is read.
   description: string
@@ -5685,6 +5689,25 @@ async function closeHandback($: Host, spawn: SpawnRecord, why: 'merged' | 'branc
   return { full: line, line }
 }
 
+/**
+ * MOD-226 (#270): the hand-back of a worker that stopped while its own background job runs and printed a pause line.
+ * The attempt stays open (its record stays pending, nothing is charged); the row says next=resume with the reason and
+ * names the wait (MOD-99). The next hand-back that differs from this one reopens the same attempt (resumedIfNew).
+ */
+async function pausedHandback($: Host, spawn: SpawnRecord, pause: Pause, n: number, text: string): Promise<Rendered> {
+  const label = taskLabel(spawn.task, spawn.subtask)
+  const t = await now($)
+  const since = spawn.agentId ? waitStates.get(spawn.agentId)?.since : undefined
+  const full = pauseRow({ task: label, attempt: spawn.attempt, budget: spawn.budget, n, reason: pause.reason, waited: since !== undefined ? t - since : 0 })
+  const quiet = `chassis-delegation: ${label} attempt ${spawn.attempt}/${spawn.budget} paused (${n}/${PAUSE_CAP - 1}) · ${waitText(label, since !== undefined ? t - since : 0)} · next=resume — ${pause.reason}`
+  await storeSet($, K.spawn(spawn.key), { ...((await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn), verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: full, verdictLine: quiet, pauses: n, pausedAs: textKey(text) })
+  await setLastVerdict($, { task: label, attempt: spawn.attempt, verdict: 'paused', next: 'resume', at: t, text: full })
+  await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'paused', line: quiet, at: t })
+  await appendLedger($, { kind: 'pause', task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, pause: n, reason: pause.reason, at: t, sessionId: await sessionIdOf($) })
+  debug($, `${label}: attempt ${spawn.attempt} paused (${n}/${PAUSE_CAP - 1}): ${pause.reason}`)
+  return { full, line: quiet }
+}
+
 /** Verifies, records, acts on the advice (autoEscalate), and returns the row in both forms (2B). */
 async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured: Measured): Promise<Rendered> {
   // MOD-94: a record rebuilt from memory or the ledger is judged as any other; its verdict says where it came from
@@ -5736,6 +5759,14 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     const why = await closedReason($, spawn, report)
     if (why) return closeHandback($, spawn, why)
   }
+  // MOD-226 (#270): a pause line and no report line is a pause: no attempt opened or charged; the third in one attempt is charged
+  const pause = !block && !spawn.adhoc && !spawn.review ? extractPause(text, spawn.task) : undefined
+  let pauseCharge: string | undefined
+  if (pause) {
+    const n = (spawn.pauses ?? 0) + 1
+    if (n < PAUSE_CAP) return pausedHandback($, spawn, pause, n, text)
+    pauseCharge = pauseCapLine(n, spawn.attempt)
+  }
   const cardless = report !== undefined && isCardless(spawn)
   if (!block) verdict = 'no-report'
   else if (cardless) {
@@ -5753,6 +5784,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     metrics = v.metrics
     red = { ...(v.red !== undefined ? { red: v.red } : {}), ...(v.redHash !== undefined ? { redHash: v.redHash } : {}), redHeld: v.redHeld }
   }
+  if (pauseCharge) lines = [...lines, pauseCharge]
 
   const t = await now($)
   // GH-106: the worker's own cost from its turn usage; else the session's growth, marked ~ (other workers inflate it)
@@ -5930,10 +5962,10 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const tail = from ? fallbackTail(from) : undefined
   if (from) debug($, fallbackLog(shownLabel, shownAttempt, from))
   const full = withTailIf(spawnText ? `${verdictRows}\n${spawnText}` : verdictRows, tail)
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + downClause
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + (pauseCharge ? ` · ${pauseCharge}` : '') + downClause
   const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
-  const { malformed: _old, ...latestClean } = latest
+  const { malformed: _old, pausedAs: _pausedAs, ...latestClean } = latest
   await storeSet($, K.spawn(spawn.key), { ...latestClean, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line, ...(malformed && block !== undefined ? { malformed: block } : {}) })
   await setWorkers($, list => list.map(w => (w.task === spawn.task && w.subtask === spawn.subtask && w.attempt === spawn.attempt ? { ...w, verdict } : w)))
   await setLastVerdict($, { task: shownLabel, attempt: shownAttempt, verdict, next, at: t, text: full })
@@ -6345,6 +6377,17 @@ async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: 
     await storeSet($, K.spawn(spawn.key), { ...open, lastFailed: false })
     return { ...open, lastFailed: false }
   }
+  // MOD-226: a hand-back that differs from the one judged a pause reopens the same attempt (no new attempt, nothing charged)
+  if (spawn.pausedAs !== undefined) {
+    if (textKey(text) === spawn.pausedAs) return spawn
+    const { pausedAs: _p, verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, ...open } = spawn
+    const key = await attemptKey($, spawn)
+    posted.delete(key)
+    await storeSet($, K.posted(key), false)
+    await storeSet($, K.postedRow(key), '')
+    await storeSet($, K.spawn(spawn.key), { ...open, lastFailed: false })
+    return { ...open, lastFailed: false }
+  }
   const sha = block ? parseReport(block)?.sha : undefined
   if (!sha) return spawn
   const records = await loadAttempts($, spawn)
@@ -6376,7 +6419,8 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   }
   await saveAttempts($, spawn, [...records, rec])
   const usdAtStart = await sessionUsd($)
-  const next: SpawnRecord = { ...spawn, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
+  const { pauses: _pauses, ...fresh } = spawn
+  const next: SpawnRecord = { ...fresh, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
   await storeSet($, K.spawn(spawn.key), next)
   await setWorkers($, list => [...list, { task: spawn.task, subtask: spawn.subtask, attempt, kind: 'resume', tier: spawn.tier, alias: spawn.alias, agentId, verdict: 'pending', at: t }])
   if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), task: spawn.task, repo: spawn.repo, alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed' })
