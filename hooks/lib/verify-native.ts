@@ -694,9 +694,32 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   const branch = (report.branch ?? '').trim()
   // repo=here: sha=HEAD (or none) means "not committed: read the working tree"
   const treeSha = here && /^(?:HEAD|none)$/i.test(sha)
-  const full = SHA_LIKE.test(sha) ? firstLine(await out('rev-parse', '--verify', '--quiet', `${sha}^{commit}`)) : ''
+  // MOD-251: rev-parse calls that take one answer are one process each.
+  //  - merged call 1 (repo!=here): `rev-parse <sha>^{commit} HEAD refs/heads/<branch>` = the sha check, the HEAD the gate step reads and the branch ref
+  //  - merged call 2 (repo=here): `rev-parse <sha>^{commit} --abbrev-ref HEAD` = the sha check and the current branch
+  //  A failure of a merged call (a missing sha or a remote-only branch) falls back to the single calls below, so each refute reads as before.
+  const hex = /^[0-9a-f]{40,64}$/i
+  const shaWanted = SHA_LIKE.test(sha)
+  const branchWanted = !here && BRANCH_LIKE.test(branch) && !branch.startsWith('-') && !branch.includes('..')
+  let full = ''
+  let headNow = ''
+  let current = ''
   let branchRef = ''
-  if (!here && BRANCH_LIKE.test(branch) && !branch.startsWith('-') && !branch.includes('..')) {
+  if (shaWanted) {
+    const argv = here ? ['rev-parse', `${sha}^{commit}`, '--abbrev-ref', 'HEAD'] : branchWanted ? ['rev-parse', `${sha}^{commit}`, 'HEAD', `refs/heads/${branch}`] : ['rev-parse', `${sha}^{commit}`, 'HEAD']
+    const lines = ((await out(...argv)) ?? '').split('\n').map(l => l.trim()).filter(l => l !== '')
+    if (lines.length === argv.length - (here ? 2 : 1) && hex.test(lines[0] ?? '') && (here ? lines[1] !== '' : hex.test(lines[1] ?? '') && (!branchWanted || hex.test(lines[2] ?? '')))) {
+      full = lines[0] as string
+      if (here) current = lines[1] as string
+      else {
+        headNow = lines[1] as string
+        if (branchWanted) branchRef = `refs/heads/${branch}`
+      }
+    } else {
+      full = firstLine(await out('rev-parse', '--verify', '--quiet', `${sha}^{commit}`))
+    }
+  }
+  if (!here && !branchRef && branchWanted) {
     for (const ref of [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`]) {
       if ((await out('rev-parse', '--verify', '--quiet', ref)) !== undefined) {
         branchRef = ref
@@ -707,7 +730,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
 
   // 1. the branch exists (repo=here: it is the checkout's current branch)
   if (here) {
-    const current = firstLine(await out('rev-parse', '--abbrev-ref', 'HEAD'))
+    if (!current) current = firstLine(await out('rev-parse', '--abbrev-ref', 'HEAD'))
     if (!current) claim('branch', 'unchecked', `could not read the current branch of ${repo}`)
     else if (branch === current) claim('branch', 'held', `${branch} is the current branch of ${repo}`)
     else claim('branch', 'unchecked', `report branch=${branch || '(none)'} but ${repo} is on ${current}`)
@@ -738,16 +761,21 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     else noDelta = `could not read git status in ${repo}`
   } else if (full) {
     let base = input.base || contract.base || input.baseRef?.trim() || undefined
-    if (!base) {
+    let mb = ''
+    if (base) {
+      mb = firstLine(await out('merge-base', base, full))
+      if (!mb && (await out('rev-parse', '--verify', '--quiet', base)) !== undefined) mb = base
+    } else {
+      // MOD-251: no rev-parse per candidate ref: merge-base itself says a ref does not resolve; a ref that resolves with no merge base is the base, as before
       for (const ref of BASE_REFS) {
-        if ((await out('rev-parse', '--verify', '--quiet', ref)) !== undefined) {
+        mb = firstLine(await out('merge-base', ref, full))
+        if (!mb && (await out('rev-parse', '--verify', '--quiet', ref)) !== undefined) mb = ref
+        if (mb) {
           base = ref
           break
         }
       }
     }
-    let mb = base ? firstLine(await out('merge-base', base, full)) : ''
-    if (!mb && base && (await out('rev-parse', '--verify', '--quiet', base)) !== undefined) mb = base
     if (mb) {
       if (base) sinceBase = /^[0-9a-f]{40}$/i.test(base) ? base.slice(0, 7) : base
       const diff = await out('diff', '--name-status', '-M', mb, full)
@@ -855,9 +883,10 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     let treeWhy: string | undefined
     if (!full && !treeSha) treeWhy = 'sha missing — cannot re-run the gate'
     else if (!here) {
-      const head = firstLine(await out('rev-parse', 'HEAD'))
-      const status = await out('status', '--porcelain')
-      const dirty = (status ?? '').split('\n').filter(l => l.trim() !== '').length
+      // MOD-251: HEAD comes from the merged rev-parse above; the working tree from one status (-z), parsed once
+      const head = headNow || firstLine(await out('rev-parse', 'HEAD'))
+      const status = await out(...STATUS_ARGS)
+      const dirty = porcelainPaths(status ?? '').length
       if (!head) treeWhy = `tree not at sha: could not read HEAD in ${repo}; the gate was not re-run`
       else if (head !== full) treeWhy = `tree not at sha: HEAD is ${head.slice(0, 10)}, not ${full.slice(0, 10)}; the gate was not re-run`
       else if (status === undefined) treeWhy = `tree not at sha: git status failed in ${repo}; the gate was not re-run`

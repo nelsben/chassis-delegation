@@ -1,4 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
+import { world, spawnInput, turnInput, sessionStart, brainSpawn, ROOT, SCRATCH, type RunAnswer } from './harness'
 import {
   isFailing,
   advise,
@@ -395,5 +396,50 @@ describe('MOD-56: a usage-limit stop', () => {
   test('the verdict reads no-report (rate limited[, resets <time>])', () => {
     expect(rateLimitedVerdict({})).toBe('no-report (rate limited)')
     expect(rateLimitedVerdict({ resetsAt: '3pm' })).toBe('no-report (rate limited, resets 3pm)')
+  })
+})
+
+// MOD-251: one passing hand-back is judged with few git processes (the merged rev-parse calls, one status)
+describe('MOD-251: a verify of a clean passing hand-back runs at most 8 git processes', () => {
+  const WT = `${ROOT}-T-1`
+  const HEAD_SHA = 'abcdef1' + '2'.repeat(33)
+  const BR = 'agent/ops/T-1'
+  const MBASE = 'b'.repeat(40)
+  const TREE = 'c'.repeat(40)
+  const CARD = ['---', 'id: T-1', 'title: The first version', 'domain: ops', 'tier: standard', 'status: queued', 'scope: [src/**, tests/**]', 'forbid: []', 'red_test: none', 'gate: test', 'budget: 2-attempts', '---', '## Why', '', 'A thing.', ''].join('\n')
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const answer = (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npm') return { exitCode: 0, stdout: 'ok\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    if (sub[0] === 'rev-parse') {
+      const out = sub.slice(1).filter(a => !a.startsWith('--'))
+      const lines = out.map(a => (a.endsWith('^{commit}') ? a.slice(0, -'^{commit}'.length) : a === 'HEAD^{tree}' ? TREE : a === 'HEAD' ? HEAD_SHA : a === 'origin/main' || a === 'main' ? MBASE : HEAD_SHA))
+      if (sub.includes('--abbrev-ref')) return { exitCode: 0, stdout: `${BR}\n` }
+      return { exitCode: 0, stdout: `${lines.join('\n')}\n` }
+    }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MBASE}\n` }
+    if (sub[0] === 'merge-base') return { exitCode: 0, stdout: '' }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: sub.includes('--name-status') ? 'A\tsrc/a.ts\n' : 'src/a.ts\n' }
+    if (sub[0] === 'status') return { exitCode: 0, stdout: '' }
+    return undefined
+  }
+
+  test('git processes in the verify stay within 8, and the verdict is still consistent', { options: { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full' } }, async ($, on) => {
+    const w = world(on as never, {
+      files: { [`${ROOT}/agents/tasks/T-1-the-first-version.md`]: CARD, [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ domains: ['ops'], gateMap: { test: 'npm test' } }) },
+      dirs: { [`${ROOT}/agents/tasks`]: ['T-1-the-first-version.md'], [WT]: [] },
+      run: answer,
+      agentId: 'agent-4',
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    } as never)
+    await ($ as any).session.start(sessionStart)
+    const out = text(await ($ as any).tool.call({ tool: 'mcp__chassis-delegation__dispatch', task: 'T-1' } as never))
+    await brainSpawn($ as any, out)
+    const before = w.runs.length
+    await ($ as any).turn.complete(turnInput('agent-4', `Done.\n[[report v=1 task=T-1 subtask=main branch=${BR} pr=none sha=${HEAD_SHA} gate=pass red=none files=src/a.ts]]`))
+    const gits = w.runs.slice(before).map(r => r.argv.join(' ')).filter(a => /^git /.test(a) && !/ worktree (lock|unlock) /.test(a))
+    expect(w.appended.map(a => a.text).concat(w.logs).join('\n')).toContain('verdict=consistent task=T-1')
+    expect(gits.length).toBeLessThanOrEqual(8)
   })
 })

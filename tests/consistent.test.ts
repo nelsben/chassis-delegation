@@ -44,8 +44,10 @@ const TABLE: Record<string, ExecOut> = {
   [git('rev-parse', '--verify', '--quiet', 'origin/main')]: ok(MB + '\n'),
   [git('merge-base', 'origin/main', FULL)]: ok(MB + '\n'),
   [git('diff', '--name-status', '-M', MB, FULL)]: ok('A\tsrc/a.ts\nA\tdocs/x.md\n'),
+  // MOD-251: the merged call: the sha check, HEAD and the branch ref in one process
+  [git('rev-parse', 'a1b2c3d^{commit}', 'HEAD', 'refs/heads/agent/ops/T-1')]: ok([FULL, FULL, FULL].join('\n') + '\n'),
   [git('rev-parse', 'HEAD')]: ok(FULL + '\n'),
-  [git('status', '--porcelain')]: ok(''),
+  [git('status', '--porcelain=v1', '--untracked-files=all', '-z')]: ok(''),
   'npm test': ok('all green\n'),
 }
 const heldVerdict = async () => {
