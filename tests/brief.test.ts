@@ -21,7 +21,10 @@ import {
   lacksLine,
   scopeOverlap,
   setHeaderField,
+  scopeForbidClashes,
+  scopeForbidClashLine,
 } from '../hooks/lib/brief'
+import { cardFromFields, type CardCtx } from '../hooks/lib/card'
 import { parseCard, renderHeader } from '../hooks/lib/dispatch'
 import { briefContract, pathMatchesAny } from '../hooks/lib/verify-native'
 
@@ -400,5 +403,45 @@ describe('MOD-170: scopeAmends, the folder and glob-prefix rule', () => {
     expect(scopeAmendHeld(amend('hooks/lib/*.ts'), 'new-files', scope, fresh('hooks/lib/*.ts'))).toBe(true)
     expect(scopeAmendHeld(amend('src/new.ts'), 'new-files', scope, fresh('src/new.ts'))).toBe(true)
     expect(scopeAmendHeld(amend('hooks/lib/new.ts', 'src/new.ts'), 'new-files', scope, fresh('hooks/lib/new.ts', 'src/new.ts'))).toBe(true)
+  })
+})
+
+describe('MOD-227 (#304): a scope path under a forbid is flagged when the brief is made', () => {
+  const line = (entry: string, forbid: string, origin = '') => scopeForbidClashLine(entry, forbid, origin)
+
+  test('an exact path under a forbid glob is one line naming both', () => {
+    const c = scopeForbidClashes(['.claude/skills/x/SKILL.md'], ['.claude/**'])
+    expect(c).toEqual([{ entry: '.claude/skills/x/SKILL.md', forbid: '.claude/**', origin: '' }])
+    expect(line(c[0]!.entry, c[0]!.forbid)).toBe('scope .claude/skills/x/SKILL.md is under forbid .claude/** — drop the forbid, narrow it, or drop the scope path')
+  })
+
+  test('a scope glob under a forbid glob is a clash', () => {
+    expect(scopeForbidClashes(['docs/cards/**'], ['docs/**']).map(c => c.entry)).toEqual(['docs/cards/**'])
+  })
+
+  test('no overlap gives no line', () => {
+    expect(scopeForbidClashes(['src/a.ts', 'hooks/**'], ['docs/**', 'tests/x.ts'])).toEqual([])
+    expect(scopeForbidClashes(['docs/**'], ['docs/cards/**'])).toEqual([])
+  })
+
+  test('a forbid from repo config or a sibling card is named in the line', () => {
+    const origin = (f: string) => (f === '.claude/**' ? 'repo config' : '')
+    const c = scopeForbidClashes(['.claude/skills/x/SKILL.md'], ['.claude/**'], origin)
+    expect(c[0]!.origin).toBe('repo config')
+    expect(line(c[0]!.entry, c[0]!.forbid, c[0]!.origin)).toBe('scope .claude/skills/x/SKILL.md is under forbid .claude/** (from repo config) — drop the forbid, narrow it, or drop the scope path')
+    expect(line('a/b.ts', 'a/**', 'sibling card MOD-9')).toContain('(from sibling card MOD-9)')
+  })
+
+  const ctx: CardCtx = { siblings: [], domains: ['mod'], gateIds: ['test'], names: [], spendByTier: { economy: 2, standard: 6, frontier: 15 } }
+  const input = (over: Record<string, unknown>) => ({ title: 't', why: 'w', doneWhen: ['d'], redTest: 'none', domain: 'mod', ...over })
+
+  test("the card tool refuses a card whose own scope clashes with its own forbid, and writes nothing", () => {
+    const r = cardFromFields(input({ scope: ['.claude/skills/x/SKILL.md'], forbid: ['.claude/**'] }), ctx)
+    expect(r).toEqual({ error: 'scope .claude/skills/x/SKILL.md is under forbid .claude/** — drop the forbid, narrow it, or drop the scope path' })
+  })
+
+  test("a clash with the parent issue's forbid does not refuse the card (dispatch warns, naming it)", () => {
+    const r = cardFromFields(input({ scope: ['src/a.ts'], parent: 5, parentForbid: ['src/**'] }), ctx)
+    expect('error' in r).toBe(false)
   })
 })

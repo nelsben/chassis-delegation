@@ -58,9 +58,8 @@ import {
   type ScopeAmends,
   amendScopeInsideForbid,
   amendInsideForbidLine,
-  forbidCovering,
-  scopeInsideForbidWarning,
-  scopeInsideForbid,
+  scopeForbidClashes,
+  scopeForbidClashLine,
   appendAmends,
   budgetWarning,
   effectiveList,
@@ -6862,6 +6861,25 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const expandAll = (list: readonly string[]): string[] => list.map(e => expandTilde(e, home))
   const headScope = expandAll(scope ?? card.scope)
   const headForbid = expandAll(forbid ?? card.forbid)
+  // MOD-227 (#304): a scope entry under a forbid can never be touched. A clash with the card's own forbid (its file or
+  // --forbid) refuses before any brief is written; a forbid a sibling card's scope put there wins as before and is warned
+  // about below, naming the sibling.
+  const siblingScopes = new Map<string, string>()
+  if (forbid === undefined && card.fields.parent !== undefined && !replay && scopeForbidClashes(headScope, headForbid).length > 0) {
+    try {
+      for (const e of await $.fs.list(tasksDir)) {
+        if (!e.name.endsWith('.md')) continue
+        const sib = parseCard((await readText($, `${tasksDir}/${e.name}`)) ?? '')
+        if ('error' in sib || sib.id === id || String(sib.fields.parent) !== String(card.fields.parent)) continue
+        for (const g of sib.scope) if (!siblingScopes.has(g)) siblingScopes.set(g, sib.id)
+      }
+    } catch {
+      // an unreadable folder names no sibling; the clash is then the card's own
+    }
+  }
+  const forbidOrigin = (f: string): string => (siblingScopes.has(f) ? `sibling card ${siblingScopes.get(f)}` : '')
+  const ownClash = replay ? undefined : scopeForbidClashes(headScope, headForbid, forbidOrigin).find(c => c.origin === '')
+  if (ownClash !== undefined) return `/dispatch ${id}: refused, no brief written: ${scopeForbidClashLine(ownClash.entry, ownClash.forbid)}`
   const outdir = outdirOf(headScope, card.outdir ? expandTilde(card.outdir, home) : undefined)
   // scratch= is written for a card that has an output folder, names a scratch folder, or shares or has no repo (a worktree card's header stays as it was)
   const scratch = outdir !== undefined || here || none || card.scratch ? (card.scratch ? expandTilde(card.scratch, home) : defaultScratch(await tmpDirOf($), id)) : undefined
@@ -7024,8 +7042,9 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   }
   const shownHeader = parseHeader(shown)
   const shownForbid = (shownHeader?.fields.forbid ?? '').split(',').filter(Boolean)
-  for (const entry of scopeInsideForbid((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid)) {
-    out.push(`   ${scopeInsideForbidWarning(entry, forbidCovering(entry, shownForbid) as string)}`)
+  // MOD-227: a forbid from elsewhere (the parent issue, a sibling card) wins as before; the line names where it came from
+  for (const c of scopeForbidClashes((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, forbidOrigin)) {
+    out.push(`   warning: ${scopeForbidClashLine(c.entry, c.forbid, c.origin)}`)
   }
   // MOD-29: a forbid glob that can match a scope entry or a path the done-when names is said once per collision (nothing is refused)
   for (const line of forbidCollisions((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, doneWhenOf(card.body))) {

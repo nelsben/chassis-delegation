@@ -446,9 +446,29 @@ export function amendScopeInsideForbid(a: Amend, forbid: readonly string[]): { p
 export const amendInsideForbidLine = (p: { path: string; forbid: string }): string =>
   `amend needs approval: scope+=${p.path} lies inside forbid ${p.forbid}; scope+= alone does nothing, shrink the forbid`
 
-/** The dispatch warning for a scope entry a forbid covers. */
-export const scopeInsideForbidWarning = (entry: string, forbid: string): string =>
-  `warning: scope entry ${entry} is inside forbid ${forbid} and can never be touched; shrink the forbid (forbid-=) to allow it`
+/**
+ * MOD-227 (#304): the scope entries a forbid entry or glob covers, each with the forbid and where that forbid came
+ * from (`originOf(forbid)`: '' for the card's own, else 'repo config' or 'sibling card <ID>'). Forbid wins over scope,
+ * so a worker could never touch such an entry; it is knowable when the brief is built.
+ */
+export function scopeForbidClashes(
+  scope: readonly string[],
+  forbid: readonly string[],
+  originOf: (forbid: string) => string = () => '',
+): { entry: string; forbid: string; origin: string }[] {
+  const out: { entry: string; forbid: string; origin: string }[] = []
+  for (const entry of scope) {
+    // the card's own forbid is named before any other: that is the one it can fix itself
+    const hits = forbid.filter(f => forbidCovering(entry, [f]) !== undefined)
+    const f = hits.find(h => originOf(h) === '') ?? hits[0]
+    if (f !== undefined) out.push({ entry, forbid: f, origin: originOf(f) })
+  }
+  return out
+}
+
+/** MOD-227: the one line for a clash; `origin` ('repo config', 'sibling card MOD-9') is named when the forbid is not the card's own. */
+export const scopeForbidClashLine = (entry: string, forbid: string, origin = ''): string =>
+  `scope ${entry} is under forbid ${forbid}${origin !== '' ? ` (from ${origin})` : ''} \u2014 drop the forbid, narrow it, or drop the scope path`
 
 /**
  * Appends each block to the brief on its own line, in order (append-only: the
