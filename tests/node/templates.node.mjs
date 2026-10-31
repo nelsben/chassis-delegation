@@ -128,13 +128,13 @@ describe('5E: hooks/templates/debrief.md, the built-in debrief', () => {
 
 describe('MOD-21: hooks/templates/review.md, the reviewer prompt', () => {
   // the keys register.ts fills (hooks/lib/review.ts, ReviewVars)
-  const KEYS = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback']
+  const KEYS = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback', 'gaterecord']
 
   test('it fills only keys the mod knows, and uses the ones a reviewer cannot do without', () => {
     const t = read('hooks/templates/review.md')
     const used = [...new Set([...t.matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))]
     for (const key of used) expect(KEYS.includes(key)).toBe(true)
-    for (const key of ['id', 'brief', 'worktree', 'sha', 'report', 'handback']) expect(used.includes(key)).toBe(true)
+    for (const key of ['id', 'brief', 'worktree', 'sha', 'report', 'handback', 'gaterecord']) expect(used.includes(key)).toBe(true)
   })
 
   test('it says: read the brief, the report and the diff at the sha; one row per claim; the three labels; the deciding command or file:line; edit nothing', () => {
@@ -184,7 +184,7 @@ describe('MOD-28: what the mod loads is what it ships', () => {
   })
 
   test('the shipped review.md uses only keys the reviewer spawn fills, and debrief.md carries no {{ marker at all', () => {
-    const filled = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback']
+    const filled = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback', 'gaterecord']
     const keys = [...read('hooks/templates/review.md').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1])
     for (const k of keys) expect(filled.includes(k)).toBe(true)
     expect(read('hooks/templates/debrief.md').includes('{{')).toBe(false)
@@ -212,5 +212,16 @@ describe('MOD-120 (#199 item 1): the brief shows the gate as the command it is j
       expect(out.includes('{{')).toBe(false)
     }
     expect(renderBrief(t, { ...base, mode: 'worktree', gateNote: '' }).includes('git diff --name-only')).toBe(false)
+  })
+})
+
+describe('MOD-253: the review template reads the verifier\'s gate record', () => {
+  test('it carries the record, tells the reviewer not to re-run the suite, and keeps the report instruction last', () => {
+    const t = read('hooks/templates/review.md')
+    expect(t.includes('{{gaterecord}}')).toBe(true)
+    expect(t.includes('do not re-run the suite')).toBe(true)
+    expect(t.includes('run the suite')).toBe(true)
+    expect(t.includes('a test run only if it writes nothing')).toBe(false)
+    expect(t.trimEnd().endsWith('[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]')).toBe(true)
   })
 })

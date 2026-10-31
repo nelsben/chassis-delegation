@@ -232,6 +232,7 @@ import {
   refutedRows,
   reviewAdvice,
   reviewClause,
+  gateRecord,
   reviewDue,
   reviewerDeny,
   reviewerPick,
@@ -1176,6 +1177,9 @@ async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<
 
 /** MOD-229: where each verifier's gate is (waiting for the engine-gate lock, or running), by task label, for the row and the verdict tool. */
 const gateProgress = new Map<string, GateProgress>()
+
+/** MOD-253: the last lines the verifier's gates printed, by task label, for the review brief. */
+const gateTails = new Map<string, string[]>()
 
 /**
  * MOD-229 (#323): a gate command as a spawned child, so the host's 10-minute cap on one `$.process.run` never
@@ -5569,6 +5573,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const lockPath = repo.replace(/\/+$/, '')
   const locked = !here && lockPath !== taskRepo ? await lockWorktree($, taskRepo, lockPath) : false
   let r: Awaited<ReturnType<typeof verifyNative>>
+  gateTails.delete(taskLabel(spawn.task, spawn.subtask))
   try {
     r = await verifyNative(
       {
@@ -5591,7 +5596,15 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
       {
         exec: (argv, init) => run($, [...argv], init),
         // MOD-229: gates (and the red test's re-run) are spawned under the mod's own ceiling
-        gate: (argv, init) => spawnGate($, [...argv], { cwd: init.cwd, progress: { key: taskLabel(spawn.task, spawn.subtask), id: init.id } }),
+        gate: async (argv, init) => {
+          const r = await spawnGate($, [...argv], { cwd: init.cwd, progress: { key: taskLabel(spawn.task, spawn.subtask), id: init.id } })
+          if (r.ok) {
+            const key = taskLabel(spawn.task, spawn.subtask)
+            const tail = `${r.stdout}\n${r.stderr}`.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '').slice(-GATE_TAIL_LINES)
+            gateTails.set(key, [...(gateTails.get(key) ?? []), `  [${init.id}] exit ${r.exitCode}`, ...tail.map(l => `  | ${l.trim()}`)])
+          }
+          return r
+        },
         write: (path, t) => $.fs.write(path, t),
         readRed: path => readRed($, path),
         turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask), taskLabel(spawn.task, spawn.subtask)),
@@ -6202,7 +6215,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   // MOD-21: the reviewer's spawn block rides under the row as a respawn's does; a review that cannot be set up is next=accept, with the reason
   let reviewBlock: string | undefined
   if (advice.kind === 'review') {
-    const built = await prepareReview($, spawn, { block: block ?? '', sha: report?.sha?.trim() ?? '', branch: report?.branch?.trim() ?? '', text })
+    const built = await prepareReview($, spawn, { block: block ?? '', sha: report?.sha?.trim() ?? '', branch: report?.branch?.trim() ?? '', text, lines })
     if ('block' in built) reviewBlock = built.block
     else {
       advice = { kind: 'accept', next: 'accept' }
@@ -8731,13 +8744,14 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
 
 /** What a hand-back may be quoted at in a reviewer's prompt. */
 const HANDBACK_CAP = 6000
+const GATE_TAIL_LINES = 8
 
 /**
  * MOD-21: the reviewer's spawn block for a consistent hand-back: hooks/templates/review.md filled in with the brief,
  * the tree, the sha, the base, the report and what the worker said, the model one tier below the worker's. A template
  * that cannot be read gives the reason instead (the verdict is then next=accept: a review never blocks on its own failure).
  */
-async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string; sha: string; branch: string; text: string }): Promise<{ block: string } | { why: string }> {
+async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string; sha: string; branch: string; text: string; lines?: readonly string[] }): Promise<{ block: string } | { why: string }> {
   // MOD-28: the review template as loaded with this code, never a fresh read of the folder
   const loaded = await loadedTemplates($)
   const template = loaded.text.get('review.md')
@@ -8767,6 +8781,7 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
       sha: input.sha || 'HEAD',
       base,
       report: input.block,
+      gaterecord: gateRecord(input.lines ?? [], gateTails.get(label) ?? []),
       handback: input.text.length > HANDBACK_CAP ? `${input.text.slice(0, HANDBACK_CAP - 1)}…` : input.text,
     },
   })

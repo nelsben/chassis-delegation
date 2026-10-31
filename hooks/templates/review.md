@@ -4,7 +4,7 @@ You are a reviewer, not a worker. A worker handed back {{id}} and the mod found 
 
 Read, in this order:
 1. The brief: {{brief}} (scope, forbid, red_test, gate, and the card under it).
-2. The report and the hand-back, below.
+2. The report, the verifier's gate record and the hand-back, below.
 3. The diff at the sha. The tree is {{worktree}} (branch {{branch}}, sha {{sha}}). `git -C {{worktree}} diff $(git -C {{worktree}} merge-base {{base}} {{sha}}) {{sha}}` shows it (if {{base}} does not resolve, try main, origin/master or master), and `git -C {{worktree}} show {{sha}}:<path>` shows a file as it stands there. If the report says sha=HEAD, the worker did not commit: the work is in the tree, so read `git -C {{worktree}} status --short` and `git -C {{worktree}} diff {{base}}`.
 
 ## What you do
@@ -18,7 +18,8 @@ Read, in this order:
 
 ## Rules
 - Edit nothing, and never fix anything: no Edit, Write, MultiEdit or NotebookEdit, no Bash command that writes a file, no commit, no push. The mod refuses them and a refused call is not a finding. If the worker got something wrong, say it in a refuted row; the worker is sent that row and fixes it.
-- Run only read-only commands: git diff, show, log and status, cat, grep, ls, and a test run only if it writes nothing outside a temporary folder.
+- Run only read-only commands: git diff, show, log and status, cat, grep, ls.
+- The mod already ran the gate at the sha; read its record below and do not re-run the suite (about 2 minutes under a lock). Run the suite yourself only if a finding depends on an output the record does not show, and then only if it writes nothing outside a temporary folder.
 - Do not stray out of {{worktree}} and the brief.
 - Keep any single foreground wait under 5 minutes; kill anything hung and say so.
 
@@ -29,6 +30,8 @@ unverifiable: <the claim> — <what you could not read, and what would decide it
 
 ## The report
 {{report}}
+
+{{gaterecord}}
 
 ## The hand-back
 {{handback}}

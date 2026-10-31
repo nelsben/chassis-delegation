@@ -9,6 +9,7 @@ import {
   parseReviewMarker,
   refutedRows,
   renderReview,
+  gateRecord,
   reviewAdvice,
   reviewClause,
   reviewDue,
@@ -308,5 +309,24 @@ describe('MOD-224: a review that arrives with no spawn record', () => {
     })
     expect(p.call.prompt).toContain('attempt=2 sha=1234abc')
     expect(p.call.prompt).toContain('[[review v=1 task=T-4 confirmed=N refuted=N unverifiable=N]]')
+  })
+})
+
+describe('MOD-253: the review brief carries the verifier\'s gate record', () => {
+  const claim = 'claim gate: held — gate green at 1234abcd (gate=pass confirmed)'
+  test('a passing gate gives the heading, its claim lines and the output tail', () => {
+    const out = gateRecord(['claim files: held — ok', claim], ['  | 120 pass', '  | 0 fail'])
+    expect(out.startsWith("## Verifier's gate record")).toBe(true)
+    expect(out.includes(claim)).toBe(true)
+    expect(out.includes('claim files')).toBe(false)
+    expect(out.includes('  | 0 fail')).toBe(true)
+  })
+  test('no gate claim gives a line saying no record exists', () => {
+    const out = gateRecord(['claim files: held — ok'], [])
+    expect(out.startsWith("## Verifier's gate record")).toBe(true)
+    expect(out.includes('no gate record')).toBe(true)
+  })
+  test('the record renders into the template through {{gaterecord}}', () => {
+    expect(renderReview('{{gaterecord}}\nend', { gaterecord: gateRecord([claim], []) }).includes(claim)).toBe(true)
   })
 })
