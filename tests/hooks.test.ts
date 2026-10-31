@@ -174,8 +174,8 @@ describe('tool.call on Agent: report capture and verify', () => {
     expect(context).toContain('claim branch: held — refs/heads/agent/frontend/T-4')
     expect(context).toContain('claim files: held — files= matches the sha delta exactly')
     expect(context).toContain(`${RED}\n  | a/x.ts: not formatted`)
-    // no chassis script: git reads and the gate, nothing else
-    expect(w.runs.every(x => x.argv[0] === 'git' || x.argv[0] === 'npx')).toBe(true)
+    // no chassis script: git reads, the gate, and (MOD-230) the load read after a red gate, nothing else
+    expect(w.runs.every(x => x.argv[0] === 'git' || x.argv[0] === 'npx' || x.argv[0] === 'sysctl' || x.argv[0] === 'nproc')).toBe(true)
     const gate = w.runs.find(x => x.argv[0] === 'npx')
     expect(gate?.argv).toEqual(GATE_ARGV)
     expect(gate?.cwd).toBe(ROOT) // no worktree beside the root: the root itself

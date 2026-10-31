@@ -559,3 +559,21 @@ describe('MOD-194: gh issue view', () => {
     no(view(), { ...A, landRepo: undefined })
   })
 })
+
+describe('MOD-230: the load read', () => {
+  test('exactly sysctl -n vm.loadavg hw.ncpu and nproc pass', () => {
+    ok(['sysctl', '-n', 'vm.loadavg', 'hw.ncpu'])
+    ok(['nproc'])
+  })
+  test('near-misses are refused', () => {
+    no(['sysctl', '-n', 'vm.loadavg'])
+    no(['sysctl', '-n', 'hw.memsize', 'hw.ncpu'])
+    no(['sysctl', '-n', 'vm.loadavg', 'hw.ncpu', 'kern.ostype'])
+    no(['sysctl', '-w', 'vm.loadavg=1'])
+    no(['sysctl', '-a'])
+    no(['sysctl'])
+    no(['nproc', '--all'])
+    no(['nproc', '1'])
+    no(['cat', '/proc/loadavg'])
+  })
+})

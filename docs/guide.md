@@ -132,6 +132,10 @@ A live app that takes one client at a time (a running Blender, a device on a ben
 The brain waits with the `verdict` tool; the `driveWarn` row points here.
 A worker waiting on its own background job wakes the brain once; past `waitStallMin` (default 20) it says the worker is stalled.
 
+## Many workers on a busy machine
+
+Engine-suite gates (`claude plugin test`) run one at a time, so nine lanes with that gate queue behind each other. When a dispatch queues or starts a lane and three or more live or queued briefed lanes have an engine gate, its result adds `<k> lanes share the engine gate; it runs one at a time: expect verdict waits`. When the verifier's gate is red or times out and the machine is loaded at that moment (the 1-minute load is at least twice the core count), the verdict adds `machine loaded (load <x> on <n> cores): may be load, not the change; re-run with /dispatch <ID> --verify <sha> once it drops`; the verdict itself is unchanged. Re-run it that way once the load drops. Workers are told to run a gate that fails with timeouts once more on its own before handing back gate=fail. The load is read with `sysctl -n vm.loadavg hw.ncpu` (macOS) or `/proc/loadavg` and `nproc` (Linux); a read that fails means no words, never a failed verdict.
+
 ## Lessons
 
 One committed file per domain, `<cardDir>/lessons/<domain>.md`, appended to every brief in that domain under

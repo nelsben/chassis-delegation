@@ -41,6 +41,7 @@
 //                                                            (MOD-197: this one shape also passes while /delegation merge runs, ahead of
 //                                                             the remote refusal; every other gh is still refused then)
 //                                                            (MOD-194: the tree tool and /delegation tree; read-only, args in exactly that order)
+//   sysctl -n vm.loadavg hw.ncpu, nproc                      (MOD-230: the load read, exactly these two argvs)
 //   claude plugin validate|test <absolute folder>            (exact; a no-repo brief's gate)
 //   a gate-map command, word for word, `{files}`, `{worktree}` and `{outdir}` filled by absolute paths
 //                                                            (./gates.ts holds what a map may name)
@@ -98,6 +99,9 @@ export function checkArgv(argv: readonly string[], allow: AllowConfig = {}): Che
   if (cmd === 'claude') return checkClaude(rest)
   // MOD-72: the verdict tool's wait is a `sleep` process (a $.clock wait would spend the hook's budget); only `sleep <whole seconds, 1 to 600>`
   if (cmd === 'sleep') return rest.length === 1 && /^[0-9]{1,3}$/.test(rest[0]!) && Number(rest[0]) >= 1 && Number(rest[0]) <= 600 ? ok : refuse('sleep takes one whole number of seconds, 1 to 600')
+  // MOD-230 (#323): the load read, exactly these two argvs and no other arguments (Linux reads /proc/loadavg with $.fs.read)
+  if (cmd === 'sysctl') return rest.length === 3 && rest.join(' ') === '-n vm.loadavg hw.ncpu' ? ok : refuse('sysctl passes only as `sysctl -n vm.loadavg hw.ncpu`')
+  if (cmd === 'nproc') return rest.length === 0 ? ok : refuse('nproc takes no arguments')
   if (matchesAnyTemplate(argv, allow.gateTemplates ?? [])) return ok
   return refuse(`${cmd} is not on the list (not git, gh, claude plugin, nor a gate-map command word for word)`)
 }

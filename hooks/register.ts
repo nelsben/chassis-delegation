@@ -293,6 +293,7 @@ import {
   type Verdict,
   type WorkPresent,
 } from './lib/verify'
+import { briefHasEngineGate, engineLanesLine, isLoaded, loadedWords, NPROC_ARGV, parseProcLoad, parseSysctlLoad, PROC_LOADAVG, SYSCTL_LOAD_ARGV, type LoadReading } from './lib/load'
 import { BASE_REFS, briefContract, briefWantsRed, isMalformedReport, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds } from './lib/watch'
 import { allowance, bar, cellDay, dayIndex, dayKey, dayRecord, daySegments, inWindow, pace, parseRecord, rationKey, rationReport, rationText, resetsIn, segments, surplus, type DayRecord, type Window as RationWindow } from './lib/ration'
@@ -5110,6 +5111,63 @@ async function unlockWorktree($: Host, repo: string, worktree: string): Promise<
   if (!r.ok || r.exitCode !== 0) debug($, `worktree unlock ${worktree} failed: ${r.ok ? `exit ${r.exitCode} ${r.stderr.trim()}` : r.why}`)
 }
 
+/**
+ * MOD-230 (#323): the machine's 1-minute load and core count. macOS runs `sysctl -n vm.loadavg hw.ncpu`; Linux (where
+ * that fails) reads /proc/loadavg and runs `nproc` (both argvs are exact entries of the allowlist). Fails open: any error, refusal or
+ * unparsable text is nothing.
+ */
+async function readMachineLoad($: Host): Promise<LoadReading | undefined> {
+  try {
+    const r = await run($, [...SYSCTL_LOAD_ARGV], { timeoutMs: 5000 })
+    if (r.ok && r.exitCode === 0) {
+      const mac = parseSysctlLoad(r.stdout)
+      if (mac) return mac
+    }
+    // not macOS (or sysctl cannot say): Linux
+    let proc: string
+    try {
+      proc = await $.fs.read(PROC_LOADAVG)
+    } catch {
+      return undefined
+    }
+    const n = await run($, [...NPROC_ARGV], { timeoutMs: 5000 })
+    return n.ok && n.exitCode === 0 ? parseProcLoad(proc, n.stdout) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** MOD-230: the loaded-machine words when the machine is loaded now, else nothing. */
+async function loadedWordsNow($: Host, id: string): Promise<string | undefined> {
+  const reading = await readMachineLoad($)
+  return isLoaded(reading) ? loadedWords(reading, id) : undefined
+}
+
+/**
+ * MOD-230 (#323): `<k> lanes share the engine gate; ...` when 3 or more briefed lanes (the live workers, the queued
+ * rows and this one) have an engine gate. The gate is read off each lane's brief; a brief that cannot be read is no lane.
+ */
+async function engineLanesNote($: Host, id: string, ownBrief: string, ownGateMap: Readonly<Record<string, string>>): Promise<string | undefined> {
+  try {
+    const lanes = new Set<string>()
+    const root = await $.session.root()
+    const consider = async (label: string, path: string | undefined, map: Readonly<Record<string, string>>) => {
+      const text = path ? await readText($, path) : undefined
+      if (text !== undefined && briefHasEngineGate(text, map)) lanes.add(label)
+    }
+    await consider(id, ownBrief, ownGateMap)
+    for (const w of (await liveState($)).workers) await consider(w.label, w.spawn.briefPath, cfg.gateMap)
+    for (const q of await readQueue($)) {
+      const label = taskLabel(q.task, q.subtask ?? 'main')
+      if (lanes.has(label)) continue
+      await consider(label, await existingBrief($, root, briefFileName(q.task)), cfg.gateMap)
+    }
+    return engineLanesLine(lanes.size)
+  } catch {
+    return undefined
+  }
+}
+
 async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<VerifyResult> {
   await loadRepoConfig($)
   const root = await $.session.root()
@@ -5167,7 +5225,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
         ...(outside ? { outside } : {}),
         ...(writes ? { writes } : {}),
       },
-      { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)), stat: path => statArtefact($, path) },
+      { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)), stat: path => statArtefact($, path), load: () => loadedWordsNow($, spawn.task) },
     )
   } finally {
     if (locked) await unlockWorktree($, taskRepo, lockPath)
@@ -6861,12 +6919,16 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     const at = queuedIndex(await readQueue($), id, 'main')
     out.push(`4. ${prepared.deny}`)
     out.push(`brief ${briefPath} · ${place} · branch ${branch} · ${queuedText(at >= 0 ? at + 1 : 1)}`)
+    const queuedShare = await engineLanesNote($, id, briefPath, target ? target.gateMap : cfg.gateMap)
+    if (queuedShare) out.push(queuedShare)
     return out.join('\n')
   }
   // GH-104: the line says what the spawn spends: the model and the attempt of the budget
   out.push(`4. spawn prepared: ${subagentType} on ${prepared.alias} · tier=${prepared.tier} (${prepared.source}) · attempt ${prepared.attempt}/${prepared.budget} — nothing runs until the Agent call below is made`)
   out.push(`brief ${briefPath} · ${place} · branch ${branch} · tier=${prepared.tier} → ${prepared.alias}`)
   out.push('', spawnBlock(prepared.call))
+  const startedShare = await engineLanesNote($, id, briefPath, target ? target.gateMap : cfg.gateMap)
+  if (startedShare) out.push(startedShare)
   // MOD-64: with wakes off nothing starts the brain's turn at the verdict, so it waits for it in the hand-back turn
   if (!cfg.wakeOnVerdict) out.push(verdictRule(id))
   return out.join('\n')
