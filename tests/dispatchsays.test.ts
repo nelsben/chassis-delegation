@@ -41,9 +41,11 @@ describe('MOD-219: a verdict says when its gate was reused', () => {
     expect(GATE_REUSED).toBe('gate reused (recorded pass, not re-run)')
     expect(verdictLine(v)).not.toContain('gate reused')
   })
-  test('the empty-delta swap is what marks a reused gate', () => {
+  test('a recorded gate that was not re-run marks a reused gate; the _empty swap does not', () => {
+    expect(gateReusedIn(['claim gate: unchecked — gate not re-run: prettier (not in gateMap)'])).toBe(true)
+    expect(gateReusedIn(['claim gate: unchecked — tree not at sha: 1 uncommitted path in the worktree; the gate was not re-run'])).toBe(true)
     const line = gateForDelta('test', { test: 'npm test', fast: 'echo ok', _empty: 'fast' }, []).line
-    expect(gateReusedIn([line as string])).toBe(true)
-    expect(gateReusedIn(['gate green at abc'])).toBe(false)
+    expect(gateReusedIn([line as string])).toBe(false)
+    expect(gateReusedIn(['claim gate: held — gate green at abc'])).toBe(false)
   })
 })

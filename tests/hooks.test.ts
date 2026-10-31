@@ -1520,7 +1520,7 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-5', REPORT))
     const row = verdictRows(w)[0] ?? ''
-    expect(row.split('\n')[0]).toBe(`chassis-delegation: verdict=unverified task=T-5 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=${PROVE}`)
+    expect(row.split('\n')[0]).toBe(`chassis-delegation: verdict=unverified task=T-5 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 · gate reused (recorded pass, not re-run) next=${PROVE}`)
     expect(row).not.toContain('check by hand')
     const sent = (await $.session.send({ to: 'agent-5', text: 'prove the gate', origin: { kind: 'model' } } as never)) as { isDelivered?: boolean }
     expect(sent.isDelivered).toBe(true)
@@ -1531,7 +1531,7 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     const w = world(on, { files: { [BRIEF]: HEADER() + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-5' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-5', REPORT))
-    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 next=resumed agent=agent-5 (autoEscalate)')
+    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/3 usd=~0.00 model=claude-sonnet-5-5 · gate reused (recorded pass, not re-run) next=resumed agent=agent-5 (autoEscalate)')
     expect(w.sent).toHaveLength(1)
     expect(w.sent[0]?.text).toContain('claim gate: unchecked — gate not re-run: prettier (not in gateMap)')
     expect(w.sent[0]?.text).not.toContain('claim branch: held')
@@ -1542,7 +1542,7 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     const w = world(on, { files: { [BRIEF]: HEADER(1) + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-5' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-5', REPORT))
-    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/1 usd=~0.00 model=claude-sonnet-5-5 next=check by hand — unverified is not a pass')
+    expect(verdictRows(w)[0]?.split('\n')[0]).toContain('verdict=unverified task=T-5 attempt=1/1 usd=~0.00 model=claude-sonnet-5-5 · gate reused (recorded pass, not re-run) next=check by hand — unverified is not a pass')
   })
 
   const WARN = 'warning: budget "frontier-60m" is not <n>-attempts; using the default 3'

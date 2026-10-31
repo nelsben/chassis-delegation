@@ -325,8 +325,8 @@ export function syntheticReport(r: { task: string; subtask: string; branch: stri
 /** MOD-219: the words a verdict row carries when its gate was not re-run (the recorded pass stood in). */
 export const GATE_REUSED = 'gate reused (recorded pass, not re-run)'
 
-/** MOD-219: whether the verifier's lines say the card's gate was swapped for the `_empty` gate (no changed files), so the suite was not re-run. */
-export const gateReusedIn = (lines: readonly string[]): boolean => lines.some(l => /^gate: .* \u2192 _empty /.test(l))
+/** MOD-219: whether the verifier's lines record a gate it did not run: a `claim gate: unchecked` line saying `not re-run` (an id missing from gateMap, a refused command, a tree not at the sha). The `_empty` swap runs a gate and is not one. */
+export const gateReusedIn = (lines: readonly string[]): boolean => lines.some(l => /^claim gate: unchecked — .*not re-run/.test(l))
 
 /**
  * The verdict row's first line. `usd` (the attempt's cost, 2 decimals) and the
