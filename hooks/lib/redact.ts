@@ -13,6 +13,8 @@ export type RedactRules = {
   userEmail?: string
   /** The person's own list (the /config option `redact`); never read from the repo file, which is public. */
   words?: readonly string[]
+  /** MOD-218: the issue goes to the origin repo itself, whose name is already public there: the origin and repo-name rules are skipped. */
+  sameRepo?: boolean
 }
 // one private-use character per placeholder, so a placeholder is never rescanned by a later rule
 const MARKS = { home: '\uE001', repo: '\uE002', person: '\uE003', redacted: '\uE004' } as const
@@ -23,6 +25,8 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 /** Not preceded or followed by a letter, digit, underscore (or hyphen, for names that carry one). */
 const wholeWord = (s: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRe(s)}(?![\\p{L}\\p{N}_])`, 'giu')
 const wholeName = (s: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}_-])${escapeRe(s)}(?![\\p{L}\\p{N}_-])`, 'giu')
+/** MOD-218: a name that is a dotfolder path segment (`~/.name/`, `/x/.name`) is a folder, not the repo: not matched. */
+const notDotfolder = (re: RegExp): RegExp => new RegExp(`(?<!\\/\\.)${re.source}`, re.flags)
 
 /** The comma-separated /config option as a list: trimmed, empties dropped. */
 export const parseRedactList = (text: string | undefined): string[] =>
@@ -49,21 +53,21 @@ export function redact(text: string, rules: RedactRules = {}): string {
   let out = text
   const repoMark = M('repo')
   const origin = (rules.origin ?? '').trim()
-  if (origin !== '') {
+  if (origin !== '' && rules.sameRepo !== true) {
     out = out.replace(new RegExp(escapeRe(origin), 'giu'), repoMark)
     const on = ownerNameOf(origin)
     if (on) out = out.replace(wholeName(on), repoMark)
   }
   out = out.replace(HOME_PREFIX, M('home'))
   const repo = (rules.repo ?? '').trim()
-  if (repo !== '') out = out.replace(wholeName(repo), repoMark)
+  if (repo !== '' && rules.sameRepo !== true) out = out.replace(notDotfolder(wholeName(repo)), repoMark)
   const email = (rules.userEmail ?? '').trim()
   if (email !== '') out = out.replace(new RegExp(escapeRe(email), 'giu'), M('person'))
   const name = (rules.userName ?? '').trim()
   if (name !== '') out = out.replace(wholeWord(name), M('person'))
   // any other email address is a person too
   out = out.replace(EMAIL, M('person'))
-  for (const w of rules.words ?? []) if (w.trim() !== '') out = out.replace(wholeWord(w.trim()), M('redacted'))
+  for (const w of rules.words ?? []) if (w.trim() !== '') out = out.replace(notDotfolder(wholeWord(w.trim())), M('redacted'))
   return out.replace(/[\uE001-\uE004]/g, c => PLACEHOLDERS[c] ?? '')
 }
 

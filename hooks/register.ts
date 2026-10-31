@@ -346,7 +346,7 @@ import {
 } from './lib/mergecmd'
 import { configPlan, fieldAnswer, manifestFields, rowsByField, viewFields, type CfgRow, type CfgView, type Source } from './lib/configcmd'
 import { CONFIG_TABLE } from './lib/configtable'
-import { parseUserOptions, repoFileWith, resolveOptions, userFileWith, userOptionsPath, type Resolved } from './lib/configeff'
+import { parseUserOptions, repoFileWith, repoProjectOf, resolveOptions, userFileWith, userOptionsPath, type Resolved } from './lib/configeff'
 import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
 import { dropLocalQuotes, gitConfigValue, parseRedactList, redact, type RedactRules } from './lib/redact'
 import { allowOf, missingBlocks, missingBlockRefusal, noLocalRefusal, renderLocal, trackedRefusal, unreadableRefusal } from './lib/brieflocal'
@@ -871,7 +871,7 @@ const taskRepos = new Map<string, { path: string; domains: string[]; gateTemplat
 let mergeCtx: MergeCtx | undefined
 /** MOD-143: the filled argv of the merge check running now (it passed the gate checker); the allowlist accepts exactly it, only while merge runs it. */
 let mergeCheckArgvs: string[][] = []
-const allowCfg = (): AllowConfig => ({ gateTemplates: [...(taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates), ...mergeCheckArgvs], ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(landRepo ? { landRepo } : {}), ...(parseProject(cfg.project) ? { project: parseProject(cfg.project) } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}), ...(mergeCtx ? { merge: mergeCtx } : {}) })
+const allowCfg = (): AllowConfig => ({ gateTemplates: [...(taskRepos.size > 0 ? [...cfg.gateTemplates, ...[...taskRepos.values()].flatMap(r => r.gateTemplates)] : cfg.gateTemplates), ...mergeCheckArgvs], ...(taskRepos.size > 0 ? { taskRepos: Object.fromEntries([...taskRepos.entries()].map(([id, r]) => [id, { path: r.path, domains: r.domains }])) } : {}), domains: cfg.domains, cardDir: cfg.cardDir, ...(cfg.issueRepo ? { issueRepo: cfg.issueRepo } : {}), ...(landRepo ? { landRepo } : {}), ...(effectiveProject() ? { project: effectiveProject() } : {}), ...(sessionRoot ? { root: sessionRoot } : {}), ...(cfg.worktreeRoot ? { worktreeRoot: cfg.worktreeRoot } : {}), ...(loadedRoot ? { pluginRoot: loadedRoot } : {}), ...(mergeCtx ? { merge: mergeCtx } : {}) })
 
 // ---- small host helpers (fail-open) ---------------------------------------
 function debug($: Host, text: string) {
@@ -1080,6 +1080,13 @@ async function homeDir($: Host): Promise<string> {
  * remakes the config: defaults < repo file < yours < the host's settings. `force` remakes it
  * though nothing changed (a /config row was just set).
  */
+/** MOD-218: the repo file's `project` as the land add reads it: `owner/number`, `'none'`, or undefined when absent or not a value. */
+let repoProject: string | undefined
+/** The project land adds to: the repo file's value when it has one (`none` adds nothing), else the option. */
+function effectiveProject(): { owner: string; number: number } | undefined {
+  return repoProject === 'none' ? undefined : parseProject(repoProject ?? cfg.project)
+}
+
 async function loadRepoConfig($: Host, force = false): Promise<void> {
   let root: string
   try {
@@ -1102,7 +1109,10 @@ async function loadRepoConfig($: Host, force = false): Promise<void> {
   const userChanged = uText !== userText
   repoText = text
   modManifest = manifest
-  const parsed = text === null ? { config: {}, errors: [] } : parseRepoConfig(text)
+  // MOD-218: the repo file's own `project` (an owner/number or none) is read here and wins over the user-level option
+  const repoProj = text === null ? { value: undefined, text: null } : repoProjectOf(text)
+  repoProject = repoProj.value
+  const parsed = text === null ? { config: {}, errors: [] } : parseRepoConfig(repoProj.text ?? text)
   repoLayer = parsed.config
   if (userChanged) {
     userText = uText
@@ -3724,7 +3734,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   // git is not on the allow list outside a merge, so the default branch comes from baseRef and origin from .git/config
   const wantName = defaultBranchOf((cfg.baseRef ?? '').trim())
   const def = wantName !== '' && !isSha(wantName) ? wantName : 'main'
-  const rules = await redactRules($)
+  const rules = await redactRules($, true)
   // MOD-204: the title is redacted with the body's rules before the slug, the dry-run line and gh
   const title = redact(a.title, rules)
   const body = redact(landedBody({ ...(a.note !== undefined ? { note: a.note } : {}), ...(a.supersedes !== undefined ? { supersedes: a.supersedes } : {}), paths: a.paths, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)
@@ -3795,7 +3805,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   if (!cfg.landAuto && a.confirm !== true) return [file, `title: ${title}`, `type: ${a.type}`, `parent: ${a.parent ?? 'none'}`, ghLine, ...supersedeLine, ...hintLine, ...(mayBeFiled ? [`may already be filed #${mayBeFiled.number} ${mayBeFiled.url} (checked on confirm)`] : []), 'nothing filed: landAuto is off; call land again with confirm: true once the person says yes'].join('\n')
   const r = await fileOne($, { root, ownerRepo, file, body, title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
   if ('failed' in r) return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...hintLine].join('\n')
-  const projectLines = await addToProject($, root, r.issue.url)
+  const projectLines = await addToProject($, root, r.issue.url, a.noProject === true)
   const closing = closeArgv(String(r.issue.number))
   let supersedeLines: string[] = []
   if (closing && a.supersedes !== undefined) {
@@ -3878,8 +3888,8 @@ async function issueIsOpen($: Host, root: string, ownerRepo: string, n: number):
 }
 
 /** MOD-193: adds an issue to the configured project; the one line it reports, or none when no project is set. */
-async function addToProject($: Host, root: string, url: string): Promise<string[]> {
-  const project = parseProject(cfg.project)
+async function addToProject($: Host, root: string, url: string, skip = false): Promise<string[]> {
+  const project = skip ? undefined : effectiveProject()
   if (!project) return []
   const added = await run($, ['gh', 'project', 'item-add', String(project.number), '--owner', project.owner, '--url', url], { cwd: root, timeoutMs: 60000 })
   return added.ok && added.exitCode === 0 ? [`added to project ${project.owner}/${project.number}`] : [`not added to project ${project.owner}/${project.number}: ${(added.ok ? added.stderr || added.stdout : added.why).trim().slice(0, 400)}`]
@@ -3892,7 +3902,7 @@ async function addToProject($: Host, root: string, url: string): Promise<string[
 async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promise<string> {
   if ('error' in parsedIn) return parsedIn.error
   await loadRepoConfig($)
-  const rules = await redactRules($)
+  const rules = await redactRules($, true)
   // MOD-204: every title is redacted with the body's rules before the slug, the printed lines and gh
   const parsed = { ...parsedIn, feature: { ...parsedIn.feature, title: redact(parsedIn.feature.title, rules) }, tasks: parsedIn.tasks.map(t => ({ ...t, title: redact(t.title, rules) })) }
   const root = (await $.session.root()).replace(/\/+$/, '')
@@ -4012,7 +4022,7 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   // MOD-198: every issue filed so far, this call's and an earlier call's, goes to the project; the lines say how that went
   const projectLines = async (): Promise<string[]> => {
     const lines: string[] = []
-    for (const i of issues) for (const l of await addToProject($, root, i.url)) lines.push(l.startsWith('added') ? l : `${i.title}: ${l}`)
+    for (const i of issues) for (const l of await addToProject($, root, i.url, parsed.noProject === true)) lines.push(l.startsWith('added') ? l : `${i.title}: ${l}`)
     const failures = lines.filter(l => !l.startsWith('added'))
     return [...(lines.length > 0 && failures.length === 0 ? [lines[0] as string] : []), ...failures]
   }
@@ -4034,7 +4044,7 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   return [...tree, ...written, ...filed, ...(await projectLines()), `tree: #${featureNumber} with ${parsed.tasks.length} tasks`].join('\n')
 }
 
-async function redactRules($: Host): Promise<RedactRules> {
+async function redactRules($: Host, forIssue = false): Promise<RedactRules> {
   const root = (await $.session.root()).replace(/\/+$/, '')
   const home = (await homeOf($)).replace(/\/+$/, '')
   const repoCfg = (await readText($, `${root}/.git/config`)) ?? ''
@@ -4046,6 +4056,8 @@ async function redactRules($: Host): Promise<RedactRules> {
   return {
     repo: root.split('/').pop() ?? '',
     ...(origin ? { origin } : {}),
+    // MOD-218: land files to the origin repo itself, whose name is already public there
+    ...(forIssue && ownerRepoOf(origin ?? '') ? { sameRepo: true } : {}),
     ...(userName ? { userName } : {}),
     ...(userEmail ? { userEmail } : {}),
     words: cfg.redact,

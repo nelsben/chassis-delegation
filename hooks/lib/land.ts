@@ -4,9 +4,9 @@ import { contained } from './scopetree'
 
 export const LAND_TYPES = ['feature', 'epic', 'story', 'task', 'bug', 'spike'] as const
 export type LandType = (typeof LAND_TYPES)[number]
-export const LAND_USAGE = `usage: /delegation land <${LAND_TYPES.join('|')}> <title> [--parent <n>] [--supersedes <n>] [--paths a,b] [--note <text>] [--dry-run] [--confirm]; type is one of ${LAND_TYPES.join(', ')}; --parent and --supersedes are whole numbers 1 or more; --confirm files the issue when the landAuto option is off`
+export const LAND_USAGE = `usage: /delegation land <${LAND_TYPES.join('|')}> <title> [--parent <n>] [--supersedes <n>] [--paths a,b] [--note <text>] [--dry-run] [--confirm] [--no-project]; type is one of ${LAND_TYPES.join(', ')}; --parent and --supersedes are whole numbers 1 or more; --confirm files the issue when the landAuto option is off`
 
-export type LandArgs = { type: LandType; title: string; parent?: number; /** MOD-200: the issue this one replaces; it is closed `superseded by #n` once this is filed. */ supersedes?: number; paths: string[]; note?: string; dryRun?: boolean; /** MOD-205: with landAuto off, true files; otherwise land only shows the issue. */ confirm?: boolean }
+export type LandArgs = { type: LandType; title: string; parent?: number; /** MOD-200: the issue this one replaces; it is closed `superseded by #n` once this is filed. */ supersedes?: number; paths: string[]; note?: string; dryRun?: boolean; /** MOD-205: with landAuto off, true files; otherwise land only shows the issue. */ confirm?: boolean; /** MOD-218: skip the Project item-add for this call only. */ noProject?: boolean }
 
 /** Words of the text; a double-quoted run is one word (the quotes dropped). */
 function words(text: string): { w: string; quoted: boolean }[] {
@@ -29,7 +29,14 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
   let flag = ''
   let dryRun = false
   let confirm = false
+  let noProject = false
   for (const { w, quoted } of ws.slice(1)) {
+    if (!quoted && w === '--no-project') {
+      if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
+      noProject = true
+      flag = ''
+      continue
+    }
     if (!quoted && w === '--dry-run') {
       if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
       dryRun = true
@@ -65,7 +72,7 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
   const t = title.join(' ').trim()
   if (t === '') return { error: LAND_USAGE }
   const n = note.join(' ').trim()
-  return { type, title: t, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(n !== '' ? { note: n } : {}), ...(dryRun ? { dryRun } : {}), ...(confirm ? { confirm } : {}) }
+  return { type, title: t, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(n !== '' ? { note: n } : {}), ...(dryRun ? { dryRun } : {}), ...(confirm ? { confirm } : {}), ...(noProject ? { noProject } : {}) }
 }
 
 /** MOD-192: the land tool, answered by the same function as /delegation land. */
@@ -83,6 +90,7 @@ export const LAND_TOOL = {
       paths: { type: 'array', items: { type: 'string' }, description: 'Optional: the repo paths the work touches (listed as a scope block in the body).' },
       note: { type: 'string', description: 'Optional: text for the top of the issue body.' },
       dryRun: { type: 'boolean', description: 'true: write the body and print the gh line only; file nothing.' },
+      project: { type: 'boolean', description: 'false: do not add this issue to the configured Project (this call only). Omit or true: add it as the project option says.' },
       confirm: { type: 'boolean', description: 'true only after the person has said yes to the issue shown; unless the landAuto option is on (off by default) the call files nothing without it. Ignored when landAuto is on.' },
     },
     required: ['type', 'title'],
@@ -108,7 +116,7 @@ export function parseLandTool(input: Record<string, unknown>): LandArgs | { erro
   }
   const paths = Array.isArray(input.paths) ? input.paths.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(p => p !== '') : []
   const note = typeof input.note === 'string' ? input.note.trim() : ''
-  return { type, title, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(note !== '' ? { note } : {}), ...(input.dryRun === true ? { dryRun: true } : {}), ...(input.confirm === true ? { confirm: true } : {}) }
+  return { type, title, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(note !== '' ? { note } : {}), ...(input.dryRun === true ? { dryRun: true } : {}), ...(input.confirm === true ? { confirm: true } : {}), ...(input.project === false ? { noProject: true } : {}) }
 }
 
 /** MOD-192: the `project` option, `<owner>/<number>`; undefined when it is not that. */
@@ -195,7 +203,7 @@ export function freeName(slug: string, taken: ReadonlySet<string>): string {
 }
 
 export type PlanItem = { title: string; type: LandType; paths: string[]; note?: string }
-export type Plan = { feature: PlanItem; tasks: PlanItem[]; confirm: boolean }
+export type Plan = { feature: PlanItem; tasks: PlanItem[]; confirm: boolean; /** MOD-218: skip the Project item-add for this call only. */ noProject?: boolean }
 
 /** MOD-193: the land_plan tool. */
 export const LAND_PLAN_TOOL = {
@@ -232,6 +240,7 @@ export const LAND_PLAN_TOOL = {
           additionalProperties: false,
         },
       },
+      project: { type: 'boolean', description: 'false: do not add the issues to the configured Project (this call only).' },
       confirm: { type: 'boolean', description: 'true only after the person has said yes to the tree shown; otherwise the call files nothing.' },
     },
     required: ['feature', 'tasks'],
@@ -269,7 +278,7 @@ export function parsePlan(input: unknown): Plan | { error: string } {
     if (stray !== undefined) return { error: `land_plan: task "${t.title}" path ${stray} is outside the feature paths (${feature.paths.join(', ')})` }
     tasks.push(t)
   }
-  return { feature, tasks, confirm: o.confirm === true }
+  return { feature, tasks, confirm: o.confirm === true, ...(o.project === false ? { noProject: true } : {}) }
 }
 
 const K256 = [
