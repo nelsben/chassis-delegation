@@ -163,6 +163,8 @@ export function parseReviewMarker(prompt: string): ReviewMarker | undefined {
 
 /** The keys hooks/templates/review.md may use; the mod fills each. */
 export type ReviewVars = {
+  /** MOD-253: the `## Verifier's gate record` section (gateRecord). */
+  gaterecord?: string
   id: string
   subtask: string
   attempt: string
@@ -184,6 +186,15 @@ export type ReviewVars = {
 /** The template with its `{{key}}`s filled in one pass: a key it lacks, and anything inside a value, stays as it is. */
 export const renderReview = (template: string, vars: Readonly<Record<string, string>>): string =>
   template.replace(/\{\{(\w+)\}\}/g, (whole, key: string) => (key in vars ? (vars[key] as string) : whole))
+
+/** MOD-253: the review brief's `## Verifier's gate record`: the verdict's gate claim lines and the gate output tail, so the reviewer need not re-run the suite. */
+export function gateRecord(lines: readonly string[], tail: readonly string[]): string {
+  const head = "## Verifier's gate record"
+  const claims = lines.filter(l => l.startsWith('claim gate:'))
+  if (claims.length === 0) return `${head}\n\n(no gate record: the verifier did not run a gate for this hand-back; run the suite yourself only if a finding depends on it)`
+  const out = tail.length > 0 ? `\n\nGate output tail:\n${tail.join('\n')}` : '\n\n(no gate output was kept)'
+  return `${head}\n\nThe mod ran the gate at the sha and recorded:\n${claims.join('\n')}${out}`
+}
 
 export type ReviewPlanInput = {
   /** hooks/templates/review.md. */
