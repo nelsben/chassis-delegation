@@ -1,7 +1,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { parseReport } from '../hooks/lib/brief'
 import { engineLockDecision, ENGINE_POLL_MS, isEngineGate, readEngineLock, waitedLine } from '../hooks/lib/gates'
-import { advise } from '../hooks/lib/verify'
+import { advise, gateReusedIn } from '../hooks/lib/verify'
 import { gateFailures, timeoutRerun, verifyNative, type ExecOut } from '../hooks/lib/verify-native'
 
 // MOD-20: a gate red only on timeouts in tests the delta never touched is re-run once; an engine
@@ -327,5 +327,20 @@ describe('MOD-149: a red gate saves its full output and says when the tree chang
     const r = await verifyNative(input({ outDir: OUT, attempt: 1 }), w.io)
     expect(claim(r.lines, 'gate')).toBe('claim gate: held — gate green at a1b2c3d (gate=pass confirmed)')
     expect(written.size).toBe(1)
+  })
+})
+
+describe('MOD-219: the verifier recording a gate it did not run is what the row calls reused', () => {
+  test('a gate id missing from gateMap is not re-run, and its claim line is read as reused', async () => {
+    const w = world([ok()])
+    const r = await verifyNative(input({ gateMap: {} }), w.io)
+    expect(claim(r.lines, 'gate')).toContain('gate not re-run: test')
+    expect(w.gate).toEqual([])
+    expect(gateReusedIn(r.lines)).toBe(true)
+  })
+  test('a gate that ran is not reused', async () => {
+    const w = world([ok()])
+    const r = await verifyNative(input(), w.io)
+    expect(gateReusedIn(r.lines)).toBe(false)
   })
 })
