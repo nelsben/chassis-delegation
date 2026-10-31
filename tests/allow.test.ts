@@ -24,6 +24,7 @@ describe('allowlist accepts', () => {
     ok(['git', '-C', R, 'rev-parse', '--abbrev-ref', 'HEAD'])
     ok(['git', 'status', '--porcelain'])
     ok(['git', 'log', '-1', '--format=%H'])
+    ok(['git', '-C', R, 'diff-tree', '-r', '--name-only', 'a'.repeat(40), 'HEAD^{tree}'])
     ok(['git', 'worktree', 'list', '--porcelain'])
     ok(['gh', 'pr', 'list', '--json', 'number'])
     ok(['gh', 'pr', 'view', '12', '--json', 'state'])

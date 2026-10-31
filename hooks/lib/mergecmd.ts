@@ -91,7 +91,7 @@ export const MERGE_TOOL = {
 
 // ---- the verdict a merge needs ------------------------------------------------------------
 
-export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha?: string; kind?: string }
+export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha?: string; kind?: string; gateTree?: Record<string, string> }
 
 /**
  * The task's latest verdict row in the ledger text (main subtask). A reviewer's row that says
@@ -100,6 +100,22 @@ export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha
 export function latestVerdictRow(ledger: string, task: string): VerdictRow | undefined {
   return resolveRows(verdictRows(ledger, task))
 }
+
+const TREE_HASH = /^[0-9a-f]{40,64}$/
+
+/** MOD-236: a verdict row's gateTree (gate id -> tree hash), keeping only well-formed entries; undefined when none. */
+export function gateTreeOf(v: unknown): Record<string, string> | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, t] of Object.entries(v as Record<string, unknown>)) if (typeof t === 'string' && TREE_HASH.test(t)) out[k] = t
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * MOD-236: whether a `git diff-tree -r --name-only <recorded> HEAD^{tree}` output (an empty string for none) shows no change
+ * but the card's own path: the rebase moved nothing the verifier's gates could have seen.
+ */
+export const onlyCardMoved = (diffOut: string, cardRel: string | undefined): boolean => diffOut.split('\n').map(l => l.trim()).filter(Boolean).every(l => l === cardRel)
 
 function verdictRows(ledger: string, task: string): VerdictRow[] {
   const rows: VerdictRow[] = []
@@ -113,7 +129,7 @@ function verdictRows(ledger: string, task: string): VerdictRow[] {
     }
     if (!r || r.task !== task || typeof r.verdict !== 'string') continue
     if (r.subtask !== undefined && r.subtask !== 'main') continue
-    rows.push({ verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}), ...(typeof r.attempt === 'number' ? { attempt: r.attempt } : {}), ...(typeof r.sha === 'string' ? { sha: r.sha } : {}), ...(typeof r.kind === 'string' ? { kind: r.kind } : {}) })
+    rows.push({ verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}), ...(typeof r.attempt === 'number' ? { attempt: r.attempt } : {}), ...(typeof r.sha === 'string' ? { sha: r.sha } : {}), ...(typeof r.kind === 'string' ? { kind: r.kind } : {}), ...(gateTreeOf(r.gateTree) ? { gateTree: gateTreeOf(r.gateTree) as Record<string, string> } : {}) })
   }
   return rows
 }

@@ -3,7 +3,7 @@
 // and a refused argv never runs. Pure: no `$`.
 //
 // Allowed, and nothing else (part 5A: no chassis script is on the list):
-//   git [-C <dir>] diff|merge-base|rev-parse|status|log …   (no --output, --ext-diff, --textconv; the verifier's delta is `diff --name-status -M`)
+//   git [-C <dir>] diff|diff-tree|merge-base|rev-parse|status|log …   (no --output, --ext-diff, --textconv; the verifier's delta is `diff --name-status -M`)
 //   git [-C <dir>] worktree list [--porcelain|-v|--verbose|-z]
 //   git [-C <dir>] fetch [-q] origin main                    (exact)
 //   git -C <plugin root> merge --ff-only origin/main        (exact; <plugin root> is the loaded folder only; /delegation update)
@@ -63,7 +63,7 @@ export type TaskRepo = { path: string; domains?: readonly string[] }
 
 export type AllowConfig = { /** MOD-44: the task ids that name another local repo as theirs, and that repo; `git -C <path> worktree add` passes for those tasks only. */ taskRepos?: Readonly<Record<string, TaskRepo>>; gateTemplates?: readonly (readonly string[])[]; domains?: readonly string[]; worktreeRoot?: string; /** MOD-3: the loaded plugin folder, the one dir `merge --ff-only origin/main` may run in. */ pluginRoot?: string; cardDir?: string; /** MOD-7: the one repo `gh issue` may name (owner/name); empty or absent = no issue form passes. */ issueRepo?: string; /** MOD-7: the session root, whose .delegation/debriefs/ holds the only body files. */ root?: string; /** MOD-192: owner/name of the session root's origin (empty or absent = no land create passes). */ landRepo?: string; /** MOD-192: the configured GitHub Project; absent = no item-add passes. */ project?: { owner: string; number: number }; /** MOD-75: set only while `/delegation merge` runs: its local git writes pass, exact shapes bound to this one task; a push, gh, curl, sf or wget never does. */ merge?: MergeCtx }
 
-const GIT_READ = ['diff', 'merge-base', 'rev-parse', 'status', 'log']
+const GIT_READ = ['diff', 'diff-tree', 'merge-base', 'rev-parse', 'status', 'log']
 const GIT_WRITEY_FLAGS = /^(--output(=|$)|--ext-diff$|--textconv$|-O)/
 const TASK_ID = /^[A-Z][A-Z0-9]*-\d+[a-z]?$/
 const TASK_ID_SRC = '[A-Z][A-Z0-9]*-\\d+[a-z]?'

@@ -139,6 +139,8 @@ export type NativeResult = {
   red?: { path: string; hash?: string; held?: boolean }
   /** MOD-22: the report's metrics=, for the attempt record; never judged. */
   metrics?: Record<string, string>
+  /** MOD-236: each gate id whose runs all exited 0, with the worktree tree hash they ran on (the id that ran, the `_empty` swap included). */
+  gateTree?: Record<string, string>
 }
 
 /** What the mod read at a report's red= path (register.ts, through `$.fs`). */
@@ -842,6 +844,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
 
   // 5. the gate, re-run in the worker's own worktree at the sha (an honest gate=fail is never punished);
   //    repo=here: in the shared checkout as it stands, uncommitted changes and all
+  let gateTree: Record<string, string> | undefined
   const emptyGate = cardless ? { gate: contract.gate } : gateForDelta(contract.gate, input.gateMap, delta)
   if (emptyGate.line) lines.push(emptyGate.line)
   const gates: GateResolution = cardless ? { runs: [], notRerun: [] } : resolveGateRuns(emptyGate.gate, input.gateMap, input.allowed ?? (() => false), input.filesPath, input.repo, contract.outdir)
@@ -869,6 +872,11 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       let timedOut = false
       // MOD-20: timeouts in tests the delta never touched, seen on a first run that was then run again
       let reranTimeouts = 0
+      // MOD-236: the runs of each gate id, and how many of them exited 0
+      const runsOf: Record<string, number> = {}
+      const passedOf: Record<string, number> = {}
+      const idOf = (run: GateRun): string => gateIdOf(emptyGate.gate, input.gateMap, run.label)
+      for (const run of gates.runs) runsOf[idOf(run)] = (runsOf[idOf(run)] ?? 0) + 1
       const runGate = async (run: GateRun): Promise<{ r: ExecOut; timeouts: number }> => {
         // an engine gate waits for another worker's engine gate to finish; the turn is held across a rerun
         const turn = io.turn && isEngineGate(run.argv) ? await io.turn(run.argv).catch(() => undefined) : undefined
@@ -901,6 +909,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
           fullOut = `${r.stdout}${r.stdout && r.stderr && !r.stdout.endsWith('\n') ? '\n' : ''}${r.stderr}`
           break
         }
+        passedOf[idOf(run)] = (passedOf[idOf(run)] ?? 0) + 1
       }
       // MOD-149: a red run in a worktree that is gone or moved by the end of it is not judged
       let changed: string | undefined
@@ -908,6 +917,15 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         const head = firstLine(await out('rev-parse', 'HEAD'))
         if (!head) changed = 'gone'
         else if (head !== full) changed = `HEAD now ${head.slice(0, 7)}`
+      }
+      // MOD-236: the gates that passed whole, on the tree they ran on (read after the run, only when the worktree stood still)
+      const passedIds = Object.keys(runsOf).filter(id => passedOf[id] === runsOf[id])
+      if (!here && !changed && passedIds.length > 0) {
+        const tree = firstLine(await out('rev-parse', 'HEAD^{tree}'))
+        if (/^[0-9a-f]{40,64}$/.test(tree)) {
+          gateTree = {}
+          for (const id of passedIds) gateTree[id] = tree
+        }
       }
       // MOD-149: the whole output of a red run, saved where the lead can read it
       let outputAt = ''
@@ -1004,5 +1022,5 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   if (hasMetrics) lines.push(metricsLine(metrics))
 
   const verdict: NativeVerdict = anyFailed ? 'refuted' : anyUnchecked ? 'unverified' : 'consistent'
-  return { verdict, lines: [...lines, ...notes], ...(red ? { red } : {}), ...(hasMetrics ? { metrics } : {}) }
+  return { verdict, lines: [...lines, ...notes], ...(red ? { red } : {}), ...(hasMetrics ? { metrics } : {}), ...(gateTree ? { gateTree } : {}) }
 }

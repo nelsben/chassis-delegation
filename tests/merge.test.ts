@@ -130,6 +130,67 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(pr).not.toMatch(/\/(Users|home)\//)
   })
 
+  // MOD-236: the verifier recorded the tree each gate passed on; a rebase that moves only the card leaves that tree as it was
+  const VERIFIED = 'a'.repeat(40)
+  const treeRow = (gateTree: Record<string, string>) => JSON.stringify({ task: ID, subtask: 'main', attempt: 1, kind: 'spawn', verdict: 'consistent', sha: 'abc1234', next: 'accept', gateTree }) + '\n'
+  const ALL = { validate: VERIFIED, node: VERIFIED, test: VERIFIED }
+  const treeDiff = (out: string | undefined): Answers => argv => (argv.includes('diff-tree') ? (out === undefined ? { exitCode: 128, stdout: '' } : is(argv, 'git', '-C', WT, 'diff-tree', '-r', '--name-only', VERIFIED, 'HEAD^{tree}') ? { exitCode: 0, stdout: out } : undefined) : undefined)
+  const VALIDATE = (): string => `claude plugin validate ${WT}`
+  const NODE = 'node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs'
+  const TEST = (): string => `claude plugin test ${WT}`
+
+  test('MOD-236: a merge whose rebase changes nothing but the card file runs no gate process', async ($, on) => {
+    const w = world(on, { files: files(treeRow(ALL)), dirs, store, run: happy(treeDiff(`docs/cards/${CARD_NAME}\n`)) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    const ran = w.runs.map(r => r.argv.join(' '))
+    expect(ran).not.toContain(VALIDATE())
+    expect(ran).not.toContain(NODE)
+    expect(ran).not.toContain(TEST())
+    for (const g of ['validate', 'node', 'test']) {
+      const line = `${g}: gate reused (pass at verify on tree ${VERIFIED.slice(0, 10)}, not re-run)`
+      expect(out).toContain(line)
+      expect(w.files.get(`${ROOT}/.delegation/${ID}/merge-gates.txt`)).toContain(line)
+    }
+    expect(out).toContain('gates green')
+    expect(blockOf(out)[0]).toBe(`git -C ${WT} push -u origin ${BRANCH}`)
+  })
+
+  test('MOD-236: an empty tree diff (a git-ignored card, no card commit) is no change either', async ($, on) => {
+    const w = world(on, { files: files(treeRow(ALL)), dirs, store, run: happy(treeDiff('')) })
+    await $.session.start(sessionStart)
+    await $.command.run(mergeCmd(ID))
+    expect(w.runs.map(r => r.argv.join(' '))).not.toContain(TEST())
+  })
+
+  test('MOD-236: a merge after the base moved (any other path in the tree diff) runs every gate', async ($, on) => {
+    const w = world(on, { files: files(treeRow(ALL)), dirs, store, run: happy(treeDiff(`docs/cards/${CARD_NAME}\nhooks/register.ts\n`)) })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    const ran = w.runs.map(r => r.argv.join(' '))
+    expect(ran).toContain(VALIDATE())
+    expect(ran).toContain(NODE)
+    expect(ran).toContain(TEST())
+    expect(out).not.toContain('gate reused')
+  })
+
+  test('MOD-236: only the gates with a recorded tree are skipped', async ($, on) => {
+    const w = world(on, { files: files(treeRow({ validate: VERIFIED })), dirs, store, run: happy(treeDiff('')) })
+    await $.session.start(sessionStart)
+    await $.command.run(mergeCmd(ID))
+    const ran = w.runs.map(r => r.argv.join(' '))
+    expect(ran).not.toContain(VALIDATE())
+    expect(ran).toContain(NODE)
+    expect(ran).toContain(TEST())
+  })
+
+  test('MOD-236: a tree diff that fails runs every gate', async ($, on) => {
+    const w = world(on, { files: files(treeRow(ALL)), dirs, store, run: happy(treeDiff(undefined)) })
+    await $.session.start(sessionStart)
+    await $.command.run(mergeCmd(ID))
+    expect(w.runs.map(r => r.argv.join(' '))).toContain(VALIDATE())
+  })
+
   test('the merge tool is registered and answers as the command does (one function, two doors)', async ($, on) => {
     const w = world(on, { files: files(), dirs, store, run: happy() })
     await $.session.start(sessionStart)

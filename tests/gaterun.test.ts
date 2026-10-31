@@ -1,7 +1,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { parseReport } from '../hooks/lib/brief'
 import { engineLockDecision, ENGINE_POLL_MS, isEngineGate, readEngineLock, waitedLine } from '../hooks/lib/gates'
-import { advise, gateReusedIn } from '../hooks/lib/verify'
+import { advise, gateNotRerun } from '../hooks/lib/verify'
 import { gateFailures, timeoutRerun, verifyNative, type ExecOut } from '../hooks/lib/verify-native'
 
 // MOD-20: a gate red only on timeouts in tests the delta never touched is re-run once; an engine
@@ -137,6 +137,7 @@ const GIT: Record<string, ExecOut> = {
   [git('diff', '--name-status', '-M', MB, FULL)]: ok('A\tsrc/a.ts\nA\tdocs/x.md\n'),
   [git('rev-parse', 'HEAD')]: ok(`${FULL}\n`),
   [git('status', '--porcelain')]: ok(''),
+  [git('rev-parse', 'HEAD^{tree}')]: ok(`${'e'.repeat(40)}\n`),
 }
 
 /** The gate answers `answers` in order (the last one for every run after); the calls and the turns are recorded. */
@@ -330,17 +331,38 @@ describe('MOD-149: a red gate saves its full output and says when the tree chang
   })
 })
 
-describe('MOD-219: the verifier recording a gate it did not run is what the row calls reused', () => {
-  test('a gate id missing from gateMap is not re-run, and its claim line is read as reused', async () => {
+describe('MOD-219/236: the verifier recording a gate it did not run is what the row calls not re-run', () => {
+  test('a gate id missing from gateMap is not re-run, and its claim line is read as not re-run', async () => {
     const w = world([ok()])
     const r = await verifyNative(input({ gateMap: {} }), w.io)
     expect(claim(r.lines, 'gate')).toContain('gate not re-run: test')
     expect(w.gate).toEqual([])
-    expect(gateReusedIn(r.lines)).toBe(true)
+    expect(gateNotRerun(r.lines)).toBe('gate not re-run (not in gateMap)')
   })
-  test('a gate that ran is not reused', async () => {
+  test('a gate that ran is not marked', async () => {
     const w = world([ok()])
     const r = await verifyNative(input(), w.io)
-    expect(gateReusedIn(r.lines)).toBe(false)
+    expect(gateNotRerun(r.lines)).toBeUndefined()
+  })
+})
+
+describe('MOD-236: the verifier records the tree each passing gate ran on', () => {
+  test('a gate that exited 0 is recorded under its id with the worktree tree hash', async () => {
+    const w = world([ok()])
+    const r = await verifyNative(input(), w.io)
+    expect(r.gateTree).toEqual({ test: 'e'.repeat(40) })
+  })
+  test('a red gate, and a gate id that was not run, record nothing', async () => {
+    const red1 = await verifyNative(input(), world([{ ok: true, exitCode: 1, stdout: 'x', stderr: '' }]).io)
+    expect(red1.gateTree).toBeUndefined()
+    const none = await verifyNative(input({ gateMap: {} }), world([ok()]).io)
+    expect(none.gateTree).toBeUndefined()
+  })
+  test('a gate id of several commands is recorded only when all of them passed', async () => {
+    const two = input({ gateMap: { test: 'npm test && npm run lint' }, allowed: () => true })
+    const both = await verifyNative(two, world([ok(), ok()]).io)
+    expect(both.gateTree).toEqual({ test: 'e'.repeat(40) })
+    const second = await verifyNative(two, world([ok(), { ok: true, exitCode: 1, stdout: 'x', stderr: '' }]).io)
+    expect(second.gateTree).toBeUndefined()
   })
 })
