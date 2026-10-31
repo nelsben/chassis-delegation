@@ -93,7 +93,7 @@ Detail: [CHANGELOG 0.9.29](../CHANGELOG.md).
 
 Nothing to do.
 Changed: while the verifier judges a hand-back the worker's worktree is locked, so `git worktree remove --force` refuses it; land after the verdict (`git worktree unlock <path>` frees one left behind).
-Optional: a repo can set `gateTimeoutMinutes` (whole minutes 1 to 10, default 9) for a long gate.
+Optional: a repo can set `gateTimeoutMinutes` (whole minutes; 1 to 120, default 30 since MOD-229) for a long gate.
 Detail: [CHANGELOG 0.9.28](../CHANGELOG.md).
 
 ### From 0.9.26 to 0.9.27
