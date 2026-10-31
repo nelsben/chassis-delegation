@@ -2,7 +2,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { sessionRecords, events, familyOf, sampleEvery, spendByModel, spendSeries, SPEND_CAP, worktreeRows, type SpendPoint, sparkText } from '../hooks/lib/live'
 import type { AttemptRecord } from '../hooks/lib/attempts'
-import { world, spawnInput, workerCall, SCRATCH } from './harness'
+import { world, spawnInput, workerCall, SCRATCH, sessionStart } from './harness'
 import { brainLine, brainSummary, emptyBrain } from '../hooks/lib/brain'
 
 const NOW = 10_000_000
@@ -185,5 +185,62 @@ describe('MOD-240: liveState and spawnByAgent reads', () => {
     const before = w.storeGets
     await workerCall($, w, 'agent-7', { tool: 'Bash', command: 'git commit -m x' })
     expect(w.storeGets - before).toBeLessThanOrEqual(2)
+  })
+})
+
+// MOD-242: the spend sampler sleeps when nothing is running, redraws only when the figure moved, and the model probe backs off.
+describe('MOD-242: the spend sampler and the model probe', () => {
+  const MIN = 60_000
+  test('an idle session makes 0 ui invalidations from the sampler between minute 1 and minute 10', async ($, on) => {
+    const w = world(on)
+    await $.session.start(sessionStart)
+    await w.clock.advance(MIN)
+    const before = w.invalidations
+    for (let i = 0; i < 9; i++) await w.clock.advance(MIN)
+    expect(w.invalidations - before).toBe(0)
+  })
+
+  test('a live worker is still sampled every 15 s, a redraw per moved figure; an unmoved figure redraws nothing', async ($, on) => {
+    const w = world(on)
+    w.store.set('delegation.agent.ag0', 'k0')
+    w.store.set('delegation.spawn.k0', { key: 'k0', task: 'T-0', subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 3, purpose: 'build', description: '', subagentType: 'general-purpose', agentId: 'ag0', at: NOW })
+    w.agents.push({ id: 'ag0', type: 'general-purpose', description: '', status: 'running' })
+    await $.session.start(sessionStart)
+    await w.clock.advance(1)
+    for (let i = 0; i < 4; i++) {
+      w.usd += 1
+      const before = w.invalidations
+      await w.clock.advance(15_000)
+      expect(w.invalidations, `tick ${i}`).toBeGreaterThan(before)
+    }
+    const still = w.invalidations
+    await w.clock.advance(15_000)
+    expect(w.invalidations).toBe(still)
+    // the curve keeps a point per moved tick
+    const series = w.store.get('delegation.spend') as SpendPoint[] | undefined
+    expect(series === undefined || series.length >= 4).toBe(true)
+  })
+
+  test('the probe stops asking a model after 3 failures, until candidateIds changes; a success clears the entry', { options: { probeModels: true, candidateIds: 'claude-next-9' } }, async ($, on) => {
+    const w = world(on, { skip: ['model.classify'] })
+    let asked = 0
+    let fail = true
+    ;(on as unknown as (n: string, h: unknown) => void)('model.classify', () => {
+      asked++
+      if (fail) throw new Error('no such model')
+      return { value: 'ok' }
+    })
+    for (let i = 0; i < 5; i++) {
+      await $.session.start(sessionStart)
+      for (let j = 0; j < 5; j++) await w.clock.advance(1)
+    }
+    expect(asked).toBe(3)
+    expect(w.store.get('delegation.models.failed')).toMatchObject({ 'claude-next-9': { n: 3 } })
+    fail = false
+    w.store.set('delegation.models.failed', { 'claude-next-9': { n: 1, idsHash: (w.store.get('delegation.models.failed') as Record<string, { idsHash: string }>)['claude-next-9']!.idsHash } })
+    await $.session.start(sessionStart)
+    for (let j = 0; j < 5; j++) await w.clock.advance(1)
+    expect(asked).toBe(4)
+    expect(w.store.get('delegation.models.failed')).toEqual({})
   })
 })

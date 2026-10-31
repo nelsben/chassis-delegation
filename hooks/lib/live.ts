@@ -19,6 +19,24 @@ export const SAMPLE_IDLE_MS = 60_000
 /** How often to sample the session's dollars: fast while a worker is live or queued, slow otherwise. */
 export const sampleEvery = (active: boolean): number => (active ? SAMPLE_LIVE_MS : SAMPLE_IDLE_MS)
 
+/** MOD-242: a tick makes a point only when the session dollars or the live-worker count moved since the last point. */
+export const sampleMoved = (last: { usd: number; workers: number } | undefined, usd: number, workers: number): boolean =>
+  last === undefined || last.usd !== usd || last.workers !== workers
+
+/** MOD-242: the probe's hash of the candidate ids; a failure count is good only for the list it was counted against. */
+export const idsHashOf = (ids: readonly string[]): string => {
+  let h = 5381
+  for (const c of ids.join('|')) h = ((h * 33) ^ c.charCodeAt(0)) >>> 0
+  return h.toString(16)
+}
+export const PROBE_MAX_FAILURES = 3
+export type ProbeFailed = Record<string, { n: number; idsHash: string }>
+/** MOD-242: is `id` given up on (3 failures against this same id list)? */
+export const probeSkipped = (failed: ProbeFailed | undefined, id: string, idsHash: string): boolean => {
+  const f = failed?.[id]
+  return f !== undefined && f.idsHash === idsHash && f.n >= PROBE_MAX_FAILURES
+}
+
 /** The series with one more sample, the last `cap` kept; a sample that is no finite number is dropped. */
 export function spendSeries(prev: readonly SpendPoint[] | undefined, point: SpendPoint, cap = SPEND_CAP): SpendPoint[] {
   const list = Array.isArray(prev) ? prev : []
