@@ -875,5 +875,20 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(await say($, 'gateTimeoutMinutes')).toContain('gateTimeoutMinutes')
     expect(delivered(w) + w.debugLogs.join('\n')).toContain('gateTimeoutMinutes')
   })
+
+  test('treeImportBatch: 1 makes a tree import create one issue and stop', async ($, on) => {
+    let n = 49
+    const w = world(on, {
+      skip: ['prompt.submit'],
+      files: { [`${ROOT}/.git/config`]: '[remote "origin"]\n\turl = https://github.com/o/r.git\n', [`${ROOT}/.delegation/plans/p.json`]: JSON.stringify({ version: 1, items: [{ type: 'epic', title: 'One' }, { type: 'epic', title: 'Two' }] }) },
+      run: async (argv: string[]) => (argv[0] === 'sleep' ? { exitCode: 0, stdout: '' } : argv[0] === 'gh' ? { exitCode: 0, stdout: argv[2] === 'create' ? `https://github.com/o/r/issues/${++n}\n` : '' } : undefined),
+    })
+    await $.session.start(sessionStart)
+    await set($, 'treeImportBatch', '1')
+    const r = await $.tool.call({ tool: 'mcp__chassis-delegation__tree_import', file: '.delegation/plans/p.json', confirm: true } as never)
+    const out = typeof (r as { result?: unknown }).result === 'string' ? ((r as { result?: string }).result as string) : String((r as { text?: string }).text ?? '')
+    expect(out).toContain('filed 1 of 2; run again to continue')
+    expect(w.runs.filter(x => x.argv[0] === 'gh' && x.argv[2] === 'create').length).toBe(1)
+  })
 })
 

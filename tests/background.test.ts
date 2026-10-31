@@ -38,7 +38,7 @@ describe('2A: the dispatch tool', () => {
   test('dispatch is registered as a tool at session.start, beside the command', BRIEFS, async ($, on) => {
     const w = world(on, { files: cardFiles(), dirs: cardDirs, run: whichOpus })
     await $.session.start(sessionStart)
-    expect(w.tools).toEqual(['dispatch', 'verdict', 'card', 'init', 'setup', 'merge', 'land', 'land_plan', 'tree'])
+    expect(w.tools).toEqual(['dispatch', 'verdict', 'card', 'init', 'setup', 'merge', 'land', 'land_plan', 'tree_import', 'tree'])
     expect(w.commands).toContain('dispatch')
   })
 

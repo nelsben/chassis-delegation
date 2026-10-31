@@ -187,6 +187,36 @@ To backfill work that already shipped, give the item the evidence: `land --close
 
 To read a plan back, use the `tree` tool (or `/delegation tree <n>`, the same function) with the number of a feature or other parent issue. It runs one read-only `gh issue view` for this repo's origin and prints the issue as `#<n> <type>: <title> (open|closed)`, its `scope:` and `forbid:` blocks, then one row per sub-issue: `done` (closed, or its card is accepted or merged), `in flight` (an open card names it in `issue:`, and the row ends with that card's id) or `planned`, then a count line. It writes no file and files nothing. Use it at the start of a session to pick up the plan. Before cutting a task's card under a parent, call it on the parent: its last line, `parentScope for a task card: [...]`, is the JSON array to pass as the card tool's `parentScope`, together with `parent: <n>` (and `parentForbid` from the `forbid:` line).
 
+### Tree import
+
+To file a large multi-level plan (a backfill of many features, epics, stories and tasks) in one reviewed step, write it as a JSON file under `.delegation/plans/` (any other folder is refused) and run `/delegation tree import <file> --dry-run` (or the `tree_import` tool). The file is `{ "version": 1, "parent"?: <n>, "items": [ ... ] }`; each item has a `type` (feature, epic, story or task), a `title`, and optional `paths`, `note`, `close` and `children`, nested up to 4 levels. The land_plan path rules hold at every level (a task needs a path; a child's paths sit inside its parent's when the parent has paths) and so does the `close` rule, and a parent with more than 100 children is refused; every error names its item, such as `items[2].children[0]`, and nothing is filed on any of them.
+
+```json
+{
+  "version": 1,
+  "parent": 12,
+  "items": [
+    {
+      "type": "feature",
+      "title": "Example feature",
+      "children": [
+        {
+          "type": "epic",
+          "title": "Example epic",
+          "paths": ["src/example/**"],
+          "children": [
+            { "type": "task", "title": "Example task", "paths": ["src/example/a.ts"] },
+            { "type": "task", "title": "Example done task", "paths": ["src/example/b.ts"], "close": "shipped before the mod" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+The dry run (and any call without `confirm`) prints the whole tree indented, with the count per type and how many items are new, may be reused and will be filed closed, and runs no `gh`. Add `--confirm` (the tool's `confirm: true`) after you have read it: the import files parents before children with the same shapes `land` uses, under `parent` when the file names one, and writes each issue number back into the file as `"issue": <n>` after its create. The file is the manifest: a re-run reads it first and skips an item whose issue is open (or closed, when the item has `close`), so after a failure or a stop it files only what is missing. Each run creates at most `treeImportBatch` issues (default 20, 1 to 100), at least a second apart, and then stops with `filed k of n; run again to continue`.
+
 Create the type labels once per repo, with the owner and name of your repo in place of `acme/widgets`:
 
 ```
@@ -219,6 +249,8 @@ Two one-line leads sit in the band above the prompt, for the brain and not for y
 | `/delegation config [all \| <group> \| <field> [<value> \| default] \| repo <field> <value>]` | you | shows or sets options (see [/delegation config](configuration.md#delegation-config)) |
 | `/delegation dashboard` | you | opens the pane (see [Dashboard](#dashboard)) |
 | `/delegation merge <ID> [--review <text> \| --review-file <abs path>]` | you, or the brain after a consistent/accept verdict | rebases, commits the card as merged, runs the gates, writes `.delegation/<ID>/pr.md`, prints the push and PR block (see [Merging a card](review-and-merge.md#merging-a-card)) |
+| `/delegation tree import <file> [--dry-run] [--confirm]` | you | files a multi-level plan file from `.delegation/plans/`; dry run first, resumable (see [Tree import](#tree-import)) |
+| `tree_import` | the brain | the same, with `file`, `dryRun` and `confirm` |
 | `/delegation land <type> <title> [--parent <n>] [--paths a,b] [--note <text>]` | you | writes a redacted issue body under `.delegation/landed/` and prints the `gh issue create` line; files and dispatches nothing |
 | `/delegation merge <ID> --finish` | you, or the brain after the PR landed | checks the branch is in origin, pulls, removes the worktree and branch, writes the `merged` ledger row, prints the cleanup block |
 | `/dispatch <ID> [--dry-run\|--scope\|--forbid\|--replay\|--base\|--here\|--repo <abs path>\|--force-overlap]` | you | brief, worktree, tier, spawn block (see **Spawn** under [The contracts](contracts.md#the-contracts)); `--here` shares your checkout (see [repo=here](contracts.md#repohere-the-main-checkout)) |

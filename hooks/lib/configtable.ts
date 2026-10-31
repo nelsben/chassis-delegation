@@ -39,6 +39,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['ledgerFile', 'Checking the work', 'Keep a log of every spawn and judged attempt inside the repo', 'bool', 'user', true],
   ['baseRef', 'Checking the work', 'The branch or commit that a worker\'s changes are compared against', 'text', 'repo', ''],
   ['landAuto', 'Debriefs', 'Off: land shows the issue first and files on your yes; on: files at once', 'bool', 'user', false],
+  ['treeImportBatch', 'Debriefs', 'Most issues one tree import creates in a run, 1 to 100; then run it again', 'count', 'user', 20],
   ['project', 'Debriefs', 'The GitHub board that issues filed by land are added to, as owner/number', 'text', 'repo', ''],
   ['ignore', 'Checking the work', 'Files and folders left out when checking a worker that shares your checkout', 'list', 'repo', ''],
   ['briefDir', 'Where things go', 'The folder where worker instructions are saved', 'text', 'user', ''],
