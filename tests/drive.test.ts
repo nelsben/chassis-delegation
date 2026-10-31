@@ -1,7 +1,7 @@
 // MOD-48: what the brain's driving costs it: the call kinds, the split's lines, and the warn row (pure).
 import { test, expect, describe } from 'claude-code/testing'
 import { priceFor, usdOf } from '../hooks/lib/cost'
-import { callKind, commandKey, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyDrive, emptyWatch, DRIVE_THRESHOLD_TOKENS, freshSessionRow } from '../hooks/lib/drive'
+import { callKind, cutText, isPoll, commandKey, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyDrive, emptyWatch, DRIVE_THRESHOLD_TOKENS, freshSessionRow } from '../hooks/lib/drive'
 
 describe('MOD-48: the kind of a call', () => {
   test('a background Bash call, an until loop and a sleep loop are run-or-poll', () => {
@@ -171,5 +171,45 @@ describe('MOD-53: the fresh-session row', () => {
   })
   test('0 is off', () => {
     expect(freshSessionRow(900_000, 0)).toBeUndefined()
+  })
+})
+
+describe('MOD-225 (#305): a poll is looked for outside heredoc bodies and quoted text', () => {
+  const NOTES = "cat > notes.md <<'EOF'\nwe wait while the build runs, then\nuntil it is green we sleep 5 and retry\nEOF"
+  test('real polls still poll', () => {
+    expect(isPoll('until [ -f x ]; do sleep 5; done')).toBe(true)
+    expect(isPoll('while true; do ls; sleep 10; done')).toBe(true)
+    expect(isPoll('sleep 30 && cat log')).toBe(true)
+    expect(isPoll("bash -c 'until [ -f x ]; do sleep 5; done'")).toBe(true)
+    expect(isPoll('sh -c "while true; do sleep 2; done"')).toBe(true)
+    expect(isPoll("zsh -lc 'sleep 30'")).toBe(true)
+  })
+  test('a heredoc write, a quoted message and a quoted echo do not poll', () => {
+    expect(isPoll(NOTES)).toBe(false)
+    expect(isPoll("cat > f <<-'EOF'\n\twhile x; do sleep 1; done\n\tEOF\n")).toBe(false)
+    expect(isPoll('cat > f <<EOF\nuntil done\nEOF')).toBe(false)
+    expect(isPoll('git commit -m "wait until the sleep test passes"')).toBe(false)
+    expect(isPoll('echo "sleep 5"')).toBe(false)
+    expect(isPoll("echo 'until x'")).toBe(false)
+  })
+  test('a poll after a heredoc on the same command still polls', () => {
+    expect(isPoll("cat > f <<'EOF'\nhello\nEOF\nsleep 30")).toBe(true)
+  })
+  test('callKind: the notes write is not a run-or-poll', () => {
+    expect(callKind('Bash', { command: NOTES }, true)).toBe('edit')
+  })
+  test('cutText removes heredoc bodies and quoted strings, keeps a bash -c body', () => {
+    expect(cutText("cat > f <<'EOF'\nbody\nEOF\nls")).toBe('cat > f <<\nls')
+    expect(cutText('echo "a b" \'c\' d')).toBe('echo "" \'\' d')
+    expect(cutText("bash -c 'sleep 3'")).toBe("bash -c ' sleep 3'")
+    expect(cutText('cat <<< "x y"')).toBe('cat <<< ""')
+  })
+  test('commandKey ignores a heredoc body, so two writes of different prose are not a repeat', () => {
+    expect(commandKey("cat > f <<'EOF'\none\nEOF")).toBe(commandKey("cat > f <<'EOF'\ntwo\nEOF"))
+    expect(commandKey('git commit -m "a"')).toBe(commandKey('git commit -m "b"'))
+  })
+  test('the row does not speak for a notes write at a large context', () => {
+    const r = driveStep(emptyWatch(), { command: NOTES, context: 300_000, threshold: DRIVE_THRESHOLD_TOKENS, model: 'claude-opus-5-5', enabled: true })
+    expect(r.row).toBeUndefined()
   })
 })
