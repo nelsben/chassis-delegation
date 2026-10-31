@@ -88,7 +88,7 @@ export type RepoConfig = {
   /** MOD-124 (#188): a gitignored rules file (repo-relative or absolute) copied into every brief under a section the debrief drops. */
   briefLocal?: string
   maxWorkers?: number
-  /** MOD-155 (#246): whole minutes (1 to 10) the verifier and merge let one gate run; unset = 9. */
+  /** MOD-155 (#246), MOD-229 (#323): whole minutes (1 to 120) the verifier and merge let one gate run; unset = 30. */
   gateTimeoutMinutes?: number
   /** MOD-131 (#219): a second, lower ceiling under maxWorkers for the briefed workers of a tier (a whole number of 1 or more); a tier the map lacks takes the total alone. */
   maxWorkersByTier?: Partial<Record<Tier, number>>
