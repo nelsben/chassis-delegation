@@ -758,3 +758,135 @@ describe('MOD-213: land_plan parent and no-path items', () => {
     expect(none).toContain('nothing filed')
   })
 })
+
+describe('MOD-214: an item filed already done is closed at once with its evidence', () => {
+  const tool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land', ...input } as never)
+  const planTool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land_plan', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const gh = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh')
+  const closes = (w: any) => gh(w).filter((a: string[]) => a[2] === 'close')
+  const creates = (w: any) => gh(w).filter((a: string[]) => a[2] === 'create')
+  // numbers from 50; `states` answers gh issue view per number (OPEN unless set); `failClose` numbers refuse to close
+  const fake = (states: Record<number, string> = {}, failClose: number[] = [], subs: { number: number; state: string }[] = []) => {
+    let n = 49
+    return async (argv: string[]) => {
+      if (argv[0] !== 'gh') return undefined
+      if (argv[2] === 'view') return { exitCode: 0, stdout: JSON.stringify({ number: Number(argv[3]), state: states[Number(argv[3])] ?? 'OPEN', subIssues: subs }) }
+      if (argv[2] === 'close') return failClose.includes(Number(argv[3])) ? { exitCode: 1, stdout: '', stderr: 'no permission' } : { exitCode: 0, stdout: '' }
+      if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
+      n++
+      return { exitCode: 0, stdout: `https://github.com/o/r/issues/${n}\n` }
+    }
+  }
+  const setup = (on: any, run = fake()) => world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run })
+  const plan = (closeTasks: (string | undefined)[], closeFeature: string | undefined = 'shipped in v1', over: Record<string, unknown> = {}) => ({
+    feature: { title: 'Export rework', paths: ['src/export/**'], ...(closeFeature ? { close: closeFeature } : {}) },
+    tasks: [
+      { title: 'Fix header', paths: ['src/export/a.ts'], ...(closeTasks[0] ? { close: closeTasks[0] } : {}) },
+      { title: 'Fix footer', paths: ['src/export/b.ts'], ...(closeTasks[1] ? { close: closeTasks[1] } : {}) },
+    ],
+    ...over,
+  })
+
+  test('land --closed files, then closes with the redacted comment and writes a closed: line', { options: { landAuto: true, redact: 'globex' } }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'story', title: 'Old export', closed: 'shipped by globex in v1' }))
+    expect(out).toContain('filed #50')
+    expect(closes(w)).toEqual([['gh', 'issue', 'close', '50', '--repo', 'o/r', '--comment', expect.stringMatching(/^done before filing: shipped by .* in v1$/)]])
+    expect(closes(w)[0][7]).not.toContain('globex')
+    expect(out).toContain('closed #50')
+    expect(w.files.get(`${LANDED}/old-export.md`) ?? '').toMatch(/issue: #50 \S+\nclosed: \d{4}-\d\d-\d\dT[\d:.]+Z\n$/)
+    const parsed = parseLandArgs('story Old export --closed shipped in v1 --paths a.ts')
+    expect('error' in parsed ? '' : parsed.closed).toBe('shipped in v1')
+    expect(LAND_USAGE).toContain('--closed')
+  })
+
+  test('land without closed runs no close', { options: { landAuto: true } }, async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await tool($, { type: 'story', title: 'Plain' })
+    expect(closes(w)).toEqual([])
+  })
+
+  test('land_plan with every child closed closes the children, then the parent', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan(['in v1', 'in v2'], 'whole thing in v2', { confirm: true })))
+    expect(closes(w).map((a: string[]) => a[3])).toEqual(['51', '52', '50'])
+    expect(closes(w)[2][7]).toBe('done before filing: whole thing in v2')
+    expect(out).not.toContain('left open')
+    expect(w.files.get(`${LANDED}/fix-header.md`) ?? '').toMatch(/closed: \d{4}-/)
+  })
+
+  test('one open child keeps the parent open and the result says so', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan(['in v1', undefined], 'all of it', { confirm: true })))
+    expect(closes(w).map((a: string[]) => a[3])).toEqual(['51'])
+    expect(out).toContain('#50 left open: 1 open children')
+  })
+
+  test('a child with close under a parent without close leaves the parent open', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan(['in v1', 'in v2'], '', { confirm: true })))
+    expect(closes(w).map((a: string[]) => a[3])).toEqual(['51', '52'])
+    expect(out).not.toContain('left open')
+  })
+
+  test('the preview marks the item (filed closed: ...) and runs no gh', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan(['in v1', undefined])))
+    expect(out).toContain('  task: Fix header [src/export/a.ts] (filed closed: in v1)')
+    expect(out).toContain('(filed closed: shipped in v1)')
+    expect(out).not.toContain('Fix footer [src/export/b.ts] (filed')
+    expect(gh(w)).toEqual([])
+    const land = text(await tool($, { type: 'story', title: 'Old export', closed: 'in v1', dryRun: true }))
+    expect(land).toContain('(filed closed: in v1)')
+    expect(gh(w)).toEqual([])
+  })
+
+  test('a retry closes a reused item that is still open, and leaves a closed one as is', async ($, on) => {
+    const states: Record<number, string> = {}
+    const failing = [51]
+    const inner = fake(states, [], [{ number: 51, state: 'OPEN' }, { number: 52, state: 'OPEN' }])
+    const run = async (argv: string[]) => {
+      if (argv[0] === 'gh' && argv[2] === 'close' && failing.includes(Number(argv[3]))) return { exitCode: 1, stdout: '', stderr: 'no permission' }
+      if (argv[0] === 'gh' && argv[2] === 'view') return { exitCode: 0, stdout: JSON.stringify({ number: Number(argv[3]), state: states[Number(argv[3])] ?? 'OPEN', subIssues: [{ number: 51, state: states[51] ?? 'OPEN' }, { number: 52, state: states[52] ?? 'OPEN' }] }) }
+      return inner(argv)
+    }
+    const w = setup(on, run)
+    await $.session.start(sessionStart)
+    const input = plan(['in v1', 'in v2'], '', { confirm: true })
+    const first = text(await planTool($, input))
+    expect(first).toContain('close #51 failed: no permission')
+    expect(closes(w).map((a: string[]) => a[3])).toEqual(['51', '52'])
+    states[52] = 'CLOSED'
+    failing.length = 0
+    w.runs.length = 0
+    const out = text(await planTool($, input))
+    expect(creates(w)).toEqual([])
+    expect(closes(w).map((a: string[]) => a[3])).toEqual(['51'])
+    expect(out).toContain('already filed #51')
+    expect(out).not.toContain('failed')
+  })
+
+  test('a failed close is reported once, not retried, and no closed: line is written', async ($, on) => {
+    const w = setup(on, fake({}, [51]))
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan(['in v1', undefined], '', { confirm: true })))
+    expect(out.split('\n').filter(l => l.startsWith('close #51 failed'))).toHaveLength(1)
+    expect(closes(w)).toHaveLength(1)
+    expect(w.files.get(`${LANDED}/fix-header.md`) ?? '').not.toContain('closed:')
+  })
+
+  test('a close that is not text is refused before anything is written', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, plan([], '', { feature: { title: 'Export rework', paths: ['src/export/**'], close: 5 } })))
+    expect(out).toContain('close')
+    expect([...w.files.keys()].some(k => k.startsWith(LANDED))).toBe(false)
+  })
+})

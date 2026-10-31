@@ -210,7 +210,7 @@ import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
+import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
@@ -3737,6 +3737,9 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   const rules = await redactRules($, true)
   // MOD-204: the title is redacted with the body's rules before the slug, the dry-run line and gh
   const title = redact(a.title, rules)
+  // MOD-214: the evidence goes through the same rules before the preview line and the close comment
+  const closedEv = a.closed !== undefined ? redact(a.closed, rules) : undefined
+  const closedLine = closedEv !== undefined ? [`(filed closed: ${closedEv})`] : []
   const body = redact(landedBody({ ...(a.note !== undefined ? { note: a.note } : {}), ...(a.supersedes !== undefined ? { supersedes: a.supersedes } : {}), paths: a.paths, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)
   const folder = `${root}/.delegation/landed`
   let taken = new Set<string>()
@@ -3752,7 +3755,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   sessionRoot = root
   // MOD-207: the newest <slug>[-n].md whose body is this body (an issue: line aside) is this landing's file; a copy with no issue: line is reused, one with an issue: line is a resume
   let name = ''
-  let alreadyFiled: { number: number; url: string } | undefined
+  let alreadyFiled: { number: number; url: string; closed?: boolean } | undefined
   let mayBeFiled: { number: number; url: string } | undefined
   const filing = cfg.landAuto || a.confirm === true
   if (!a.dryRun && ownerRepo) {
@@ -3769,9 +3772,13 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
       else if (!filing) {
         name = same.name
         mayBeFiled = prior
-      } else if (await issueIsOpen($, root, ownerRepo, prior.number)) {
-        name = same.name
-        alreadyFiled = prior
+      } else {
+        const view = await viewIssue($, root, ownerRepo, prior.number)
+        // MOD-214: a landing that is to be filed closed also reuses its issue once it is closed
+        if (view?.state === 'OPEN' || (closedEv !== undefined && view?.state === 'CLOSED')) {
+          name = same.name
+          alreadyFiled = { ...prior, closed: view.state === 'CLOSED' }
+        }
       }
     }
   }
@@ -3790,7 +3797,11 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
       return `land: ${file} not written: ${String(err)}`
     }
   }
-  if (alreadyFiled) return [file, `already filed #${alreadyFiled.number} ${alreadyFiled.url}`].join('\n')
+  if (alreadyFiled) {
+    // MOD-214: a retry closes the reused issue when it is still open and the call says closed; a closed one is left as is
+    const again = closedEv !== undefined && !alreadyFiled.closed ? [await closeFiled($, root, ownerRepo as string, alreadyFiled.number, closedEv, file)] : []
+    return [file, `already filed #${alreadyFiled.number} ${alreadyFiled.url}`, ...again].join('\n')
+  }
   const hint = a.parent === undefined ? parentHint(a.paths, open) : undefined
   const ghLine = ownerRepo
     ? `gh issue create --repo ${ownerRepo} --title ${shellWord(title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
@@ -3800,9 +3811,9 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   const supersedeNote = (a.note ?? title).replace(/\s+/g, ' ').trim()
   const closeArgv = (newNumber: string): string[] | undefined => (a.supersedes !== undefined && ownerRepo ? ['gh', 'issue', 'close', String(a.supersedes), '--repo', ownerRepo, '--comment', superseded(Number(newNumber), supersedeNote)] : undefined)
   const supersedeLine = a.supersedes !== undefined && ownerRepo ? [`gh issue close ${a.supersedes} --repo ${ownerRepo} --comment ${shellWord(`superseded by #<new>: ${supersedeNote}`)}`] : []
-  if (a.dryRun || !ownerRepo) return [file, ghLine, ...supersedeLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
+  if (a.dryRun || !ownerRepo) return [file, ghLine, ...closedLine, ...supersedeLine, ...hintLine, 'nothing was filed or dispatched'].join('\n')
   // MOD-205: landAuto off shows the issue and files only when asked again with confirm
-  if (!cfg.landAuto && a.confirm !== true) return [file, `title: ${title}`, `type: ${a.type}`, `parent: ${a.parent ?? 'none'}`, ghLine, ...supersedeLine, ...hintLine, ...(mayBeFiled ? [`may already be filed #${mayBeFiled.number} ${mayBeFiled.url} (checked on confirm)`] : []), 'nothing filed: landAuto is off; call land again with confirm: true once the person says yes'].join('\n')
+  if (!cfg.landAuto && a.confirm !== true) return [file, `title: ${title}`, `type: ${a.type}`, `parent: ${a.parent ?? 'none'}`, ghLine, ...closedLine, ...supersedeLine, ...hintLine, ...(mayBeFiled ? [`may already be filed #${mayBeFiled.number} ${mayBeFiled.url} (checked on confirm)`] : []), 'nothing filed: landAuto is off; call land again with confirm: true once the person says yes'].join('\n')
   const r = await fileOne($, { root, ownerRepo, file, body, title, type: a.type, ...(a.parent !== undefined ? { parent: a.parent } : {}) })
   if ('failed' in r) return [file, `gh issue create failed; the line it tried: ${ghLine}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...hintLine].join('\n')
   const projectLines = await addToProject($, root, r.issue.url, a.noProject === true)
@@ -3815,7 +3826,8 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
         ? [`closed #${a.supersedes} as superseded by #${r.issue.number}`]
         : [`gh issue close failed; the line it tried: ${closing.slice(0, 6).join(' ')} --comment ${shellWord(closing[7] as string)}`, `gh said: ${(c.ok ? c.stderr || c.stdout : c.why).trim().slice(0, 400) || '(nothing on stderr)'}`]
   }
-  return [file, `filed #${r.issue.number} ${r.issue.url}`, ...projectLines, ...supersedeLines, ...hintLine].join('\n')
+  const doneLines = closedEv !== undefined ? [await closeFiled($, root, ownerRepo, r.issue.number, closedEv, file)] : []
+  return [file, `filed #${r.issue.number} ${r.issue.url}`, ...projectLines, ...doneLines, ...supersedeLines, ...hintLine].join('\n')
 }
 
 /** MOD-194: the tree tool and /delegation tree <n>: one gh issue view, printed as done / in flight / planned. Read-only; writes no file. */
@@ -3887,6 +3899,21 @@ async function issueIsOpen($: Host, root: string, ownerRepo: string, n: number):
   return (await viewIssue($, root, ownerRepo, n))?.state === 'OPEN'
 }
 
+/**
+ * MOD-214: closes a filed issue with `done before filing: <evidence>` (the evidence already redacted) through the allowlisted
+ * `gh issue close` shape, and adds `closed: <ISO time>` to its landed file. The one result line; a failed close is not retried.
+ */
+async function closeFiled($: Host, root: string, ownerRepo: string, n: number, evidence: string, file: string): Promise<string> {
+  const c = await run($, ['gh', 'issue', 'close', String(n), '--repo', ownerRepo, '--comment', doneBeforeFiling(evidence)], { cwd: root, timeoutMs: 60000 })
+  if (!c.ok || c.exitCode !== 0) return `close #${n} failed: ${(c.ok ? c.stderr || c.stdout : c.why).trim().slice(0, 400) || '(nothing on stderr)'}`
+  try {
+    await $.fs.write(file, withClosedLine((await readText($, file)) ?? '', new Date(await now($)).toISOString()))
+  } catch (err) {
+    debug($, `land: closed line not written to ${file}: ${String(err)}`)
+  }
+  return `closed #${n}`
+}
+
 /** MOD-193: adds an issue to the configured project; the one line it reports, or none when no project is set. */
 async function addToProject($: Host, root: string, url: string, skip = false): Promise<string[]> {
   const project = skip ? undefined : effectiveProject()
@@ -3904,7 +3931,7 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   await loadRepoConfig($)
   const rules = await redactRules($, true)
   // MOD-204: every title is redacted with the body's rules before the slug, the printed lines and gh
-  const parsed = { ...parsedIn, feature: { ...parsedIn.feature, title: redact(parsedIn.feature.title, rules) }, tasks: parsedIn.tasks.map(t => ({ ...t, title: redact(t.title, rules) })) }
+  const parsed = { ...parsedIn, feature: { ...parsedIn.feature, title: redact(parsedIn.feature.title, rules), ...(parsedIn.feature.close !== undefined ? { close: redact(parsedIn.feature.close, rules) } : {}) }, tasks: parsedIn.tasks.map(t => ({ ...t, title: redact(t.title, rules), ...(t.close !== undefined ? { close: redact(t.close, rules) } : {}) })) }
   const root = (await $.session.root()).replace(/\/+$/, '')
   const cardDir = cardDirPath(root, cfg.cardDir)
   const found: LandCard[] = []
@@ -3933,14 +3960,14 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   const used = new Set<string>()
   // MOD-207: every landed file of this plan ends with the plan key; a feature's prior file is reused only under the same key
   const key = planKey(parsed.feature.title, parsed.feature.paths, parsed.parent)
-  const items: { item: PlanItem; isFeature: boolean; file: string; body: string; filed?: { number: number; url: string }; mayReuse?: { number: number; url: string }; write: boolean }[] = []
+  const items: { item: PlanItem; isFeature: boolean; file: string; body: string; filed?: { number: number; url: string; closed?: boolean }; mayReuse?: { number: number; url: string }; write: boolean }[] = []
   // the sub-issues of this run's feature, read once; undefined while the feature is new or not yet read
   let featureSubs: { number: number; state: string }[] | undefined
   for (const [i, item] of [parsed.feature, ...parsed.tasks].entries()) {
     const body = `${redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, noScope: true, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)}plan: ${key}\n`
     const slug = slugOf(item.title)
     let name = ''
-    let filedAs: { number: number; url: string } | undefined
+    let filedAs: { number: number; url: string; closed?: boolean } | undefined
     let mayReuse: { number: number; url: string } | undefined
     // the newest of the slug file and its -<n> copies that ends in an issue: line may be this run's item already filed
     let newest = ''
@@ -3962,9 +3989,10 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
               mayReuse = prior
             } else {
               const view = await viewIssue($, root, ownerRepo, prior.number)
-              if (view?.state === 'OPEN') {
+              // MOD-214: an item to be filed closed is also reused once it is closed
+              if (view?.state === 'OPEN' || (item.close !== undefined && view?.state === 'CLOSED')) {
                 name = newest
-                filedAs = prior
+                filedAs = { ...prior, closed: view.state === 'CLOSED' }
                 featureSubs = view.subs
               }
             }
@@ -3975,9 +4003,10 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
         } else if (featureSubs) {
           // a task is reused only when it is a sub-issue of this run's feature and OPEN
           const sub = featureSubs.find(x => x.number === prior.number)
-          if (sub && (sub.state !== '' ? sub.state.toUpperCase() === 'OPEN' : await issueIsOpen($, root, ownerRepo, prior.number))) {
+          const state = sub ? (sub.state !== '' ? sub.state.toUpperCase() : (await viewIssue($, root, ownerRepo, prior.number))?.state) : undefined
+          if (sub && (state === 'OPEN' || (item.close !== undefined && state === 'CLOSED'))) {
             name = newest
-            filedAs = prior
+            filedAs = { ...prior, closed: state === 'CLOSED' }
           }
         }
       }
@@ -4011,7 +4040,8 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   sessionRoot = root
   const reuseNote = (it: (typeof items)[number]) => (it.mayReuse ? ` may reuse #${it.mayReuse.number} (checked on confirm)` : '')
   const scopeOf = (paths: readonly string[]) => (paths.length > 0 ? paths.join(', ') : 'scope: none')
-  const tree = [`feature: ${parsed.feature.title} [${scopeOf(parsed.feature.paths)}]${parsed.parent !== undefined ? ` under #${parsed.parent}` : ''}${reuseNote(items[0] as (typeof items)[number])}`, ...parsed.tasks.map((t, k) => `  task: ${t.title} [${scopeOf(t.paths)}]${reuseNote(items[k + 1] as (typeof items)[number])}`)]
+  const closedNote = (item: PlanItem) => (item.close !== undefined ? ` (filed closed: ${item.close})` : '')
+  const tree = [`feature: ${parsed.feature.title} [${scopeOf(parsed.feature.paths)}]${parsed.parent !== undefined ? ` under #${parsed.parent}` : ''}${reuseNote(items[0] as (typeof items)[number])}${closedNote(parsed.feature)}`, ...parsed.tasks.map((t, k) => `  task: ${t.title} [${scopeOf(t.paths)}]${reuseNote(items[k + 1] as (typeof items)[number])}${closedNote(t)}`)]
   const written = ['files written:', ...items.filter(it => it.write).map(it => `  ${it.file}`)]
   if (!parsed.confirm || !ownerRepo) {
     const why = ownerRepo ? [] : [`origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); nothing can be filed`]
@@ -4019,6 +4049,8 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   }
   const filed: string[] = []
   const issues: { number: number; url: string; title: string }[] = []
+  // MOD-214: the issue number of each item and whether it was already closed when reused
+  const numbers: { number: number; closed: boolean }[] = []
   let featureNumber = 0
   // MOD-198: every issue filed so far, this call's and an earlier call's, goes to the project; the lines say how that went
   const projectLines = async (): Promise<string[]> => {
@@ -4032,6 +4064,7 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
       if (it.isFeature) featureNumber = it.filed.number
       filed.push(`already filed #${it.filed.number} ${it.filed.url} ${it.item.title}`)
       issues.push({ ...it.filed, title: it.item.title })
+      numbers.push({ number: it.filed.number, closed: it.filed.closed === true })
       continue
     }
     const r = await fileOne($, { root, ownerRepo, file: it.file, body: it.body, title: it.item.title, type: it.item.type, ...(it.isFeature ? (parsed.parent !== undefined ? { parent: parsed.parent } : {}) : { parent: featureNumber }) })
@@ -4041,8 +4074,26 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
     if (it.isFeature) featureNumber = r.issue.number
     filed.push(`filed #${r.issue.number} ${r.issue.url} ${it.item.title}`)
     issues.push({ ...r.issue, title: it.item.title })
+    numbers.push({ number: r.issue.number, closed: false })
   }
-  return [...tree, ...written, ...filed, ...(await projectLines()), `tree: #${featureNumber} with ${parsed.tasks.length} tasks`].join('\n')
+  // MOD-214: children are closed first; the top item is closed only when every task in the plan is closed
+  const closeLines: string[] = []
+  const closeNow = async (k: number): Promise<boolean> => {
+    const it = items[k] as (typeof items)[number]
+    const num = numbers[k] as { number: number; closed: boolean }
+    if (it.item.close === undefined) return false
+    if (num.closed) return true
+    const line = await closeFiled($, root, ownerRepo, num.number, it.item.close, it.file)
+    if (!line.startsWith('closed')) closeLines.push(line)
+    return line.startsWith('closed')
+  }
+  let openChildren = 0
+  for (let k = 1; k < items.length; k++) if (!(await closeNow(k))) openChildren++
+  if (parsed.feature.close !== undefined) {
+    if (openChildren > 0) closeLines.push(`#${featureNumber} left open: ${openChildren} open children`)
+    else await closeNow(0)
+  }
+  return [...tree, ...written, ...filed, ...(await projectLines()), ...closeLines, `tree: #${featureNumber} with ${parsed.tasks.length} tasks`].join('\n')
 }
 
 async function redactRules($: Host, forIssue = false): Promise<RedactRules> {
