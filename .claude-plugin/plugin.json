@@ -1,6 +1,6 @@
 {
   "name": "chassis-delegation",
-  "version": "0.9.37",
+  "version": "0.9.38",
   "description": "Delegate coding tasks to verified Claude workers: tiering, verification, background debrief and eval, dashboard",
   "author": {
     "name": "Ben Nelsen"
@@ -360,7 +360,7 @@
     "project": {
       "type": "string",
       "title": "GitHub Project (owner/number)",
-      "description": "The GitHub Project that /delegation land and the land tool add a new issue to after filing it, written <owner>/<number> (for example acme/3). Empty: the issue is filed and not added to any Project. A value that is not <owner>/<number> is ignored. A value here other than the default wins over the repo file (.chassis-delegation.json)",
+      "description": "The GitHub Project that /delegation land and the land tool add a new issue to after filing it, written <owner>/<number> (for example acme/3). Empty: the issue is filed and not added to any Project. A value that is not <owner>/<number> is ignored. A project in the repo file (.chassis-delegation.json), including none, wins over this value; land and land_plan take project: false, and /delegation land takes --no-project, to skip the add for one call.",
       "default": ""
     },
     "scopeAmends": {
