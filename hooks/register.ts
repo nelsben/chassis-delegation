@@ -7484,6 +7484,11 @@ async function configView($: Host): Promise<CfgView> {
   }
   const values: Record<string, unknown> = { ...r.resolved.values }
   const sources: Record<string, Source> = { ...r.resolved.sources }
+  // MOD-223: the repo file's own project (owner/number or none) is what land adds to, so it is the value in effect
+  if (repoProject !== undefined) {
+    values.project = repoProject
+    sources.project = 'repo'
+  }
   // a manifest field the table lacks: the host's value, else its manifest default
   for (const f of fields.filter(x => !CONFIG_TABLE[x])) {
     const def = specs[f]?.default

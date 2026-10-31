@@ -282,6 +282,31 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
     expect((await say($, '')).split('\n')).toEqual(['chassis-delegation: 64 options, 0 set (0 repo, 0 yours, 0 host, 0 locked)', 'all 64 at their defaults', HOW])
   })
 
+  test('MOD-223: a repo file project (none or owner/number) is the value in effect, source repo, over the user option', async ($, on) => {
+    bare(on, { [REPO_FILE]: JSON.stringify({ project: 'none' }) })
+    await $.session.start(sessionStart)
+    await say($, 'project acme/3')
+    expect(await say($, 'project')).toContain('project = none (repo)')
+    const short = await say($, '')
+    expect(short).toContain(' project = none (repo)')
+    expect(short).toContain('1 repo')
+  })
+
+  test('MOD-223: repo acme/9 with user acme/3 shows acme/9 from the repo', async ($, on) => {
+    bare(on, { [REPO_FILE]: JSON.stringify({ project: 'acme/9' }) })
+    await $.session.start(sessionStart)
+    await say($, 'project acme/3')
+    expect(await say($, 'project')).toContain('project = acme/9 (repo)')
+    expect(await say($, '')).toContain(' project = acme/9 (repo)')
+  })
+
+  test('MOD-223: no repo project shows the user value as yours', async ($, on) => {
+    bare(on, { [REPO_FILE]: JSON.stringify({ maxWorkers: 3 }) })
+    await $.session.start(sessionStart)
+    await say($, 'project acme/3')
+    expect(await say($, 'project')).toContain('project = acme/3 (yours)')
+  })
+
   test('the short view lists only what is set, by group, one line each, with the source; any case finds the name', async ($, on) => {
     bare(on, { [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs', validate: 'v' }, maxWorkers: 3 }) })
     await $.session.start(sessionStart)
