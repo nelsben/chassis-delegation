@@ -72,7 +72,7 @@ describe('MOD-94 (#159): the live count survives a refused spawn record', () => 
     expect((await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))).deny).toBeUndefined()
     expect(w.store.has('delegation.spawn.toolu_A0000001')).toBe(false)
     const third = await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_C0000003' }))
-    expect(third.deny).toBe('queued: T-3 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: T-3; limit: maxWorkers 2 from the host options)')
+    expect(third.deny).toBe('queued: T-3 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: T-3; limit: maxWorkers 2 from the host options) — queued: position 1 of 1 (maxWorkers 2 running)')
     expect(w.spawns).toHaveLength(2)
     const text = resultText(await $.tool.call({ tool: DISPATCH, task: 'BE-101', scope: 'app/**' } as never))
     expect(text).toContain('queued: BE-101 — the mod will tell you when a slot frees')

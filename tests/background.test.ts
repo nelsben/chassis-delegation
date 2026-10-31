@@ -164,7 +164,7 @@ describe('2F: the worker scheduler', () => {
     const b = await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
     const c = await $.agent.spawn(spawnInput({ prompt: brief('T-3'), tool_use_id: 'toolu_C0000003', description: 'T-3 work', subagentType: 'backend', cwd: '/w3' }))
     expect([a.agentId, b.agentId]).toEqual(['agent-1', 'agent-2'])
-    expect(c.deny).toBe('queued: T-3 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: T-3; limit: maxWorkers 2 from the default)')
+    expect(c.deny).toBe('queued: T-3 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: T-3; limit: maxWorkers 2 from the default) — queued: position 1 of 1 (maxWorkers 2 running)')
     expect(w.spawns).toHaveLength(2)
     const queue = w.state.get('chassis-delegation.queue') as Record<string, unknown>[]
     expect(queue).toHaveLength(1)
@@ -220,7 +220,7 @@ describe('2F: the worker scheduler', () => {
     const w = world(on, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
     const second = await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))
-    expect(second.deny).toBe('queued: T-2 — the mod will tell you when a slot frees (1 live: T-1; 1 queued: T-2; limit: maxWorkers 1 from the host options)')
+    expect(second.deny).toBe('queued: T-2 — the mod will tell you when a slot frees (1 live: T-1; 1 queued: T-2; limit: maxWorkers 1 from the host options) — queued: position 1 of 1 (maxWorkers 1 running)')
     expect(w.spawns).toHaveLength(1)
   })
 

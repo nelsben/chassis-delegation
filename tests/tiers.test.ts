@@ -30,7 +30,7 @@ describe('MOD-131: per-tier slots in the spawn hook', () => {
     await $.agent.spawn(spawnInput({ prompt: brief('T-1', 'frontier'), tool_use_id: 'toolu_A0000001' }))
     await $.agent.spawn(spawnInput({ prompt: brief('T-2', 'frontier'), tool_use_id: 'toolu_B0000002' }))
     const third = await $.agent.spawn(spawnInput({ prompt: brief('T-3', 'frontier'), tool_use_id: 'toolu_C0000003' }))
-    expect(third.deny).toBe('queued: T-3 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: T-3; limit: maxWorkers 2 from the host options)')
+    expect(third.deny).toBe('queued: T-3 — the mod will tell you when a slot frees (2 live: T-1, T-2; 1 queued: T-3; limit: maxWorkers 2 from the host options) — queued: position 1 of 1 (maxWorkers 2 running)')
   })
 
   test('a standard row queued behind two queued frontier rows is ready when a standard worker hands back while both frontier workers run', { options: { maxWorkers: 3, maxWorkersByTier: '{"frontier":2}' } }, async ($, on) => {
@@ -75,7 +75,7 @@ describe('MOD-145 (#234): a queued dispatch names where its worker limit came fr
     await $.agent.spawn(spawnInput({ prompt: brief('T-1', 'standard'), tool_use_id: 'toolu_A0000001' }))
     const second = await $.agent.spawn(spawnInput({ prompt: brief('T-2', 'standard'), tool_use_id: 'toolu_B0000002' }))
     expect(w.spawns).toHaveLength(1)
-    expect(second.deny).toMatch(/limit: maxWorkers 1 from your options file\)$/)
+    expect(second.deny).toMatch(/limit: maxWorkers 1 from your options file\) — queued: position 1 of 1 \(maxWorkers 1 running\)$/)
   })
 
   test('a tier cap from the repo file is named by tier', { options: { maxWorkers: 6 } }, async ($, on) => {

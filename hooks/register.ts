@@ -1972,8 +1972,8 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
     const entered = enqueue(queue, item)
     // MOD-44: a task for another local repo shows that repo's folder name beside it
     const shown = withRepoName(label, item.repo, sessionRoot)
-    // MOD-219: where a tier-capped lane stands in the queue, and which cap holds it
-    const capHeld = (position: number, of: number) => (slotTier ? { position, of, cap: cfg.maxWorkersByTier[slotTier] ?? 0 } : undefined)
+    // MOD-219/MOD-222: where a lane stands in the queue, and which cap (a tier's, or the total maxWorkers) holds it
+    const capHeld = (position: number, of: number) => ({ position, of, cap: slotTier ? cfg.maxWorkersByTier[slotTier] ?? 0 : cfg.maxWorkers })
     if (entered.existing) {
       const kept = entered.existing
       return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position, slotTier, limit, capHeld(kept.position, queue.length)) }
