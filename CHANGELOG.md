@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Tree import reuses an item whose recorded issue is CLOSED even with no `close` (MOD-221).** It is no longer filed again: no `gh issue create` runs, it counts in `already filed`, its line reads `already filed #<n> (closed) <title>`, it counts as closed for its parent's `close` rule, and its children are still visited under its number. The preview, an OPEN or unreadable recorded issue, and a CLOSED one with `close` are unchanged.
+
 ## 0.9.38 — 2026-10-31
 
 ### Added

@@ -164,6 +164,25 @@ describe('MOD-215: tree import', () => {
     expect(creates(w)).toHaveLength(0)
   })
 
+  test('MOD-221: a CLOSED recorded issue with no close is reused, not filed again', async ($, on) => {
+    const g = sim()
+    g.issues.set(7, { title: 'Old', state: 'CLOSED' })
+    const plan = planJson({ items: [
+      { type: 'task', title: 'Old', paths: ['a'], issue: 7 },
+      { type: 'epic', title: 'Wrap', close: 'shipped', children: [{ type: 'task', title: 'Kid', paths: ['b'], issue: 7 }] },
+    ] })
+    const w = setup(on, g.run, plan)
+    await $.session.start(sessionStart)
+    const pre = text(await importTool($, { file: rel }))
+    expect(gh(w)).toEqual([])
+    expect(pre).toContain('nothing filed')
+    const out = text(await importTool($, { file: rel, confirm: true }))
+    expect(out).toContain('already filed #7 (closed) Old')
+    expect(out).toContain('already filed 2')
+    expect(creates(w).map((a: string[]) => a[a.indexOf('--title') + 1])).toEqual(['Wrap'])
+    expect(gh(w).filter((a: string[]) => a[2] === 'close').map((a: string[]) => a[3])).toEqual(['50'])
+  })
+
   test('a parent in the file files the top items under it', async ($, on) => {
     const w = setup(on, sim().run, planJson({ parent: 7 }))
     await $.session.start(sessionStart)
