@@ -33,8 +33,10 @@ function happy(over: Table = {}): Table {
     [git('rev-parse', '--verify', '--quiet', 'origin/main')]: ok(MB + '\n'),
     [git('merge-base', 'origin/main', FULL)]: ok(MB + '\n'),
     [git('diff', '--name-status', '-M', MB, FULL)]: ok('A\tsrc/a.ts\nA\tdocs/x.md\n'),
+    // MOD-251: the merged call: the sha check, HEAD and the branch ref in one process
+    [git('rev-parse', 'a1b2c3d^{commit}', 'HEAD', 'refs/heads/agent/ops/T-1')]: ok([FULL, FULL, FULL].join('\n') + '\n'),
     [git('rev-parse', 'HEAD')]: ok(FULL + '\n'),
-    [git('status', '--porcelain')]: ok(''),
+    [git('status', '--porcelain=v1', '--untracked-files=all', '-z')]: ok(''),
     'npm test': ok('all green\n'),
     ...over,
   }
@@ -154,7 +156,7 @@ describe('5A: verifyNative against a repo answered from a table', () => {
     expect(t.calls.some(c => c.argv.includes('worktree') || c.argv.includes('fetch'))).toBe(false)
   })
   test('a sha that does not exist is a fabrication: refuted', async () => {
-    const t = io(happy({ [git('rev-parse', '--verify', '--quiet', 'a1b2c3d^{commit}')]: exit(1) }))
+    const t = io(happy({ [git('rev-parse', 'a1b2c3d^{commit}', 'HEAD', 'refs/heads/agent/ops/T-1')]: exit(128), [git('rev-parse', '--verify', '--quiet', 'a1b2c3d^{commit}')]: exit(1) }))
     const r = await verifyNative(input(), t)
     expect(r.verdict).toBe('refuted')
     expect(r.lines).toContain(`claim sha: failed — sha 'a1b2c3d' does not exist in ${REPO} (fabrication)`)
@@ -166,12 +168,12 @@ describe('5A: verifyNative against a repo answered from a table', () => {
     expect(r.lines).toContain('claim sha: failed — sha a1b2c3d exists but is NOT reachable on agent/ops/T-1')
   })
   test('a dirty tree, or a HEAD other than the sha: the gate is unchecked and never run', async () => {
-    const dirty = io(happy({ [git('status', '--porcelain')]: ok(' M src/a.ts\n?? tmp.txt\n') }))
+    const dirty = io(happy({ [git('status', '--porcelain=v1', '--untracked-files=all', '-z')]: ok(' M src/a.ts\0?? tmp.txt\0') }))
     const r = await verifyNative(input(), dirty)
     expect(r.verdict).toBe('unverified')
     expect(r.lines).toContain('claim gate: unchecked — tree not at sha: 2 uncommitted paths in the worktree; the gate was not re-run')
     expect(dirty.calls.some(c => c.argv[0] === 'npm')).toBe(false)
-    const moved = io(happy({ [git('rev-parse', 'HEAD')]: ok('f'.repeat(40) + '\n') }))
+    const moved = io(happy({ [git('rev-parse', 'a1b2c3d^{commit}', 'HEAD', 'refs/heads/agent/ops/T-1')]: ok([FULL, 'f'.repeat(40), FULL].join('\n') + '\n') }))
     expect((await verifyNative(input(), moved)).lines).toContain(`claim gate: unchecked — tree not at sha: HEAD is ffffffffff, not a1b2c3d4e5; the gate was not re-run`)
   })
   test('files= that misses a changed path: refuted, naming it', async () => {
@@ -725,7 +727,7 @@ describe('MOD-211: a malformed report line', () => {
     expect(r.lines.join('\n')).not.toContain('fabrication')
   })
   test('a present sha that does not exist still says fabrication', async () => {
-    const t = io(happy({ [git('rev-parse', '--verify', '--quiet', 'a1b2c3d^{commit}')]: exit(1) }))
+    const t = io(happy({ [git('rev-parse', 'a1b2c3d^{commit}', 'HEAD', 'refs/heads/agent/ops/T-1')]: exit(128), [git('rev-parse', '--verify', '--quiet', 'a1b2c3d^{commit}')]: exit(1) }))
     const r = await verifyNative(input(), t)
     expect(r.lines.join('\n')).toContain('(fabrication)')
     expect(r.lines.join('\n')).not.toContain('malformed report')
