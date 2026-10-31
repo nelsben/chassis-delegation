@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`land_plan`: the top item may name an existing parent issue, and feature, epic and story items may have no paths (MOD-213).** The top item takes an optional `parent` (a whole number) and is filed under it as a sub-issue; the preview shows `under #<n>` and runs no gh, and the plan key includes the parent, so the same plan under another parent files anew. `paths` may be empty or left out on a feature, epic or story (the preview prints `scope: none`, the body says so, and its children are not path-constrained); a task, bug or spike still needs one. `tasks` may be empty or left out, so a feature or epic with no open work is filed alone; the 30-task cap stays.
 - **A repo-level `project` and a per-call opt-out for the Project add (MOD-218).** A `project` in the repo file (`.chassis-delegation.json`), including the value `none`, now wins over the user-level option; `none` adds nothing and prints no line. `land` and `land_plan` take `project: false`, and `/delegation land` takes `--no-project`, to skip the item-add for that call only.
 
 ### Fixed

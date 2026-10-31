@@ -104,8 +104,8 @@ describe('MOD-193: parsePlan', () => {
   test('bad shapes are one-line errors', async () => {
     const { parsePlan } = await lib()
     const bad = [
-      {}, { ...ok(), feature: { title: '', paths: ['a'] } }, { ...ok(), feature: { title: 'F', paths: [] } },
-      { ...ok(), feature: { title: 'F', type: 'bug', paths: ['src/**'] } }, { ...ok(), tasks: [] },
+      {}, { ...ok(), feature: { title: '', paths: ['a'] } }, { ...ok(), feature: { title: 'F', paths: ['a'] }, parent: 0 },
+      { ...ok(), feature: { title: 'F', type: 'bug', paths: ['src/**'] } }, { ...ok(), tasks: 'x' },
       { ...ok(), tasks: Array.from({ length: 31 }, (_, i) => ({ title: `t${i}`, paths: ['src/a'] })) },
       { ...ok(), tasks: [{ title: 'A', type: 'epic', paths: ['src/a'] }] }, { ...ok(), tasks: [{ title: 'A', paths: [] }] },
     ]
@@ -170,5 +170,16 @@ describe('MOD-218: redact leaves dotfolder segments and the same repo alone', ()
     expect(parseLandArgs('bug T --no-project')).toEqual({ type: 'bug', title: 'T', paths: [], noProject: true })
     expect(parseLandTool({ type: 'bug', title: 'T', project: false }).noProject).toBe(true)
     expect(parseLandTool({ type: 'bug', title: 'T' }).noProject).toBe(undefined)
+  })
+})
+
+describe('MOD-213: planKey with a parent', () => {
+  test('no parent keeps the key; a parent changes it and different parents differ', async () => {
+    const { planKey } = await lib()
+    expect(planKey('Export rework', ['src/a/**'], undefined)).toBe(planKey('Export rework', ['src/a/**']))
+    expect(planKey('Export rework', ['src/a/**'], 7)).not.toBe(planKey('Export rework', ['src/a/**']))
+    expect(planKey('Export rework', ['src/a/**'], 7)).not.toBe(planKey('Export rework', ['src/a/**'], 8))
+    expect(planKey('Export rework', ['src/a/**'], 7)).toBe(planKey('Export rework', ['src/a/**'], 7))
+    expect(planKey('Export rework', [], 7)).toMatch(/^export-rework-[0-9a-f]{8}$/)
   })
 })

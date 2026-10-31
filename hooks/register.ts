@@ -3932,12 +3932,12 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   const ownerRepo = ownerRepoOf(origin ?? '')
   const used = new Set<string>()
   // MOD-207: every landed file of this plan ends with the plan key; a feature's prior file is reused only under the same key
-  const key = planKey(parsed.feature.title, parsed.feature.paths)
+  const key = planKey(parsed.feature.title, parsed.feature.paths, parsed.parent)
   const items: { item: PlanItem; isFeature: boolean; file: string; body: string; filed?: { number: number; url: string }; mayReuse?: { number: number; url: string }; write: boolean }[] = []
   // the sub-issues of this run's feature, read once; undefined while the feature is new or not yet read
   let featureSubs: { number: number; state: string }[] | undefined
   for (const [i, item] of [parsed.feature, ...parsed.tasks].entries()) {
-    const body = `${redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)}plan: ${key}\n`
+    const body = `${redact(landedBody({ ...(item.note !== undefined ? { note: item.note } : {}), paths: item.paths, noScope: true, cards: open.map(c => ({ id: c.id, title: c.title, scope: c.scope })), defaultBranch: def }), rules)}plan: ${key}\n`
     const slug = slugOf(item.title)
     let name = ''
     let filedAs: { number: number; url: string } | undefined
@@ -4010,7 +4010,8 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   landRepo = ownerRepo ?? ''
   sessionRoot = root
   const reuseNote = (it: (typeof items)[number]) => (it.mayReuse ? ` may reuse #${it.mayReuse.number} (checked on confirm)` : '')
-  const tree = [`feature: ${parsed.feature.title} [${parsed.feature.paths.join(', ')}]${reuseNote(items[0] as (typeof items)[number])}`, ...parsed.tasks.map((t, k) => `  task: ${t.title} [${t.paths.join(', ')}]${reuseNote(items[k + 1] as (typeof items)[number])}`)]
+  const scopeOf = (paths: readonly string[]) => (paths.length > 0 ? paths.join(', ') : 'scope: none')
+  const tree = [`feature: ${parsed.feature.title} [${scopeOf(parsed.feature.paths)}]${parsed.parent !== undefined ? ` under #${parsed.parent}` : ''}${reuseNote(items[0] as (typeof items)[number])}`, ...parsed.tasks.map((t, k) => `  task: ${t.title} [${scopeOf(t.paths)}]${reuseNote(items[k + 1] as (typeof items)[number])}`)]
   const written = ['files written:', ...items.filter(it => it.write).map(it => `  ${it.file}`)]
   if (!parsed.confirm || !ownerRepo) {
     const why = ownerRepo ? [] : [`origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); nothing can be filed`]
@@ -4033,7 +4034,7 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
       issues.push({ ...it.filed, title: it.item.title })
       continue
     }
-    const r = await fileOne($, { root, ownerRepo, file: it.file, body: it.body, title: it.item.title, type: it.item.type, ...(it.isFeature ? {} : { parent: featureNumber }) })
+    const r = await fileOne($, { root, ownerRepo, file: it.file, body: it.body, title: it.item.title, type: it.item.type, ...(it.isFeature ? (parsed.parent !== undefined ? { parent: parsed.parent } : {}) : { parent: featureNumber }) })
     if ('failed' in r) {
       return [...filed, ...items.slice(i).map(x => `not filed: ${x.item.title}`), `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`, ...(await projectLines())].join('\n')
     }

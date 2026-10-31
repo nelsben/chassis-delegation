@@ -672,3 +672,89 @@ describe('MOD-218: same-repo land, dotfolders, project precedence', () => {
     expect(adds(w)).toEqual([])
   })
 })
+
+describe('MOD-213: land_plan parent and no-path items', () => {
+  const planTool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land_plan', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const gh = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh')
+  const creates = (w: any) => gh(w).filter((a: string[]) => a[2] === 'create')
+  const fake = () => {
+    let n = 49
+    return async (argv: string[]) => {
+      if (argv[0] !== 'gh') return undefined
+      if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
+      n++
+      return { exitCode: 0, stdout: `https://github.com/o/r/issues/${n}\n` }
+    }
+  }
+  const setup = (on: any) => world(on, { files: { ...files(), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: fake() })
+  const base = (over: Record<string, unknown> = {}) => ({ feature: { title: 'Export epic', type: 'epic', paths: ['src/export/**'] }, tasks: [{ title: 'Fix header', paths: ['src/export/a.ts'] }], ...over })
+
+  test('a top item with a parent files under it; the preview says under #n and runs no gh', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const pre = text(await planTool($, base({ feature: { title: 'Export epic', type: 'epic', paths: ['src/export/**'] }, parent: 7 })))
+    expect(pre).toContain('under #7')
+    expect(gh(w)).toEqual([])
+    await planTool($, base({ parent: 7, confirm: true }))
+    expect(creates(w)[0]).toEqual(['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Export epic', '--label', 'type:epic', '--parent', '7', '--body-file', `${LANDED}/export-epic.md`])
+    expect(creates(w)[1]).toContain('50')
+  })
+
+  test('the same plan under a different parent files a new top issue', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await planTool($, base({ parent: 7, confirm: true }))
+    w.runs.length = 0
+    await planTool($, base({ parent: 8, confirm: true }))
+    expect(creates(w)).toHaveLength(2)
+    expect(creates(w)[0]).toContain('8')
+    expect(creates(w)[0]).toContain(`${LANDED}/export-epic-2.md`)
+  })
+
+  test('a bad parent is refused', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    expect(text(await planTool($, base({ parent: 0, confirm: true })))).toContain('parent')
+    expect(text(await planTool($, base({ parent: 1.5, confirm: true })))).toContain('parent')
+    expect(gh(w)).toEqual([])
+  })
+
+  test('a story with paths: [] is accepted and its body says scope none; preview shows scope: none', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, base({ tasks: [{ title: 'Process story', type: 'story', paths: [] }, { title: 'Left out', type: 'story' }] })))
+    expect(out).toContain('scope: none')
+    const body = w.files.get(`${LANDED}/process-story.md`) ?? ''
+    expect(body).toContain('scope: none')
+    expect(body).not.toContain('```scope')
+  })
+
+  test('a task with no paths is still refused', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, base({ tasks: [{ title: 'Bare task', paths: [] }], confirm: true })))
+    expect(out).toContain('needs at least one path')
+    expect(gh(w)).toEqual([])
+  })
+
+  test('a child path outside a parent that has paths is still refused; children of a no-path parent are accepted', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    expect(text(await planTool($, base({ tasks: [{ title: 'Stray', paths: ['docs/x.md'] }], confirm: true })))).toContain('outside the feature paths')
+    expect(gh(w)).toEqual([])
+    const out = text(await planTool($, base({ feature: { title: 'Loose epic', type: 'epic' }, tasks: [{ title: 'Anywhere', paths: ['docs/x.md'] }], confirm: true })))
+    expect(out).toContain('tree: #50 with 1 tasks')
+    expect(creates(w)).toHaveLength(2)
+  })
+
+  test('a plan with no tasks files just the top issue, under its parent', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    const out = text(await planTool($, { feature: { title: 'Lonely epic', type: 'epic', paths: [] }, parent: 3, confirm: true }))
+    expect(creates(w)).toEqual([['gh', 'issue', 'create', '--repo', 'o/r', '--title', 'Lonely epic', '--label', 'type:epic', '--parent', '3', '--body-file', `${LANDED}/lonely-epic.md`]])
+    expect(out).toContain('tree: #50 with 0 tasks')
+    const none = text(await planTool($, { feature: { title: 'Empty tasks', paths: ['a/**'] }, tasks: [] }))
+    expect(none).toContain('nothing filed')
+  })
+})
