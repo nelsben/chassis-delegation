@@ -10,6 +10,12 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.38 to 0.9.39
+
+Nothing needs doing to upgrade.
+Fixed: tree import reuses a recorded issue that is closed (with or without `close`); the queue position for a lane held by the total `maxWorkers` cap; `/delegation config` shows the repo file's `project` (including `none`) as the value in effect.
+Detail: [CHANGELOG 0.9.39](../CHANGELOG.md).
+
 ### From 0.9.37 to 0.9.38
 
 Nothing needs doing to upgrade. A scope refute now charges only the paths the worker wrote.
