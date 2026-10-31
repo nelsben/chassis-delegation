@@ -10,6 +10,14 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.39 to 0.9.40
+
+Nothing needs doing to upgrade, except that `gateTimeoutMinutes` now defaults to 30 and takes 1 to 120: a value already set in a repo file or in /config is kept.
+Added: busy-machine words on a red or timed-out gate and at dispatch; the `[[pause v=1 …]]` line a worker prints instead of a report while its own background job runs.
+Changed: the verifier's gate runs with no 10-minute host cap, up to `gateTimeoutMinutes`.
+Fixed: merge takes a review that accepts; a review read after compaction; the polling row ignores heredocs and quoted text; a scope/forbid clash refuses the card.
+Detail: [CHANGELOG 0.9.40](../CHANGELOG.md).
+
 ### From 0.9.38 to 0.9.39
 
 Nothing needs doing to upgrade.
