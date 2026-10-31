@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { MIB, PRESSURE_BYTES, RATION_RETAIN_MS, RETAIN_MS, TARGET_BYTES, prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from '../hooks/lib/retention'
+import { MIB, PRESSURE_BYTES, RATION_RETAIN_MS, RETAIN_MS, TARGET_BYTES, prunedLine, refusedRow, refusedWritesLine, retentionPlan, slimSpawns, storeBytes, storeLine, type StoreEntry } from '../hooks/lib/retention'
 
 // MOD-89 (#157, #159): what the mod deletes from its store so a set is never refused at the host's 4 MiB cap.
 const NOW = 100 * 24 * 60 * 60 * 1000
@@ -68,20 +68,39 @@ describe('MOD-89: the retention plan', () => {
     expect(plan(entries).delete).toEqual([])
   })
 
-  test('a record with no timestamp is left alone, and so is every session-level and global key', () => {
+  test('a record with no timestamp is left alone; global keys are never pruned; MOD-233: session keys age out after 14 days', () => {
     const entries: StoreEntry[] = [
       ['delegation.agent.ag-gone', 'k-gone'],
       ['delegation.effort.T-6', 'low'],
-      ['delegation.recent.sess-1', [{ task: 'T-1', attempt: 1, verdict: 'consistent', line: 'x', at: 1 }]],
-      ['delegation.debrief.sess-1', { lastAt: 1, watermark: 0, lines: 0, sessionId: 'sess-1' }],
-      ['delegation.friction.sess-1', { total: 0, events: [] }],
+      ['delegation.recent.sess-1', [{ task: 'T-1', attempt: 1, verdict: 'consistent', line: 'x' }]],
       ['delegation.brain.1', { at: 1 }],
+      ['delegation.postAsk.1', { at: 1 }],
       ['delegation.adhoc', [{ task: 'adhoc-1', at: 1 }]],
       ['delegation.evals', [{ at: 1 }]],
       ['delegation.alias.sonnet', { id: 'claude-sonnet-5-5', since: 1 }],
       ['delegation.updateCheck', { at: 1, behind: 0 }],
     ]
     expect(plan(entries).delete).toEqual([])
+  })
+
+  test('MOD-233: a recent.<old sid> key whose newest row is 15 days old is in the delete list, and the live session\'s recent key is not', () => {
+    const row = (at: number) => ({ task: 'T-1', attempt: 1, verdict: 'consistent', line: 'x', at })
+    const entries: StoreEntry[] = [
+      ['delegation.recent.old', [row(NOW - 20 * DAY), row(NOW - 15 * DAY)]],
+      ['delegation.recent.fresh', [row(NOW - 20 * DAY), row(NOW - 13 * DAY)]],
+      ['delegation.recent.live', [row(NOW - 15 * DAY)]],
+      ['delegation.debrief.old', { lastAt: NOW - 15 * DAY, watermark: 0, lines: 0, sessionId: 'old' }],
+      ['delegation.merged.old', [{ task: 'T-1', sha: 'a', at: NOW - 16 * DAY }]],
+      ['delegation.notes.old', { at: NOW - 16 * DAY, path: '/p' }],
+      ['delegation.friction.old', { total: 1, events: [{ kind: 'denial', at: NOW - 16 * DAY }] }],
+      ['delegation.friction.fresh', { total: 1, events: [{ kind: 'denial', at: NOW - 16 * DAY }, { kind: 'denial', at: NOW - DAY }] }],
+      ['delegation.friction.live', { total: 1, events: [{ kind: 'denial', at: NOW - 16 * DAY }] }],
+    ]
+    const live = ['delegation.recent.live', 'delegation.friction.live']
+    expect(retentionPlan({ entries, open: [], now: NOW, keep: live }).delete.sort()).toEqual(['delegation.debrief.old', 'delegation.friction.old', 'delegation.merged.old', 'delegation.notes.old', 'delegation.recent.old'])
+    // under store pressure a session key still waits its 14 days
+    const big: StoreEntry = ['delegation.junk', 'x'.repeat(PRESSURE_BYTES)]
+    expect(retentionPlan({ entries: [...entries, big], open: [], now: NOW, keep: live }).delete).not.toContain('delegation.recent.fresh')
   })
 
   test('the keys come back oldest first', () => {
@@ -155,3 +174,24 @@ describe('MOD-89: the retention plan', () => {
     expect(refusedRow('delegation.spawn.k1', 'store over 4 MiB')).toBe('store write failed: delegation.spawn.k1 (store over 4 MiB); new workers may have no verdict until the store is pruned')
   })
 })
+
+describe('MOD-233: posted verdict text is dropped after a day', () => {
+  const key = (n: string) => `T-9:1:${n}`
+  const ak = (s: Record<string, unknown>) => `T-9:1:${s.attempt}`
+  const withBlock = (at: number): StoreEntry => spawn('k-9', 'T-9', at, { verdictBlock: 'first line\nsecond', verdictLine: 'first line' })
+  test('a posted verdict over 24 h old keeps its first line; a younger or unposted one keeps everything; a second run lists nothing', () => {
+    const old = NOW - 2 * DAY
+    const posted: StoreEntry[] = [withBlock(old), ['delegation.posted.T-9:1:1', true], ['delegation.postedRow.T-9:1:1', 'row']]
+    const p = slimSpawns(posted, NOW, ak)
+    expect(p.drop).toEqual(['delegation.postedRow.T-9:1:1'])
+    expect(p.rewrite).toHaveLength(1)
+    const v = p.rewrite[0]!.value
+    expect(v.verdictSummary).toBe('first line')
+    expect('verdictBlock' in v || 'verdictLine' in v).toBe(false)
+    expect(slimSpawns([[p.rewrite[0]!.key, v], ...posted.slice(1)], NOW, ak).rewrite).toEqual([])
+    expect(slimSpawns([withBlock(NOW - 3600_000), ...posted.slice(1)], NOW, ak).rewrite).toEqual([])
+    expect(slimSpawns([withBlock(old)], NOW, ak).rewrite).toEqual([])
+    expect(key('1')).toBe('T-9:1:1')
+  })
+})
+

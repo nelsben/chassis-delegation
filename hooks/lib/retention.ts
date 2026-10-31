@@ -20,6 +20,8 @@ export type RetentionInput = {
   /** The open tasks: running workers, pending verdicts, queued spawns; a task id or a label (`T-1`, `T-1/api`, `T-1@replay-…`). */
   open: Iterable<string>
   now: number
+  /** MOD-233: the live session's keys; the plan never deletes them, whatever their age. */
+  keep?: readonly string[]
 }
 export type RetentionPlan = {
   /** The keys to delete, oldest first. */
@@ -69,6 +71,9 @@ const COST = `${P}cost.`
 /** MOD-217: a worker's write log, keyed by its agent id like its cost. */
 const WRITES = `${P}writes.`
 const RATION = `${P}ration.`
+/** MOD-233: session-level families keyed by the session id; aged out after RATION_RETAIN_MS by their newest timestamp. brain, postAsk and freshSession are not among them. */
+const SESSION = ['recent', 'debrief', 'merged', 'notes', 'friction'].map(f => `${P}${f}.`)
+const retainFor = (key: string): number => (key.startsWith(RATION) || SESSION.some(p => key.startsWith(p)) ? RATION_RETAIN_MS : RETAIN_MS)
 
 /** The task id of a task label or key: `T-1/api`, `T-1@replay-ab12`, `T-1:1:2`, `T-1@/other` are all T-1. */
 export const taskOfLabel = (label: string): string => label.split(/[/@:]/)[0] ?? label
@@ -81,8 +86,10 @@ function ownTs(v: unknown): number | undefined {
   if (Array.isArray(v)) return newest(v.map(ownTs))
   if (!v || typeof v !== 'object') return undefined
   const o = v as Record<string, unknown>
+  // MOD-233: a friction record keeps its timestamps in events[].at
+  const events = Array.isArray(o.events) ? ownTs(o.events) : undefined
   const accepted = o.accepted && typeof o.accepted === 'object' ? (o.accepted as Record<string, unknown>).at : undefined
-  return newest([...TS_FIELDS.map(f => o[f]), accepted].map(x => (typeof x === 'number' && Number.isFinite(x) ? x : undefined)))
+  return newest([...TS_FIELDS.map(f => o[f]), accepted].map(x => (typeof x === 'number' && Number.isFinite(x) ? x : undefined)).concat(events))
 }
 function newest(xs: readonly (number | undefined)[]): number | undefined {
   let best: number | undefined
@@ -140,7 +147,7 @@ function metas(entries: readonly StoreEntry[]): Meta[] {
     else if (BY_ATTEMPT.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_TASK.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_BRIEF.some(p => key.startsWith(p))) m = withTask(taskOfBrief(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
-    else if (key.startsWith(RATION)) return { key, bytes, ...(ownTs(value) !== undefined ? { ts: ownTs(value) as number } : {}) }
+    else if (key.startsWith(RATION) || SESSION.some(p => key.startsWith(p))) return { key, bytes, ...(ownTs(value) !== undefined ? { ts: ownTs(value) as number } : {}) }
     else return { key, bytes } // session-level and global keys: never the plan's
     return { key, bytes, ...(m.task ? { task: m.task } : {}), ...(m.ts !== undefined ? { ts: m.ts } : {}) }
   })
@@ -162,15 +169,17 @@ const byAge = (a: Meta, b: Meta): number => (a.ts as number) - (b.ts as number) 
 /**
  * The keys to delete, oldest first. A per-task record goes once its newest timestamp is more than RETAIN_MS old
  * and its task is not open; over PRESSURE_BYTES, closed records younger than that go too, oldest first, until the
- * store is under TARGET_BYTES. An open task's records, a record with no timestamp, and every session-level or
- * global key are never in it.
+ * store is under TARGET_BYTES. An open task's records, a record with no timestamp, the `keep` keys and the global
+ * keys (adhoc, evals, alias, updateCheck, brain, postAsk) are never in it. MOD-233: a session-level key (recent,
+ * debrief, merged, notes, friction) goes RATION_RETAIN_MS after its newest timestamp, pressure or not.
  */
 export function retentionPlan(input: RetentionInput): RetentionPlan {
   const { entries, now } = input
   const before = storeBytes(entries)
   const open = openTasks(entries, input.open, now)
-  const closed = metas(entries).filter(m => m.ts !== undefined && !(m.task !== undefined && open.has(m.task)))
-  const old = closed.filter(m => now - (m.ts as number) > (m.key.startsWith(RATION) ? RATION_RETAIN_MS : RETAIN_MS))
+  const keep = new Set(input.keep ?? [])
+  const closed = metas(entries).filter(m => m.ts !== undefined && !keep.has(m.key) && !(m.task !== undefined && open.has(m.task)))
+  const old = closed.filter(m => now - (m.ts as number) > retainFor(m.key))
   const gone = new Set(old.map(m => m.key))
   let count = entries.length
   let size = before
@@ -201,3 +210,46 @@ export const prunedLine = (n: number, before: number, after: number): string => 
 export const storeLine = (bytes: number): string => `store: ${mib(bytes)} MiB of 4 MiB`
 export const refusedWritesLine = (n: number, key: string): string => `store: ${n} writes refused this session (last ${key})`
 export const refusedRow = (key: string, reason: string): string => `store write failed: ${key} (${reason}); new workers may have no verdict until the store is pruned`
+
+/** MOD-233: a posted verdict older than this keeps one summary line, not its text. */
+export const VERDICT_TEXT_MS = 24 * 60 * 60 * 1000
+
+export type SlimPlan = {
+  /** The spawn records to rewrite: key and new value (verdictBlock and verdictLine gone, verdictSummary set). */
+  rewrite: { key: string; value: Record<string, unknown> }[]
+  /** The postedRow keys whose value is no longer kept. */
+  drop: string[]
+}
+
+/**
+ * MOD-233: a spawn whose verdict was posted (`posted(attemptKey)` true) and judged more than VERDICT_TEXT_MS ago
+ * keeps `verdictSummary`, the first line of its block, in place of the block, the line and the postedRow value.
+ * Idempotent: a record with no verdictBlock is not listed. `attemptKeyOf` is the spawn's attempt key.
+ */
+export function slimSpawns(entries: readonly StoreEntry[], now: number, attemptKeyOf: (spawn: Record<string, unknown>) => string): SlimPlan {
+  const values = new Map(entries)
+  const judged = new Map<string, number>()
+  for (const [k, v] of entries) {
+    if (!k.startsWith(TASKS) || !Array.isArray(v)) continue
+    for (const r of v) {
+      const t = ownTs(r)
+      if (t === undefined || !r || typeof r !== 'object') continue
+      for (const id of [(r as Record<string, unknown>).toolUseId, (r as Record<string, unknown>).agentId]) if (typeof id === 'string') judged.set(id, Math.max(judged.get(id) ?? t, t))
+    }
+  }
+  const out: SlimPlan = { rewrite: [], drop: [] }
+  for (const [k, v] of entries) {
+    if (!k.startsWith(SPAWN) || !v || typeof v !== 'object') continue
+    const s = v as Record<string, unknown>
+    if (typeof s.verdictBlock !== 'string' || s.verdictBlock === '') continue
+    const key = typeof s.key === 'string' ? s.key : k.slice(SPAWN.length)
+    const at = newest([judged.get(key), typeof s.agentId === 'string' ? judged.get(s.agentId) : undefined, typeof s.at === 'number' ? s.at : undefined])
+    if (at === undefined || now - at <= VERDICT_TEXT_MS) continue
+    const ak = attemptKeyOf(s)
+    if (values.get(`${P}posted.${ak}`) !== true) continue
+    const { verdictBlock, verdictLine: _line, ...rest } = s
+    out.rewrite.push({ key: k, value: { ...rest, verdictSummary: verdictBlock.split('\n')[0] ?? '' } })
+    if (values.has(`${P}postedRow.${ak}`)) out.drop.push(`${P}postedRow.${ak}`)
+  }
+  return out
+}

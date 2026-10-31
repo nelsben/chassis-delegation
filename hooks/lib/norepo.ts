@@ -177,7 +177,7 @@ export type OutsideEntry = { path: string; size: number; mtimeMs: number }
  * is the root itself).
  */
 export type RootListing =
-  | { root: string; entries: OutsideEntry[]; dirs?: { path: string; mtimeMs: number }[] }
+  | { root: string; entries: OutsideEntry[]; dirs?: { path: string; mtimeMs: number }[]; /** MOD-233: the inline fallback kept only the first entries; the listing is partial and never judges a delta. */ truncated?: true }
   | { root: string; error: string }
   | { root: string; since: number; files: number }
 /** The most entries the hand-back walk of a watermark root visits before the claim is left unchecked. */
@@ -207,6 +207,7 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
     const a = input.after.find(l => l.root === root)
     if (b === undefined) unchecked ??= `outside delta: no listing of ${root} was taken at dispatch`
     else if ('error' in b) unchecked ??= `outside delta: ${root} could not be listed at dispatch: ${b.error}`
+    else if ('truncated' in b && b.truncated) unchecked ??= `outside delta: the dispatch listing of ${root} was cut short (${b.entries.length} entries kept)`
     else if ('since' in b) {
       if (a === undefined) unchecked ??= `outside delta: ${root} was not listed at hand-back`
       else if ('error' in a) unchecked ??= `outside delta: ${root} could not be listed at hand-back: ${a.error}`
