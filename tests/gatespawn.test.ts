@@ -44,13 +44,17 @@ const repo = (slot: { w?: World }, gateMs: number) => {
   }
 }
 
-type Setup = { gateMs: number; minutes?: number; gate?: 'prettier' | 'test'; store?: Record<string, unknown> }
+type Setup = { gateMs: number; minutes?: number; gate?: 'prettier' | 'test'; store?: Record<string, unknown>; noRepoFile?: true; onGate?: (w: World) => void }
 const setup = (on: unknown, o: Setup): World => {
   const slot: { w?: World } = {}
   const repoFile = { gateMap: { prettier: 'npx prettier --check {files}', test: 'claude plugin test {worktree}' }, ...(o.minutes !== undefined ? { gateTimeoutMinutes: o.minutes } : {}) }
+  const answer = repo(slot, o.gateMs)
   const w = world(on as never, {
-    files: { [BRIEF]: `${header(o.gate ?? 'prettier')}\nbody`, [REPO_FILE]: JSON.stringify(repoFile) },
-    run: repo(slot, o.gateMs),
+    files: { [BRIEF]: `${header(o.gate ?? 'prettier')}\nbody`, ...(o.noRepoFile ? {} : { [REPO_FILE]: JSON.stringify(repoFile) }) },
+    run: async argv => {
+      if (argv[0] === 'claude' || argv[0] === 'npx') o.onGate?.(slot.w as World)
+      return answer(argv)
+    },
     agentId: 'agent-4',
     hostCap: true,
     ...(o.store ? { store: o.store } : {}),
@@ -127,6 +131,26 @@ describe('MOD-229: the gate is spawned, under the mod\'s own ceiling', () => {
     expect(text).toContain("for X-9's engine gate")
     expect(text).toContain('T-4 attempt 1/3 consistent')
     expect(text).not.toContain('gate ran past')
+  })
+})
+
+// MOD-229: the host hands the mod each option at its manifest default (30) when the person never set it; that value
+// is the unset sentinel, so it never beats the repo file or the built-in default. The engine-gate lock's until shows the ceiling.
+describe('MOD-229: the ceiling in effect, with the manifest default in the host options', () => {
+  const LOCK = 'delegation.engineGate'
+  const MANIFEST_DEFAULT = { gateTimeoutMinutes: 30 }
+  const untilOf = async ($: any, on: unknown, o: Omit<Setup, 'gateMs' | 'gate' | 'onGate'>) => {
+    let held: { since?: number; until?: number } | undefined
+    const w = setup(on, { gateMs: 0, gate: 'test', ...o, onGate: x => void (held = x.store.get(LOCK) as typeof held) })
+    await handBack($, w, 5)
+    expect(delivered(w)).toContain('T-4 attempt 1/3 consistent')
+    return (held?.until ?? 0) - (held?.since ?? 0)
+  }
+  test('the manifest default and no repo file: the effective ceiling is 30 minutes', { options: { ...MANIFEST_DEFAULT, gateMap: '{"test":"claude plugin test {worktree}"}' } }, async ($, on) => {
+    expect(await untilOf($, on, { noRepoFile: true })).toBe(30 * MIN)
+  })
+  test('the manifest default and gateTimeoutMinutes 60 in the repo file: 60 is honoured', { options: MANIFEST_DEFAULT }, async ($, on) => {
+    expect(await untilOf($, on, { minutes: 60 })).toBe(60 * MIN)
   })
 })
 
