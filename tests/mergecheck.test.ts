@@ -120,31 +120,26 @@ describe('MOD-143: the card tool takes mergeCheck', () => {
   })
 })
 
-describe('MOD-155 (#246): gateTimeoutMinutes sets how long merge lets one gate run', () => {
+describe('MOD-155 (#246), MOD-229 (#323): merge spawns its gate under gateTimeoutMinutes', () => {
   const delta: Answers = argv => (argv.includes('diff') ? { exitCode: 0, stdout: 'hooks/register.ts\n' } : undefined)
-  const gateRun = (w: { runs: { argv: string[]; timeoutMs?: number }[] }) => w.runs.find(r => r.argv[0] === 'claude' && r.argv[1] === 'plugin' && r.argv[2] === 'test')
-  test('8 in the repo file gives the merge gate run 480000', async ($, on) => {
-    const set15 = world(on, { ...setup(card(), repoFile({ gateTimeoutMinutes: 8 })), run: happy(delta) })
+  const gateRun = (w: { runs: { argv: string[]; timeoutMs?: number; spawned?: true }[] }) => w.runs.find(r => r.argv[0] === 'claude' && r.argv[1] === 'plugin' && r.argv[2] === 'test')
+  test('8 in the repo file: the merge gate is spawned, with no host timeout', async ($, on) => {
+    const w = world(on, { ...setup(card(), repoFile({ gateTimeoutMinutes: 8 })), run: happy(delta) })
     await $.session.start(sessionStart)
     await $.command.run(mergeCmd(ID))
-    expect(gateRun(set15)?.timeoutMs).toBe(480_000)
+    expect(gateRun(w)?.spawned).toBe(true)
+    expect(gateRun(w)?.timeoutMs).toBeUndefined()
   })
-  test('10 gives the merge gate run 600000', async ($, on) => {
-    const w = world(on, { ...setup(card(), repoFile({ gateTimeoutMinutes: 10 })), run: happy(delta) })
-    await $.session.start(sessionStart)
-    await $.command.run(mergeCmd(ID))
-    expect(gateRun(w)?.timeoutMs).toBe(600_000)
-  })
-  test('15 is over the cap: the merge gate run keeps 540000', async ($, on) => {
+  test('15, past the host cap of 10, is taken: the merge gate is spawned', async ($, on) => {
     const w = world(on, { ...setup(card(), repoFile({ gateTimeoutMinutes: 15 })), run: happy(delta) })
     await $.session.start(sessionStart)
     await $.command.run(mergeCmd(ID))
-    expect(gateRun(w)?.timeoutMs).toBe(540_000)
+    expect(gateRun(w)?.spawned).toBe(true)
   })
-  test('unset: 540000', async ($, on) => {
+  test('unset: the merge gate is spawned', async ($, on) => {
     const w = world(on, { ...setup(card()), run: happy(delta) })
     await $.session.start(sessionStart)
     await $.command.run(mergeCmd(ID))
-    expect(gateRun(w)?.timeoutMs).toBe(540_000)
+    expect(gateRun(w)?.spawned).toBe(true)
   })
 })

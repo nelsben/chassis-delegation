@@ -9,7 +9,8 @@ export const TMP = '/tmp/td'
 export const HOME = '/home/u'
 export const NOW = 1_000_000
 
-export type Run = { argv: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number }
+/** MOD-229: `spawned` marks a command started with `$.process.spawn` (a gate), which has no host timeout. */
+export type Run = { argv: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number; spawned?: true }
 export type RunAnswer = { exitCode: number; stdout: string; stderr?: string }
 
 export type World = {
@@ -123,6 +124,11 @@ export type WorldOptions = {
   noBriefTemplate?: true
   /** MOD-66: the text reading <plugin root>/.claude-plugin/plugin.json answers (the manifest's option defaults). */
   manifest?: string
+  /**
+   * MOD-229: `$.process.run` keeps the host's rule on the test clock: a run given a timeoutMs that is still
+   * answering past it (ten minutes at most) is refused as timed out. Off, a held answer is waited for however long.
+   */
+  hostCap?: true
 }
 
 const RESOLVED: Record<string, string> = {
@@ -261,8 +267,20 @@ export function world(on: On, options: WorldOptions = {}): World {
     const unmerged = e.argv[3] === 'merge-base' && e.argv[4] === '--is-ancestor' && e.argv[e.argv.length - 1] === 'origin/main'
     // MOD-72: a `sleep` process (the mod's budget-free wait) takes its seconds on the test clock unless the test answers it
     const sleeps = e.argv[0] === 'sleep' ? async () => (await w.clock.sleep(Number(e.argv[1]) * 1000), { exitCode: 0, stdout: '' }) : undefined
-    const answer = (await options.run?.([...e.argv])) ?? (sleeps ? await sleeps() : { exitCode: unmerged ? 1 : 0, stdout: '' })
+    const answering = (async () => (await options.run?.([...e.argv])) ?? (sleeps ? await sleeps() : { exitCode: unmerged ? 1 : 0, stdout: '' }))()
+    // MOD-229: the host kills a run still going at its timeoutMs (600000 at most) and the call rejects
+    const capMs = options.hostCap && e.init?.timeoutMs !== undefined ? Math.min(e.init.timeoutMs, 600_000) : undefined
+    const answer = capMs === undefined ? await answering : await Promise.race([answering, w.clock.sleep(capMs).then(() => undefined)])
+    if (answer === undefined) return { deny: `Command timed out after ${capMs} ms` }
     return { value: { exitCode: answer.exitCode, stdout: answer.stdout, stderr: answer.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  // MOD-229: a spawned command (a gate) is answered as a run is: its output as pieces, then { value } how it ended; no timeout
+  ;(on as unknown as (n: string, h: unknown) => void)('process.spawn', async function* (_$: unknown, e: { argv: string[]; cwd?: string; env?: Record<string, string>; input?: string }) {
+    w.runs.push({ argv: [...e.argv], cwd: e.cwd, env: e.env, stdin: e.input, spawned: true })
+    const answer = (await options.run?.([...e.argv])) ?? { exitCode: 0, stdout: '' }
+    if (answer.stdout) yield { stream: 'stdout', text: answer.stdout }
+    if (answer.stderr) yield { stream: 'stderr', text: answer.stderr }
+    return { value: { code: answer.exitCode, signal: null } }
   })
   hook('model.classify', () => ({ value: options.classify }))
   hook('agent.list', () => ({ value: w.agents.map(a => ({ ...a })) }))

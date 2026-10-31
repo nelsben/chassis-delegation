@@ -846,32 +846,35 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
   const gateRunOf = (w: W) => w.runs.find(r => r.argv[0] === 'npx')
   const gateRepo = (extra: Record<string, unknown>) => JSON.stringify({ gateMap: { prettier: 'npx prettier --check {files}' }, ...extra })
 
-  test('gateTimeoutMinutes: 8 in the repo file lets the verifier run a gate for 8 minutes', async ($, on) => {
+  // MOD-229 (#323): the gate is spawned under the mod's own ceiling, so no host timeoutMs rides the run (tests/gatespawn.test.ts times it)
+  test('gateTimeoutMinutes: 8 in the repo file: the verifier spawns the gate, with no host timeout', async ($, on) => {
     const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 8 }) } })
     await $.session.start(sessionStart)
     await handBack($)
-    expect(gateRunOf(w)?.timeoutMs).toBe(480_000)
+    expect(gateRunOf(w)?.spawned).toBe(true)
+    expect(gateRunOf(w)?.timeoutMs).toBeUndefined()
   })
 
-  test('gate timeout 10 minutes runs the gate for the host ceiling of 10 minutes', async ($, on) => {
-    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 10 }) } })
-    await $.session.start(sessionStart)
-    await handBack($)
-    expect(gateRunOf(w)?.timeoutMs).toBe(600_000)
-  })
-
-  test('gate timeout unset: the verifier lets a gate run 9 minutes', async ($, on) => {
-    const w = handBackWorld(on)
-    await $.session.start(sessionStart)
-    await handBack($)
-    expect(gateRunOf(w)?.timeoutMs).toBe(540_000)
-  })
-
-  test('gate timeout 15 is named in the config errors and the 9 minutes hold', async ($, on) => {
+  test('gate timeout 15 minutes, past the host cap of 10, is taken: the gate is spawned', async ($, on) => {
     const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 15 }) } })
     await $.session.start(sessionStart)
     await handBack($)
-    expect(gateRunOf(w)?.timeoutMs).toBe(540_000)
+    expect(gateRunOf(w)?.spawned).toBe(true)
+    expect(delivered(w) + w.debugLogs.join('\n')).not.toContain('gateTimeoutMinutes')
+  })
+
+  test('gate timeout unset: the verifier spawns the gate', async ($, on) => {
+    const w = handBackWorld(on)
+    await $.session.start(sessionStart)
+    await handBack($)
+    expect(gateRunOf(w)?.spawned).toBe(true)
+  })
+
+  test('gate timeout 121 is named in the config errors and the gate still runs', async ($, on) => {
+    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ gateTimeoutMinutes: 121 }) } })
+    await $.session.start(sessionStart)
+    await handBack($)
+    expect(gateRunOf(w)?.spawned).toBe(true)
     expect(await say($, 'gateTimeoutMinutes')).toContain('gateTimeoutMinutes')
     expect(delivered(w) + w.debugLogs.join('\n')).toContain('gateTimeoutMinutes')
   })

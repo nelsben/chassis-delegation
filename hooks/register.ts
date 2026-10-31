@@ -215,6 +215,7 @@ import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, iss
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
+import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, type GateProgress } from './lib/gaterun'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
@@ -447,8 +448,12 @@ const DEBRIEF_STALE_MS = HOUR_MS
 const EVALS_CAP = 100
 /** The longest timeoutMs the host takes for one process run (10 minutes). */
 const HOST_MAX_TIMEOUT_MS = 600_000
-/** MOD-155 (#246): how long one gate command may run, read at the time of the run (repo option gateTimeoutMinutes, default 9). */
-const gateTimeoutMs = (): number => cfg.gateTimeoutMinutes * 60 * 1000
+/**
+ * MOD-155 (#246), MOD-229 (#323): how long one gate command may run, read at the time of the run (repo option
+ * gateTimeoutMinutes, 1 to 120, default 30). The mod's own ceiling: a gate is spawned (spawnGate), so the host's
+ * 10-minute cap on one `$.process.run` does not apply; the engine-gate lock's `until` is the same ceiling.
+ */
+const gateTimeoutMs = (): number => ceilingMs(cfg.gateTimeoutMinutes)
 /** MOD-143: the longest a card's merge check may run. */
 const MERGE_CHECK_TIMEOUT_MS = 10 * 60 * 1000
 /** The advice kinds that leave something for the brain (or the person) to do. */
@@ -1047,8 +1052,8 @@ async function sessionUsd($: Host): Promise<number | undefined> {
 
 type RunOut = { ok: true; exitCode: number; stdout: string; stderr: string } | { ok: false; why: string }
 
-/** The ONLY way the mod runs a host command: a refused argv never reaches `$.process.run`. */
-async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number }): Promise<RunOut> {
+/** The allowlist before any host command (run and spawnGate): the refusal, or undefined when the argv may run. */
+async function refusal($: Host, argv: string[]): Promise<RunOut | undefined> {
   loadedRoot = $.plugin.root
   try {
     sessionRoot = (await $.session.root()).replace(/\/+$/, '')
@@ -1056,20 +1061,74 @@ async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<
     // no root: no issue form passes
   }
   const check = checkArgv(argv, allowCfg())
-  if (!check.ok) {
-    try {
-      $.ui.log(refusedLine(argv, check.reason))
-    } catch {
-      // the refusal stands either way
-    }
-    return { ok: false, why: `refused: ${check.reason}` }
+  if (check.ok) return undefined
+  try {
+    $.ui.log(refusedLine(argv, check.reason))
+  } catch {
+    // the refusal stands either way
   }
+  return { ok: false, why: `refused: ${check.reason}` }
+}
+
+/** The ONLY way the mod runs a host command: a refused argv never reaches `$.process.run` (nor `$.process.spawn`, spawnGate). */
+async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number }): Promise<RunOut> {
+  const refused = await refusal($, argv)
+  if (refused) return refused
   try {
     // MOD-155: the host refuses a timeoutMs over 600000, so a longer gate limit runs at the host's ceiling
     const r = await $.process.run(argv, init?.timeoutMs !== undefined && init.timeoutMs > HOST_MAX_TIMEOUT_MS ? { ...init, timeoutMs: HOST_MAX_TIMEOUT_MS } : init)
     return { ok: true, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr }
   } catch (err) {
     return { ok: false, why: String(err) }
+  }
+}
+
+/** MOD-229: where each verifier's gate is (waiting for the engine-gate lock, or running), by task label, for the row and the verdict tool. */
+const gateProgress = new Map<string, GateProgress>()
+
+/**
+ * MOD-229 (#323): a gate command as a spawned child, so the host's 10-minute cap on one `$.process.run` never
+ * applies; the mod's own ceiling, gateTimeoutMinutes, ends it. The same allowlist as run and the same shape back,
+ * stdout and stderr kept to 4 MiB each. At the ceiling the stream is closed, which kills the child, and the run reads
+ * as not run: `gate ran past gateTimeoutMinutes (<n> min)`. Each pull of the stream is a `$` call, so the hook's
+ * budget is not spent while the gate runs; the ceiling is a `$.clock.after` timer, not a clock wait. Commands other
+ * than gates keep run.
+ */
+async function spawnGate($: Host, argv: string[], init: { cwd?: string; progress?: { key: string; id: string } } = {}): Promise<RunOut> {
+  const refused = await refusal($, argv)
+  if (refused) return refused
+  const minutes = cfg.gateTimeoutMinutes
+  const key = init.progress?.key
+  let timer: { cancel: () => void } | undefined
+  try {
+    if (init.progress) gateProgress.set(init.progress.key, { phase: 'gate', id: init.progress.id, since: await now($) })
+    const stream = $.process.spawn({ argv, ...(init.cwd !== undefined ? { cwd: init.cwd } : {}) })
+    let fire = (): void => undefined
+    const ceiling = new Promise<'ceiling'>(resolve => {
+      fire = () => resolve('ceiling')
+    })
+    timer = $.clock.after(ceilingMs(minutes), () => fire())
+    const out = gateOutput()
+    for (;;) {
+      const pull = stream.next()
+      pull.catch(() => undefined)
+      const got = await Promise.race([pull, ceiling])
+      if (got === 'ceiling') {
+        try {
+          void stream.return(undefined as never).catch(() => undefined)
+        } catch {
+          // the child ends with the module at the latest
+        }
+        return { ok: false, why: pastCeiling(minutes) }
+      }
+      if (got.done) return { ok: true, exitCode: spawnExitCode(got.value), stdout: out.stdout(), stderr: out.stderr() }
+      out.add(got.value.stream, got.value.text)
+    }
+  } catch (err) {
+    return { ok: false, why: String(err) }
+  } finally {
+    timer?.cancel()
+    if (key !== undefined) gateProgress.delete(key)
   }
 }
 
@@ -1737,6 +1796,13 @@ async function worktreeList($: Host, root: string, t: number): Promise<string> {
 }
 
 /** Everything the band and the pane draw: the session's facts gathered, the model made by live.ts. */
+/** MOD-229: an owed row's state while its verifier's gate runs: `verifying (gate test running 3 min)`. */
+function withGateProgress<R extends { task: string; kind: string; state: string }>(row: R, t: number): R {
+  if (row.kind !== 'owed') return row
+  for (const [label, p] of gateProgress) if (row.task === label || row.task.startsWith(`${label} `)) return { ...row, state: gateProgressText(p, t) }
+  return row
+}
+
 async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number; repo?: string }[]; waits: ReadonlyMap<string, ResourceWait>; tierHeld: ReadonlyMap<string, Tier> }> {
   const t = await now($)
   const live = await liveState($)
@@ -1791,6 +1857,8 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     ...(ctx !== undefined ? { ctx } : {}),
     ...(brain ? { brain } : {}),
   })
+  // MOD-229: a row whose verdict is owed while its gate runs (or waits for the engine gate) says so, with the minutes
+  if (gateProgress.size > 0) view.rows = view.rows.map(r => withGateProgress(r, t))
   return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits, tierHeld: queuePlan.tierHeld ?? new Map() }
 }
 
@@ -2948,7 +3016,8 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
       const turn = isEngineGate(g.argv) ? await takeEngineTurn($, `${id} merge`) : undefined
       let r: RunOut
       try {
-        r = await run($, g.argv, { cwd: wt.path, timeoutMs: gateTimeoutMs() })
+        // MOD-229: spawned under the mod's own ceiling, as the verifier's gates are
+        r = await spawnGate($, g.argv, { cwd: wt.path })
       } finally {
         await turn?.release()
       }
@@ -4900,7 +4969,7 @@ let engineSeq = 0
  * time. The lock expires after the gate's own timeout, so a crashed holder never wedges the rest. A
  * store that cannot be read or written runs the gate without a turn rather than not at all.
  */
-async function takeEngineTurn($: Host, label: string): Promise<{ line?: string; release: () => Promise<void> }> {
+async function takeEngineTurn($: Host, label: string, progressKey?: string): Promise<{ line?: string; release: () => Promise<void> }> {
   const started = await now($)
   const token = `${label}#${started}#${(engineSeq += 1)}`
   let holder: string | undefined
@@ -4913,6 +4982,8 @@ async function takeEngineTurn($: Host, label: string): Promise<{ line?: string; 
         return decision
       })
       if (d.take) break
+      // MOD-229: the lock wait is shown apart from the gate's own time, and the ceiling starts only once the gate does
+      if (holder === undefined && progressKey !== undefined) gateProgress.set(progressKey, { phase: 'lock', since: started })
       holder = d.holder
       // MOD-72: a process wait, so a long lock wait does not spend the hook's budget (HookBudget); a clock wait of 1 s at most when it cannot start
       if (!(await pauseOffBudget($, d.waitMs))) await $.clock.sleep(Math.min(d.waitMs, 1000))
@@ -4920,6 +4991,8 @@ async function takeEngineTurn($: Host, label: string): Promise<{ line?: string; 
   } catch (err) {
     debug($, `${label}: engine gate turn not taken (${String(err)}); the gate runs without it`)
     return { release: async () => undefined }
+  } finally {
+    if (progressKey !== undefined && gateProgress.get(progressKey)?.phase === 'lock') gateProgress.delete(progressKey)
   }
   const release = async () => {
     try {
@@ -5225,7 +5298,16 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
         ...(outside ? { outside } : {}),
         ...(writes ? { writes } : {}),
       },
-      { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)), stat: path => statArtefact($, path), load: () => loadedWordsNow($, spawn.task) },
+      {
+        exec: (argv, init) => run($, [...argv], init),
+        // MOD-229: gates (and the red test's re-run) are spawned under the mod's own ceiling
+        gate: (argv, init) => spawnGate($, [...argv], { cwd: init.cwd, progress: { key: taskLabel(spawn.task, spawn.subtask), id: init.id } }),
+        write: (path, t) => $.fs.write(path, t),
+        readRed: path => readRed($, path),
+        turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask), taskLabel(spawn.task, spawn.subtask)),
+        stat: path => statArtefact($, path),
+        load: () => loadedWordsNow($, spawn.task),
+      },
     )
   } finally {
     if (locked) await unlockWorktree($, taskRepo, lockPath)
@@ -5266,11 +5348,12 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const waits: string[] = []
   for (const g of gates.runs) {
     // MOD-20: an engine gate takes its turn here too
-    const turn = isEngineGate(g.argv) ? await takeEngineTurn($, taskLabel(report.task ?? 'no-repo', report.subtask ?? 'main')) : undefined
+    const label = taskLabel(report.task ?? 'no-repo', report.subtask ?? 'main')
+    const turn = isEngineGate(g.argv) ? await takeEngineTurn($, label, label) : undefined
     if (turn?.line) waits.push(turn.line)
     let r: RunOut
     try {
-      r = await run($, g.argv, { cwd: gateRoot, timeoutMs: gateTimeoutMs() })
+      r = await spawnGate($, g.argv, { cwd: gateRoot, progress: { key: label, id: gateIdOf(contract.gate, cfg.gateMap, g.label) } })
     } finally {
       await turn?.release()
     }
@@ -6008,6 +6091,12 @@ async function pauseOffBudget($: Host, ms: number): Promise<boolean> {
   return r.ok && r.exitCode === 0
 }
 
+/** MOD-229: the still-verifying reply, with where the gate is when one runs or waits: `· verifying (gate test running 3 min)`. */
+async function stillVerifyingNow($: Host, label: string, seconds: number): Promise<string> {
+  const p = gateProgress.get(label)
+  return p ? `${stillVerifying(label, seconds)} · ${gateProgressText(p, await now($))}` : stillVerifying(label, seconds)
+}
+
 async function runVerdict($: Host, input: Record<string, unknown>): Promise<string> {
   const parsed = parseVerdictTool(input)
   if ('error' in parsed) return parsed.error
@@ -6021,9 +6110,9 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
       const lines = [...drainStatus(parsed.task), ...(await commentVerdict($, parsed.task, parsed.subtask, found.text))]
       return lines.length > 0 ? `${found.text}\n${lines.join('\n')}` : found.text
     }
-    if (waited >= limit) return stillVerifying(label, parsed.waitSeconds)
+    if (waited >= limit) return stillVerifyingNow($, label, parsed.waitSeconds)
     const step = Math.min(POLL_MS, limit - waited)
-    if (!(await pauseOffBudget($, step))) return stillVerifying(label, parsed.waitSeconds)
+    if (!(await pauseOffBudget($, step))) return stillVerifyingNow($, label, parsed.waitSeconds)
     waited += step
   }
 }

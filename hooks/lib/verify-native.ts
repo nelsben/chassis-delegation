@@ -42,10 +42,17 @@ import { effectiveList, parseAmends, parseHeader, type Report } from './brief'
 import { checkGateWords, gateForDelta, isEngineGate, resolveGateRuns, splitCommand, type GateResolution, type GateRun } from './gates'
 import { artefactsCheck, attributeWrites, isAbsolute, isDelegationPath, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
 import { isGitRef } from './repoconfig'
+import { gateIdOf } from './gaterun'
 
 export type ExecOut = { ok: true; exitCode: number; stdout: string; stderr: string } | { ok: false; why: string }
 export type NativeIo = {
   exec: (argv: readonly string[], init?: { cwd?: string; timeoutMs?: number }) => Promise<ExecOut>
+  /**
+   * MOD-229 (#323): runs a gate command (and the red test's re-run) as a spawned child under the mod's own
+   * ceiling, gateTimeoutMinutes, so no 10-minute host cap applies; `id` is the brief's gate id it runs, for the
+   * "gate <id> running <m> min" row. Same shape as exec. Absent, gates go through exec as before.
+   */
+  gate?: (argv: readonly string[], init: { cwd: string; id: string }) => Promise<ExecOut>
   /** Writes files.txt (the changed paths, one a line) before the gate runs: a gate may read it as {files}. */
   write: (path: string, text: string) => Promise<void>
   /** Reads the red evidence at an absolute path inside the worker's tree (GH-20); absent, a named file is unchecked. */
@@ -866,7 +873,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         const turn = io.turn && isEngineGate(run.argv) ? await io.turn(run.argv).catch(() => undefined) : undefined
         if (turn?.line) lines.push(turn.line)
         try {
-          const go = () => io.exec(run.argv, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS })
+          const go = () => (io.gate ? io.gate(run.argv, { cwd: repo, id: gateIdOf(emptyGate.gate, input.gateMap, run.label) }) : io.exec(run.argv, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS }))
           const first = await go()
           if (!first.ok || first.exitCode === 0 || first.exitCode === 126 || first.exitCode === 127) return { r: first, timeouts: 0 }
           const again = timeoutRerun(`${first.stdout}\n${first.stderr}`, delta, repo)
@@ -960,7 +967,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     const cmd = redTestCommand(contract.redTest, input.allowed ?? (() => false))
     if (cmd && redWantsGreen(ev) && !(redTarget(named, repo, contract.scratch) as { outside?: true }).outside) {
       try {
-        const g = await io.exec(cmd, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS })
+        const g = io.gate ? await io.gate(cmd, { cwd: repo, id: 'red test' }) : await io.exec(cmd, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS })
         green = g.ok ? { ran: true, exitCode: g.exitCode, output: `${g.stdout.trim()}${g.stderr.trim() ? `\n${g.stderr.trim()}` : ''}` } : { ran: false, why: g.why }
       } catch (err) {
         green = { ran: false, why: String(err) }
