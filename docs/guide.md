@@ -106,6 +106,8 @@ The dry run and `/dispatch` print these; the card is still written.
 
 Shrink the forbid or list the files before you say go.
 
+A scope path that a forbid covers can never be touched, because forbid wins. When a brief is made (the card tool, `/dispatch`), each scope entry is tested against each forbid entry and glob. If the card's own forbid covers a scope entry, the brief is refused: the card tool writes no card and dispatch writes no brief, and the error is `scope .claude/skills/x/SKILL.md is under forbid .claude/** — drop the forbid, narrow it, or drop the scope path`. If the forbid came from elsewhere (the parent issue's forbid, an open sibling card's scope, repo-wide config), nothing is refused: the brief is written, the forbid wins, and the dry run prints the same line as a `warning:` with `(from sibling card <ID>)` or `(from repo config)`, so you know where to fix it.
+
 ### The brief follows the card
 
 A brief is the card plus the dispatch flags, rendered once. Dispatch renders it again each time and compares it with the file in the folder. If the card, `--scope` or `--forbid` would change it, the file is rewritten and step 2 reads `2. brief <path> rewritten: the card changed, --scope applied, --forbid applied` (only the reasons that hold). If nothing would change it, step 2 reads `exists — reused, not overwritten`. Pass the same flags on every dispatch: a flag you leave out means the card's own value.

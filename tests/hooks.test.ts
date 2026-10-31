@@ -1072,13 +1072,15 @@ describe('/dispatch', () => {
     expect((w.files.get(`${SCRATCH}/briefs/BE-101.brief.md`) ?? '').startsWith(header + '\n\n')).toBe(true)
   })
 
-  test('a scope entry inside a forbid glob is named once in the dispatch output (GH-17)', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
-    world(on, { files: files(), dirs, run })
+  test('a scope entry inside the card\'s own forbid refuses the dispatch and writes no brief (GH-17, MOD-227)', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, run })
     await $.session.start(sessionStart)
     const out = await $.command.run(commandInput('BE-101 --dry-run --scope docs/a.md,src/**/x.ts --forbid docs/**'))
-    const warning = 'warning: scope entry docs/a.md is inside forbid docs/** and can never be touched; shrink the forbid (forbid-=) to allow it'
-    expect(String(out.text).split(warning)).toHaveLength(2)
-    expect(String(out.text)).not.toContain('scope entry src/')
+    const line = 'scope docs/a.md is under forbid docs/** \u2014 drop the forbid, narrow it, or drop the scope path'
+    expect(String(out.text)).toContain(line)
+    expect(String(out.text)).not.toContain('[[brief ')
+    expect(String(out.text)).not.toContain('scope src/')
+    expect(w.files.has(`${SCRATCH}/briefs/BE-101.brief.md`)).toBe(false)
   })
 
   test('--replay reads the card at the base commit and works in the -replay worktree', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {

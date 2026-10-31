@@ -6,7 +6,7 @@
 // MOD-23: `resources` names what the worker holds while it runs, and `lanes` splits one
 // sentence into several cards (one per worker) with sequential ids, the shared fields
 // and each lane's own scope.
-import { isSpacedPath, RESOURCE_NAME, scopeOverlap } from './brief'
+import { isSpacedPath, RESOURCE_NAME, scopeForbidClashes, scopeForbidClashLine, scopeOverlap } from './brief'
 import { dollars, spendCeiling } from './cost'
 import { scopeLooksProse, yamlScalar } from './dispatch'
 import { gateCommandTemplates } from './gates'
@@ -207,6 +207,10 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
     const pair = scopeOverlap(scope, sib.scope)
     if (pair) return { error: `scope ${pair.mine} overlaps open sibling ${sib.id} under parent #${parent}; wait for it to merge, or narrow the scope` }
   }
+  // MOD-227 (#304): a scope path under the card's own forbid can never be touched; refused before any card is written.
+  // A parent or sibling forbid is not the card's own: it is added and dispatch warns, naming where it came from.
+  const ownClash = scopeForbidClashes(scope, ownForbid)[0]
+  if (ownClash !== undefined) return { error: scopeForbidClashLine(ownClash.entry, ownClash.forbid) }
   const forbid = [...new Set([...ownForbid, ...parentForbid, ...siblings.flatMap(s => s.scope)])]
   const allow = resourceNames(input.allow, 'allow', 'live-reads')
   if ('error' in allow) return allow
