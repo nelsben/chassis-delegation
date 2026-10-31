@@ -7,6 +7,17 @@ import { fileURLToPath } from 'node:url'
 
 const read = rel => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8')
 
+describe('MOD-230: the brief tells the worker to re-run a timeout failure once', () => {
+  test('every mode that runs the gate carries the sentence', async () => {
+    const { renderSections } = await import('../../hooks/lib/dispatch.ts')
+    const t = read('hooks/templates/brief.md')
+    for (const here of [true, false]) {
+      const out = renderSections(t, here)
+      expect(out.includes('If the gate fails with timeouts (ETIMEDOUT, a test timing out), run it once more on its own before handing back gate=fail, and say in the report that it was re-run.')).toBe(true)
+    }
+  })
+})
+
 describe('5C: hooks/templates/brief.md is repo-neutral', () => {
   test('no product-specific line survives', () => {
     const t = read('hooks/templates/brief.md')

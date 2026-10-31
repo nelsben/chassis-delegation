@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **A busy machine is named as such (MOD-230, #323).** Dispatch adds `<k> lanes share the engine gate; it runs one at a time: expect verdict waits` when 3 or more live or queued briefed lanes have an engine gate. A verifier gate that is red or times out while the 1-minute load is at least twice the core count adds `machine loaded (load <x> on <n> cores): may be load, not the change; re-run with /dispatch <ID> --verify <sha> once it drops` to the verdict; the verdict itself is unchanged and a failed load read adds nothing. The load is read through `sysctl -n vm.loadavg hw.ncpu` and `nproc` (the two new exact allowlist entries) or `/proc/loadavg`. The brief template tells workers to re-run a gate that fails with timeouts once before handing back gate=fail.
+
 ### Fixed
 
 - **`merge` accepts a task whose verifier said `next=review` and whose review then said `next=accept` (MOD-231).** `latestVerdictRow` skipped the accepting review row and fell back to the consistent row, whose `next` was `review`, so a reviewed-and-accepted task was refused. A newest review row with `next=accept` now stands for the consistent row it reviewed (same attempt), read as `consistent · next=accept` with that row's attempt and sha; a review with any other `next` still blocks, and a consistent `next=review` row with no review still refuses. The verdict tool agrees: after such a review it names `next=accept` and offers no new review block.

@@ -57,6 +57,8 @@ export type NativeIo = {
   turn?: (argv: readonly string[]) => Promise<{ line?: string; release: () => Promise<void> }>
   /** MOD-22: what is at a path the report's artefacts= names (exists, size, folder or not); absent, artefacts are unchecked. */
   stat?: (path: string) => Promise<ArtefactStat>
+  /** MOD-230 (#323): the words for a loaded machine (`machine loaded (load x on n cores): …`), or nothing when it is not loaded or cannot be read. Called only after a red or timed-out gate; a throw reads as nothing. */
+  load?: () => Promise<string | undefined>
 }
 
 export type NativeInput = {
@@ -856,6 +858,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       let tail: string[] = []
       let fullOut = ''
       let stopped: string | undefined
+      let timedOut = false
       // MOD-20: timeouts in tests the delta never touched, seen on a first run that was then run again
       let reranTimeouts = 0
       const runGate = async (run: GateRun): Promise<{ r: ExecOut; timeouts: number }> => {
@@ -877,6 +880,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         reranTimeouts += timeouts
         if (!r.ok) {
           stopped = `gate ${run.label} did not run: ${r.why}`
+          timedOut = /timed? ?out|ETIMEDOUT/i.test(r.why)
           break
         }
         if (r.exitCode === 126 || r.exitCode === 127) {
@@ -925,6 +929,11 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         else claim('gate', 'unchecked', 'gate=fail claimed but the gate is green — not a refutation, recorded')
       } else claim('gate', 'unchecked', `report gate='${said}' is not pass|fail`)
       if (code !== 0 && reranTimeouts > 0) lines.push(`note: the gate was re-run once after ${plural(reranTimeouts, 'timeout')} in untouched tests, and was red again`)
+      // MOD-230 (#323): a red or timed-out gate on a loaded machine says so; the verdict is not changed, only the words
+      if (io.load && !changed && ((!stopped && code !== 0) || timedOut)) {
+        const words = await io.load().catch(() => undefined)
+        if (words) lines.push(words)
+      }
     }
   }
 
