@@ -19,7 +19,7 @@ import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
 import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
 import { paneTree, type PaneTable, type PaneView } from './lib/pane'
-import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, sampleEvery, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
+import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, SAMPLE_LIVE_MS, sampleEvery, sampleMoved, idsHashOf, probeSkipped, type ProbeFailed, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
 import { checkArgv, isSha, LOCK_REASON, refusedLine, type AllowConfig, type MergeCtx } from './lib/allow'
 import {
@@ -399,6 +399,8 @@ const K = {
   handoff: (briefPath: string) => `delegation.handoff.${briefPath}`,
   agentTypes: 'delegation.agentTypes',
   answered: 'delegation.models.answered',
+  /** MOD-242: the probe's failure counts, id to {n, idsHash}. */
+  modelsFailed: 'delegation.models.failed',
   replay: (briefPath: string) => `delegation.replay.${briefPath}`,
   /** A worker's own spend this attempt, from its turn usage (GH-106). */
   cost: (agentId: string) => `delegation.cost.${agentId}`,
@@ -2031,20 +2033,64 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
   return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits, tierHeld: queuePlan.tierHeld ?? new Map() }
 }
 
-/** One sample of the session's dollars; the next waits 15 s while a worker is live or queued, else 60 s. */
+/**
+ * One sample of the session's dollars. MOD-242: a point (and a redraw) only when the dollars or the live-worker count moved;
+ * the next sample waits 15 s while a worker is live or queued, 60 s while only a brain turn is open, and none is scheduled
+ * when nothing runs (armSample wakes it).
+ */
+let lastSample: { usd: number; workers: number } | undefined
+let samplePaused = false
+let sampling = false
+let sampleAgain = false
 async function sampleSpend($: Host): Promise<void> {
-  let active = false
+  let busy = false
+  let work = false
+  sampling = true
+  sampleAgain = false
   try {
     const t = await now($)
     const live = await liveState($)
-    active = live.workers.length + live.pending.length + live.queued > 0
+    work = live.workers.length + live.pending.length + live.queued > 0
+    busy = work || turnOpen
     const usd = await sessionUsd($)
-    if (usd !== undefined) await $.state.set(SPEND, spendSeries(await readSpend($), { t, usd }))
-    redraw($)
+    if (usd !== undefined && sampleMoved(lastSample, usd, live.workers.length)) {
+      lastSample = { usd, workers: live.workers.length }
+      await $.state.set(SPEND, spendSeries(await readSpend($), { t, usd }))
+      redraw($)
+    }
   } catch (err) {
     debug($, `spend not sampled: ${String(err)}`)
   }
-  scheduleSample($, sampleEvery(active))
+  sampling = false
+  if (sampleAgain) {
+    busy = true
+    work = true
+  }
+  if (busy) {
+    samplePaused = false
+    scheduleSample($, sampleEvery(work))
+  } else {
+    sampleTimer?.cancel()
+    sampleTimer = undefined
+    samplePaused = true
+  }
+}
+/** MOD-242: wake a sleeping sampler (turn.start, a worker's spawn, a queue change): a point at the new time keeps the curve flat across the gap. */
+function armSample($: Host): void {
+  if (sampling) {
+    sampleAgain = true
+    return
+  }
+  if (!samplePaused) return
+  samplePaused = false
+  void (async () => {
+    try {
+      if (lastSample !== undefined) await $.state.set(SPEND, spendSeries(await readSpend($), { t: await now($), usd: lastSample.usd }))
+    } catch (err) {
+      debug($, `spend not re-armed: ${String(err)}`)
+    }
+    scheduleSample($, SAMPLE_LIVE_MS)
+  })()
 }
 function scheduleSample($: Host, ms: number) {
   sampleTimer?.cancel()
@@ -2118,6 +2164,7 @@ async function readQueue($: Host): Promise<QueuedSpawn[]> {
   }
 }
 async function writeQueue($: Host, queue: QueuedSpawn[]): Promise<void> {
+  armSample($)
   try {
     await $.state.set(QUEUE, queue)
   } catch (err) {
@@ -5130,17 +5177,25 @@ async function noteAgentTypes($: Host, names: readonly string[]) {
 
 async function probe($: Host) {
   const answered = (await storeGet<string[]>($, K.answered)) ?? []
+  // MOD-242: an id that failed 3 times against this id list is not asked again until the list changes
+  const failed: ProbeFailed = { ...((await storeGet<ProbeFailed>($, K.modelsFailed)) ?? {}) }
+  const hash = idsHashOf(cfg.candidateIds)
+  const before = JSON.stringify(failed)
   for (const id of cfg.candidateIds) {
     if (answered.includes(id)) continue
+    if (probeSkipped(failed, id, hash)) continue
     try {
       await $.model.classify('ok', ['ok', 'no'], { model: id })
       answered.push(id)
+      delete failed[id]
       $.ui.toast(`${id} answers now`)
     } catch {
-      // not yet
+      const prev = failed[id]
+      failed[id] = { n: (prev && prev.idsHash === hash ? prev.n : 0) + 1, idsHash: hash }
     }
   }
   await storeSet($, K.answered, answered)
+  if (JSON.stringify(failed) !== before) await storeSet($, K.modelsFailed, failed)
 }
 
 // ---- verify + verdict (5A: native) ---------------------------------------------------
@@ -8958,6 +9013,7 @@ export const register: Register = (on, opts) => {
   // ---- agent.spawn: tier, budget, record, drift --------------------------------------
   on('agent.spawn', async ($, e, next) => {
     if (e.fork) return next(e)
+    armSample($)
     const pk = promptKey({ prompt: e.prompt, ...(e.cwd ? { cwd: e.cwd } : {}) })
     if (selfDecided.has(pk)) {
       // the mod's own spawn, decided already by spawnSelf: pass it on, and say which agent started
@@ -9273,6 +9329,7 @@ export const register: Register = (on, opts) => {
     }
     inTurn = true
     turnOpen = true
+    armSample($)
     cancelIdle()
     await refreshBrainKey($)
     return next(e)
@@ -9425,6 +9482,8 @@ export const register: Register = (on, opts) => {
     await pruneStore($, 'start')
     await loadRepoConfig($)
     void sweepMergeGates($)
+    lastSample = undefined
+    samplePaused = false
     void sampleSpend($)
     try {
       await noteAgentTypes($, (await $.agent.list()).map(a => a.type))
