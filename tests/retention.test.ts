@@ -1,5 +1,7 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { MIB, PRESSURE_BYTES, RATION_RETAIN_MS, RETAIN_MS, TARGET_BYTES, prunedLine, refusedRow, refusedWritesLine, retentionPlan, slimSpawns, storeBytes, storeLine, type StoreEntry } from '../hooks/lib/retention'
+import { world, spawnInput, turnInput, sessionStart, delegationCommand, ROOT, NOW as WNOW, SCRATCH } from './harness'
+import { MOD_VERSION } from '../hooks/lib/version'
+import { FULL_SCAN_MS, SizeEstimate, entryBytes, scanDue, MIB, PRESSURE_BYTES, RATION_RETAIN_MS, RETAIN_MS, TARGET_BYTES, prunedLine, refusedRow, refusedWritesLine, retentionPlan, slimSpawns, storeBytes, storeLine, type StoreEntry } from '../hooks/lib/retention'
 
 // MOD-89 (#157, #159): what the mod deletes from its store so a set is never refused at the host's 4 MiB cap.
 const NOW = 100 * 24 * 60 * 60 * 1000
@@ -195,3 +197,102 @@ describe('MOD-233: posted verdict text is dropped after a day', () => {
   })
 })
 
+
+// MOD-243: a verdict stops reading every key in the store when the running estimate is under the pressure line.
+const VBRIEF = `${SCRATCH}/briefs/T-5.brief.md`
+const VHEADER = '[[brief v=1 task=T-5 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+const VPROMPT = `Your brief is the file ${VBRIEF}. Read it whole, then follow it exactly.`
+const VREPORT = '[[report v=1 task=T-5 subtask=main branch=agent/frontend/T-5 pr=none sha=1111111 gate=pass files=a/x.ts]]'
+const flush = async () => {
+  for (let i = 0; i < 300; i++) await Promise.resolve()
+  await new Promise(r => setTimeout(r, 20))
+  for (let i = 0; i < 300; i++) await Promise.resolve()
+}
+
+describe('MOD-243: the estimate decides when the full scan is worth it', () => {
+  test('a verdict in a store under the pressure line, scanned an hour ago, reads no key list and fewer than 30 keys', { options: { gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
+    const store: Record<string, unknown> = { 'delegation.prune': { at: WNOW - 3_600_000, bytes: 200_000 }, [`delegation.migrated.${ROOT}`]: MOD_VERSION }
+    for (let i = 0; i < 500; i++) store[`delegation.unrelated.${i}`] = { n: i }
+    const w = world(on, { files: { [VBRIEF]: VHEADER + '\nbody' }, dirs: { [`${ROOT}-T-5`]: [] }, run: (argv: string[]) => (argv[0] === 'npx' ? { exitCode: 0, stdout: '' } : undefined), agentId: 'agent-5', store })
+    await $.agent.spawn(spawnInput({ prompt: VPROMPT, cwd: `${ROOT}-T-5` }))
+    const keys0 = w.storeKeyReads
+    const gets0 = w.storeGets
+    await $.turn.complete(turnInput('agent-5', 'Done.\n' + VREPORT))
+    await flush()
+    expect(w.storeKeyReads - keys0).toBe(0)
+    expect(w.storeGets - gets0).toBeLessThan(30)
+  })
+
+  const scanned = async (prune: unknown, extra: Record<string, unknown> = {}) => {
+    const store: Record<string, unknown> = { [`delegation.migrated.${ROOT}`]: MOD_VERSION, ...(prune === undefined ? {} : { 'delegation.prune': prune }), ...extra }
+    for (let i = 0; i < 50; i++) store[`delegation.unrelated.${i}`] = { n: i }
+    return store
+  }
+  test('session start scans when the last scan is a day old, and records it; a recent one under the line does not', async ($, on) => {
+    const stale = world(on, { store: await scanned({ at: WNOW - FULL_SCAN_MS - 1, bytes: 1000 }) })
+    await $.session.start(sessionStart)
+    expect(stale.storeKeyReads).toBeGreaterThan(0)
+    expect(stale.store.get('delegation.prune')).toMatchObject({ at: WNOW })
+  })
+
+  test('session start with a recent scan under the line reads no key list', async ($, on) => {
+    const w = world(on, { store: await scanned({ at: WNOW - 1000, bytes: 1000 }) })
+    await $.session.start(sessionStart)
+    expect(w.storeKeyReads).toBe(0)
+    expect(w.store.get('delegation.prune')).toEqual({ at: WNOW - 1000, bytes: 1000 })
+  })
+
+  test('a recorded size over the pressure line scans', async ($, on) => {
+    const w = world(on, { store: await scanned({ at: WNOW - 1000, bytes: PRESSURE_BYTES + 10 }) })
+    await $.session.start(sessionStart)
+    expect(w.storeKeyReads).toBeGreaterThan(0)
+    expect((w.store.get('delegation.prune') as { bytes: number }).bytes).toBeLessThan(PRESSURE_BYTES)
+  })
+
+  test('/delegation reports the size from the estimate with no key list read', async ($, on) => {
+    const w = world(on, { store: await scanned({ at: WNOW - 1000, bytes: 1.5 * MIB }) })
+    const text = String((await $.command.run(delegationCommand)).text)
+    expect(text).toContain('store: 1.50 MiB of 4 MiB')
+    // the 50 unrelated keys are not each read for the figure
+    expect(w.storeGets).toBeLessThan(40)
+  })
+})
+
+describe('MOD-243: the scan decision and the running estimate', () => {
+  const last = { at: 1000, bytes: 1000 }
+  test('the scan is due on a refused write, no record, no estimate, pressure, or a scan 24 h old', () => {
+    const base = { last, estimate: 1000, now: 2000, refused: false }
+    expect(scanDue(base)).toBe(false)
+    expect(scanDue({ ...base, refused: true })).toBe(true)
+    expect(scanDue({ ...base, last: undefined })).toBe(true)
+    expect(scanDue({ ...base, estimate: undefined })).toBe(true)
+    expect(scanDue({ ...base, estimate: PRESSURE_BYTES + 1 })).toBe(true)
+    expect(scanDue({ ...base, estimate: PRESSURE_BYTES })).toBe(false)
+    expect(scanDue({ ...base, now: 1000 + FULL_SCAN_MS - 1 })).toBe(false)
+    expect(scanDue({ ...base, now: 1000 + FULL_SCAN_MS })).toBe(true)
+  })
+
+  test('a set adds the value\'s bytes, a rewrite the difference, a delete what was known', () => {
+    const e = new SizeEstimate()
+    expect(e.bytes).toBeUndefined()
+    e.seed(100)
+    e.seed(999)
+    expect(e.bytes).toBe(100)
+    e.set('a', 'xx')
+    const first = entryBytes('a', 'xx') + 1
+    expect(e.bytes).toBe(100 + first)
+    e.set('a', 'xxxx')
+    expect(e.bytes).toBe(100 + entryBytes('a', 'xxxx') + 1)
+    e.delete('a')
+    expect(e.bytes).toBe(100)
+    e.delete('never-seen')
+    expect(e.bytes).toBe(100)
+    e.reset(50)
+    expect(e.bytes).toBe(50)
+  })
+
+  test('the plan leaves the prune record and the migration marker alone', () => {
+    const entries: StoreEntry[] = [['delegation.prune', { at: 1, bytes: 2 }], ['delegation.migrated./r', '0.9.40']]
+    expect(plan(entries).delete).toEqual([])
+  })
+})

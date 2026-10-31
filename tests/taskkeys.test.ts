@@ -1,7 +1,8 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { migratedLine, migrationPlan, rowRoot, scopedAttemptKey, scopedId, trimRepo } from '../hooks/lib/taskkeys'
 import { RETAIN_MS, retentionPlan } from '../hooks/lib/retention'
-import { world, sessionStart, ROOT } from './harness'
+import { world, sessionStart, spawnInput, ROOT, SCRATCH } from './harness'
+import { MOD_VERSION } from '../hooks/lib/version'
 
 // MOD-117 (#185, #184): every per-task key names the card's repo, the session's own cards too.
 const A = '/repo/a'
@@ -144,5 +145,33 @@ describe('MOD-117: session start moves the bare keys', () => {
     await $.session.start(sessionStart)
     expect(new Map(w.store)).toEqual(before)
     expect(w.debugLogs.filter(l => l.includes('per-task key'))).toHaveLength(1)
+  })
+})
+
+describe('MOD-243: the migration marker', () => {
+  test('a successful run writes delegation.migrated.<root> = the mod version; a start that finds it reads no key list', async ($, on) => {
+    const w = world(on, { store: { 'delegation.tasks.OPS-4': [row(2, ROOT)] } })
+    await $.session.start(sessionStart)
+    expect(w.store.get(`delegation.migrated.${ROOT}`)).toBe(MOD_VERSION)
+    expect(w.store.has('delegation.tasks.OPS-4')).toBe(false)
+    const reads = w.storeKeyReads
+    await $.session.start(sessionStart)
+    expect(w.storeKeyReads).toBe(reads)
+  })
+
+  test('with the marker present, a bare key found later moves at the first per-task read of its task', async ($, on) => {
+    const brief = `${SCRATCH}/briefs/T-5.brief.md`
+    const header = '[[brief v=1 task=T-5 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+    const old = row(1, ROOT, { task: 'T-5', toolUseId: 'old', agentId: 'ag-old' })
+    const w = world(on, { files: { [brief]: header + '\nbody' }, dirs: { [`${ROOT}-T-5`]: [] }, agentId: 'agent-5', store: { [`delegation.migrated.${ROOT}`]: MOD_VERSION, 'delegation.prune': { at: 1_000_000, bytes: 100 }, 'delegation.tasks.T-5': [old] } })
+    await $.session.start(sessionStart)
+    expect(w.storeKeyReads).toBe(0)
+    expect(w.store.has('delegation.tasks.T-5')).toBe(true)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${brief}. Read it whole, then follow it exactly.`, cwd: `${ROOT}-T-5` }))
+    expect(w.store.has('delegation.tasks.T-5')).toBe(false)
+    const moved = (w.store.get(`delegation.tasks.T-5@${ROOT}`) ?? []) as { attempt: number }[]
+    expect(moved.map(r => r.attempt)).toContain(1)
+    expect(moved.length).toBe(2)
+    expect(w.storeKeyReads).toBe(0)
   })
 })
