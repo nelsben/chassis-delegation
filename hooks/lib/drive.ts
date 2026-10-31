@@ -27,8 +27,67 @@ const SPAWN_TOOLS = ['Agent', 'Task', 'SendMessage']
 const READ_COMMANDS = ['grep', 'egrep', 'fgrep', 'rg', 'sed', 'cat', 'ls', 'head', 'tail', 'find', 'wc', 'awk', 'cut', 'sort', 'jq', 'diff', 'stat', 'file', 'tree', 'less', 'cd', 'pwd', 'echo', 'test', 'which', 'tr', 'uniq', 'column']
 const SKIP_COMMANDS = ['git', 'gh']
 
-/** A command that waits on something: an until or while loop, or a sleep. */
-export const isPoll = (command: string): boolean => /(^|[\s;&|(])until\s/.test(command) || /(^|[\s;&|(])while\s[^]*\bsleep\b/.test(command) || /(^|[\s;&|(])sleep\s+\d/.test(command)
+const SHELL_C = /(?:^|[\s;&|(\/])(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c\s*$/
+
+/**
+ * MOD-225 (#305): the command with its prose cut out. Heredoc bodies (`<<WORD`, `<<'WORD'`, `<<-WORD`, up to the
+ * closing word) are removed and single- or double-quoted strings are emptied; the quote marks stay. A quoted body
+ * that follows `bash|sh|zsh -c` is kept, since it is a shell run. Pure, one pass, no regex over the whole text.
+ */
+export function cutText(command: string): string {
+  let out = ''
+  const pending: { word: string; dash: boolean }[] = []
+  let i = 0
+  const n = command.length
+  while (i < n) {
+    const c = command[i]
+    if (c === '\\') {
+      out += command.slice(i, i + 2)
+      i += 2
+    } else if (c === '<' && command.startsWith('<<', i) && command[i + 2] !== '<' && command[i + 2] !== '(' && command[i - 1] !== '<') {
+      const m = /^<<(-?)\s*(?:'([^']*)'|"([^"]*)"|\\?([A-Za-z_][A-Za-z0-9_]*))/.exec(command.slice(i))
+      if (m) {
+        pending.push({ word: m[2] ?? m[3] ?? m[4] ?? '', dash: m[1] === '-' })
+        out += `<<${m[1]}`
+        i += m[0].length
+      } else {
+        out += '<<'
+        i += 2
+      }
+    } else if (c === '\n' && pending.length > 0) {
+      out += '\n'
+      i++
+      for (const h of pending) {
+        for (;;) {
+          if (i >= n) break
+          let end = command.indexOf('\n', i)
+          if (end < 0) end = n
+          const line = command.slice(i, end)
+          i = Math.min(end + 1, n)
+          if ((h.dash ? line.replace(/^\t+/, '') : line) === h.word) break
+        }
+      }
+      pending.length = 0
+    } else if (c === "'" || c === '"') {
+      let j = i + 1
+      while (j < n && command[j] !== c) j += c === '"' && command[j] === '\\' ? 2 : 1
+      const close = Math.min(j, n - 1)
+      if (SHELL_C.test(out)) out += command.slice(i, close + 1).replace(/^["']/, '$& ')
+      else out += c + (j < n ? c : '')
+      i = close + 1
+    } else {
+      out += c
+      i++
+    }
+  }
+  return out
+}
+
+/** A command that waits on something: an until or while loop, or a sleep. Heredoc bodies and quoted text are not looked at. */
+export const isPoll = (command: string): boolean => {
+  const c = cutText(command)
+  return /(^|[\s;&|(])until\s/.test(c) || /(^|[\s;&|(])while\s[^]*\bsleep\b/.test(c) || /(^|[\s;&|(])sleep\s+\d/.test(c)
+}
 
 const firstWord = (command: string): string => {
   const words = command.trim().split(/\s+/)
@@ -100,7 +159,7 @@ const CD = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*/
  * when long). A command that is nothing but an assignment keeps its own text.
  */
 export function commandKey(command: string): string {
-  const whole = command.trim().replace(/\s+/g, ' ')
+  const whole = cutText(command).trim().replace(/\s+/g, ' ')
   let rest = whole
   for (;;) {
     const next = rest.replace(ASSIGNMENT, '').replace(CD, '')

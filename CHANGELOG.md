@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **The brain-polling row no longer fires on a file write or a quoted message (MOD-225, #305).** `isPoll` and the repeat key now look at the command with heredoc bodies (`<<WORD`, `<<'WORD'`, `<<-WORD`, up to the closing word) and single- or double-quoted strings cut out (`cutText`, in `hooks/lib/drive.ts`), so a `cat > notes.md <<'EOF'` whose prose says "while" and "sleep", `git commit -m "wait until the sleep test passes"` and `echo "sleep 5"` are not polls. A quoted body run by `bash|sh|zsh -c` is kept, so `until`/`while`/`sleep` loops still poll. The row text and threshold are unchanged.
 - **A review that arrives after the lead's context was compacted is taken, or refused in one line (MOD-224).** The break was the spawn record: a reviewer's hand-back was joined to its review only through the spawn record the spawn hook stored, and when that record was gone the hand-back was treated as an ad hoc agent's and its `[[review]]` block never read, so the verdict kept saying `next=review`. The reviewer's closing block now also carries `attempt=` and `sha=`; a block naming the task, the attempt and the sha the verdict waits on is recorded without the spawn record (never on the task alone). A block that names another attempt or sha, or none, is not recorded, and the next `verdict` adds `review seen for <id> but it names sha <x>, waiting on <y>; spawn the reviewer again`. A normal spawn-and-return review is unchanged.
 
 ### Added
