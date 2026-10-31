@@ -200,6 +200,7 @@ export type RedClaim = { status: 'held' | 'failed' | 'unchecked'; detail: string
 export const BASE_REFS = ['origin/main', 'main', 'origin/master', 'master'] as const
 
 export const GATE_OUTPUT_LINES = 8
+// MOD-229: only the fallback when no io.gate is passed (the pure path, through exec); the engine always passes io.gate
 const DEFAULT_GATE_TIMEOUT_MS = 9 * 60 * 1000
 const GIT_TIMEOUT_MS = 30 * 1000
 
