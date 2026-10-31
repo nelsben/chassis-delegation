@@ -133,6 +133,26 @@ export function outdirOf(scope: readonly string[], named?: string): string | und
 /** A path is under `root` (or is it). */
 const under = (path: string, root: string): boolean => path === root || path.startsWith(root === '/' ? '/' : `${root}/`)
 
+/** MOD-217: a path in the mod's own `.delegation/` folder (under the repo root or any worktree): never part of a scope, forbid or outside delta. */
+export const isDelegationPath = (path: string): boolean => /(^|\/)\.delegation(\/|$)/.test(path)
+
+/**
+ * MOD-217: which of the changed (absolute) paths a worker wrote. A path is the worker's when it is in `log`
+ * (the paths its tool calls wrote), is a folder one of them lies under, or lies under a folder one of them
+ * wrote. An empty log attributes every path to the worker: a worker whose writes were all through scripts the
+ * lexer cannot see must not slip through unseen.
+ */
+export function attributeWrites(paths: readonly string[], log: readonly string[] | undefined): { mine: string[]; foreign: string[] } {
+  if (log === undefined || log.length === 0) return { mine: [...paths], foreign: [] }
+  const mine: string[] = []
+  const foreign: string[] = []
+  for (const p of paths) {
+    const q = p.replace(/\/+$/, '') || '/'
+    ;(log.some(w => w === q || under(w, q) || under(q, w)) ? mine : foreign).push(p)
+  }
+  return { mine, foreign }
+}
+
 /** The roots with any that lies inside another dropped, each once, in order. */
 const outermost = (roots: readonly string[]): string[] => {
   const all = [...new Set(roots)]
@@ -175,7 +195,7 @@ const anyMatch = (path: string, globs: readonly string[], dir = false): boolean 
  * A root that was not listed at one end leaves the claim unchecked unless a
  * failure was found elsewhere. Undefined when no root was listed at all.
  */
-export function outsideClaim(input: { before: readonly RootListing[]; after: readonly RootListing[]; scope: readonly string[]; forbid: readonly string[]; /** MOD-185: absolute folder prefixes whose changes are the mod's and the lead's own writes; ignored for scope and forbid alike. */ ignore?: readonly string[] }): ClaimResult | undefined {
+export function outsideClaim(input: { before: readonly RootListing[]; after: readonly RootListing[]; scope: readonly string[]; forbid: readonly string[]; /** MOD-185: absolute folder prefixes whose changes are the mod's and the lead's own writes; ignored for scope and forbid alike. */ ignore?: readonly string[]; /** MOD-217: the paths the worker's own tool calls wrote; a changed path outside it is listed in `foreign`, never judged. Empty or absent: every path is the worker's. */ writes?: readonly string[] }): (ClaimResult & { foreign?: string[] }) | undefined {
   const roots = [...new Set([...input.before.map(l => l.root), ...input.after.map(l => l.root)])]
   if (roots.length === 0) return undefined
   const changed: string[] = []
@@ -212,8 +232,10 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
   const files = [...new Set(changed)].filter(p => !changedDirs.has(p))
   const ignoreRoots = (input.ignore ?? []).filter(isAbsolute).map(i => i.replace(/\/+$/, '') || '/')
   const all = [...new Set([...files, ...changedDirs])].sort()
-  const paths = all.filter(p => !ignoreRoots.some(i => under(p, i)))
-  const ignored = all.length - paths.length
+  const kept = all.filter(p => !ignoreRoots.some(i => under(p, i)))
+  const ignored = all.length - kept.length
+  // MOD-217: the mod's own .delegation/ is never judged; a path the worker did not write is listed, not judged
+  const { mine: paths, foreign } = attributeWrites(kept.filter(p => !isDelegationPath(p)), input.writes)
   const rel = (i: string): string => {
     const r = roots.find(o => under(i, o) && o !== i)
     return r === undefined ? i : i.slice(r === '/' ? 1 : r.length + 1)
@@ -224,15 +246,16 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
     return anyMatch(p, input.forbid, dir) ? [{ p, why: 'touches forbid path' }] : anyMatch(p, input.scope, dir) ? [] : [{ p, why: 'out-of-scope path' }]
   })
   const first = bad[0]
-  if (first) return { status: 'failed', detail: `${first.why}: ${first.p} (outside delta${bad.length > 1 ? `, +${bad.length - 1} more` : ''})` }
-  if (unchecked !== undefined) return { status: 'unchecked', detail: unchecked + ignoredNote }
+  const extra = foreign.length > 0 ? { foreign } : {}
+  if (first) return { status: 'failed', detail: `${first.why}: ${first.p} (outside delta${bad.length > 1 ? `, +${bad.length - 1} more` : ''})`, ...extra }
+  if (unchecked !== undefined) return { status: 'unchecked', detail: unchecked + ignoredNote, ...extra }
   const where = roots.join(', ')
   const by = watched ? ' (checked by modification time)' : ''
-  return { status: 'held', detail: paths.length === 0 ? `outside delta: nothing changed under ${where}${by}${ignoredNote}` : `outside delta: ${plural(paths.length, 'changed path')} under ${where}, every one within scope and none in forbid${by}${ignoredNote}` }
+  return { status: 'held', detail: paths.length === 0 ? `outside delta: nothing changed under ${where}${by}${ignoredNote}` : `outside delta: ${plural(paths.length, 'changed path')} under ${where}, every one within scope and none in forbid${by}${ignoredNote}`, ...extra }
 }
 
 /** What the verifier needs to compare the outside: the listings taken at dispatch, and a way to list a root now. */
-export type OutsideInput = { before: readonly RootListing[]; list: (root: string, since?: number) => Promise<RootListing> }
+export type OutsideInput = { before: readonly RootListing[]; list: (root: string, since?: number) => Promise<RootListing>; /** MOD-217: the paths the worker's tool calls wrote (its write log). */ writes?: readonly string[] }
 
 /** MOD-186: the folder (under the session root) that holds a repo=none card's listing files. */
 export const outsideDirOf = (root: string): string => `${root.replace(/\/+$/, '')}/.delegation/outside`
@@ -251,7 +274,7 @@ export function isOutsideFile(root: string, path: string): boolean {
  * the outside delta. Undefined when nothing was recorded at dispatch (a brief that never went through
  * /dispatch): the outside is then no part of the scope claim.
  */
-export async function outsideCheck(scope: readonly string[], forbid: readonly string[], outside: OutsideInput | undefined, ignore?: readonly string[]): Promise<ClaimResult | undefined> {
+export async function outsideCheck(scope: readonly string[], forbid: readonly string[], outside: OutsideInput | undefined, ignore?: readonly string[]): Promise<(ClaimResult & { foreign?: string[] }) | undefined> {
   if (outside === undefined) return undefined
   // a root an amendment added inside a folder listed at dispatch is covered by that listing
   const roots = outermost([...outside.before.map(l => l.root), ...outsideRoots(scope, forbid)])
@@ -264,7 +287,7 @@ export async function outsideCheck(scope: readonly string[], forbid: readonly st
       after.push({ root, error: String(err) })
     }
   }
-  return outsideClaim({ before: outside.before, after, scope, forbid, ...(ignore ? { ignore } : {}) })
+  return outsideClaim({ before: outside.before, after, scope, forbid, ...(ignore ? { ignore } : {}), ...(outside.writes ? { writes: outside.writes } : {}) })
 }
 
 /** The report's `artefacts=` list: comma-separated paths, `none` and blanks dropped. */

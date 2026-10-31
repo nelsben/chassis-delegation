@@ -213,7 +213,7 @@ import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
-import { artefactsCheck, defaultScratch, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
+import { artefactsCheck, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
@@ -391,6 +391,8 @@ const K = {
   replay: (briefPath: string) => `delegation.replay.${briefPath}`,
   /** A worker's own spend this attempt, from its turn usage (GH-106). */
   cost: (agentId: string) => `delegation.cost.${agentId}`,
+  /** MOD-217: the paths a worker's own tool calls wrote (absolute, capped), read at its verdict to charge scope only for what it wrote. */
+  writes: (agentId: string) => `delegation.writes.${agentId}`,
   /** MOD-13: the card's own `effort:`, written at /dispatch; it wins over effortByTier. */
   effort: (task: string, repo = '') => `delegation.effort.${scopedId(task, repo)}`,
   /** Set once an attempt's verdict row is posted to the conversation. */
@@ -1604,6 +1606,39 @@ async function freshSessionGuard($: Host): Promise<void> {
     await appendRow($, row)
   } catch (err) {
     debug($, `fresh-session check skipped: ${String(err)}`)
+  }
+}
+
+/** MOD-217: the most paths one worker's write log holds. */
+const WRITE_LOG_CAP = 2000
+
+/**
+ * MOD-217: a recorded worker's Edit, Write, MultiEdit and NotebookEdit file_path, and the paths bashWrites finds in
+ * a Bash command, resolved against the worker's cwd, are added to its write log (capped). A reviewer, an ad hoc
+ * agent and an unrecorded agent log nothing. Never throws: a call that cannot be logged is debug.
+ */
+async function noteWrites($: Host, e: { tool: unknown; agentId?: string }): Promise<void> {
+  const tool = String(e.tool)
+  if (!e.agentId || !(WRITE_TOOLS.includes(tool) || tool === 'Bash')) return
+  try {
+    const spawn = await spawnByAgent($, e.agentId)
+    if (!spawn || spawn.adhoc || spawn.review) return
+    const input = e as unknown as Record<string, unknown>
+    const cwd = await bashCwd($, e.agentId)
+    const home = (await $.env.get('HOME')) || undefined
+    const raw = tool === 'Bash' ? bashWrites(typeof input.command === 'string' ? input.command : '', cwd, home).paths : toolPath(input)
+    const paths = raw.flatMap(p => {
+      const abs = isAbsolute(p) ? p : `${cwd.replace(/\/+$/, '')}/${p}`
+      const n = normalizePath(abs)
+      return n === undefined ? [] : [n]
+    })
+    if (paths.length === 0) return
+    const key = K.writes(e.agentId)
+    const had = (await storeGet<string[]>($, key)) ?? []
+    const log = [...new Set([...had, ...paths])].slice(0, WRITE_LOG_CAP)
+    if (log.length > had.length) await storeSet($, key, log)
+  } catch (err) {
+    debug($, `write log not kept: ${String(err)}`)
   }
 }
 
@@ -4888,12 +4923,14 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const report = parseReport(block)
   const filesPath = filesPathFor(scratchFor(briefPath), spawn.task)
   const allowed = (argv: readonly string[]) => checkArgv(argv, allowCfg()).ok
-  if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path)
+  // MOD-217: the paths this worker wrote, so scope is charged only for them
+  const writes = spawn.agentId ? await storeGet<string[]>($, K.writes(spawn.agentId)) : undefined
+  if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes)
   // GH-16: repo=here verifies the session's own checkout, shared with the brain and other workers
   const here = header?.repo === 'here'
   const repo = here ? root : await workerRepo($, spawn, header?.repo, root)
   const probed = await run($, workTreeArgv(repo), { cwd: root, timeoutMs: 15000 })
-  if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path)
+  if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes)
   // GH-20: a red file must differ from every earlier attempt's of this task + subtask
   const priorRed = priorRedHashes(await loadAttempts($, spawn), spawn.subtask, spawn.attempt, laneOf(spawn))
   const others = here ? (await inFlightHere($, root, taskLabel(spawn.task, spawn.subtask))).map(c => ({ card: c.label, files: c.files })) : []
@@ -4920,6 +4957,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
         ...(baseRef ? { baseRef } : {}),
         ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),
         ...(outside ? { outside } : {}),
+        ...(writes ? { writes } : {}),
       },
       { exec: (argv, init) => run($, [...argv], init), write: (path, t) => $.fs.write(path, t), readRed: path => readRed($, path), turn: () => takeEngineTurn($, taskLabel(spawn.task, spawn.subtask)), stat: path => statArtefact($, path) },
     )
@@ -4935,7 +4973,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
  * first scope root and lie in scope; the gate (map id, or a bare allowlisted
  * command such as `claude plugin validate <folder>`) must exit 0.
  */
-async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string, task?: string, repo?: string): Promise<VerifyResult> {
+async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string, task?: string, repo?: string, writes?: readonly string[]): Promise<VerifyResult> {
   const contract = briefContract(briefText)
   if (!contract.ok) return { verdict: 'refused', lines: [...amendLines, contract.line], noRepo: true }
   // GH-103: a prose scope= gives no root to check files under; the work stands, unverified
@@ -4952,7 +4990,7 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const watched = outsideRoots(absScope, absForbid)
   const baseline = await outsideFor($, task, repo, watched)
   // MOD-185: the mod's .delegation/ and the cards folder in the session checkout are written during a run, never by the worker
-  const outside = await outsideCheck(absScope, absForbid, baseline, [`${root.replace(/\/+$/, '')}/.delegation`, cardDirPath(root, cfg.cardDir)])
+  const outside = await outsideCheck(absScope, absForbid, baseline && writes ? { ...baseline, writes } : baseline, [`${root.replace(/\/+$/, '')}/.delegation`, cardDirPath(root, cfg.cardDir)])
   const artefacts = await artefactsCheck(reportArtefacts(report.artefacts), contract.outdir ?? scopeRoot, path => statArtefact($, path))
   const metrics = reportMetrics(report.metrics)
   // MOD-163: a card with no worktree has one sensible {worktree}: the checkout the worker ran in (the task's other repo per MOD-44)
@@ -4988,8 +5026,10 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   })
   const ranIds = (contract.gate ?? '').split(',').map(g => g.trim()).filter(g => g && !gates.notRerun.some(n => n.id === g))
   const ranNote = gates.runs.length > 0 && ranIds.length > 0 ? [`gate ${ranIds.join(', ')} ran in the checkout (repo=none)`] : []
+  // MOD-217: changed paths the worker did not write are listed, never judged
+  const foreignLine = outside?.foreign && outside.foreign.length > 0 ? [`changed during the run, not by this worker: ${outside.foreign.join(', ')}`] : []
   const note = watched.length > 0 && baseline === undefined ? [`note: outside delta not checked: no listing of ${watched.join(', ')} was taken at dispatch`] : []
-  return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...waits, ...v.lines, ...ranNote, ...note], noRepo: true, ...(Object.keys(metrics).length > 0 ? { metrics } : {}) }
+  return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...waits, ...v.lines, ...foreignLine, ...ranNote, ...note], noRepo: true, ...(Object.keys(metrics).length > 0 ? { metrics } : {}) }
 }
 
 /**
@@ -8115,6 +8155,8 @@ export const register: Register = (on, opts) => {
       if (typeof message === 'string') handbacks.set(e.agentId, message)
     }
     const out = await next(e)
+    // MOD-217: what a recorded worker writes is logged against its spawn
+    if (e.agentId && out.deny === undefined) await noteWrites($, e)
     // MOD-119: a Bash call's output tells a command that repeats from one that makes progress
     if (!e.agentId && String(e.tool) === 'Bash' && out.deny === undefined && typeof e.command === 'string') {
       const r = out.result as { stdout?: unknown; stderr?: unknown } | undefined

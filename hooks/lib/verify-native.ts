@@ -40,7 +40,7 @@
 // Pure apart from `io`: no `$`.
 import { effectiveList, parseAmends, parseHeader, type Report } from './brief'
 import { checkGateWords, gateForDelta, isEngineGate, resolveGateRuns, splitCommand, type GateResolution, type GateRun } from './gates'
-import { artefactsCheck, isAbsolute, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
+import { artefactsCheck, attributeWrites, isAbsolute, isDelegationPath, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
 import { isGitRef } from './repoconfig'
 
 export type ExecOut = { ok: true; exitCode: number; stdout: string; stderr: string } | { ok: false; why: string }
@@ -86,6 +86,8 @@ export type NativeInput = {
   cardless?: boolean
   /** MOD-22: the listings taken at dispatch and a way to list a root now; absent, the outside delta is no part of the scope claim. */
   outside?: OutsideInput
+  /** MOD-217: the paths the worker's tool calls wrote (its write log); a repo=here git delta and the outside delta charge scope only for these. Absent or empty: every changed path is the worker's. */
+  writes?: readonly string[]
   /** MOD-149: the folder a red gate's full output is saved in (`verify-gate-<attempt>.txt`); absent, nothing is saved. */
   outDir?: string
   /** MOD-149: the attempt number in the saved file's name (1 when absent). */
@@ -651,6 +653,8 @@ export function verifyCardless(input: { repo: string; report: Report; baseRef?: 
   )
 }
 
+const abs = (repo: string, rel: string): string => `${repo.replace(/\/+$/, '')}/${rel}`
+
 const CARDLESS_CONTRACT: BriefContract = { ok: true, scope: [], forbid: [], ignore: [], parentScope: [], lines: [], amendments: 0 }
 
 export async function verifyNative(input: NativeInput, io: NativeIo): Promise<NativeResult> {
@@ -750,6 +754,13 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     delta = sub.kept
     lines.push(ignoredLine(sub))
   }
+  // MOD-217: in the shared checkout a changed path the worker did not write is a sibling's or the brain's: listed, never judged
+  const foreignGit = new Set<string>()
+  if (here && delta && !cardless) {
+    const split = attributeWrites(delta.filter(p => !isDelegationPath(p)).map(p => abs(repo, p)), input.writes)
+    const prefix = repo.replace(/\/+$/, '').length + 1
+    for (const p of split.foreign) foreignGit.add(p.slice(prefix))
+  }
   const notes: string[] = []
   if (delta && !cardless) {
     try {
@@ -767,7 +778,9 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   const repoForbid = contract.forbid.filter(e => !isAbsolute(e))
   const watched = outsideRoots(absScope, absForbid)
   const outsideChecked = !cardless && !contract.scopeProse && !contract.amendBad && watched.length + (input.outside?.before.length ?? 0) > 0
-  const outside = outsideChecked ? await outsideCheck(absScope, absForbid, input.outside) : undefined
+  const outside = outsideChecked ? await outsideCheck(absScope, absForbid, input.outside ? { ...input.outside, ...(input.writes ? { writes: input.writes } : {}) } : undefined) : undefined
+  // MOD-217: changed paths the worker did not write; listed on one line, never judged
+  const foreign: string[] = [...foreignGit, ...(outside?.foreign ?? [])]
   if (cardless) claim('scope', 'unchecked', NO_BRIEF_REASON)
   else if (contract.scopeProse) claim('scope', 'unchecked', 'scope= reads as prose; add scope_globs= to the brief to check it')
   else if (contract.amendBad) {
@@ -777,7 +790,9 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     if (!delta) git = { status: 'unchecked', detail: noDelta }
     else {
       let bad: string | undefined
-      for (const p of delta) {
+      // MOD-217: .delegation/** is the mod's, never judged; in the shared checkout only the paths this worker wrote are
+      const judged = delta.filter(p => !isDelegationPath(p) && !foreignGit.has(p))
+      for (const p of judged) {
         if (pathMatchesAny(p, repoForbid)) bad = `touches forbid path: ${p}`
         else if (!pathMatchesAny(p, repoScope)) bad = `out-of-scope path: ${p}`
         if (bad) break
@@ -793,13 +808,14 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     else if (git.status === 'unchecked') claim('scope', 'unchecked', git.detail)
     else if (outside?.status === 'unchecked') claim('scope', 'unchecked', outside.detail)
     else claim('scope', 'held', outside ? `${git.detail}; ${outside.detail}` : git.detail)
+    if (foreign.length > 0) lines.push(`changed during the run, not by this worker: ${foreign.join(', ')}`)
     if (outsideChecked && outside === undefined && watched.length > 0) notes.push(`note: outside delta not checked: no listing of ${watched.join(', ')} was taken at dispatch`)
   }
 
   // 4. files= is the delta, exactly
   if (!delta) claim('files', 'unchecked', treeSha ? `no delta to compare against (${noDelta})` : 'no delta to compare against (sha/base missing)')
   else {
-    const line = filesClaim(csv(report.files).filter(f => f !== 'none'), delta, treeSha ? 'the dirty-tree delta' : 'the sha delta', renamedFrom)
+    const line = filesClaim(csv(report.files).filter(f => f !== 'none'), delta.filter(p => !foreignGit.has(p)), treeSha ? 'the dirty-tree delta' : 'the sha delta', renamedFrom)
     lines.push(line)
     if (line.startsWith('claim files: failed')) anyFailed = true
   }

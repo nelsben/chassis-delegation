@@ -279,6 +279,8 @@ Failure markers, in any case: `fail`, `error`, `not ok`, `✗`, `exit code 1`-`9
 `expected`. A held red claim shows the file's size and its first marker line with a failing word, else the first that
 does not read as passing; a reused proof shows `attempt n's proof, reused`.
 
+Scope is charged only for paths the worker wrote (MOD-217). The `tool.call` hook logs every path a recorded worker's Edit, Write, MultiEdit, NotebookEdit and Bash writes (the Bash paths as `bashWrites` reads them, resolved against the worker's cwd) under `delegation.writes.<agentId>`, capped at 2000 paths, and at the verdict the outside delta and a repo=here git delta count against `scope=` and `forbid=` only the changed paths in that log. The rest are listed on one line, `changed during the run, not by this worker: <paths>`, and never refute (so a scope refute that rests only on a brain's or a sibling's edit cannot happen, and a refute that rests on the worker's own paths still charges an attempt); `.delegation/**` under the repo root or any worktree is left out of every scope, forbid and delta, and a worktree card's own git delta is unchanged. When the log is empty but the delta shows writes (every write went through a script the lexer cannot see), the changed paths are the worker's, as before.
+
 `consistent` means every machine-checkable claim matches git. It is not a review: nothing reads the diff, so read it
 before you accept. A report declaring `gate=fail` is never accepted: its row reads `consistent (report gate=fail)` and
 `next=` resumes the worker. A stored record or ledger line may say `verified`, which reads as `consistent`: in a script
@@ -382,7 +384,7 @@ or a sha that resolves; the gate runs on the tree as it stands, the clean-tree r
 `git status --porcelain=v1 --untracked-files=all -z` names (with a real sha, `merge-base(<base>, sha)..sha`), less
 `ignore=` and `ignore+=`, less other in-flight cards' `files=` read at verify time; one line names each subtraction.
 
-The verifier cannot tell who wrote a path: commit or stash an accepted repo=here card's files before the next hand-back,
+The verifier tells a path the worker wrote (its write log) from one a sibling or the brain changed, and lists the latter without judging them; still commit or stash an accepted repo=here card's files before the next hand-back,
 or add them to `ignore`. For a nested child repo, start the session in the child; the mod reads only
 `<root>/.chassis-delegation.json`, so `/delegation init` there writes the child's own files.
 
