@@ -169,3 +169,24 @@ export function repoFileWith(text: string | undefined, field: string, value: unk
   if (!placed && value !== undefined) next[field] = value
   return `${JSON.stringify(next, null, 2)}\n`
 }
+
+/**
+ * MOD-218: the repo file's own `project`. `owner/number` or `none` (any case) is a value that wins over the user-level option
+ * (`none` adds nothing); anything else is no value. `text` is the file text to give parseRepoConfig: without the `project` key
+ * when it is `none` (which parseRepoConfig would call a bad value), else null (the text as it is).
+ */
+export function repoProjectOf(text: string): { value: string | undefined; text: string | null } {
+  let obj: unknown
+  try {
+    obj = JSON.parse(text)
+  } catch {
+    return { value: undefined, text: null }
+  }
+  if (!isObject(obj) || typeof obj.project !== 'string') return { value: undefined, text: null }
+  const v = obj.project.trim()
+  if (v.toLowerCase() === 'none') {
+    const { project: _drop, ...rest } = obj
+    return { value: 'none', text: JSON.stringify(rest) }
+  }
+  return /^[A-Za-z0-9-]+\/[0-9]{1,9}$/.test(v) ? { value: v, text: null } : { value: undefined, text: null }
+}

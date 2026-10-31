@@ -147,3 +147,28 @@ describe('MOD-207: subIssuesOf', () => {
     expect(subIssuesOf(null)).toEqual([])
   })
 })
+
+describe('MOD-218: redact leaves dotfolder segments and the same repo alone', () => {
+  test('a dotfolder named like the repo or a listed word is kept; the home prefix is still scrubbed', () => {
+    const rules = { repo: 'acme-app', words: ['globex'] }
+    expect(redact('see ~/.acme-app/cfg and ~/.globex/x', rules)).toBe('see ~/.acme-app/cfg and ~/.globex/x')
+    expect(redact('at /Users/x/.acme-app/y', rules)).toBe('at <home>/.acme-app/y')
+    expect(redact('see /srv/.acme-app', rules)).toBe('see /srv/.acme-app')
+  })
+  test('a bare name in prose, and a name after a slash that is not a dotfolder, are still replaced', () => {
+    const rules = { repo: 'acme-app', words: ['globex'] }
+    expect(redact('the acme-app tool and Globex', rules)).toBe('the <repo> tool and <redacted>')
+    expect(redact('in /srv/acme-app/src', rules)).toBe('in /srv/<repo>/src')
+    expect(redact('a name.acme-app here', rules)).toBe('a name.<repo> here')
+  })
+  test('sameRepo skips the origin and repo-name rules only', () => {
+    const rules = { repo: 'acme-app', origin: 'https://github.com/o/acme-app.git', sameRepo: true, words: ['globex'], userEmail: 'a@b.io' }
+    expect(redact('acme-app o/acme-app https://github.com/o/acme-app.git Globex a@b.io /Users/x/y', rules)).toBe('acme-app o/acme-app https://github.com/o/acme-app.git <redacted> <person> <home>/y')
+  })
+  test('parseLandArgs takes --no-project; land_plan and the tool take project: false', async () => {
+    const { parseLandArgs, parseLandTool } = await lib()
+    expect(parseLandArgs('bug T --no-project')).toEqual({ type: 'bug', title: 'T', paths: [], noProject: true })
+    expect(parseLandTool({ type: 'bug', title: 'T', project: false }).noProject).toBe(true)
+    expect(parseLandTool({ type: 'bug', title: 'T' }).noProject).toBe(undefined)
+  })
+})

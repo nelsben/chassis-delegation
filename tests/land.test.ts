@@ -594,3 +594,81 @@ describe('MOD-207: land resume keyed to the plan', () => {
     expect([...w.files.keys()].filter(k => k.startsWith(LANDED))).toEqual([file])
   })
 })
+
+describe('MOD-218: same-repo land, dotfolders, project precedence', () => {
+  const tool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land', ...input } as never)
+  const planTool = ($: any, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__chassis-delegation__land_plan', ...input } as never)
+  const text = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const repoFile = (project?: string) => ({ [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards', ...(project ? { project } : {}) }) })
+  const run = async (argv: string[]) => (argv[0] === 'gh' ? { exitCode: 0, stdout: argv[2] === 'create' ? 'https://github.com/o/acme-app/issues/42\n' : '' } : undefined)
+  const gh = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh')
+  const adds = (w: any) => gh(w).filter((a: string[]) => a[1] === 'project')
+  const origin = gitCfg('https://github.com/o/acme-app.git')
+
+  test('same-repo land keeps the repo name in the title and body; a listed word and a dotfolder are handled', { options: { landAuto: true, redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...origin }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    await tool($, { type: 'bug', title: 'acme-app drops a row', note: 'config in ~/.globex/x and acme-app, Globex' })
+    const create = gh(w).find((a: string[]) => a[2] === 'create')
+    expect(create[create.indexOf('--title') + 1]).toBe('acme-app drops a row')
+    const body = w.files.get(`${LANDED}/acme-app-drops-a-row.md`) ?? ''
+    expect(body).toContain('config in ~/.globex/x and acme-app, <redacted>')
+  })
+
+  test('land_plan keeps the repo name too', { options: { redact: 'globex' } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...origin }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    await planTool($, { feature: { title: 'acme-app rework', paths: ['src/export/**'], note: 'see ~/.globex/' }, tasks: [{ title: 'Fix acme-app header', paths: ['src/export/a.ts'] }], confirm: true })
+    const titles = gh(w).filter((a: string[]) => a[2] === 'create').map((a: string[]) => a[a.indexOf('--title') + 1])
+    expect(titles).toEqual(['acme-app rework', 'Fix acme-app header'])
+  })
+
+  test('a repo-level project beats a user-level one', { options: { landAuto: true, project: 'u/9' } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...origin }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    await tool($, { type: 'bug', title: 'T' })
+    expect(adds(w)).toEqual([['gh', 'project', 'item-add', '1', '--owner', 'o', '--url', 'https://github.com/o/acme-app/issues/42']])
+  })
+
+  test('a repo-level project none beats a user-level one: no item-add and no line', { options: { landAuto: true, project: 'u/9' } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('none'), ...origin }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'T' }))
+    expect(adds(w)).toEqual([])
+    expect(out).toContain('filed #42')
+    expect(out.includes('project')).toBe(false)
+  })
+
+  test('the user-level project still applies when the repo sets none', { options: { landAuto: true, project: 'u/9' } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...origin }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    await tool($, { type: 'bug', title: 'T' })
+    expect(adds(w).length).toBe(1)
+    expect(adds(w)[0].slice(0, 6)).toEqual(['gh', 'project', 'item-add', '9', '--owner', 'u'])
+  })
+
+  test('project: false runs no item-add for that call only', { options: { landAuto: true } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...origin }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    const out = text(await tool($, { type: 'bug', title: 'First', project: false }))
+    expect(adds(w)).toEqual([])
+    expect(out.includes('project')).toBe(false)
+    await tool($, { type: 'bug', title: 'Second' })
+    expect(adds(w).length).toBe(1)
+  })
+
+  test('/delegation land --no-project skips the add', { options: { landAuto: true } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...origin }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    await $.command.run(land('bug Third --no-project'))
+    expect(gh(w).some((a: string[]) => a[2] === 'create')).toBe(true)
+    expect(adds(w)).toEqual([])
+  })
+
+  test('land_plan with project: false adds nothing', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...origin }, dirs: dirs(), run })
+    await $.session.start(sessionStart)
+    await planTool($, { feature: { title: 'Rework', paths: ['src/export/**'] }, tasks: [{ title: 'Fix header', paths: ['src/export/a.ts'] }], confirm: true, project: false })
+    expect(adds(w)).toEqual([])
+  })
+})

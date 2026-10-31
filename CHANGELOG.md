@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **A repo-level `project` and a per-call opt-out for the Project add (MOD-218).** A `project` in the repo file (`.chassis-delegation.json`), including the value `none`, now wins over the user-level option; `none` adds nothing and prints no line. `land` and `land_plan` take `project: false`, and `/delegation land` takes `--no-project`, to skip the item-add for that call only.
+
 ### Fixed
 
+- **Land redaction leaves dotfolder path segments and the target repo's own name alone (MOD-218).** The repo-name and word-list rules no longer match a name that is a dotfolder segment (`~/.name/`, `/x/.name`), so `~/.name/` is no longer rewritten to `~/.<repo>/`; the home, person and email rules are unchanged. `land` and `land_plan` file to the origin repo itself, whose name is already public there, so they skip the origin and repo-name rules (every other rule still applies); debrief redaction is unchanged.
 - **Scope is charged only for paths the worker wrote (MOD-217).** The `tool.call` hook now keeps a per-worker write log (the Edit, Write, MultiEdit and NotebookEdit `file_path` and the paths a Bash command writes, resolved against the worker's cwd; at most 2000 paths; reviewers unchanged). At the verdict the outside delta and a repo=here git delta count against scope and forbid only the changed paths in that log; the others are listed on one line, `changed during the run, not by this worker: <paths>`, and never refute, so a brain edit to a shared file or a sibling worker's edit no longer refutes a card and burns an attempt. A worktree card's git delta is unchanged, and a worker with an empty log is charged for the whole delta as before.
 - **`.delegation/**` is never part of a scope, forbid or outside delta (MOD-217).** The mod's own `.delegation/<other-task>/files.txt`, under the repo root or any worktree, no longer counts as a forbid or scope hit on another card.
 
