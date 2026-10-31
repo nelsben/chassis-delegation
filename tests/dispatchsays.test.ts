@@ -3,7 +3,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { world, spawnInput, sessionStart } from './harness'
 import { redTestWarnings } from '../hooks/lib/card'
-import { verdictLine, gateReusedIn, GATE_REUSED } from '../hooks/lib/verify'
+import { verdictLine, gateNotRerun } from '../hooks/lib/verify'
 import { gateForDelta } from '../hooks/lib/gates'
 
 const brief = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=frontier]]\nDo it.`
@@ -50,18 +50,19 @@ describe('MOD-222: a lane held by the total maxWorkers cap says its position', (
   })
 })
 
-describe('MOD-219: a verdict says when its gate was reused', () => {
+describe('MOD-219/236: a verdict says why its gate was not re-run', () => {
   const v = { verdict: 'consistent' as const, task: 'T-1', attempt: 1, budget: 2, next: 'accept' }
-  test('the row carries the words; a re-run gate does not', () => {
-    expect(verdictLine({ ...v, gateReused: true })).toContain(`${GATE_REUSED} next=accept`)
-    expect(GATE_REUSED).toBe('gate reused (recorded pass, not re-run)')
+  test('the row carries the reason; a re-run gate does not', () => {
+    expect(verdictLine({ ...v, gateNotRerun: 'gate not re-run (tree not at sha)' })).toContain(' · gate not re-run (tree not at sha) next=accept')
+    expect(verdictLine(v)).not.toContain('gate not re-run')
     expect(verdictLine(v)).not.toContain('gate reused')
   })
-  test('a recorded gate that was not re-run marks a reused gate; the _empty swap does not', () => {
-    expect(gateReusedIn(['claim gate: unchecked — gate not re-run: prettier (not in gateMap)'])).toBe(true)
-    expect(gateReusedIn(['claim gate: unchecked — tree not at sha: 1 uncommitted path in the worktree; the gate was not re-run'])).toBe(true)
+  test('a recorded gate that was not re-run names its reason; the _empty swap does not', () => {
+    expect(gateNotRerun(['claim gate: unchecked — gate not re-run: prettier (not in gateMap)'])).toBe('gate not re-run (not in gateMap)')
+    expect(gateNotRerun(['claim gate: unchecked — tree not at sha: 1 uncommitted path in the worktree; the gate was not re-run'])).toBe('gate not re-run (tree not at sha)')
+    expect(gateNotRerun(['claim gate: unchecked — gate not re-run: lint (gateMap command refused: a gate may not run sh)'])).toBe('gate not re-run (refused)')
     const line = gateForDelta('test', { test: 'npm test', fast: 'echo ok', _empty: 'fast' }, []).line
-    expect(gateReusedIn([line as string])).toBe(false)
-    expect(gateReusedIn(['claim gate: held — gate green at abc'])).toBe(false)
+    expect(gateNotRerun([line as string])).toBeUndefined()
+    expect(gateNotRerun(['claim gate: held — gate green at abc'])).toBeUndefined()
   })
 })

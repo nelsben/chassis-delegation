@@ -286,7 +286,7 @@ import {
   scratchFor,
   syntheticReport,
   verdictLine,
-  gateReusedIn,
+  gateNotRerun,
   verifyAdvice,
   workPresentDeny,
   workPresentLine,
@@ -316,6 +316,7 @@ import {
   labelIsMerged,
   lastLines,
   latestVerdictRow,
+  onlyCardMoved,
   reviewAcceptedAttempt,
   mainBranchLine,
   mergeTarget,
@@ -3053,6 +3054,27 @@ async function sweepMergeGates($: Host): Promise<void> {
   }
 }
 
+/**
+ * MOD-236: the gate ids whose recorded pass at the verifier (the verdict row's gateTree) stands for this merge: the recorded tree
+ * differs from the worktree's head tree in nothing but the card's path (`git diff-tree -r --name-only`). Fails open: any
+ * git failure reuses nothing.
+ */
+async function reusableGates($: Host, wt: string, gateTree: Record<string, string> | undefined, cardRel: string | undefined): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (!gateTree) return out
+  const same = new Map<string, boolean>()
+  for (const [gid, tree] of Object.entries(gateTree)) {
+    let ok = same.get(tree)
+    if (ok === undefined) {
+      const r = await run($, ['git', '-C', wt, 'diff-tree', '-r', '--name-only', tree, 'HEAD^{tree}'], { cwd: wt, timeoutMs: 15000 })
+      ok = r.ok && r.exitCode === 0 && onlyCardMoved(r.stdout, cardRel)
+      same.set(tree, ok)
+    }
+    if (ok) out.set(gid, tree)
+  }
+  return out
+}
+
 /** `/delegation merge <ID> [--finish]` and the merge tool: one function, two doors. */
 async function runMerge($: Host, parsed: MergeArgs | { error: string }): Promise<string> {
   if ('error' in parsed) return parsed.error
@@ -3212,6 +3234,9 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   // MOD-122: a branch that changes no file runs gateMap._empty instead of the card's gates
   const emptyGate = gateForDelta(card.gate.join(','), cfg.gateMap, names.trim() === '' ? [] : names.trim().split('\n'))
   if (emptyGate.line) log.push(emptyGate.line)
+  // MOD-236: a gate the verifier passed on a tree that differs from this one in the card file alone is not run again
+  const reusedLines: string[] = []
+  const reusable = await reusableGates($, wt.path, row.gateTree, ignored ? undefined : cardRel)
   for (const gid of emptyGate.line && emptyGate.gate ? [emptyGate.gate] : card.gate) {
     const res = resolveGateRuns(gid, cfg.gateMap, allowed, filesPath, wt.path)
     const skipped = res.notRerun[0]
@@ -3219,6 +3244,14 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
       log.push(`## ${gid}: not run (${skipped.why})`)
       await writeLog()
       return `${id}: gate ${gid} not run at ${short} (${skipped.why}); not pushed`
+    }
+    const at = reusable.get(gid)
+    if (at !== undefined) {
+      const said = `${gid}: gate reused (pass at verify on tree ${at.slice(0, 10)}, not re-run)`
+      log.push(said)
+      reusedLines.push(said)
+      results.push({ id: gid, label: res.runs.map(g => g.label).join(' && ') || gid, ok: true })
+      continue
     }
     for (const g of res.runs) {
       const turn = isEngineGate(g.argv) ? await takeEngineTurn($, `${id} merge`) : undefined
@@ -3260,6 +3293,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   return [
     ...amends.map(amendMergeLine),
     `${id}: rebased onto ${baseRef}; ${ignored ? cardKeptLocalClause(`${root}/${cardRel}`) : committed ? `card committed as merged (${cardRel})` : 'the worktree already carries the merged card; nothing committed again'}; gates green at ${short}${results.length > 0 ? ` (${results.map(r => r.id).join(', ')})` : ' (the card names no gate)'}${passed.map(c => `; merge check passed (${c})`).join('')}`,
+    ...reusedLines,
     `pr body: ${prFile} · gate output: ${outDir}/merge-gates.txt${version ? ` · releases v${version}` : ''}`,
     remoteBlock('remote: run these lines verbatim, in order (the mod never pushes nor calls gh):', lines),
   ].join('\n')
@@ -5063,7 +5097,7 @@ async function probe($: Host) {
 }
 
 // ---- verify + verdict (5A: native) ---------------------------------------------------
-type VerifyResult = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true; metrics?: Record<string, string> }
+type VerifyResult = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true; metrics?: Record<string, string>; gateTree?: Record<string, string> }
 
 /** sha-256 of `bytes`, hex, by the environment's crypto.subtle; undefined when it cannot be taken. */
 async function sha256Hex(bytes: Uint8Array): Promise<string | undefined> {
@@ -5568,7 +5602,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   } finally {
     if (locked) await unlockWorktree($, taskRepo, lockPath)
   }
-  return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.metrics ? { metrics: r.metrics } : {}), ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
+  return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.metrics ? { metrics: r.metrics } : {}), ...(r.gateTree ? { gateTree: r.gateTree } : {}), ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
 }
 
 /**
@@ -5987,6 +6021,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   let lines: string[] = []
   let noRepo = false
   let metrics: Record<string, string> | undefined
+  let gateTree: Record<string, string> | undefined
   let red: Pick<AttemptRecord, 'red' | 'redHash' | 'redHeld'> = {}
   // GH-16: a repo=here worker's claimed files go on its record before the verify, so a sibling verifying now subtracts them
   if (report && spawn.here && !spawn.adhoc) {
@@ -6036,6 +6071,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     lines = v.lines
     noRepo = v.noRepo === true
     metrics = v.metrics
+    gateTree = v.gateTree
     red = { ...(v.red !== undefined ? { red: v.red } : {}), ...(v.redHash !== undefined ? { redHash: v.redHash } : {}), redHeld: v.redHeld }
   }
   if (pauseCharge) lines = [...lines, pauseCharge]
@@ -6210,7 +6246,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const workLine = work ? workPresentLine(work) : undefined
   // MOD-124: the exceptions the brief allowed ride on the row
   const allow = spawn.adhoc ? [] : await allowIdsOf($, spawn)
-  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next, allow, gateReused: gateReusedIn(lines) }) + downClause, workLine ? [workLine, ...lines] : lines)
+  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next, allow, gateNotRerun: gateNotRerun(lines) }) + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
   const tail = from ? fallbackTail(from) : undefined
@@ -6230,7 +6266,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${shownLabel}: ${shortNext(next)}${hint}` : undefined
     await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line: quiet, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}), ...(report?.sha ? { sha: report.sha } : {}), ...(spawn.key.includes('-rejudge-') ? { rejudge: true } : {}) })
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
-    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, next: shortNext(next), sessionId: await sessionIdOf($) })
+    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), next: shortNext(next), sessionId: await sessionIdOf($) })
   }
   return { full, line }
 }

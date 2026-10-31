@@ -322,22 +322,35 @@ export function syntheticReport(r: { task: string; subtask: string; branch: stri
   )
 }
 
-/** MOD-219: the words a verdict row carries when its gate was not re-run (the recorded pass stood in). */
-export const GATE_REUSED = 'gate reused (recorded pass, not re-run)'
+/** MOD-236: the words a verdict row carries when a gate was not re-run, by reason (the label stays `gate reused` for the merge skip alone). */
+export const GATE_NOT_RERUN = 'gate not re-run'
 
-/** MOD-219: whether the verifier's lines record a gate it did not run: a `claim gate: unchecked` line saying `not re-run` (an id missing from gateMap, a refused command, a tree not at the sha). The `_empty` swap runs a gate and is not one. */
-export const gateReusedIn = (lines: readonly string[]): boolean => lines.some(l => /^claim gate: unchecked — .*not re-run/.test(l))
+/**
+ * MOD-219/236: the reason the verifier's lines record a gate it did not run, as the words after the label:
+ * `gate not re-run (not in gateMap)`, `(tree not at sha)` or `(refused)`; undefined when every gate ran. The `_empty` swap runs a gate and is not one.
+ */
+export function gateNotRerun(lines: readonly string[]): string | undefined {
+  for (const l of lines) {
+    const m = /^claim gate: unchecked — (.*)$/.exec(l)
+    if (!m || !/not re-run/.test(m[1] as string)) continue
+    const why = m[1] as string
+    if (/^tree not at sha/.test(why)) return `${GATE_NOT_RERUN} (tree not at sha)`
+    if (/not in gateMap/.test(why)) return `${GATE_NOT_RERUN} (not in gateMap)`
+    return `${GATE_NOT_RERUN} (refused)`
+  }
+  return undefined
+}
 
 /**
  * The verdict row's first line. `usd` (the attempt's cost, 2 decimals) and the
  * resolved `model` show when known; `next=` stays last because it runs to the
  * end of the line.
  */
-export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateReused?: boolean }): string =>
+export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateNotRerun?: string }): string =>
   `chassis-delegation: verdict=${v.verdict} task=${v.task} attempt=${v.attempt}/${v.budget}` +
   (v.usd !== undefined && Number.isFinite(v.usd) ? ` usd=${v.usdApprox ? '~' : ''}${v.usd.toFixed(2)}` : '') +
   (v.model ? ` model=${v.model}` : '') +
-  (v.gateReused ? ` · ${GATE_REUSED}` : '') +
+  (v.gateNotRerun ? ` · ${v.gateNotRerun}` : '') +
   (v.allow && v.allow.length > 0 ? ` · allow=${v.allow.join(',')} · next=${v.next}` : ` next=${v.next}`)
 
 /** One line per amend the mod appended to the brief before verifying. */
