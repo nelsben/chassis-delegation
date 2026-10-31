@@ -217,7 +217,7 @@ import { artefactsCheck, defaultScratch, normalizePath, expandTilde, globList, g
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, type GateProgress } from './lib/gaterun'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
-import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
+import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, slimSpawns, storeBytes, storeLine, type StoreEntry } from './lib/retention'
 import { migratedLine, migrationPlan, scopedId, trimRepo } from './lib/taskkeys'
 import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLine, parseLedger, spawnRow, verdictAfter, withTail, type Fallback, type LedgerRow, type RowQuery } from './lib/storeloss'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
@@ -444,6 +444,8 @@ const PROBE_EVERY_MS = 24 * 60 * 60 * 1000
 const MIN_MS = 60 * 1000
 const HOUR_MS = 60 * MIN_MS
 const RECENT_CAP = 50
+/** MOD-233: merged.<sid> keeps its newest entries, like recent. */
+const MERGED_CAP = 50
 /** An eval runner out longer than this is taken as gone (a T1 run takes minutes). */
 const EVAL_STALE_MS = 3 * HOUR_MS
 /** MOD-6: a debrief whose agent never handed back is not holding the one slot past this. */
@@ -531,6 +533,8 @@ type SpawnRecord = {
   resources?: string[]
   verdictAttempt?: number
   verdictBlock?: string
+  /** MOD-233: the first line of a posted verdict's block, kept once the block, the line and the postedRow value are dropped (24 h after the verdict). */
+  verdictSummary?: string
   lastFailed?: boolean
   /** A `/dispatch --replay` run, from `base`. */
   replay?: boolean
@@ -1012,7 +1016,10 @@ async function pruneOnce($: Host, at: 'start' | 'verdict'): Promise<void> {
     const entries = await storeEntries($)
     const live = await liveState($)
     const open = [...live.workers.flatMap(w => [w.label, w.spawn.task]), ...live.pending.map(p => p.task), ...(await readQueue($)).map(q => q.task), ...finalizing.keys()]
-    const plan = retentionPlan({ entries, open, now: await now($) })
+    const t = await now($)
+    const sid = await sessionIdOf($)
+    const keep = sid ? ['recent', 'debrief', 'friction', 'merged', 'notes'].map(f => `delegation.${f}.${sid}`) : []
+    const plan = retentionPlan({ entries, open, now: t, keep })
     let n = 0
     const outsideFiles = new Map(entries.filter(([k]) => k.startsWith('delegation.outside.')).map(([k, v]) => [k, (v as { file?: unknown } | null)?.file] as const))
     for (const key of plan.delete) {
@@ -1023,6 +1030,25 @@ async function pruneOnce($: Host, at: 'start' | 'verdict'): Promise<void> {
         agentKeyChanged(key)
         n += 1
         if (key.startsWith(K.tasks(''))) recordsCache = undefined
+      } catch (err) {
+        debug($, `store.delete ${key} failed: ${String(err)}`)
+      }
+    }
+    // MOD-233: a posted verdict a day old keeps one summary line, not its text (idempotent; same scan)
+    const root = await sessionRootOf($)
+    const gone = new Set(plan.delete)
+    const slim = slimSpawns(entries.filter(([k]) => !gone.has(k)), t, s => attemptKeyIn(s as unknown as SpawnRecord, root))
+    for (const w of slim.rewrite) {
+      try {
+        const cur = await storeGet<SpawnRecord>($, w.key)
+        if (cur?.verdictBlock !== undefined && cur.verdictBlock === (entries.find(([k]) => k === w.key)?.[1] as SpawnRecord | undefined)?.verdictBlock) await storeSet($, w.key, w.value)
+      } catch (err) {
+        debug($, `spawn ${w.key} not slimmed: ${String(err)}`)
+      }
+    }
+    for (const key of slim.drop) {
+      try {
+        await $.store.delete(key)
       } catch (err) {
         debug($, `store.delete ${key} failed: ${String(err)}`)
       }
@@ -2527,7 +2553,7 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
   }
   const row = overSpendLine({ label, task: spawnIn.task, attempt: spawnIn.attempt, budget: spawnIn.budget, usd: own, spend: ceiling })
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawnIn.key))) ?? spawnIn
-  await storeSet($, K.spawn(spawnIn.key), { ...latest, verdictAttempt: spawnIn.attempt, lastFailed: false, verdictBlock: row, verdictLine: row })
+  await storeSet($, K.spawn(spawnIn.key), { ...latest, verdictAttempt: spawnIn.attempt, lastFailed: false, verdictBlock: row })
   await setWorkers($, list => list.map(w => (w.task === spawnIn.task && w.subtask === spawnIn.subtask && w.attempt === spawnIn.attempt ? { ...w, verdict: 'over-spend' } : w)))
   const next = OVER_SPEND_NEXT(spawnIn.task)
   await setLastVerdict($, { task: label, attempt: spawnIn.attempt, verdict: 'over-spend', next, at: t, text: row })
@@ -3247,7 +3273,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   await clearOwed($, id)
   if (sid) {
     const list = ((await storeGet<MergedEntry[]>($, K.merged(sid))) ?? []).filter(m => m.task !== id)
-    await storeSet($, K.merged(sid), [...list, { task: id, sha, ...(version ? { version } : {}), at: t }])
+    await storeSet($, K.merged(sid), [...list, { task: id, sha, ...(version ? { version } : {}), at: t }].slice(-MERGED_CAP))
   }
   try {
     await $.store.delete(K.mergePrep(id, await cardRepo($)))
@@ -5164,6 +5190,10 @@ async function listRoot($: Host, root: string, since?: number): Promise<RootList
   return entries.length > OUTSIDE_MAX_ENTRIES ? { root, since: started, files: entries.length + files } : { root, entries }
 }
 
+/** MOD-233: the listing kept inline in the store (when its file could not be written) holds at most this many entries per root. */
+const OUTSIDE_INLINE_MAX = 200
+const capListing = (l: RootListing): RootListing => ('entries' in l && l.entries.length > OUTSIDE_INLINE_MAX ? { ...l, entries: l.entries.slice(0, OUTSIDE_INLINE_MAX), truncated: true } : l)
+
 /** What is at an artefact path: missing, or its size (a folder: its entry count). */
 async function statArtefact($: Host, path: string): Promise<ArtefactStat> {
   try {
@@ -5265,7 +5295,7 @@ async function recordOutside($: Host, task: string, briefPath: string, reused: b
       debug($, `outside listing file ${file} not written, the listing stays in the store: ${String(err)}`)
     }
   }
-  await storeSet($, key, wrote && file !== undefined ? { at: await now($), briefPath, file, files } : { at: await now($), briefPath, roots: listed })
+  await storeSet($, key, wrote && file !== undefined ? { at: await now($), briefPath, file, files } : { at: await now($), briefPath, roots: listed.map(capListing) })
   const bad = listed.filter((l): l is { root: string; error: string } => 'error' in l)
   const marks = listed.filter((l): l is { root: string; since: number; files: number } => 'since' in l)
   return `outside: listed ${roots.join(', ')} before the run (${files} file${files === 1 ? '' : 's'})${bad.length > 0 ? `; ${bad.map(b => `${b.root} could not be listed: ${b.error}`).join('; ')}, so scope will be unchecked there` : ''}${marks.map(m => `; ${m.root} holds more than ${OUTSIDE_MAX_ENTRIES} files, so changes there will be found by modification time`).join('')}`
@@ -5699,7 +5729,12 @@ async function attemptOfSpawn($: Host, spawn: SpawnRecord): Promise<AttemptRecor
   return rec
 }
 
-const renderedOf = (s: SpawnRecord): Rendered => ({ full: s.verdictBlock as string, line: s.verdictLine ?? (s.verdictBlock as string).split('\n')[0] ?? '' })
+const renderedOf = (s: SpawnRecord): Rendered => {
+  const full = s.verdictBlock ?? s.verdictSummary ?? ''
+  return { full, line: s.verdictLine ?? full.split('\n')[0] ?? '' }
+}
+/** MOD-233: a spawn holds a verdict: its block, or (once posted and a day old) its one-line summary. */
+const hasVerdictText = (s: SpawnRecord): boolean => !!(s.verdictBlock || s.verdictSummary)
 
 // ---- MOD-136 (#222): a task already merged is closed ---------------------------------------------
 /** Drops a task's owed row from this session's recent list (its work is merged, accepted or closed), leaving the verdict line. */
@@ -5775,7 +5810,7 @@ async function closeHandback($: Host, spawn: SpawnRecord, why: 'merged' | 'branc
     else await saveAttempts($, spawn, patchRecord(held, spawn.subtask, spawn.attempt, { verdict: 'unverified', verdictAt: t }, lane))
   }
   await clearOwed($, label)
-  const next: SpawnRecord = { ...((await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn), verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: line, verdictLine: line }
+  const next: SpawnRecord = { ...((await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn), verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: line }
   await storeSet($, K.spawn(spawn.key), next)
   await setWorkers($, list => list.map(w => (w.task === spawn.task && w.subtask === spawn.subtask && w.attempt === spawn.attempt ? { ...w, verdict: 'unverified' } : w)))
   await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'unverified', line, at: t })
@@ -5812,10 +5847,10 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   // MOD-211: a malformed verdict is cached for the same report line only; a resent line is judged again on the same attempt
   const block = extractReport(text)
   const resent = (s: SpawnRecord): boolean => s.malformed !== undefined && s.malformed !== block
-  if (spawnIn.verdictAttempt === spawnIn.attempt && spawnIn.verdictBlock && !resent(spawnIn)) return renderedOf(spawnIn)
+  if (spawnIn.verdictAttempt === spawnIn.attempt && hasVerdictText(spawnIn) && !resent(spawnIn)) return renderedOf(spawnIn)
   // A caller may hold a record read before an earlier fire stored its verdict.
   const stored = await storeGet<SpawnRecord>($, K.spawn(spawnIn.key))
-  if (stored && stored.attempt === spawnIn.attempt && stored.verdictAttempt === spawnIn.attempt && stored.verdictBlock && !resent(stored)) return renderedOf(stored)
+  if (stored && stored.attempt === spawnIn.attempt && stored.verdictAttempt === spawnIn.attempt && hasVerdictText(stored) && !resent(stored)) return renderedOf(stored)
   const { malformed: _malformed, ...spawnClean } = spawnIn
   let spawn: SpawnRecord = spawnClean
   const tokens = measured.tokens
@@ -6082,9 +6117,9 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
  * and budget are untouched here: a resume that follows is the worker's next attempt, and the brain or autoEscalate sends it.
  */
 async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measured: Measured): Promise<Rendered> {
-  if (spawn.verdictAttempt === spawn.attempt && spawn.verdictBlock) return renderedOf(spawn)
+  if (spawn.verdictAttempt === spawn.attempt && hasVerdictText(spawn)) return renderedOf(spawn)
   const stored = await storeGet<SpawnRecord>($, K.spawn(spawn.key))
-  if (stored && stored.verdictAttempt === stored.attempt && stored.verdictBlock) return renderedOf(stored)
+  if (stored && stored.verdictAttempt === stored.attempt && hasVerdictText(stored)) return renderedOf(stored)
   const label = taskLabel(spawn.task, spawn.subtask)
   const lane = laneOf(spawn)
   const t = await now($)
@@ -6214,7 +6249,7 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<Verdi
   const latest = attemptsFor(await loadAttempts($, { task, repo }), subtask).at(-1)
   // MOD-94 (#157): an attempt the store has no record of: this process's memory of its start, else the ledger
   const mem = rememberedFor(task, subtask, repo)
-  if (mem && (!latest || mem.attempt > latest.attempt)) return mem.verdictAttempt === mem.attempt && mem.verdictBlock ? postedOf($, mem, undefined) : { kind: 'wait' }
+  if (mem && (!latest || mem.attempt > latest.attempt)) return mem.verdictAttempt === mem.attempt && hasVerdictText(mem) ? postedOf($, mem, undefined) : { kind: 'wait' }
   if (!latest) {
     // MOD-148: a hand-back whose verify is in flight in this process whose spawn names the task is an attempt, however late its record lands
     for (const v of verifying.values()) if (v.task === task && v.subtask === subtask) return { kind: 'wait' }
@@ -6226,7 +6261,7 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<Verdi
   const spawn = (await spawnByAgent($, latest.agentId)) ?? (latest.toolUseId ? await storeGet<SpawnRecord>($, K.spawn(latest.toolUseId)) : undefined)
   if (!spawn || spawn.attempt !== latest.attempt || spawn.task !== task || spawn.subtask !== subtask) return { kind: 'judged', text: `${PLUGIN}: ${label} attempt ${latest.attempt} ${latest.verdict}` }
   // the verdict is patched into the attempt record before its row is stored
-  if (spawn.verdictAttempt !== spawn.attempt || !spawn.verdictBlock) return { kind: 'wait' }
+  if (spawn.verdictAttempt !== spawn.attempt || !hasVerdictText(spawn)) return { kind: 'wait' }
   return postedOf($, spawn, latest.verdictAt)
 }
 
@@ -6463,7 +6498,7 @@ async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: 
   // MOD-211: a different report line after a malformed one reopens the same attempt (no new attempt, nothing charged)
   if (spawn.malformed !== undefined) {
     if (block === undefined || block === spawn.malformed) return spawn
-    const { malformed: _m, verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, ...open } = spawn
+    const { malformed: _m, verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, verdictSummary: _vs, ...open } = spawn
     const key = await attemptKey($, spawn)
     posted.delete(key)
     await storeSet($, K.posted(key), false)
@@ -6474,7 +6509,7 @@ async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: 
   // MOD-226: a hand-back that differs from the one judged a pause reopens the same attempt (no new attempt, nothing charged)
   if (spawn.pausedAs !== undefined) {
     if (textKey(text) === spawn.pausedAs) return spawn
-    const { pausedAs: _p, verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, ...open } = spawn
+    const { pausedAs: _p, verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, verdictSummary: _vs, ...open } = spawn
     const key = await attemptKey($, spawn)
     posted.delete(key)
     await storeSet($, K.posted(key), false)

@@ -291,3 +291,16 @@ describe('MOD-217: attributing changed paths to the worker', () => {
     expect(outsideClaim({ before, after, scope: ['/out/a/mine.txt'], forbid: [], writes: ['/out/a/theirs.txt'] })?.status).toBe('failed')
   })
 })
+
+describe('MOD-233: a truncated inline listing is unchecked', () => {
+  const e = (path: string) => ({ path, size: 1, mtimeMs: 1 })
+  const cut: RootListing = { root: '/out', entries: [e('a')], truncated: true }
+  test('never clean, and never read as newly added files', () => {
+    const after: RootListing = { root: '/out', entries: [e('a'), e('b'), e('c')] }
+    const c = outsideClaim({ before: [cut], after: [after], scope: ['/out/**'], forbid: [] })
+    expect(c?.status).toBe('unchecked')
+    expect(c?.detail).toContain('cut short')
+    // a failure elsewhere still fails
+    expect(outsideClaim({ before: [cut, { root: '/x', entries: [] }], after: [after, { root: '/x', entries: [e('z')] }], scope: [], forbid: [] })?.status).toBe('failed')
+  })
+})

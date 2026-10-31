@@ -106,7 +106,8 @@ Only the engine has tiering, the queue, `maxWorkers`, the respawn ladder, spend 
 - a per-task record (`delegation.spawn`, `.agent`, `.agentName`, `.cost`, `.tasks`, `.handoff`, `.replay`, `.classifier`, `.effort`, `.posted`, `.postedRow`, `.outside`, `.taskRepo`, `.mergePrep`) goes when its newest timestamp is over **7 days** old and its task is not open.
 - an open task is never touched;
 - over **3.5 MiB**, closed records go too, oldest first, until under **3 MiB**;
-- session-level keys (`delegation.recent`, `.debrief`, `.friction`, `.brain`, `.adhoc`, `.evals`) are kept and capped where written (`recent` 50 lines, `friction` 100, `adhoc` 200, `evals` 100).
+- session-level keys (`delegation.recent`, `.debrief`, `.friction`, `.merged`, `.notes`, `.brain`, `.adhoc`, `.evals`) are kept and capped where written (`recent` 50 lines, `merged` 50, `friction` 100, `adhoc` 200, `evals` 100); `recent`, `debrief`, `merged`, `notes` and `friction` are also aged out after **14 days** by their newest timestamp (never the live session's), while `brain`, `adhoc`, `evals`, `alias` and `updateCheck` are never pruned;
+- a spawn whose verdict was posted and is over **24 hours** old keeps a one-line `verdictSummary` in place of `verdictBlock`, `verdictLine` and its `postedRow` value (done in the same scan, idempotent); the inline `outside` listing fallback keeps at most 200 entries per root and is marked `truncated`, which the scope claim reads as unchecked.
 
 A research card's listing file under `.delegation/outside/` goes with its `.outside` record (the host's file API has no delete, so the file is emptied); a failure there is a debug line, never a stop.
 
