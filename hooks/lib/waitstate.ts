@@ -22,7 +22,7 @@ const WAIT_NOW = /\b(?:waiting|(?:i['\u2019]?ll|i will|will|going to|still|now)\
  * (MOD-56) is never a wait; past tense or a bare "wait" elsewhere does not count.
  */
 export function saysWaiting(text: string): boolean {
-  if (extractReport(text) !== undefined || detectRateLimit(text) !== undefined) return false
+  if (extractReport(text) !== undefined || extractPause(text) !== undefined || detectRateLimit(text) !== undefined) return false
   const paras = text.trim().split(/\n\s*\n/)
   const last = (paras[paras.length - 1] ?? '').slice(-400)
   return WAIT_NOW.test(last)
@@ -47,3 +47,40 @@ export function waitStep(prev: WaitState | undefined, now: number, ceilingMin: n
   if (ceilingMin > 0 && !prev.stalled && waited >= ceilingMin * MIN_MS) return { state: { ...prev, stalled: true }, say: stallText(id, waited) }
   return { state: prev, held: true }
 }
+
+// MOD-226 (#270): a worker that must stop while its own background job runs prints a pause line, not a report.
+/** Pauses a worker may take in one attempt before the next is charged as an attempt. */
+export const PAUSE_CAP = 3
+
+export type Pause = { task?: string; reason: string; block: string }
+
+/**
+ * The LAST line-anchored `[[pause v=1 task=<id> reason=<one line>]]` of a hand-back, else undefined. It is not read
+ * when the hand-back holds a report line (a report wins), nor when its task= names another task than `task`.
+ */
+export function extractPause(text: string, task?: string): Pause | undefined {
+  if (extractReport(text) !== undefined) return undefined
+  const found = [...text.matchAll(/^[ \t]*(\[\[pause\b([^\n]*?)\]\])[ \t]*$/gm)]
+  const m = found.at(-1)
+  if (!m) return undefined
+  const body = m[2] ?? ''
+  const named = /\btask=(\S+)/.exec(body)?.[1]
+  if (task !== undefined && named !== undefined && named !== task) return undefined
+  const reason = (/\breason=(.*)$/.exec(body)?.[1] ?? '').trim()
+  return { ...(named !== undefined ? { task: named } : {}), reason: reason === '' ? 'no reason given' : reason, block: m[1] as string }
+}
+
+/** A short stable fingerprint of a hand-back's text: one delivered twice is one pause. */
+export function textKey(text: string): string {
+  let h = 5381
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0
+  return `${text.length}:${h.toString(36)}`
+}
+
+/** The row for a recorded pause (the long form; the wait state's text rides under it). */
+export const pauseRow = (p: { task: string; attempt: number; budget: number; n: number; reason: string; waited: number }): string =>
+  `chassis-delegation: verdict=paused task=${p.task} attempt=${p.attempt}/${p.budget} pause=${p.n}/${PAUSE_CAP - 1} next=resume — ${p.reason}\n${waitText(p.task, p.waited)}`
+
+/** The row's line for a pause that reached the cap and is charged as an attempt. */
+export const pauseCapLine = (n: number, attempt: number): string =>
+  `pause cap: pause ${n} in attempt ${attempt} is charged as an attempt (a worker may pause ${PAUSE_CAP - 1} times per attempt); hand back a report, or stop`

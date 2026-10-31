@@ -275,6 +275,8 @@ export function ledgerRowKey(row: Record<string, unknown>): string | undefined {
   // MOD-94: a spawn row is one per spawn (its tool_use_id, else its agent), and a replay's apart from a real run's
   if (row.event === 'spawn') return `spawn|${head}|${row.replay ? `replay-${String(row.base ?? '')}` : ''}|${String(row.toolUseId ?? row.agentId ?? '')}`
   if (row.kind === 'accept') return `accept|${head}`
+  // MOD-226: a pause row is one per (attempt, pause number)
+  if (row.kind === 'pause') return `pause|${head}|${String(row.pause ?? '')}`
   if (typeof row.verdict !== 'string') return undefined
   // a reviewer's rows are told apart by the spawn they came from; a worker's by (task, attempt, sha, verdict)
   return `verdict|${head}|${String(row.sha ?? '')}|${row.verdict}${row.kind === 'review' ? `|${String(row.toolUseId ?? '')}` : ''}`

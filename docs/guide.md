@@ -131,6 +131,7 @@ A live app that takes one client at a time (a running Blender, a device on a ben
 `resources: [blender-live]`. The worker holds it while it runs; a second card naming it waits in the queue.
 The brain waits with the `verdict` tool; the `driveWarn` row points here.
 A worker waiting on its own background job wakes the brain once; past `waitStallMin` (default 20) it says the worker is stalled.
+A worker that must stop while its own background job runs prints a pause line instead of a report: `[[pause v=1 task=<id> reason=<one line>]]`. The `verdict` row says `paused` with `next=resume` and the reason; no attempt is opened or charged, so the later real report is still that attempt. Use it only for that case: a stop with neither a report nor a pause line is charged as a `no-report`, and the third pause in one attempt is charged too (`pause cap` on the row), so a worker cannot pause forever.
 
 ## Many workers on a busy machine
 
