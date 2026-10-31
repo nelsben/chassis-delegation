@@ -113,6 +113,12 @@ export function callKind(tool: string, input: { command?: unknown; run_in_backgr
   return 'run'
 }
 
+/** MOD-239: `a` plus `b`, field by field; none when both are none. */
+export const addDrive = (a: DriveRecord | undefined, b: DriveRecord | undefined): DriveRecord | undefined => {
+  if (!a || !b) return a ?? b
+  return { run: a.run + b.run, read: a.read + b.read, edit: a.edit + b.edit, spawn: a.spawn + b.spawn, ctxTokens: a.ctxTokens + b.ctxTokens, ctxCalls: a.ctxCalls + b.ctxCalls }
+}
+
 export const driveCall = (r: DriveRecord | undefined, kind: DriveKind): DriveRecord => {
   const prev = r ?? emptyDrive()
   return { ...prev, [kind]: prev[kind] + 1 }
@@ -171,7 +177,7 @@ export function commandKey(command: string): string {
 }
 
 /** `runs`: per key, the runs that count toward the row and the hash of the last known output. */
-export type Watch = { commands: string[]; warned: boolean; runs?: Record<string, { count: number; out?: string }> }
+export type Watch = { commands: string[]; warned: boolean; runs?: Record<string, { count: number; out?: string; len?: number }> }
 export const emptyWatch = (): Watch => ({ commands: [], warned: false, runs: {} })
 
 /** True when `command` has already run in the watch (this turn). */
@@ -185,9 +191,25 @@ export function driveOutput(w: Watch, command: string, output: string): Watch {
   const key = commandKey(command)
   const runs = { ...(w.runs ?? {}) }
   const prev = runs[key] ?? { count: w.commands.filter(c => c === key).length }
-  const out = hashOf(output)
-  runs[key] = { count: prev.out !== undefined && prev.out !== out ? 1 : prev.count, out }
+  const len = output.length
+  const out = outputHash(output)
+  const changed = prev.out !== undefined && (prev.len !== len || prev.out !== out)
+  runs[key] = { count: changed ? 1 : prev.count, out, len }
   return { ...w, runs }
+}
+
+/** MOD-239: the most a hash reads of one end of a long output. */
+const SAMPLE = 8192
+
+/** The hash of an output: all of it when short, else its first and last 8 KB and its length (a changed length is told apart by the length). */
+const outputHash = (text: string): string => (text.length <= 2 * SAMPLE ? hashOf(text) : hashOf(`${text.slice(0, SAMPLE)}\u0000${text.length}\u0000${text.slice(-SAMPLE)}`))
+
+/** MOD-239: true when the next run of `command` could raise the row: its third run of the same key, or a poll. */
+export function driveSpeaks(w: Watch, command: string): boolean {
+  const key = commandKey(command)
+  const prev = w.runs?.[key]
+  const count = (prev ? prev.count : w.commands.filter(c => c === key).length) + 1
+  return count >= 3 || isPoll(command)
 }
 
 /** MOD-99 (#165): the move the polling row names: card the resource it uses, wait with the verdict tool, else the guide section. */
@@ -210,7 +232,7 @@ export function driveStep(
   const key = commandKey(i.command)
   const prev = w.runs?.[key]
   const count = (prev ? prev.count : w.commands.filter(c => c === key).length) + 1
-  const state: Watch = { commands: [...w.commands, key], warned: w.warned, runs: { ...(w.runs ?? {}), [key]: { count, ...(prev?.out !== undefined ? { out: prev.out } : {}) } } }
+  const state: Watch = { commands: [...w.commands, key], warned: w.warned, runs: { ...(w.runs ?? {}), [key]: { count, ...(prev?.out !== undefined ? { out: prev.out, len: prev.len } : {}) } } }
   const poll = isPoll(i.command)
   if (!i.enabled || w.warned || i.context < i.threshold || !(count >= 3 || poll)) return { state }
   const price = priceFor(i.model)

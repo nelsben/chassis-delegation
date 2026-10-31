@@ -1,5 +1,6 @@
 // GH-113: the brain's own spend, priced and kept apart from the workers', and the delegate-only decision table (pure).
 import { test, expect, describe } from 'claude-code/testing'
+import { world, sessionStart, usage } from './harness'
 import { priceFor } from '../hooks/lib/cost'
 import { brainTurn, brainEdit, brainSplit, brainFamily, brainSummary, brainLine, brainTileText, bashWrites, bashCommits, delegateDecision, DELEGATE_DENY, PREMIUM_POSTURE } from '../hooks/lib/brain'
 import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
@@ -273,5 +274,35 @@ describe('MOD-121: effortNudge.cards unset means the card folder', () => {
     expect(mergeConfig({ effortNudge: { cards: '' } }, {}).effortNudge.cards).toBe('')
     expect(mergeConfig({ effortNudge: { cards: '' } }, { effortNudge: { up: 'low' } }).effortNudge).toEqual({ cards: '', up: 'low', down: 'medium' })
     expect(mergeConfig({}, { cardDir: 'c' }, { effortNudge: { cards: 'x/**' } }).effortNudge.cards).toBe('x/**')
+  })
+})
+
+describe('MOD-239: a brain tool call keeps its drive count in memory', () => {
+  const FABLE = 'claude-fable-5-1'
+  const mainTurn = (u: ReturnType<typeof usage>) => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: u }) as never
+  const BRAIN_KEY = 'delegation.brain.0'
+
+  test('20 Read calls in one turn make at most one store.set of the brain key, at turn.complete, carrying all 20', async ($, on) => {
+    const w = world(on, { model: FABLE })
+    on('tool.call', () => ({ result: 'ok' }) as never)
+    await $.session.start(sessionStart)
+    await $.tool.call({ tool: 'Read', file_path: '/repo/first.ts' } as never)
+    w.storeSets = {}
+    w.usageCalls = 0
+    for (let i = 0; i < 19; i++) await $.tool.call({ tool: 'Read', file_path: `/repo/f${i}.ts` } as never)
+    expect(w.storeSets[BRAIN_KEY] ?? 0).toBe(0)
+    expect(w.usageCalls).toBe(0)
+    await $.turn.complete(mainTurn(usage(FABLE, 1000, 10)))
+    expect(w.storeSets[BRAIN_KEY]).toBe(1)
+    expect((w.store.get(BRAIN_KEY) as { drive: { read: number } }).drive.read).toBe(20)
+  })
+
+  test('a stored count survives: the flush adds the delta to what the store holds', async ($, on) => {
+    const w = world(on, { model: FABLE, store: { [BRAIN_KEY]: { ...brainEdit(undefined), drive: { run: 0, read: 5, edit: 0, spawn: 0, ctxTokens: 0, ctxCalls: 0 } } } })
+    on('tool.call', () => ({ result: 'ok' }) as never)
+    await $.session.start(sessionStart)
+    for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: `/repo/f${i}.ts` } as never)
+    await $.turn.complete(mainTurn(usage(FABLE, 1000, 10)))
+    expect((w.store.get(BRAIN_KEY) as { drive: { read: number } }).drive.read).toBe(8)
   })
 })

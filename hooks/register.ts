@@ -13,7 +13,7 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { blocksFor, openItemLines } from './lib/dashboard'
-import { callKind, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
+import { addDrive, callKind, driveCall, driveLines, driveOutput, driveSpeaks, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
 import { extractPause, pauseCapLine, pauseRow, PAUSE_CAP, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
 import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
 import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
@@ -1662,14 +1662,22 @@ async function readSpend($: Host): Promise<SpendPoint[]> {
  * empty state, and a session that loads a new copy of the mod starts empty too, so a
  * record kept there lost every turn before the change. `$.state` stays as the view.
  */
+let brainKeyCache: string | undefined
+/** MOD-239: the key is read from session.usage at session.start and at a main-loop turn.start, not on every call. */
+async function refreshBrainKey($: Host): Promise<string> {
+  brainKeyCache = undefined
+  return brainKey($)
+}
 async function brainKey($: Host): Promise<string> {
+  if (brainKeyCache !== undefined) return brainKeyCache
   let since = 0
   try {
     since = (await $.session.usage()).startedAt ?? 0
   } catch {
     // unknown: one record for the unknown start
   }
-  return K.brain(since)
+  brainKeyCache = K.brain(since)
+  return brainKeyCache
 }
 
 async function readBrain($: Host): Promise<BrainRecord | undefined> {
@@ -1683,7 +1691,7 @@ async function readBrain($: Host): Promise<BrainRecord | undefined> {
   }
 }
 
-async function updateBrain($: Host, fn: (r: BrainRecord | undefined) => BrainRecord) {
+async function updateBrain($: Host, fn: (r: BrainRecord | undefined) => BrainRecord, redrawAfter = true) {
   try {
     const next = fn(await readBrain($))
     await storeSet($, await brainKey($), next)
@@ -1691,7 +1699,7 @@ async function updateBrain($: Host, fn: (r: BrainRecord | undefined) => BrainRec
   } catch (err) {
     debug($, `brain record not kept: ${String(err)}`)
   }
-  redraw($)
+  if (redrawAfter) redraw($)
 }
 
 /** The family of the model in the brain's seat: `$.session.model()`, else the one a prompt render names. */
@@ -1751,13 +1759,43 @@ let driveWatch: Watch = emptyWatch()
 /** The calls the brain's open turn has made. */
 let driveTurnCalls = 0
 
-const readDrive = async ($: Host): Promise<DriveRecord | undefined> => ((await readBrain($)) as WithDrive | undefined)?.drive
+/** MOD-239: the counts of this turn's calls, not yet in the stored brain record. */
+let drivePending: DriveRecord | undefined
+/** When the pending counts were last flushed (or first started), in clock ms. */
+let driveFlushedAt = 0
+/** The drive rows as the band and pane last drew them. */
+let driveShown = ''
+const DRIVE_DEBOUNCE_MS = 5000
 
-/** A brain-record update that keeps the drive counts a brainTurn would drop. */
-const keepDrive = (fn: (r: BrainRecord | undefined) => BrainRecord) => (r: BrainRecord | undefined): BrainRecord => ({ ...fn(r), ...((r as WithDrive | undefined)?.drive ? { drive: (r as WithDrive).drive } : {}) }) as BrainRecord
+/** The stored counts plus the unflushed delta, so a mid-turn /delegation status is current. */
+const readDrive = async ($: Host): Promise<DriveRecord | undefined> => addDrive(((await readBrain($)) as WithDrive | undefined)?.drive, drivePending)
 
-async function updateDrive($: Host, fn: (r: DriveRecord | undefined) => DriveRecord) {
-  await updateBrain($, r => ({ ...(r ?? emptyBrain()), drive: fn((r as WithDrive | undefined)?.drive) }) as BrainRecord)
+
+/**
+ * MOD-239: the pending delta is merged into the stored record (stored + delta, never an overwrite) with one store
+ * write; `brainFn` (a turn's brainTurn) rides in the same write. The delta is taken before the write, so calls that
+ * arrive meanwhile count in the next one. The band is redrawn when the brain record changed or the drive rows did.
+ */
+async function flushDrive($: Host, brainFn?: (r: BrainRecord | undefined) => BrainRecord) {
+  const delta = drivePending
+  drivePending = undefined
+  driveFlushedAt = await now($)
+  if (!delta && !brainFn) return
+  await updateBrain(
+    $,
+    r => {
+      const base = brainFn ? brainFn(r) : (r ?? emptyBrain())
+      const stored = (r as WithDrive | undefined)?.drive
+      const drive = addDrive(stored, delta)
+      return (drive ? { ...base, drive } : base) as BrainRecord
+    },
+    brainFn !== undefined,
+  )
+  if (!brainFn) {
+    const shown = driveLines(await readDrive($)).join('\n')
+    if (shown !== driveShown) redraw($)
+    driveShown = shown
+  }
 }
 
 /** The brain's context now, in tokens: the window times the percent `session.usage` reports. */
@@ -1777,18 +1815,23 @@ async function driveGuard($: Host, e: { tool: unknown; agentId?: string }): Prom
   try {
     const input = e as unknown as Record<string, unknown>
     const command = tool === 'Bash' && typeof input.command === 'string' ? input.command : ''
+    if (command !== '') await loadRepoConfig($)
     const writes = command !== '' && bashWrites(command, await $.session.root(), (await $.env.get('HOME')) || undefined).paths.length > 0
     const kind = callKind(tool, input, writes, command !== '' && ranBefore(driveWatch, command))
     if (kind === undefined) return
     driveTurnCalls += 1
-    await updateDrive($, r => driveCall(r, kind))
+    // MOD-239: the count stays in memory; turn.complete (or the 5 s debounce) writes it
+    drivePending = driveCall(drivePending, kind)
+    if (driveFlushedAt === 0) driveFlushedAt = await now($)
+    else if ((await now($)) - driveFlushedAt >= DRIVE_DEBOUNCE_MS) await flushDrive($)
     if (command === '') return
-    await loadRepoConfig($)
-    const model = (await $.session.model().catch(() => undefined)) || undefined
+    // MOD-239: the live workers, the context and the model are read only when the step could speak
+    const speaks = cfg.driveWarn && driveSpeaks(driveWatch, command)
+    const model = speaks ? (await $.session.model().catch(() => undefined)) || undefined : undefined
     // MOD-99 (#165): the resources a running card declares, and whether a worker is running for the brain to wait on
-    const running = cfg.driveWarn ? (await liveState($)).workers : []
+    const running = speaks ? (await liveState($)).workers : []
     const resources = [...new Set(running.flatMap(w => w.spawn.resources ?? []))]
-    const step = driveStep(driveWatch, { command, context: cfg.driveWarn ? await brainContextTokens($) : 0, threshold: cfg.driveWarnTokens, model, enabled: cfg.driveWarn, resources, waitingOnWorker: running.length > 0 })
+    const step = driveStep(driveWatch, { command, context: speaks ? await brainContextTokens($) : 0, threshold: cfg.driveWarnTokens, model, enabled: cfg.driveWarn, resources, waitingOnWorker: running.length > 0 })
     driveWatch = step.state
     if (step.row) await appendRow($, step.row)
   } catch (err) {
@@ -8972,7 +9015,7 @@ export const register: Register = (on, opts) => {
     // MOD-119: a Bash call's output tells a command that repeats from one that makes progress
     if (!e.agentId && String(e.tool) === 'Bash' && out.deny === undefined && typeof e.command === 'string') {
       const r = out.result as { stdout?: unknown; stderr?: unknown } | undefined
-      if (r && typeof r.stdout === 'string') driveWatch = driveOutput(driveWatch, e.command, `${r.stdout}\n${typeof r.stderr === 'string' ? r.stderr : ''}`)
+      if (cfg.driveWarn && r && typeof r.stdout === 'string') driveWatch = driveOutput(driveWatch, e.command, `${r.stdout}\n${typeof r.stderr === 'string' ? r.stderr : ''}`)
     }
     const why = out.deny ?? (out.isError === true && typeof out.text === 'string' && /\b(denied|permission)\b/i.test(out.text) ? out.text : undefined)
     if (why !== undefined) void noteFriction($, { kind: 'denial', detail: `${String(e.tool)}: ${why.slice(0, 160)}`, at: await now($) })
@@ -9189,9 +9232,8 @@ export const register: Register = (on, opts) => {
       brainWarnedThisTurn = false
       // MOD-48: the turn's calls take its input + cache-read tokens; the next turn starts a new watch
       if (e.usage && driveTurnCalls > 0) {
-        const calls = driveTurnCalls
         const t = e.usage.input_tokens + (e.usage.cache_read_input_tokens || 0)
-        await updateDrive($, r => driveTurn(r, t, calls))
+        drivePending = driveTurn(drivePending, t, driveTurnCalls)
       }
       driveTurnCalls = 0
       driveWatch = emptyWatch()
@@ -9203,10 +9245,9 @@ export const register: Register = (on, opts) => {
       }
       await freshSessionGuard($)
       // GH-113: the brain's own turn, priced apart from the workers'
-      if (e.usage) {
-        const u = e.usage
-        await updateBrain($, keepDrive(r => brainTurn(r, u)))
-      }
+      // MOD-239: the turn's drive counts and its brain spend go in one write
+      const u = e.usage
+      await flushDrive($, u ? r => brainTurn(r, u) : undefined)
       armIdle($)
       await flushWakes($)
     }
@@ -9233,6 +9274,7 @@ export const register: Register = (on, opts) => {
     inTurn = true
     turnOpen = true
     cancelIdle()
+    await refreshBrainKey($)
     return next(e)
   })
 
@@ -9294,6 +9336,10 @@ export const register: Register = (on, opts) => {
 
   // ---- session.start: the commands and tools, the repo file, agent types, probes -------
   on('session.start', async ($, e, next) => {
+    // MOD-239: the brain key is read once here; counts held from an earlier start are dropped (the store keeps its own)
+    drivePending = undefined
+    driveFlushedAt = 0
+    await refreshBrainKey($)
     // MOD-128: the host status line is retired; this clears a line an earlier version pinned
     try {
       $.ui.status(undefined)

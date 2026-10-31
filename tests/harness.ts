@@ -18,6 +18,10 @@ export type World = {
   storeKeyReads: number
   /** MOD-240: `$.store.get` calls (a test reads how many reads a path made). */
   storeGets: number
+  /** MOD-239: `$.store.set` calls by key (a test reads how many writes a path made). */
+  storeSets: Record<string, number>
+  /** MOD-239: `$.session.usage` calls. */
+  usageCalls: number
   store: Map<string, unknown>
   files: Map<string, string>
   /** MOD-28: every path `$.fs.read` was asked for, in order (a test reads which files the mod read, and how often). */
@@ -184,6 +188,8 @@ export function world(on: On, options: WorldOptions = {}): World {
     invalidations: 0,
     storeKeyReads: 0,
     storeGets: 0,
+    storeSets: {},
+    usageCalls: 0,
     transcripts: new Map(Object.entries(options.transcripts ?? {})),
     mainTranscript: options.mainTranscript ?? [],
     aborted: [],
@@ -206,14 +212,14 @@ export function world(on: On, options: WorldOptions = {}): World {
   w.clock = mock.clock(recording, { now: NOW })
   mock.env(on, { TMPDIR: TMP, HOME, PATH: '/usr/local/bin:/usr/bin' })
   hook('store.get', (e: { key: string }) => ((w.storeGets += 1), { value: w.store.get(e.key) }))
-  hook('store.set', (e: { key: string; value: unknown }) => (w.store.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }))
+  hook('store.set', (e: { key: string; value: unknown }) => ((w.storeSets[e.key] = (w.storeSets[e.key] ?? 0) + 1), w.store.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }))
   hook('store.delete', (e: { key: string }) => (w.store.delete(e.key), { value: undefined }))
   hook('store.keys', () => ((w.storeKeyReads += 1), { value: [...w.store.keys()] }))
   hook('session.root', () => ({ value: w.root }))
   hook('session.cwd', () => ({ value: w.root }))
   hook('session.model', () => ({ value: w.model }))
   hook('session.id', () => ({ value: options.sessionId ?? 'sess-1' }))
-  hook('session.usage', () => ({ value: { startedAt: 0, context: w.context, rateLimits: w.rateLimits, cost: { usd: w.usd } } }))
+  hook('session.usage', () => ((w.usageCalls += 1), { value: { startedAt: 0, context: w.context, rateLimits: w.rateLimits, cost: { usd: w.usd } } }))
   // MOD-22: a folder under a tree root exists when it is the root or a file lies under it
   const underTree = (path: string) => [...w.trees].some(t => path === t || path.startsWith(`${t}/`))
   const treeDir = (path: string) => underTree(path) && (w.trees.has(path) || [...w.files.keys()].some(k => k.startsWith(`${path}/`)))
