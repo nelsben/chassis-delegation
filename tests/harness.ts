@@ -218,7 +218,16 @@ export function world(on: On, options: WorldOptions = {}): World {
   hook('fs.exists', (e: { path: string }) => ({ value: w.files.has(e.path) || dirs.has(e.path) || treeDir(e.path) }))
   hook('fs.stat', (e: { path: string }) => {
     const text = w.files.get(e.path)
-    if (text !== undefined) return { value: { kind: 'file', size: bytesOf(text), mtimeMs: w.mtimes.get(e.path) ?? 0, isLink: false } }
+    // MOD-241: with no mtime set for a path, the time is a hash of the text, so a test that replaces a file's text reads as changed
+    const mtimeOf = (path: string, body: string) => {
+      const set = w.mtimes.get(path)
+      if (set !== undefined) return set
+      let h = 0
+      for (let i = 0; i < body.length; i += 1) h = (h * 31 + body.charCodeAt(i)) | 0
+      return Math.abs(h)
+    }
+    if (text !== undefined) return { value: { kind: 'file', size: bytesOf(text), mtimeMs: mtimeOf(e.path, text), isLink: false } }
+    if (e.path.endsWith('/.claude-plugin/plugin.json') && options.manifest !== undefined) return { value: { kind: 'file', size: bytesOf(options.manifest), mtimeMs: mtimeOf(e.path, options.manifest), isLink: false } }
     if (dirs.has(e.path) || treeDir(e.path)) return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false } }
     // the engine rejects a missing path with ENOENT; a thrown hook would read as "no implementation", so the hook denies with the reason
     return { deny: `ENOENT: no such file or directory, stat '${e.path}'` }

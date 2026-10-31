@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`loadRepoConfig` reads its three files only when one changed (MOD-241).** It keeps each file's `$.fs.stat` mtime and size (a missing file is the state `missing`); a call where all three are unchanged returns with no `fs.read`. A stat error other than ENOENT falls back to reading, `force` (the `/delegation config` paths) still re-reads, and a different session root invalidates the cache. An edit of identical size within the host's mtime resolution is missed.
+
 ## 0.9.40 — 2026-10-31
 
 ### Fixed
