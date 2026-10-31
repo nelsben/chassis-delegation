@@ -351,6 +351,12 @@
       "description": "Off by default: the land tool and /delegation land write the body and show the issue (title, type, parent, the gh line) and file only when called again with confirm: true (--confirm for /delegation land) after your yes; the land nudge says propose. On: they file the issue at once, on the brain's call, and the nudge says land",
       "default": false
     },
+    "treeImportBatch": {
+      "type": "number",
+      "title": "Tree import batch size",
+      "description": "The most issues one /delegation tree import (or tree_import call) creates in a run, 1 to 100. It then stops with `filed k of n; run again to continue`; the plan file keeps each filed issue number, so the next run files only what is missing. A value outside 1 to 100 means 20",
+      "default": 20
+    },
     "project": {
       "type": "string",
       "title": "GitHub Project (owner/number)",

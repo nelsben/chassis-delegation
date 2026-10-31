@@ -210,6 +210,7 @@ import { withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
+import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
@@ -635,6 +636,8 @@ type Config = {
   landNudge: boolean
   /** MOD-205: on files at once; off shows the issue and files only on confirm: true. */
   landAuto: boolean
+  /** MOD-215: the most creates one tree import makes in a run, 1 to 100. */
+  treeImportBatch: number
   /** MOD-31: ask | auto | off; /config only, never the (public, shared) repo file. */
   postFindings: PostMode
   /** MOD-15: how long a ready worktree row waits for the brain before the mod starts it itself; 0 = never. */
@@ -734,6 +737,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       wakeOnVerdict: o.wakeOnVerdict === true,
       landNudge: o.landNudge !== false,
       landAuto: o.landAuto === true || o.landAuto === 'on',
+      treeImportBatch: treeBatch(o.treeImportBatch),
       postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
       waitStallMs: num('waitStallMin', WAIT_STALL_DEFAULT_MIN) * MIN_MS,
@@ -3907,7 +3911,7 @@ async function closeFiled($: Host, root: string, ownerRepo: string, n: number, e
   const c = await run($, ['gh', 'issue', 'close', String(n), '--repo', ownerRepo, '--comment', doneBeforeFiling(evidence)], { cwd: root, timeoutMs: 60000 })
   if (!c.ok || c.exitCode !== 0) return `close #${n} failed: ${(c.ok ? c.stderr || c.stdout : c.why).trim().slice(0, 400) || '(nothing on stderr)'}`
   try {
-    await $.fs.write(file, withClosedLine((await readText($, file)) ?? '', new Date(await now($)).toISOString()))
+    if (file !== '') await $.fs.write(file, withClosedLine((await readText($, file)) ?? '', new Date(await now($)).toISOString()))
   } catch (err) {
     debug($, `land: closed line not written to ${file}: ${String(err)}`)
   }
@@ -4094,6 +4098,139 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
     else await closeNow(0)
   }
   return [...tree, ...written, ...filed, ...(await projectLines()), ...closeLines, `tree: #${featureNumber} with ${parsed.tasks.length} tasks`].join('\n')
+}
+
+/**
+ * MOD-215: `/delegation tree import <file> [--dry-run]` and the tree_import tool. The plan file (JSON under .delegation/plans/) is
+ * checked whole first; without confirm it prints the tree and counts and runs no gh. With confirm it files parents before children
+ * with the land shapes, writes each issue number back into the file after its create (the file is the manifest a re-run reads
+ * first), stops after treeImportBatch creates, and paces creates at least 1 s apart.
+ */
+async function treeImportWith($: Host, a: ReturnType<typeof parseTreeImportArgs>): Promise<string> {
+  if ('error' in a) return a.error
+  await loadRepoConfig($)
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const path = planFileOf(root, a.file)
+  if (!path) return `tree import: the plan file must be a .json file under .delegation/plans/ (${a.file})`
+  const src = await readText($, path)
+  if (src === undefined) return `tree import: ${path} could not be read`
+  const parsedPlan = parseTreePlan(src)
+  if ('errors' in parsedPlan) return [`tree import: ${a.file} not filed; ${parsedPlan.errors.length} error${parsedPlan.errors.length === 1 ? '' : 's'}:`, ...parsedPlan.errors.map(e => `  ${e}`)].join('\n')
+  const rules = await redactRules($, true)
+  const redactNode = (n: TreeNode): TreeNode => ({ ...n, title: redact(n.title, rules), ...(n.close !== undefined ? { close: redact(n.close, rules) } : {}), children: n.children.map(redactNode) })
+  const plan = { ...parsedPlan.plan, items: parsedPlan.plan.items.map(redactNode) }
+  const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
+  const ownerRepo = ownerRepoOf(origin ?? '')
+  landRepo = ownerRepo ?? ''
+  sessionRoot = root
+  const total = treeCounts(plan)
+  const preview = [`plan: ${a.file}${plan.parent !== undefined ? ` under #${plan.parent}` : ''}`, ...treeLines(plan), countsLine(total)]
+  if (a.dryRun || !a.confirm) return [...preview, a.dryRun ? 'nothing filed: dry run' : 'nothing filed: call tree_import again with confirm: true once the person says yes'].join('\n')
+  if (!ownerRepo) return [...preview, `origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); nothing can be filed`].join('\n')
+  let raw: unknown
+  try {
+    raw = JSON.parse(src)
+  } catch {
+    return `tree import: ${path} is not valid JSON`
+  }
+  const key = planKey((path.split('/').pop() ?? 'plan').replace(/\.json$/, ''), [], plan.parent)
+  const folder = `${root}/.delegation/landed`
+  const taken = new Set<string>()
+  try {
+    for (const e of await $.fs.list(folder)) taken.add(e.name)
+  } catch {
+    // the folder is not there yet
+  }
+  const def = ((): string => {
+    const want = defaultBranchOf((cfg.baseRef ?? '').trim())
+    return want !== '' && !isSha(want) ? want : 'main'
+  })()
+  const batch = cfg.treeImportBatch
+  const totalNew = total.fresh
+  const lines: string[] = []
+  const issues: { number: number; url: string; title: string }[] = []
+  let created = 0
+  let reused = 0
+  let stop: string | undefined
+  const visit = async (n: TreeNode, parentNum: number): Promise<{ closed: boolean } | undefined> => {
+    let num = 0
+    let wasClosed = false
+    let isReused = false
+    let file = ''
+    if (n.issue !== undefined) {
+      const view = await viewIssue($, root, ownerRepo, n.issue)
+      if (!view) {
+        stop = `tree import: could not read #${n.issue} (${n.at}); remove its "issue" from the file if it is gone`
+        return undefined
+      }
+      // an OPEN issue, or a CLOSED one when the item is to be filed closed, is already filed
+      if (view.state === 'OPEN' || (view.state === 'CLOSED' && n.close !== undefined)) {
+        num = n.issue
+        wasClosed = view.state === 'CLOSED'
+        isReused = true
+        reused++
+        lines.push(`already filed #${num} ${n.title}`)
+      }
+    }
+    if (!isReused) {
+      if (created >= batch) {
+        stop = 'batch'
+        return undefined
+      }
+      if (created > 0) await pauseOffBudget($, 1000)
+      const name = freeName(slugOf(n.title), taken)
+      taken.add(name)
+      file = `${folder}/${name}`
+      const body = `${redact(landedBody({ ...(n.note !== undefined ? { note: n.note } : {}), paths: n.paths, noScope: true, cards: [], defaultBranch: def }), rules)}plan: ${key}\n`
+      try {
+        await $.fs.write(file, body)
+      } catch (err) {
+        stop = `tree import: ${file} not written: ${String(err)}`
+        return undefined
+      }
+      const r = await fileOne($, { root, ownerRepo, file, body, title: n.title, type: n.type, ...(parentNum > 0 ? { parent: parentNum } : {}) })
+      if ('failed' in r) {
+        lines.push(`not filed: ${n.title}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`)
+        stop = 'failed'
+        return undefined
+      }
+      created++
+      num = r.issue.number
+      lines.push(`filed #${num} ${r.issue.url} ${n.title}`)
+      issues.push({ ...r.issue, title: n.title })
+      setIssueAt(raw, n.idx, num)
+      try {
+        await $.fs.write(path, `${JSON.stringify(raw, null, 2)}\n`)
+      } catch (err) {
+        stop = `tree import: #${num} filed but ${path} not updated: ${String(err)}; add "issue": ${num} to ${n.at} before running again`
+        return undefined
+      }
+    }
+    let childrenClosed = true
+    for (const c of n.children) {
+      const r = await visit(c, num)
+      if (!r) return undefined
+      if (!r.closed) childrenClosed = false
+    }
+    let closed = false
+    if (n.close !== undefined) {
+      if (wasClosed) closed = true
+      else if (childrenClosed) {
+        const line = await closeFiled($, root, ownerRepo, num, n.close, file)
+        closed = line.startsWith('closed')
+        if (!closed) lines.push(line)
+      } else lines.push(`#${num} left open: not every child is closed`)
+    }
+    return { closed }
+  }
+  for (const top of plan.items) if (!(await visit(top, plan.parent ?? 0))) break
+  const projectLines: string[] = []
+  for (const i of issues) for (const l of await addToProject($, root, i.url)) projectLines.push(l.startsWith('added') ? l : `${i.title}: ${l}`)
+  const failures = projectLines.filter(l => !l.startsWith('added'))
+  const project = [...(projectLines.length > 0 && failures.length === 0 ? [projectLines[0] as string] : []), ...failures]
+  if (stop === 'batch') return [...preview, ...lines, ...project, `filed ${created} of ${totalNew}; run again to continue`].join('\n')
+  if (stop !== undefined) return [...preview, ...lines, ...project, ...(stop === 'failed' ? [] : [stop])].join('\n')
+  return [...preview, ...lines, ...project, `tree import: done; filed ${created}, already filed ${reused}`].join('\n')
 }
 
 async function redactRules($: Host, forIssue = false): Promise<RedactRules> {
@@ -8600,6 +8737,11 @@ export const register: Register = (on, opts) => {
       debug($, `the land_plan tool was not registered: ${String(err)}`)
     }
     try {
+      await $.tool.register({ name: TREE_IMPORT_TOOL.name, description: TREE_IMPORT_TOOL.description, inputSchema: TREE_IMPORT_TOOL.inputSchema })
+    } catch (err) {
+      debug($, `the tree_import tool was not registered: ${String(err)}`)
+    }
+    try {
       await $.tool.register({ name: TREE_TOOL.name, description: TREE_TOOL.description, inputSchema: TREE_TOOL.inputSchema })
     } catch (err) {
       debug($, `the tree tool was not registered: ${String(err)}`)
@@ -8668,6 +8810,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'lesson' || arg.startsWith('lesson ')) return { text: await runLesson($, arg.slice('lesson'.length)) }
     if (arg === 'config' || arg.startsWith('config ')) return { text: await runConfig($, arg.slice('config'.length)) }
     if (arg === 'land' || arg.startsWith('land ')) return { text: await runLand($, arg.slice('land'.length)) }
+    if (arg === 'tree import' || arg.startsWith('tree import ')) return { text: await treeImportWith($, parseTreeImportArgs(arg.slice('tree import'.length))) }
     if (arg === 'tree' || arg.startsWith('tree ')) return { text: await treeWith($, arg.slice('tree'.length).trim()) }
     if (arg === 'ration') return { text: await rationReportText($) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
@@ -8693,7 +8836,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|tree <n>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|tree <n>|tree import <file>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => (landSeen($, 'card'), { result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => (landSeen($, 'verdict'), { result: await runVerdict($, e as unknown as Record<string, unknown>) }))
@@ -8702,6 +8845,7 @@ export const register: Register = (on, opts) => {
   // MOD-75: the merge tool, the command's second door
   on('tool.call', { tool: 'mcp__chassis-delegation__land' as never }, async ($, e) => (landSeen($, 'land'), { result: await landWith($, parseLandTool(e as unknown as Record<string, unknown>)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__land_plan' as never }, async ($, e) => (landSeen($, 'land_plan'), { result: await planWith($, parsePlan(e)) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__tree_import' as never }, async ($, e) => (landSeen($, 'land_plan'), { result: await treeImportWith($, parseTreeImportTool(e as unknown as Record<string, unknown>)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__tree' as never }, async ($, e) => ({ result: await treeWith($, (e as unknown as Record<string, unknown>).issue) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => (landSeen($, 'merge'), { result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
