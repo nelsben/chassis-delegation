@@ -3,6 +3,8 @@ import { test, expect, describe } from 'claude-code/testing'
 import { checkArgv } from '../hooks/lib/allow'
 import { gateTemplatesOf, resolveGateRuns, splitCommand } from '../hooks/lib/gates'
 import {
+  attributeWrites,
+  isDelegationPath,
   globRoot,
   matchGlob,
   noRepoVerdict,
@@ -258,5 +260,34 @@ describe('MOD-186: a repo=none listing lives in a file under the session .delega
     expect(isOutsideFile(S, `/elsewhere/.delegation/outside/T-1.json`)).toBe(false)
     expect(isOutsideFile(S, `${S}/.delegation/outside/a/b.json`)).toBe(false)
     expect(isOutsideFile('', `/x.json`)).toBe(false)
+  })
+})
+
+describe('MOD-217: attributing changed paths to the worker', () => {
+  test('an empty or absent log attributes every path to the worker', () => {
+    expect(attributeWrites(['/a/x', '/a/y'], undefined)).toEqual({ mine: ['/a/x', '/a/y'], foreign: [] })
+    expect(attributeWrites(['/a/x'], [])).toEqual({ mine: ['/a/x'], foreign: [] })
+  })
+  test('a path in the log is the worker\'s; the rest are foreign', () => {
+    expect(attributeWrites(['/a/x', '/a/y'], ['/a/x'])).toEqual({ mine: ['/a/x'], foreign: ['/a/y'] })
+  })
+  test('a folder the worker wrote into, and a file under a folder it wrote, are the worker\'s; a trailing slash is ignored', () => {
+    expect(attributeWrites(['/a/dir', '/a/new/f.txt', '/a/other/'], ['/a/dir/f.txt', '/a/new'])).toEqual({ mine: ['/a/dir', '/a/new/f.txt'], foreign: ['/a/other/'] })
+    expect(attributeWrites(['/a/dir/'], ['/a/dir/f.txt'])).toEqual({ mine: ['/a/dir/'], foreign: [] })
+  })
+  test('.delegation is recognised under any root, and not as a substring', () => {
+    expect(isDelegationPath('/repo/.delegation/T-1/files.txt')).toBe(true)
+    expect(isDelegationPath('.delegation/briefs/T-1.brief.md')).toBe(true)
+    expect(isDelegationPath('/work/wt/.delegation')).toBe(true)
+    expect(isDelegationPath('/repo/x.delegation/a')).toBe(false)
+    expect(isDelegationPath('/repo/src/delegation/a')).toBe(false)
+  })
+  test('the outside claim leaves .delegation out and lists an unwritten path without judging it', () => {
+    const before: RootListing[] = [{ root: '/out', entries: [] }]
+    const after: RootListing[] = [{ root: '/out', entries: [{ path: 'a/mine.txt', size: 1, mtimeMs: 1 }, { path: 'a/theirs.txt', size: 1, mtimeMs: 1 }, { path: 'wt/.delegation/T-2/files.txt', size: 1, mtimeMs: 1 }] }]
+    const r = outsideClaim({ before, after, scope: ['/out/a/mine.txt'], forbid: ['/out/wt/**'], writes: ['/out/a/mine.txt'] })
+    expect(r?.status).toBe('held')
+    expect(r?.foreign).toEqual(['/out/a/theirs.txt'])
+    expect(outsideClaim({ before, after, scope: ['/out/a/mine.txt'], forbid: [], writes: ['/out/a/theirs.txt'] })?.status).toBe('failed')
   })
 })

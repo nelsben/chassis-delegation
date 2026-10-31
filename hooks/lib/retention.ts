@@ -66,6 +66,8 @@ const SPAWN = `${P}spawn.`
 const AGENT = `${P}agent.`
 const NAME = `${P}agentName.`
 const COST = `${P}cost.`
+/** MOD-217: a worker's write log, keyed by its agent id like its cost. */
+const WRITES = `${P}writes.`
 const RATION = `${P}ration.`
 
 /** The task id of a task label or key: `T-1/api`, `T-1@replay-ab12`, `T-1:1:2`, `T-1@/other` are all T-1. */
@@ -134,6 +136,7 @@ function metas(entries: readonly StoreEntry[]): Meta[] {
     else if (key.startsWith(AGENT)) m = spawnMeta(typeof value === 'string' ? value : undefined)
     else if (key.startsWith(NAME)) m = spawnMeta(typeof value === 'string' ? str(AGENT + value) : undefined)
     else if (key.startsWith(COST)) m = spawnMeta(str(AGENT + key.slice(COST.length)))
+    else if (key.startsWith(WRITES)) m = spawnMeta(str(AGENT + key.slice(WRITES.length)))
     else if (BY_ATTEMPT.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_TASK.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_BRIEF.some(p => key.startsWith(p))) m = withTask(taskOfBrief(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))

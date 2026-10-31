@@ -1335,6 +1335,48 @@ describe('/dispatch', () => {
     expect(argvs(w).some(a => a.includes('worktree') || a.includes('fetch'))).toBe(false)
     expect(records(w, 'BE-101')[0]).toMatchObject({ here: ROOT, files: ['app/billing/RateA.ts'], verdict: 'consistent' })
   })
+
+  describe('MOD-217: repo=here attribution', () => {
+    const OPTS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full' as const, gateMap: '{"G2":"npx g2","G8p":"npx g8p"}' }
+    const REPORT = 'Done.\n[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=app/billing/RateA.ts]]'
+    const RED_HERE = { [`${ROOT}/.delegation/BE-101/red-1.txt`]: 'npx vitest run\nFAIL RateA.test.ts: expected 1 got 0\n' }
+    const edit = ($: any, file: string) => $.tool.call({ tool: 'Edit', file_path: file, old_string: 'a', new_string: 'b', agentId: 'agent-h' } as never)
+    const passed = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+    const setupHere = (on: Parameters<typeof world>[0], porcelain: string[]) => {
+      on('tool.call', { tool: 'Edit' }, passed)
+      const run = (argv: string[]): RunAnswer | undefined => {
+        if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+        if (argv[3] === 'status') return { exitCode: 0, stdout: porcelain.join('\0') }
+        return onMain(argv)
+      }
+      return world(on, { files: { ...files(), ...RED_HERE }, dirs, run, agentId: 'agent-h', store: offered })
+    }
+
+    test('a sibling worker\'s edit is listed as not by this worker and does not refute', { options: OPTS }, async ($, on) => {
+      const w = setupHere(on, [' M app/billing/RateA.ts', ' M src/sibling.ts', ''])
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text))
+      await edit($, `${ROOT}/app/billing/RateA.ts`)
+      await $.turn.complete(turnInput('agent-h', REPORT))
+      const row = delivered(w)
+      expect(row).toContain('verdict=consistent task=BE-101 attempt=1/3')
+      expect(row).toContain('changed during the run, not by this worker: src/sibling.ts')
+    })
+
+    test('the worker\'s own out-of-scope edit refutes and charges an attempt', { options: OPTS }, async ($, on) => {
+      const w = setupHere(on, [' M app/billing/RateA.ts', ' M src/mine.ts', ' M src/sibling.ts', ''])
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text))
+      await edit($, `${ROOT}/app/billing/RateA.ts`)
+      await edit($, `${ROOT}/src/mine.ts`)
+      await $.turn.complete(turnInput('agent-h', REPORT.replace('files=app/billing/RateA.ts', 'files=app/billing/RateA.ts,src/mine.ts')))
+      const row = delivered(w)
+      expect(row).toContain('verdict=refuted task=BE-101')
+      expect(row).toContain('claim scope: failed — out-of-scope path: src/mine.ts')
+      expect(row).not.toContain('out-of-scope path: src/sibling.ts')
+      expect(records(w, 'BE-101')[0]).toMatchObject({ verdict: 'refuted', attempt: 1 })
+    })
+  })
 })
 
 describe('GH-16: a nested child repo is its own root', () => {
@@ -4872,6 +4914,62 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     expect(row).toContain('verdict=refuted (no repo) task=OPS-9')
     expect(row).toContain('claim scope: failed — out-of-scope path: /out/notes/scratch.txt (outside delta)')
     expect(records(w, 'OPS-9')[0]).toMatchObject({ verdict: 'refuted', firstFailed: 'scope' })
+  })
+
+  // MOD-217: scope is charged only for paths the worker wrote
+  describe('MOD-217: attribution of the outside delta', () => {
+    const write = ($: any, file: string) => $.tool.call({ tool: 'Write', file_path: file, content: 'x', agentId: 'agent-r' } as never)
+    const passed = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+    const allowWrites = (on: Parameters<typeof world>[0]) => on('tool.call', { tool: 'Write' }, passed)
+
+    test('a brain edit to an outside file during the run does not refute the worker; it is listed as not by this worker', { options: OPTIONS }, async ($, on) => {
+      const w = setup(on)
+      allowWrites(on)
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      await write($, '/out/hair/model.glb')
+      w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+      w.files.set('/out/notes/spec.txt', 'edited by the brain')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      const row = delivered(w)
+      expect(row).toContain('verdict=consistent (no repo) task=OPS-9')
+      expect(row).toContain('changed during the run, not by this worker: /out/notes/spec.txt')
+    })
+
+    test('the worker\'s own outside write still refutes', { options: OPTIONS }, async ($, on) => {
+      const w = setup(on)
+      allowWrites(on)
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      await write($, '/out/hair/model.glb')
+      await write($, '/out/notes/scratch.txt')
+      w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+      w.files.set('/out/notes/scratch.txt', 'left behind')
+      w.files.set('/out/notes/spec.txt', 'edited by the brain')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      const row = delivered(w)
+      expect(row).toContain('verdict=refuted (no repo) task=OPS-9')
+      expect(row).toContain('claim scope: failed — out-of-scope path: /out/notes/scratch.txt (outside delta)')
+    })
+
+    test('another task\'s .delegation/<id>/files.txt in a watched folder never counts, with or without a write log', { options: OPTIONS }, async ($, on) => {
+      const w = world(on, {
+        files: { [`${ROOT}/agents/tasks/${NAME}`]: CARD.replace('forbid: []', 'forbid: [/work/**]'), '/out/hair/old.txt': 'x', [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ briefTemplate: '/tpl/brief.md' }), '/tpl/brief.md': TEMPLATE },
+        dirs: { [`${ROOT}/agents/tasks`]: [NAME] },
+        trees: ['/out/hair', '/out/notes', '/work'],
+        run,
+        agentId: 'agent-r',
+        store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+      })
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      w.files.set('/out/hair/model.glb', 'glTF-binary-bytes')
+      w.files.set('/work/MOD-9-wt/.delegation/OTHER-1/files.txt', 'a.ts\n')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      const row = delivered(w)
+      expect(row).toContain('verdict=consistent (no repo) task=OPS-9')
+      expect(row).not.toContain('files.txt')
+    })
   })
 
   test('an artefact the report names that is not there is refuted on artefacts, naming it; nothing named is no claim', { options: OPTIONS }, async ($, on) => {

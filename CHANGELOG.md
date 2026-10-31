@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Scope is charged only for paths the worker wrote (MOD-217).** The `tool.call` hook now keeps a per-worker write log (the Edit, Write, MultiEdit and NotebookEdit `file_path` and the paths a Bash command writes, resolved against the worker's cwd; at most 2000 paths; reviewers unchanged). At the verdict the outside delta and a repo=here git delta count against scope and forbid only the changed paths in that log; the others are listed on one line, `changed during the run, not by this worker: <paths>`, and never refute, so a brain edit to a shared file or a sibling worker's edit no longer refutes a card and burns an attempt. A worktree card's git delta is unchanged, and a worker with an empty log is charged for the whole delta as before.
+- **`.delegation/**` is never part of a scope, forbid or outside delta (MOD-217).** The mod's own `.delegation/<other-task>/files.txt`, under the repo root or any worktree, no longer counts as a forbid or scope hit on another card.
+
 ## 0.9.37 — 2026-10-30
 
 ### Changed
