@@ -154,11 +154,12 @@ export function withoutIssueLine(text: string): string {
 }
 
 /** The Markdown issue body: the note, the scope block when paths were given, and the open cards that overlap those paths. Redact it before it is written. */
-export function landedBody(o: { note?: string; supersedes?: number; paths: readonly string[]; cards: readonly { id: string; title: string; scope?: readonly string[] }[]; defaultBranch: string }): string {
+export function landedBody(o: { note?: string; supersedes?: number; paths: readonly string[]; /** MOD-213: a plan item with no paths says `scope: none` in place of the paths list. */ noScope?: boolean; cards: readonly { id: string; title: string; scope?: readonly string[] }[]; defaultBranch: string }): string {
   const parts: string[] = []
   if (o.note && o.note.trim() !== '') parts.push(o.note.trim())
   if (o.supersedes !== undefined) parts.push(`supersedes: #${o.supersedes}`)
   if (o.paths.length > 0) parts.push(`## Scope\n\n\`\`\`scope\n${o.paths.join('\n')}\n\`\`\``)
+  else if (o.noScope) parts.push('## Scope\n\nscope: none')
   // MOD-204: only the open cards whose scope holds one of the paths; no section when none does or there are no paths
   const overlap = o.cards.filter(c => o.paths.some(p => contained(p, c.scope ?? [])))
   if (overlap.length > 0) parts.push(`## Landed from\n\nOpen cards:\n\n${overlap.map(c => `- ${c.id} ${c.title}`.trimEnd()).join('\n')}\n\nDefault branch: ${o.defaultBranch}`)
@@ -203,13 +204,13 @@ export function freeName(slug: string, taken: ReadonlySet<string>): string {
 }
 
 export type PlanItem = { title: string; type: LandType; paths: string[]; note?: string }
-export type Plan = { feature: PlanItem; tasks: PlanItem[]; confirm: boolean; /** MOD-218: skip the Project item-add for this call only. */ noProject?: boolean }
+export type Plan = { feature: PlanItem; tasks: PlanItem[]; /** MOD-213: an existing issue the top item is filed under. */ parent?: number; confirm: boolean; /** MOD-218: skip the Project item-add for this call only. */ noProject?: boolean }
 
 /** MOD-193: the land_plan tool. */
 export const LAND_PLAN_TOOL = {
   name: 'land_plan',
   description:
-    'Lands a settled plan on GitHub as a sub-issue tree: one feature (or epic) and its tasks, each task under the feature, each added to the configured Project. Plan in chat first. Call without confirm to show the tree: every body is written under .delegation/landed/ and nothing is filed. Show that tree to the person, and call again with confirm: true only after the person says yes in their own words. Every task path must sit inside the feature paths, or the whole call is refused before anything is written.',
+    'Lands a settled plan on GitHub as a sub-issue tree: one feature (or epic) and its tasks, each task under the feature, each added to the configured Project; the top item may be filed under an existing issue with parent, and tasks may be left out. Plan in chat first. Call without confirm to show the tree: every body is written under .delegation/landed/ and nothing is filed. Show that tree to the person, and call again with confirm: true only after the person says yes in their own words. Every task path must sit inside the feature paths when the feature has paths, or the whole call is refused before anything is written; paths may be empty on a feature, epic or story (it then shows scope: none) but a task, bug or spike needs at least one.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -218,36 +219,37 @@ export const LAND_PLAN_TOOL = {
         properties: {
           title: { type: 'string', description: 'The feature issue title.' },
           type: { type: 'string', enum: ['feature', 'epic'], description: 'Default feature.' },
-          paths: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'The repo paths the whole feature may touch.' },
+          paths: { type: 'array', items: { type: 'string' }, description: 'The repo paths the whole feature may touch; may be empty or left out (scope: none), then its tasks are not constrained.' },
           note: { type: 'string', description: 'Optional: text for the top of the body.' },
         },
-        required: ['title', 'paths'],
+        required: ['title'],
         additionalProperties: false,
       },
+      parent: { type: 'number', description: 'Optional: an existing issue number (a whole number 1 or more) the top item is filed under as a sub-issue.' },
       tasks: {
         type: 'array',
-        minItems: 1,
         maxItems: 30,
         items: {
           type: 'object',
           properties: {
             title: { type: 'string', description: 'The task issue title.' },
             type: { type: 'string', enum: ['story', 'task', 'bug', 'spike'], description: 'Default task.' },
-            paths: { type: 'array', items: { type: 'string' }, minItems: 1, description: "The repo paths this task touches; each must sit inside the feature's paths." },
+            paths: { type: 'array', items: { type: 'string' }, description: "The repo paths this task touches; each must sit inside the feature's paths when it has paths. At least one unless the type is story." },
             note: { type: 'string', description: 'Optional: text for the top of the body.' },
           },
-          required: ['title', 'paths'],
+          required: ['title'],
           additionalProperties: false,
         },
       },
       project: { type: 'boolean', description: 'false: do not add the issues to the configured Project (this call only).' },
       confirm: { type: 'boolean', description: 'true only after the person has said yes to the tree shown; otherwise the call files nothing.' },
     },
-    required: ['feature', 'tasks'],
+    required: ['feature'],
     additionalProperties: false,
   },
 } as const
 
+const NO_PATH_OK: readonly LandType[] = ['feature', 'epic', 'story']
 const planItem = (raw: unknown, what: string, types: readonly LandType[], dflt: LandType): PlanItem | string => {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return `land_plan: ${what} must be an object`
   const o = raw as Record<string, unknown>
@@ -259,7 +261,7 @@ const planItem = (raw: unknown, what: string, types: readonly LandType[], dflt: 
     type = o.type as LandType
   }
   const paths = Array.isArray(o.paths) ? o.paths.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(p => p !== '') : []
-  if (paths.length === 0) return `land_plan: ${what} "${title}" needs at least one path`
+  if (paths.length === 0 && !NO_PATH_OK.includes(type)) return `land_plan: ${what} "${title}" needs at least one path`
   const note = typeof o.note === 'string' ? o.note.trim() : ''
   return { title, type, paths, ...(note !== '' ? { note } : {}) }
 }
@@ -269,16 +271,22 @@ export function parsePlan(input: unknown): Plan | { error: string } {
   const o = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
   const feature = planItem(o.feature, 'feature', ['feature', 'epic'], 'feature')
   if (typeof feature === 'string') return { error: feature }
-  if (!Array.isArray(o.tasks) || o.tasks.length < 1 || o.tasks.length > 30) return { error: 'land_plan: tasks must be a list of 1 to 30' }
+  let parent: number | undefined
+  if (o.parent !== undefined && o.parent !== null) {
+    if (typeof o.parent !== 'number' || !Number.isInteger(o.parent) || o.parent < 1) return { error: 'land_plan: parent must be a whole number, 1 or more' }
+    parent = o.parent
+  }
+  const rawTasks = o.tasks === undefined || o.tasks === null ? [] : o.tasks
+  if (!Array.isArray(rawTasks) || rawTasks.length > 30) return { error: 'land_plan: tasks must be a list of 0 to 30' }
   const tasks: PlanItem[] = []
-  for (const [i, raw] of o.tasks.entries()) {
+  for (const [i, raw] of rawTasks.entries()) {
     const t = planItem(raw, `task ${i + 1}`, ['story', 'task', 'bug', 'spike'], 'task')
     if (typeof t === 'string') return { error: t }
-    const stray = t.paths.find(p => !contained(p, feature.paths))
+    const stray = feature.paths.length === 0 ? undefined : t.paths.find(p => !contained(p, feature.paths))
     if (stray !== undefined) return { error: `land_plan: task "${t.title}" path ${stray} is outside the feature paths (${feature.paths.join(', ')})` }
     tasks.push(t)
   }
-  return { feature, tasks, confirm: o.confirm === true, ...(o.project === false ? { noProject: true } : {}) }
+  return { feature, tasks, ...(parent !== undefined ? { parent } : {}), confirm: o.confirm === true, ...(o.project === false ? { noProject: true } : {}) }
 }
 
 const K256 = [
@@ -329,9 +337,10 @@ export function sha256Text(text: string): string {
   return h.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('')
 }
 
-/** MOD-207: the plan key, the feature title's slug, `-`, and the first 8 hex of the sha-256 of the sorted feature paths joined by commas. */
-export function planKey(featureTitle: string, featurePaths: readonly string[]): string {
-  return `${slugOf(featureTitle)}-${sha256Text([...featurePaths].sort().join(',')).slice(0, 8)}`
+/** MOD-207: the plan key, the feature title's slug, `-`, and the first 8 hex of the sha-256 of the sorted feature paths joined by commas (and `|parent:<n>` when the plan has a parent). */
+export function planKey(featureTitle: string, featurePaths: readonly string[], parent?: number): string {
+  // MOD-213: a parent joins the hashed text, so the same plan under another parent files anew; no parent hashes as before
+  return `${slugOf(featureTitle)}-${sha256Text([...featurePaths].sort().join(',') + (parent !== undefined ? `|parent:${parent}` : '')).slice(0, 8)}`
 }
 
 /** MOD-207: the value of the last `plan: <key>` line of a landed file, else undefined. */
