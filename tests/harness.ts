@@ -271,7 +271,8 @@ export function world(on: On, options: WorldOptions = {}): World {
     // a file written under a listed folder shows up in it (GH-111: the card tool writes, then dispatches)
     const written = [...w.files.keys()].filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => k.slice(e.path.length + 1))
     const names = [...new Set([...listed, ...written])]
-    return { value: names.map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false })) }
+    // MOD-244: a file's entry carries its text's byte size and the mtime a test set in w.mtimes (default 0), so a rewrite of a different length reads as changed
+    return { value: names.map(name => ({ name, kind: 'file', size: bytesOf(w.files.get(`${e.path}/${name}`) ?? ''), mtimeMs: w.mtimes.get(`${e.path}/${name}`) ?? 0, isLink: false })) }
   })
   hook('process.run', async (e: { argv: string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number } }) => {
     w.runs.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env, stdin: e.init?.stdin, timeoutMs: e.init?.timeoutMs })

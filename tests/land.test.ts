@@ -219,6 +219,21 @@ describe('MOD-193: land_plan', () => {
   })
   const gh = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh')
 
+  test('MOD-244: a second call with no card changed reads no card; a changed card is read again', async ($, on) => {
+    const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: fake() })
+    for (const n of ['MOD-1-a.md', 'MOD-2-b.md', 'MOD-3-c.md']) w.mtimes.set(`${CARDS}/${n}`, 1000)
+    await $.session.start(sessionStart)
+    const cardReads = () => w.reads.filter(p => p.startsWith(`${CARDS}/`)).length
+    await planTool($, plan())
+    expect(cardReads()).toBeGreaterThan(0)
+    const before = cardReads()
+    await planTool($, plan())
+    expect(cardReads()).toBe(before)
+    w.mtimes.set(`${CARDS}/MOD-3-c.md`, 2000)
+    await planTool($, plan())
+    expect(cardReads()).toBe(before + 1)
+  })
+
   test('without confirm: bodies written, no gh, the tree shown', async ($, on) => {
     const w = world(on, { files: { ...files(), ...repoFile('o/1'), ...gitCfg('https://github.com/o/r.git') }, dirs: dirs(), run: fake() })
     await $.session.start(sessionStart)
