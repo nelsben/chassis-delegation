@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.37 to 0.9.38
+
+Nothing needs doing to upgrade. A scope refute now charges only the paths the worker wrote.
+Added: land_plan `parent` and pathless feature, epic and story items with zero tasks; `land --closed` and land_plan `close`; `/delegation tree import` with the `treeImportBatch` option; the repo-level `project` (including `none`) with `project: false` and `--no-project`; `issue:` and `parent:` accepting `#12` and an issue URL, with the `parked` status.
+Fixed: scope charged only for the worker's writes, and `.delegation/**` out of every delta; redaction leaves dotfolder segments and the target repo name alone; the dispatch wording (no outside-scope warning for red_test paths, queue position for a tier-capped lane, `gate reused (recorded pass, not re-run)` in the verdict row).
+Detail: [CHANGELOG 0.9.38](../CHANGELOG.md).
+
 ### From 0.9.36 to 0.9.37
 
 Land now shows the issue first and files only on confirm by default; `/delegation config landAuto on` restores filing at once.
