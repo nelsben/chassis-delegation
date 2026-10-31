@@ -186,11 +186,23 @@ value has its quotes removed; a line that is not `key: value` is skipped.
 | Key | Syntax | Read by | Hand-written vs the `card` tool |
 | --- | --- | --- | --- |
 | `id` | `id: ID` | everything; a card with no `id` is refused | same |
-| `status` | `status: queued` (or `claimed`) | `/dispatch` takes only `queued` or `claimed`; the retire check and `land` treat `merged` (and `landed`) as done | same; the tool writes `queued` |
-| `issue` | `issue: 12`, a whole number 1 or more, no `#`, no URL | dispatch "started" status comment and verdict comment (once per attempt, on that issue); merge finish: the close of the task issue (`gh issue close 12 --comment "merged in #<pr>"`, or `merged at <sha>`); the PR body's `Refs #<issue>` line (a reference, not a close) | same. `issue: #12` or `issue: abc` is not a whole number, so those steps read no issue and stay silent (no error). `/delegation tree` is looser: it accepts `#12`, so a card can show as matched in the tree and still get no status comment or close |
-| `parent` | `parent: 8`, a whole number 1 or more, no `#` | merge finish: the close of the parent (see below); the open-sibling rule when a new card is cut under that parent; the `land` parent hint; the parent nudge | same parse. The tool also adds the scope of the parent's open sibling cards to `forbid`; a hand-written card gets no such forbid |
+| `status` | `status: queued` | see the status table below | same; the tool writes `queued` |
+| `issue` | `issue: 12`, `issue: #12` or `issue: https://github.com/<owner>/<repo>/issues/12`; all three read as 12 | dispatch "started" status comment and verdict comment (once per attempt, on that issue); merge finish: the close of the task issue (`gh issue close 12 --comment "merged in #<pr>"`, or `merged at <sha>`); the PR body's `Refs #<issue>` line (a reference, not a close); `/delegation tree` | same read. A URL naming a repo other than the origin's is not used, and dispatch prints one warning line naming it (`issue: <value> names <owner/repo>, not <origin repo>; no status comments or close for this card`). Any other value (`issue: abc`, a pull-request URL) is not an issue number: dispatch prints `issue: <value> is not an issue number; no status comments or close for this card` once, and the steps stay silent |
+| `parent` | `parent: 8`, `parent: #8` or an issue URL of this repo (same three forms and the same warning, ending `no parent close for this card`) | merge finish: the close of the parent (see below); the open-sibling rule when a new card is cut under that parent; the `land` parent hint; the parent nudge | same parse. The tool also adds the scope of the parent's open sibling cards to `forbid`; a hand-written card gets no such forbid |
 | `parentScope` | `parentScope: [hooks/**, docs/**]`, or a block list, or a scalar split on `,` and `;` | `/dispatch` copies it to the brief header as `parent_scope=` | same parse, and it is read even without `parent`. The tool refuses `parentScope` without `parent` and refuses a `scope` glob outside it; a hand-written card is not checked, so a `scope` outside `parentScope` dispatches |
 | `scope`, `forbid` | `scope: [a/**, b.md]` | the brief's `scope=`, `forbid=` | same |
+
+**Card status.** `status:` is one word; a missing or other value is refused by dispatch as `<ID> is status <value>; /dispatch takes a queued or claimed card`.
+
+| Status | Dispatch | Land overlap list and tree's open cards |
+| --- | --- | --- |
+| `queued` | takes it | listed as open (unless the ledger has an accepted or merged row for it) |
+| `claimed` | takes it | listed as open (same rule) |
+| `parked` | refuses it: `<ID> is parked; set status: queued to dispatch it` | left out, as merged |
+| `merged` | refuses it | left out |
+| `landed` | refuses it (any other word is refused the same way) | listed as open (same rule); no step reads it specially |
+
+The land nudge reads no card status, so `parked` does not change it.
 
 No other key is read for the sync. (`land --supersedes <n>` reads no card key: it is a command argument, see below.)
 

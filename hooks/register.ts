@@ -329,6 +329,7 @@ import {
   parseMergeTool,
   prBody,
   issueRef,
+  issueNote,
   pushLines,
   readsMerged,
   remoteBlock,
@@ -2968,8 +2969,9 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   } catch {
     home = ''
   }
+  const prRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '') || undefined
   const verdictLine = `${id} attempt ${row.attempt ?? '?'}: consistent${row.sha ? ` at ${row.sha}` : ''} · next=accept`
-  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary), ...(issueRef(card.fields.issue) !== undefined ? { issue: issueRef(card.fields.issue) as number } : {}) }))
+  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary), ...(issueRef(card.fields.issue, prRepo) !== undefined ? { issue: issueRef(card.fields.issue, prRepo) as number } : {}) }))
   const title = card.title || `${id} merged`
   const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id })
   return [
@@ -2991,8 +2993,9 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   // MOD-189: the card's issue and parent, read before the root card goes
   const finishCardText = cardRel ? ((await readText($, `${root}/${cardRel}`)) ?? (await readText($, `${wt.path}/${cardRel}`))) : undefined
   const finishCard = finishCardText ? parseCard(finishCardText) : undefined
-  const cardIssue = finishCard && !('error' in finishCard) ? issueRef(finishCard.fields.issue) : undefined
-  const cardParent = finishCard && !('error' in finishCard) ? issueRef(finishCard.fields.parent) : undefined
+  const originRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '') || undefined
+  const cardIssue = finishCard && !('error' in finishCard) ? issueRef(finishCard.fields.issue, originRepo) : undefined
+  const cardParent = finishCard && !('error' in finishCard) ? issueRef(finishCard.fields.parent, originRepo) : undefined
   const fetched = await run($, ['git', '-C', root, 'fetch', 'origin'], { cwd: root, timeoutMs: 120000 })
   if (!fetched.ok || fetched.exitCode !== 0) return `${id}: git fetch origin failed in the main checkout: ${whyOf(fetched)}`
   const head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
@@ -3806,7 +3809,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
     const again = closedEv !== undefined && !alreadyFiled.closed ? [await closeFiled($, root, ownerRepo as string, alreadyFiled.number, closedEv, file)] : []
     return [file, `already filed #${alreadyFiled.number} ${alreadyFiled.url}`, ...again].join('\n')
   }
-  const hint = a.parent === undefined ? parentHint(a.paths, open) : undefined
+  const hint = a.parent === undefined ? parentHint(a.paths, open, ownerRepo || undefined) : undefined
   const ghLine = ownerRepo
     ? `gh issue create --repo ${ownerRepo} --title ${shellWord(title)} --label type:${a.type}${a.parent !== undefined ? ` --parent ${a.parent}` : ''} --body-file ${file}`
     : `origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'}); no gh line to print`
@@ -3853,8 +3856,8 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
       const t = await readText($, `${cardDir}/${e.name}`)
       const c = t === undefined ? undefined : parseCard(t)
       if (c && !('error' in c)) {
-        const m = /^#?(\d{1,9})\b/.exec(String(c.fields.issue ?? '').trim())
-        cards.push({ id: c.id, status: c.status, ...(m ? { issue: Number(m[1]) } : {}) })
+        const ref = issueRef(c.fields.issue, ownerRepo)
+        cards.push({ id: c.id, status: c.status, ...(ref !== undefined ? { issue: ref } : {}) })
       }
     }
   } catch {
@@ -3870,7 +3873,7 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
   } catch {
     return 'tree: gh printed something that is not JSON'
   }
-  return treeText(treeOf(json, cards.filter(c => c.status !== 'merged'), done))
+  return treeText(treeOf(json, cards.filter(c => c.status !== 'merged' && c.status !== 'parked'), done))
 }
 
 /** MOD-193: files one landed body with gh issue create, writes `issue: #n url` back, and adds it to the configured project. Shared by land and land_plan. */
@@ -5995,10 +5998,10 @@ async function commentOnCardIssue($: Host, o: { task: string; fileId: string; at
   if (!name) return []
   const text = await readText($, `${cardDir}/${name}`)
   const card = text === undefined ? undefined : parseCard(text)
-  const issue = card && !('error' in card) ? issueRef(card.fields.issue) : undefined
-  if (issue === undefined) return []
   const ownerRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '')
   if (!ownerRepo) return []
+  const issue = card && !('error' in card) ? issueRef(card.fields.issue, ownerRepo) : undefined
+  if (issue === undefined) return []
   const file = statusFile(root, o.fileId, o.attempt, o.kind)
   // MOD-204: a file that already ends in a posted: line was commented on before (a reload loses the in-memory set)
   const before = await readText($, file)
@@ -6751,6 +6754,12 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   // GH-108: a card tier the mod does not know runs at standard, and says so once
   const tierWarn = tierWarning(reused ? reusedHeader?.tier : card.tier)
   if (tierWarn) out.push(`   ${tierWarn}`)
+  // MOD-216: an issue: or parent: that is set but not read is said once, not ignored
+  const dispatchRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '') || undefined
+  for (const key of ['issue', 'parent'] as const) {
+    const note = issueNote(key, card.fields[key], dispatchRepo)
+    if (note) out.push(`   ${note}`)
+  }
   if (!scope && scopeLooksProse(card.scope)) {
     out.push('   note: the card scope reads as prose; the verifier leaves a prose scope unchecked unless the brief gains scope_globs= — pass scope globs')
   }

@@ -1,5 +1,5 @@
 // MOD-190: /delegation land. Pure: the arguments, the issue body, the open cards, the parent hint. No I/O, no gh.
-import { slugOf } from './card'
+import { issueRef, slugOf } from './card'
 import { contained } from './scopetree'
 
 export const LAND_TYPES = ['feature', 'epic', 'story', 'task', 'bug', 'spike'] as const
@@ -199,14 +199,14 @@ export function doneTasks(ledgerText: string): Set<string> {
 
 export type LandCard = { id: string; title: string; status?: string; parent: unknown; scope: readonly string[] }
 
-/** Cards whose status is not merged and whose task id has no accepted or merged ledger row. */
-export const openCards = (cards: readonly LandCard[], done: ReadonlySet<string>): LandCard[] => cards.filter(c => c.status !== 'merged' && !done.has(c.id))
+/** MOD-216: cards whose status is not merged or parked and whose task id has no accepted or merged ledger row. */
+export const openCards = (cards: readonly LandCard[], done: ReadonlySet<string>): LandCard[] => cards.filter(c => c.status !== 'merged' && c.status !== 'parked' && !done.has(c.id))
 
 /** The parent of the first open card with a `parent:` whose scope holds one of the paths. */
-export function parentHint(paths: readonly string[], open: readonly LandCard[]): { parent: number; card: string } | undefined {
+export function parentHint(paths: readonly string[], open: readonly LandCard[], repo?: string): { parent: number; card: string } | undefined {
   for (const c of open) {
-    const parent = Number(c.parent)
-    if (c.parent === undefined || c.parent === '' || !Number.isInteger(parent) || parent < 1) continue
+    const parent = issueRef(c.parent, repo)
+    if (parent === undefined) continue
     if (paths.some(p => contained(p, c.scope))) return { parent, card: c.id }
   }
   return undefined

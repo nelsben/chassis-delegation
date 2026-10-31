@@ -1214,6 +1214,31 @@ describe('/dispatch', () => {
     expect(w.runs).toHaveLength(0)
   })
 
+  test('MOD-216: a parked card is refused with how to dispatch it', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const f = files()
+    f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', 'status: parked')
+    const w = world(on, { files: f, dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --scope app/**'))
+    expect(out.text).toContain('BE-101 is parked; set status: queued to dispatch it')
+    expect(w.runs).toHaveLength(0)
+  })
+
+  for (const [value, line] of [
+    ['abc', 'issue: abc is not an issue number; no status comments or close for this card'],
+    ['https://github.com/x/y/issues/5', 'issue: https://github.com/x/y/issues/5 names x/y, not acme/app; no status comments or close for this card'],
+  ] as const) {
+    test(`MOD-216: issue: ${value} prints one warning at dispatch`, { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+      const f = files()
+      f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', `status: queued\nissue: ${value}`)
+      f[`${ROOT}/.git/config`] = '[remote "origin"]\n\turl = https://github.com/acme/app.git\n'
+      world(on, { files: f, dirs, run })
+      await $.session.start(sessionStart)
+      const out = String((await $.command.run(commandInput('BE-101 --dry-run'))).text)
+      expect(out.split('\n').filter(l => l.includes('is not an issue number') || l.includes('names x/y'))).toEqual([`   ${line}`])
+    })
+  }
+
   test('a non-sha --base is refused before anything runs', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, run })
     await $.session.start(sessionStart)

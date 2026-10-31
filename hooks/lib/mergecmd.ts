@@ -385,11 +385,7 @@ export function prBody(o: { body: string; verdictLine: string; gates: readonly G
   return scrubPaths(text, o.folders)
 }
 
-/** MOD-189: a card's `issue:` or `parent:` value as an issue number: a whole number 1 or more, else undefined. */
-export const issueRef = (v: unknown): number | undefined => {
-  const t = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : ''
-  return /^[1-9]\d*$/.test(t) ? Number(t) : undefined
-}
+export { issueRef, issueNote } from './card'
 
 /** MOD-171: one amend block as the merge lists it: its ops and reason. */
 export const amendSummary = (a: { ops: readonly string[]; reason: string }): string => `${a.ops.join(' ')} (${a.reason})`

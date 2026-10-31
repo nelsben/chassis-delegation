@@ -594,3 +594,28 @@ export function redTestWarnings(redTest: string, scope: readonly string[], forbi
   }
   return out
 }
+
+const ISSUE_URL = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/issues\/([1-9]\d*)\/?$/i
+
+/**
+ * MOD-189, MOD-216: a card's `issue:` or `parent:` value as an issue number. `12`, `#12` and an issue URL read as 12; with
+ * `ownerRepo` given, a URL naming another repo is undefined. Anything else is undefined.
+ */
+export const issueRef = (v: unknown, ownerRepo?: string): number | undefined => {
+  const t = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : ''
+  const plain = /^#?([1-9]\d*)$/.exec(t)
+  if (plain) return Number(plain[1])
+  const url = ISSUE_URL.exec(t)
+  if (url && (!ownerRepo || (url[1] as string).toLowerCase() === ownerRepo.toLowerCase())) return Number(url[2])
+  return undefined
+}
+
+/** MOD-216: the one warning line for a card's `issue:` or `parent:` that is set but not read (absent or read: undefined). */
+export function issueNote(key: 'issue' | 'parent', v: unknown, ownerRepo?: string): string | undefined {
+  const t = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : ''
+  if (t === '' || issueRef(t, ownerRepo) !== undefined) return undefined
+  const effect = key === 'issue' ? 'no status comments or close for this card' : 'no parent close for this card'
+  const url = ISSUE_URL.exec(t)
+  if (url) return `${key}: ${t} names ${url[1]}, not ${ownerRepo}; ${effect}`
+  return `${key}: ${t} is not an issue number; ${effect}`
+}
