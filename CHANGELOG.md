@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **`liveState` and `spawnByAgent` stop re-reading the store per agent (MOD-240).** `spawnByAgent` answers a briefed worker this process remembers from memory, and otherwise caches its result (a miss too, for ad hoc and review agents) per agent for 5 s; any write of a `delegation.spawn.*` or `delegation.agent.*` key clears the cache. `liveState` notes an agent whose spawn it read as closed (or found none for) and skips it, with no store read, until such a write, unless the agent is running; the first call after start still reads each agent once. `liveState` keeps its `exclude` argument and result, and no time-based cache of its result is added; `branchOf` is unchanged. A worker's Bash tool call resolves its spawn with at most 2 store reads across the tool.call hooks.
 - **`loadRepoConfig` reads its three files only when one changed (MOD-241).** It keeps each file's `$.fs.stat` mtime and size (a missing file is the state `missing`); a call where all three are unchanged returns with no `fs.read`. A stat error other than ENOENT falls back to reading, `force` (the `/delegation config` paths) still re-reads, and a different session root invalidates the cache. An edit of identical size within the host's mtime resolution is missed.
 
 ## 0.9.40 — 2026-10-31

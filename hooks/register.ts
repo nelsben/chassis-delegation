@@ -939,11 +939,23 @@ async function storeGet<T>($: Host, key: string): Promise<T | undefined> {
     return undefined
   }
 }
+/** MOD-240: spawnByAgent's per-agent results (kept 5 s), and the generation any spawn or agent-pointer write moves on, which also retires liveState's notes. */
+const SPAWN_CACHE_MS = 5000
+const spawnCache = new Map<string, { at: number; rec: SpawnRecord | undefined }>()
+let spawnGen = 0
+/** MOD-240: agentId → the generation at which liveState read the agent's spawn as closed (or found none). */
+const liveNotes = new Map<string, { gen: number; kind: 'closed' | 'none' }>()
+function agentKeyChanged(key: string): void {
+  if (!key.startsWith(K.spawn('')) && !key.startsWith(K.agent(''))) return
+  spawnCache.clear()
+  spawnGen += 1
+}
 async function storeSet($: Host, key: string, value: unknown): Promise<void> {
   // a task's attempt records changed: the dashboard's copy is stale (GH-112)
   if (key.startsWith(K.tasks(''))) recordsCache = undefined
   // MOD-94: a remembered worker's record follows every write of it, whether or not the store takes the write
   if (key.startsWith(K.spawn(''))) rememberWrite(value)
+  agentKeyChanged(key)
   try {
     await $.store.set(key, value)
   } catch (err) {
@@ -1007,6 +1019,7 @@ async function pruneOnce($: Host, at: 'start' | 'verdict'): Promise<void> {
         // MOD-186: a research card's listing file goes with its record
         if (outsideFiles.has(key)) await dropOutsideFile($, outsideFiles.get(key))
         await $.store.delete(key)
+        agentKeyChanged(key)
         n += 1
         if (key.startsWith(K.tasks(''))) recordsCache = undefined
       } catch (err) {
@@ -2010,8 +2023,17 @@ async function liveState($: Host, exclude?: string): Promise<Live> {
   const out: Live = { running: 0, workers: [], pending: [], queued: 0 }
   for (const a of await agentList($)) {
     if (a.id === exclude) continue
+    // MOD-240: a spawn read as closed (or absent) and no spawn or agent write since: nothing to read unless the agent is running
+    const note = liveNotes.get(a.id)
+    if (note && note.gen === spawnGen && (note.kind === 'none' || a.status !== 'running')) continue
+    const gen = spawnGen
     const spawn = await spawnByAgent($, a.id)
-    if (!spawn) continue
+    if (!spawn) {
+      liveNotes.set(a.id, { gen, kind: 'none' })
+      continue
+    }
+    if (!isOpen(spawn)) liveNotes.set(a.id, { gen, kind: 'closed' })
+    else liveNotes.delete(a.id)
     const label = taskLabel(spawn.task, spawn.subtask)
     if (a.status === 'running') {
       out.running += 1
@@ -4747,6 +4769,7 @@ async function migrateOnce($: Host, root: string): Promise<void> {
     for (const key of plan.delete) {
       try {
         await $.store.delete(key)
+        agentKeyChanged(key)
         n += 1
       } catch (err) {
         debug($, `store.delete ${key} failed: ${String(err)}`)
@@ -6492,7 +6515,15 @@ async function storedSpawnByAgent($: Host, agentId: string | undefined): Promise
 /** An agent's spawn record: the store's, else (MOD-94) the one this process remembers from its start. */
 async function spawnByAgent($: Host, agentId: string | undefined): Promise<SpawnRecord | undefined> {
   if (!agentId) return undefined
-  return (await storedSpawnByAgent($, agentId)) ?? remembered.get(agentId)
+  // MOD-240: a briefed worker this process saw is answered from memory (every write of its record lands there); else the store's, kept 5 s per agent (a miss too)
+  const mem = remembered.get(agentId)
+  if (mem) return mem
+  const t = await now($)
+  const hit = spawnCache.get(agentId)
+  if (hit && t - hit.at >= 0 && t - hit.at < SPAWN_CACHE_MS) return hit.rec
+  const rec = await storedSpawnByAgent($, agentId)
+  spawnCache.set(agentId, { at: t, rec })
+  return rec
 }
 
 /** MOD-94: a briefed worker this process saw start (or rebuilt from the ledger) is remembered, as written. */
@@ -6501,6 +6532,7 @@ function remember(spawn: SpawnRecord): void {
   const { fallback: _fallback, ...rec } = spawn
   remembered.delete(spawn.agentId)
   remembered.set(spawn.agentId, rec)
+  spawnGen += 1 // MOD-240: liveState's notes read before this record was remembered are stale
   // the oldest go first; a judged record is all that is ever old enough to reach the cap
   while (remembered.size > REMEMBER_CAP) remembered.delete(remembered.keys().next().value as string)
 }
@@ -8628,6 +8660,9 @@ export const register: Register = (on, opts) => {
   templatesLoad = undefined
   finalizing.clear()
   remembered.clear()
+  spawnCache.clear()
+  liveNotes.clear()
+  spawnGen += 1
   posted.clear()
   commentedVerdicts.clear()
 
