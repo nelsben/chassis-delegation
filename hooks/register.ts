@@ -219,7 +219,7 @@ import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, 
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, storeBytes, storeLine, type StoreEntry } from './lib/retention'
 import { migratedLine, migrationPlan, scopedId, trimRepo } from './lib/taskkeys'
-import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLine, spawnRow, verdictAfter, withTail, type Fallback, type RowQuery } from './lib/storeloss'
+import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLine, parseLedger, spawnRow, verdictAfter, withTail, type Fallback, type LedgerRow, type RowQuery } from './lib/storeloss'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { cardsHandedBack, nudgeDown, nudgeText, nudgeUp, type EffortNudge } from './lib/nudge'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
@@ -2587,18 +2587,63 @@ function appendLedger($: Host, row: Record<string, unknown>): Promise<unknown> {
   if (!cfg.ledgerFile) return Promise.resolve()
   ledgerTail = ledgerTail.then(
     async () => {
-      const path = `${await $.session.root()}/${LEDGER_FILE}`
-      const prev = (await readText($, path)) ?? ''
+      const root = (await $.session.root()).replace(/\/+$/, '')
+      const path = `${root}/${LEDGER_FILE}`
+      const cur = await ledgerAt($, root)
       // MOD-35: one row per key (an accept per task attempt; a verdict per task, attempt, sha, verdict): a second arrival of the same hand-back writes nothing
-      if (ledgerHas(prev, row)) {
+      if (ledgerHas(cur.rows, row)) {
         debug($, `ledger row for ${String(row.task)} attempt ${String(row.attempt)} already written; repeat skipped`)
         return
       }
-      await $.fs.write(path, `${prev}${prev === '' || prev.endsWith('\n') ? '' : '\n'}${JSON.stringify(row)}\n`)
+      const added = `${cur.text === '' || cur.text.endsWith('\n') ? '' : '\n'}${JSON.stringify(row)}\n`
+      const text = `${cur.text}${added}`
+      await $.fs.write(path, text)
+      // MOD-247: the file is the size it had plus what was appended: the new row joins the cached rows and the key moves on; any other size (another writer got in) drops the cache
+      const after = await ledgerStat($, path)
+      if (after && after.size === cur.size + new TextEncoder().encode(added).length) {
+        cur.rows.push(JSON.parse(JSON.stringify(row)) as LedgerRow)
+        ledgerCache = { path, mtimeMs: after.mtimeMs, size: after.size, text, rows: cur.rows }
+      } else ledgerCache = undefined
     },
     () => undefined,
   )
   return ledgerTail.catch(err => debug($, `ledger line not written: ${String(err)}`))
+}
+
+/** MOD-247: the ledger as last read: its (mtimeMs, size) from the folder listing, its text and its parsed rows. The rows are shared: a reader does not change them. */
+type LedgerState = { path: string; mtimeMs: number; size: number; text: string; rows: LedgerRow[] }
+let ledgerCache: LedgerState | undefined
+const NO_LEDGER = { text: '', rows: [] as LedgerRow[] }
+
+/** The (mtimeMs, size) of the ledger file from one listing of its folder (the stat when the folder cannot be listed); undefined when there is no file. */
+async function ledgerStat($: Host, path: string): Promise<{ mtimeMs: number; size: number } | undefined> {
+  try {
+    const e = (await $.fs.list(path.slice(0, path.lastIndexOf('/')))).find(x => x.name === 'ledger.jsonl')
+    return e ? { mtimeMs: e.mtimeMs, size: e.size } : undefined
+  } catch {
+    // an unlistable folder: ask for the file itself
+  }
+  try {
+    const st = await $.fs.stat(path)
+    return st.kind === 'file' ? { mtimeMs: st.mtimeMs, size: st.size } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** MOD-247: the ledger of the repo at `root`, parsed once per change of the file's (mtimeMs, size): an unchanged pair returns the cached rows with no read, another writer's row changes the size and is read next time. */
+async function ledgerAt($: Host, root: string): Promise<{ text: string; rows: LedgerRow[]; size: number }> {
+  const path = `${root.replace(/\/+$/, '')}/${LEDGER_FILE}`
+  const key = await ledgerStat($, path)
+  if (!key) {
+    ledgerCache = undefined
+    return { ...NO_LEDGER, rows: [], size: 0 }
+  }
+  const c = ledgerCache
+  if (c && c.path === path && c.mtimeMs === key.mtimeMs && c.size === key.size) return c
+  const text = (await readText($, path)) ?? ''
+  ledgerCache = { path, mtimeMs: key.mtimeMs, size: key.size, text, rows: parseLedger(text) }
+  return ledgerCache
 }
 
 // ---- part 2E: the delegation state -------------------------------------------------
@@ -2928,7 +2973,7 @@ async function mergeCommand($: Host, parsed: MergeArgs): Promise<string> {
   const cardDir = (cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')
   if (!parsed.finish) {
     // PREPARE 1: the latest verdict must be consistent with next=accept (the ledger; the task record when the ledger has no row)
-    const ledger = cfg.ledgerFile ? ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '') : ''
+    const ledger = cfg.ledgerFile ? (await ledgerAt($, root)).text : ''
     let row: VerdictRow | undefined = latestVerdictRow(ledger, id)
     if (!row) {
       const last = attemptsFor(await loadAttempts($, { task: id }), 'main').at(-1)
@@ -3876,7 +3921,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   } catch {
     // no card folder: no open cards
   }
-  const open = openCards(found, doneTasks((await readText($, `${root}/${LEDGER_FILE}`)) ?? ''))
+  const open = openCards(found, doneTasks((await ledgerAt($, root)).rows))
   // git is not on the allow list outside a merge, so the default branch comes from baseRef and origin from .git/config
   const wantName = defaultBranchOf((cfg.baseRef ?? '').trim())
   const def = wantName !== '' && !isSha(wantName) ? wantName : 'main'
@@ -3997,7 +4042,7 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
   } catch {
     // no card folder: no cards
   }
-  const done = doneTasks((await readText($, `${root}/${LEDGER_FILE}`)) ?? '')
+  const done = doneTasks((await ledgerAt($, root)).rows)
   const r = await run($, ['gh', 'issue', 'view', String(n), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
   if (!r.ok) return `tree: gh did not run: ${r.why.trim().slice(0, 400)}`
   if (r.exitCode !== 0) return `tree: gh issue view failed: ${(r.stderr || r.stdout).trim().slice(0, 400) || '(nothing on stderr)'}`
@@ -4081,7 +4126,7 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   } catch {
     // no card folder: no open cards
   }
-  const open = openCards(found, doneTasks((await readText($, `${root}/${LEDGER_FILE}`)) ?? ''))
+  const open = openCards(found, doneTasks((await ledgerAt($, root)).rows))
   const wantName = defaultBranchOf((cfg.baseRef ?? '').trim())
   const def = wantName !== '' && !isSha(wantName) ? wantName : 'main'
   const folder = `${root}/.delegation/landed`
@@ -6202,14 +6247,14 @@ async function postedOf($: Host, spawn: SpawnRecord, verdictAt: number | undefin
  * from the row and the brief it names, and its row is the answer. No row: none.
  */
 async function verdictFromLedger($: Host, task: string, subtask: string): Promise<VerdictNow> {
-  const text = await ledgerText($)
-  const row = text === '' ? undefined : latestSpawnRow(text, { task, subtask })
+  const { text, rows } = await ledgerOf($)
+  const row = latestSpawnRow(rows, { task, subtask })
   if (!row) return { kind: 'none' }
-  const done = verdictAfter(text, row)
+  const done = verdictAfter(rows, row)
   if (done && readVerdict(done.verdict) === 'consistent' && reviewAcceptedAttempt(text, task) === row.attempt) return { kind: 'judged', text: reviewedAcceptLine(taskLabel(task, subtask), row.attempt) }
   if (done) return { kind: 'judged', text: ledgerJudgedLine(PLUGIN, taskLabel(task, subtask), row.attempt, done.verdict, done.next) }
   if (row.agentId && (await agentList($)).some(a => a.id === row.agentId && a.status === 'running')) return { kind: 'wait' }
-  const spawn = await ledgerSpawn($, { task, subtask }, text)
+  const spawn = await ledgerSpawn($, { task, subtask }, rows)
   if (!spawn) return { kind: 'none' }
   const rendered = await finalize($, spawn, spawn.agentId ? await workerText($, spawn.agentId, '') : '', {})
   const shown = deliveryFor(cfg.verbosity, rendered).row ?? rendered.line
@@ -6571,15 +6616,20 @@ async function handbackSpawn($: Host, agentId: string | undefined, toolUseId?: s
 
 /** MOD-94: the session ledger's text, '' when it is off or unread. */
 async function ledgerText($: Host): Promise<string> {
-  if (!cfg.ledgerFile) return ''
+  return (await ledgerOf($)).text
+}
+
+/** MOD-247: the session ledger, parsed once per change of the file (empty when it is off or unread). */
+async function ledgerOf($: Host): Promise<{ text: string; rows: LedgerRow[] }> {
+  if (!cfg.ledgerFile) return NO_LEDGER
   const root = await sessionRootOf($)
-  return root ? ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '') : ''
+  return root ? ledgerAt($, root) : NO_LEDGER
 }
 
 /** MOD-94: the open attempt the newest matching ledger spawn row names, rebuilt as a spawn record (and remembered); undefined once judged. */
-async function ledgerSpawn($: Host, q: RowQuery, text?: string): Promise<SpawnRecord | undefined> {
-  const ledger = text ?? (await ledgerText($))
-  if (ledger === '') return undefined
+async function ledgerSpawn($: Host, q: RowQuery, rows?: readonly LedgerRow[]): Promise<SpawnRecord | undefined> {
+  const ledger = rows ?? (await ledgerOf($)).rows
+  if (ledger.length === 0) return undefined
   const row = latestSpawnRow(ledger, q)
   if (!row || verdictAfter(ledger, row)) return undefined
   const f = fieldsOfRow(row)
@@ -7575,14 +7625,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     if (sid) briefNames.push(...(await listNames(defaultBriefDir(root, sid))))
   }
   const ledgerNames: string[] = []
-  for (const line of ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '').split('\n')) {
-    try {
-      const task = (JSON.parse(line) as { task?: unknown } | null)?.task
-      if (typeof task === 'string' && task) ledgerNames.push(`${task}.ledger`)
-    } catch {
-      // a line that is not JSON is skipped
-    }
-  }
+  for (const r of (await ledgerAt($, root)).rows) if (typeof r.task === 'string' && r.task) ledgerNames.push(`${r.task}.ledger`)
   const names = [...cardNames, ...briefNames, ...ledgerNames]
   // repo=here when the repo has no origin/main (worktree mode cuts from it); a baseRef alone says nothing about the mode
   const originMain = target ? undefined : await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', 'origin/main'])
@@ -7591,15 +7634,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   let siblings: { id: string; scope: readonly string[] }[] = []
   const parentIn = Number(input.parent)
   if (input.parent !== undefined && Number.isInteger(parentIn) && parentIn >= 1) {
-    const done = new Set<string>()
-    for (const line of ((await readText($, `${root}/${LEDGER_FILE}`)) ?? '').split('\n')) {
-      try {
-        const row = JSON.parse(line) as { task?: unknown; kind?: unknown; how?: unknown } | null
-        if (typeof row?.task === 'string' && [row.kind, row.how].some(m => m === 'accepted' || m === 'merged')) done.add(row.task)
-      } catch {
-        // a line that is not JSON is skipped
-      }
-    }
+    const done = doneTasks((await ledgerAt($, root)).rows)
     const found: SiblingCard[] = []
     // MOD-244: through the index; the session's own board is read too when the target's folder differs, as cardNames above does
     const folders = target ? [...new Set([dir, cardDirPath(root, cfg.cardDir)])] : [dir]

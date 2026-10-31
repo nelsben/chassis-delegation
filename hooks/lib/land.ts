@@ -184,16 +184,9 @@ export function landedBody(o: { note?: string; supersedes?: number; paths: reado
 }
 
 /** The task ids with an accepted or merged ledger row (the same rule the card tool reads siblings by). */
-export function doneTasks(ledgerText: string): Set<string> {
+export function doneTasks(rows: readonly Record<string, unknown>[]): Set<string> {
   const done = new Set<string>()
-  for (const line of ledgerText.split('\n')) {
-    try {
-      const row = JSON.parse(line) as { task?: unknown; kind?: unknown; how?: unknown } | null
-      if (typeof row?.task === 'string' && [row.kind, row.how].some(m => m === 'accepted' || m === 'merged')) done.add(row.task)
-    } catch {
-      // a line that is not JSON is skipped
-    }
-  }
+  for (const row of rows) if (typeof row.task === 'string' && [row.kind, row.how].some(m => m === 'accepted' || m === 'merged')) done.add(row.task)
   return done
 }
 

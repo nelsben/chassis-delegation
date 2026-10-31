@@ -74,18 +74,21 @@ export const isSpawnRow = (r: unknown): r is SpawnRow => {
   return o.event === 'spawn' && typeof o.task === 'string' && typeof o.attempt === 'number'
 }
 
-type Parsed = { row: Record<string, unknown>; line: number }
-function parsedLines(text: string): Parsed[] {
-  const out: Parsed[] = []
-  text.split('\n').forEach((line, i) => {
-    if (line.trim() === '') return
+/** One parsed ledger line. */
+export type LedgerRow = Record<string, unknown>
+
+/** MOD-247: the rows of a ledger's text, in file order: a blank line, a line that is not JSON and a JSON value that is not an object are not rows. Parsed once per file change by the caller. */
+export function parseLedger(text: string): LedgerRow[] {
+  const out: LedgerRow[] = []
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue
     try {
       const row = JSON.parse(line) as unknown
-      if (row && typeof row === 'object' && !Array.isArray(row)) out.push({ row: row as Record<string, unknown>, line: i })
+      if (row && typeof row === 'object' && !Array.isArray(row)) out.push(row as LedgerRow)
     } catch {
       // a line that is not JSON is not a row
     }
-  })
+  }
   return out
 }
 
@@ -96,12 +99,11 @@ const sameAttempt = (a: Record<string, unknown>, b: SpawnRow): boolean =>
  * The verdict row the ledger holds for a spawn row's attempt, written after it (a reviewer's row is not the
  * worker's verdict); undefined while the attempt is open.
  */
-export function verdictAfter(text: string, row: SpawnRow): { verdict: string; next?: string } | undefined {
-  const lines = parsedLines(text)
-  const at = lines.findIndex(p => isSpawnRow(p.row) && sameAttempt(p.row, row) && p.row.toolUseId === row.toolUseId && p.row.agentId === row.agentId)
-  for (const p of lines.slice(at < 0 ? 0 : at + 1).reverse()) {
-    if (typeof p.row.verdict !== 'string' || p.row.kind === 'review' || isSpawnRow(p.row) || !sameAttempt(p.row, row)) continue
-    return { verdict: p.row.verdict, ...(typeof p.row.next === 'string' ? { next: p.row.next } : {}) }
+export function verdictAfter(rows: readonly LedgerRow[], row: SpawnRow): { verdict: string; next?: string } | undefined {
+  const at = rows.findIndex(r => isSpawnRow(r) && sameAttempt(r, row) && r.toolUseId === row.toolUseId && r.agentId === row.agentId)
+  for (const r of rows.slice(at < 0 ? 0 : at + 1).reverse()) {
+    if (typeof r.verdict !== 'string' || r.kind === 'review' || isSpawnRow(r) || !sameAttempt(r, row)) continue
+    return { verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}) }
   }
   return undefined
 }
@@ -112,8 +114,8 @@ export type RowQuery = { agentId?: string; toolUseId?: string } | { task: string
  * The newest spawn row for an agent (its id, or the spawn's tool_use_id), or for a task and subtask. A task's
  * row is matched only by a query naming the task: a hand-back is matched by its agent alone.
  */
-export function latestSpawnRow(text: string, q: RowQuery): SpawnRow | undefined {
-  const rows = parsedLines(text).map(p => p.row).filter(isSpawnRow)
+export function latestSpawnRow(ledger: readonly LedgerRow[], q: RowQuery): SpawnRow | undefined {
+  const rows = ledger.filter(isSpawnRow)
   for (const r of rows.reverse()) {
     if ('task' in q) {
       if (r.task === q.task && r.subtask === q.subtask && !r.replay) return r

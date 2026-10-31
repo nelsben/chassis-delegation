@@ -3,7 +3,7 @@ import { world, spawnInput, turnInput, sessionStart, ROOT, SCRATCH, NOW, type Ru
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 import { latestVerdictRow } from '../hooks/lib/mergecmd'
 import { ledgerHas } from '../hooks/lib/attempts'
-import { fieldsOfRow, latestSpawnRow, spawnRow, verdictAfter, withTail, type SpawnRow } from '../hooks/lib/storeloss'
+import { fieldsOfRow, latestSpawnRow, parseLedger, spawnRow, verdictAfter, withTail, type SpawnRow } from '../hooks/lib/storeloss'
 
 // MOD-94 (#157, #159): a worker whose store record was refused still counts and still gets a verdict.
 // The hook counts live workers from its own memory, the spawn appends a spawn row to the ledger, and the
@@ -195,25 +195,25 @@ describe('MOD-94: every reader of the ledger reads past a spawn row', () => {
 
   test('ledgerHas: a spawn row repeated is a repeat; a verdict or accept row for the same attempt is not one of it', () => {
     const text = jsonl([SPAWN_ROW])
-    expect(ledgerHas(text, SPAWN_ROW)).toBe(true)
-    expect(ledgerHas(text, { ...SPAWN_ROW, sessionId: 'sess-9', at: NOW })).toBe(true)
-    expect(ledgerHas(text, SPAWN_2)).toBe(false)
-    expect(ledgerHas(text, VERDICT_ROW)).toBe(false)
-    expect(ledgerHas(text, { kind: 'accept', task: 'T-4', subtask: 'main', attempt: 1, how: 'accepted' })).toBe(false)
-    expect(ledgerHas(jsonl([VERDICT_ROW]), SPAWN_ROW)).toBe(false)
+    expect(ledgerHas(parseLedger(text), SPAWN_ROW)).toBe(true)
+    expect(ledgerHas(parseLedger(text), { ...SPAWN_ROW, sessionId: 'sess-9', at: NOW })).toBe(true)
+    expect(ledgerHas(parseLedger(text), SPAWN_2)).toBe(false)
+    expect(ledgerHas(parseLedger(text), VERDICT_ROW)).toBe(false)
+    expect(ledgerHas(parseLedger(text), { kind: 'accept', task: 'T-4', subtask: 'main', attempt: 1, how: 'accepted' })).toBe(false)
+    expect(ledgerHas(parseLedger(jsonl([VERDICT_ROW])), SPAWN_ROW)).toBe(false)
   })
 
   test('the spawn row, read back: by agent, by task (never a replay), judged or open', () => {
     const row = SPAWN_ROW as SpawnRow
     const replay = { ...SPAWN_2, replay: true, base: 'abc' }
-    expect(latestSpawnRow(jsonl([SPAWN_ROW, SPAWN_2]), { agentId: 'agent-4' })).toMatchObject({ attempt: 1 })
-    expect(latestSpawnRow(jsonl([SPAWN_ROW, SPAWN_2]), { task: 'T-4', subtask: 'main' })).toMatchObject({ attempt: 2 })
-    expect(latestSpawnRow(jsonl([SPAWN_ROW, replay]), { task: 'T-4', subtask: 'main' })).toMatchObject({ attempt: 1 })
-    expect(latestSpawnRow(jsonl([SPAWN_ROW]), { task: 'T-4', subtask: 'ui' })).toBeUndefined()
-    expect(verdictAfter(jsonl([SPAWN_ROW]), row)).toBeUndefined()
-    expect(verdictAfter(jsonl([SPAWN_ROW, VERDICT_ROW]), row)).toEqual({ verdict: 'consistent', next: 'accept' })
+    expect(latestSpawnRow(parseLedger(jsonl([SPAWN_ROW, SPAWN_2])), { agentId: 'agent-4' })).toMatchObject({ attempt: 1 })
+    expect(latestSpawnRow(parseLedger(jsonl([SPAWN_ROW, SPAWN_2])), { task: 'T-4', subtask: 'main' })).toMatchObject({ attempt: 2 })
+    expect(latestSpawnRow(parseLedger(jsonl([SPAWN_ROW, replay])), { task: 'T-4', subtask: 'main' })).toMatchObject({ attempt: 1 })
+    expect(latestSpawnRow(parseLedger(jsonl([SPAWN_ROW])), { task: 'T-4', subtask: 'ui' })).toBeUndefined()
+    expect(verdictAfter(parseLedger(jsonl([SPAWN_ROW])), row)).toBeUndefined()
+    expect(verdictAfter(parseLedger(jsonl([SPAWN_ROW, VERDICT_ROW])), row)).toEqual({ verdict: 'consistent', next: 'accept' })
     // a reviewer's row is not the worker's verdict
-    expect(verdictAfter(jsonl([SPAWN_ROW, { ...VERDICT_ROW, kind: 'review', verdict: 'reviewed' }]), row)).toBeUndefined()
+    expect(verdictAfter(parseLedger(jsonl([SPAWN_ROW, { ...VERDICT_ROW, kind: 'review', verdict: 'reviewed' }])), row)).toBeUndefined()
     expect(fieldsOfRow(row)).toMatchObject({ key: 'toolu_01ABCDEFGH', task: 'T-4', attempt: 1, lineage: 1, briefPath: T4, agentId: 'agent-4' })
     const { toolUseId: _t, ...noTool } = SPAWN_ROW
     expect(fieldsOfRow(noTool as SpawnRow).key).toBe('ledger-T-4-main-1')
