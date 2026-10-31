@@ -282,20 +282,10 @@ export function ledgerRowKey(row: Record<string, unknown>): string | undefined {
   return `verdict|${head}|${String(row.sha ?? '')}|${row.verdict}${row.kind === 'review' ? `|${String(row.toolUseId ?? '')}` : ''}`
 }
 
-/** MOD-35: does this ledger text already hold a row under the same key as `row`? */
-export function ledgerHas(text: string, row: Record<string, unknown>): boolean {
+/** MOD-35: do these parsed ledger rows already hold a row under the same key as `row`? (MOD-247: the caller parses once per file change.) */
+export function ledgerHas(rows: readonly Record<string, unknown>[], row: Record<string, unknown>): boolean {
   const key = ledgerRowKey(row)
-  if (key === undefined || text === '') return false
-  for (const line of text.split('\n')) {
-    if (line.trim() === '') continue
-    try {
-      const parsed = JSON.parse(line) as unknown
-      if (parsed && typeof parsed === 'object' && ledgerRowKey(parsed as Record<string, unknown>) === key) return true
-    } catch {
-      // a line that is not JSON is not a row
-    }
-  }
-  return false
+  return key !== undefined && rows.some(r => ledgerRowKey(r) === key)
 }
 
 /** MOD-35: the accept row (`how`: the branch reached the default branch, or the brain accepted it). */

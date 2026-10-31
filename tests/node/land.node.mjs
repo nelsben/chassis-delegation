@@ -63,7 +63,7 @@ describe('MOD-190: landedBody', () => {
 describe('MOD-190: open cards, parent hint, slug file', () => {
   test('openCards drops merged cards and cards with an accepted or merged ledger row', async () => {
     const { openCards, doneTasks } = await lib()
-    const done = doneTasks('{"task":"A-2","kind":"accepted"}\nnot json\n{"task":"A-3","how":"merged"}\n{"task":"A-4","kind":"spawn"}')
+    const done = doneTasks([{ task: 'A-2', kind: 'accepted' }, { task: 'A-3', how: 'merged' }, { task: 'A-4', kind: 'spawn' }])
     const cards = [1, 2, 3, 4].map(n => ({ id: `A-${n}`, title: `t${n}`, status: n === 1 ? 'merged' : 'queued', parent: undefined, scope: [] }))
     expect(openCards(cards, done).map(c => c.id)).toEqual(['A-4'])
   })
