@@ -2,6 +2,8 @@ import { test, expect, describe } from 'claude-code/testing'
 import { world, spawnInput, turnInput, ROOT, SCRATCH, NOW, type RunAnswer, type World } from './harness'
 import { mergeConfig, parseRepoConfig } from '../hooks/lib/repoconfig'
 import { VERDICT_TOOL_NAME } from '../hooks/lib/verdicttool'
+import { pastCeiling } from '../hooks/lib/gaterun'
+import { verifyNative, type ExecOut, type NativeIo, type NativeInput } from '../hooks/lib/verify-native'
 
 // MOD-229 (#323): the verifier's gate is a spawned child, so the host's 10-minute cap on one run
 // never applies; the mod's own ceiling (gateTimeoutMinutes, 1 to 120, default 30) ends it. Every
@@ -165,5 +167,44 @@ describe('MOD-229: gateTimeoutMinutes takes 1 to 120, default 30', () => {
       expect(r.config.gateTimeoutMinutes).toBeUndefined()
       expect(r.errors).toEqual(['gateTimeoutMinutes: needs a whole number of minutes, 1 to 120 (ignored; 30 is used)'])
     }
+  })
+})
+
+// MOD-230 beside MOD-229: the load words still come on a red gate and on a gate stopped at the ceiling, when the gate goes through io.gate
+describe('MOD-229 with MOD-230: the load words on a spawned gate', () => {
+  const brief = '[[brief v=1 task=T-1 subtask=main purpose=build tier=standard model=sonnet scope=a.txt forbid=none gate=test]]\n\n# T-1\n'
+  const WORDS = 'machine loaded (load 100 on 10 cores): may be load, not the change; re-run with /dispatch T-1 --verify <sha> once it drops'
+  const judge = async (gate: ExecOut, loaded: boolean) => {
+    const exec = async (argv: readonly string[]): Promise<ExecOut> => {
+      if (argv[0] === 'git' && argv.includes('status')) return { ok: true, exitCode: 0, stdout: '', stderr: '' }
+      if (argv[0] === 'git' && argv.includes('diff')) return { ok: true, exitCode: 0, stdout: 'M\ta.txt\n', stderr: '' }
+      return { ok: true, exitCode: 0, stdout: 'a'.repeat(40) + '\n', stderr: '' }
+    }
+    const gated: string[] = []
+    const io: NativeIo = { exec, gate: async argv => (gated.push(argv.join(' ')), gate), write: async () => undefined, ...(loaded ? { load: async () => WORDS } : {}) }
+    const input = {
+      repo: '/w', report: { task: 'T-1', subtask: 'main', branch: 'b', sha: 'a'.repeat(40), gate: 'pass', files: 'a.txt', pr: 'none', red: 'none' } as never,
+      briefText: brief, gateMap: { test: 'npm test' }, allowed: () => true, filesPath: '/f.txt',
+    } satisfies NativeInput
+    const r = await verifyNative(input, io)
+    expect(gated).toEqual(['npm test'])
+    return r
+  }
+  test('a red spawned gate on a loaded machine: the words are added, the verdict as without them', async () => {
+    const red: ExecOut = { ok: true, exitCode: 1, stdout: 'boom\n', stderr: '' }
+    const plain = await judge(red, false)
+    const busy = await judge(red, true)
+    expect(busy.verdict).toBe(plain.verdict)
+    expect(busy.lines.join('\n')).toContain(WORDS)
+  })
+  test('a gate stopped at the ceiling on a loaded machine: the ceiling words and the load words', async () => {
+    const past: ExecOut = { ok: false, why: pastCeiling(2) }
+    const plain = await judge(past, false)
+    const busy = await judge(past, true)
+    expect(busy.verdict).toBe(plain.verdict)
+    const text = busy.lines.join('\n')
+    expect(text).toContain('gate ran past gateTimeoutMinutes (2 min)')
+    expect(text).toContain(WORDS)
+    expect(plain.lines.join('\n')).not.toContain('machine loaded')
   })
 })
