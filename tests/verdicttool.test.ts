@@ -239,6 +239,24 @@ describe('MOD-200: status comments on the card issue', () => {
     expect(row).toContain('consistent')
   })
 
+  for (const value of ['#77', 'https://github.com/o/r/issues/77']) {
+    test(`MOD-216: issue: ${value} gets the status comment`, { options: { ...GM } }, async ($, on) => {
+      const w = boot(on, `issue: ${value}`)
+      await $.session.start(sessionStart)
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      expect(ghComments(w)).toEqual([['gh', 'issue', 'comment', '77', '--repo', 'o/r', '--body-file', STARTED]])
+    })
+  }
+
+  for (const value of ['https://github.com/x/y/issues/77', 'abc']) {
+    test(`MOD-216: issue: ${value} (another repo, or junk) gets no comment`, { options: { ...GM } }, async ($, on) => {
+      const w = boot(on, `issue: ${value}`)
+      await $.session.start(sessionStart)
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      expect(ghComments(w)).toEqual([])
+    })
+  }
+
   test('MOD-204: a verdict comment already posted in an earlier process is not posted again; a posted line is appended after a comment', { options: { ...GM } }, async ($, on) => {
     const w = boot(on, 'issue: 77')
     await $.session.start(sessionStart)

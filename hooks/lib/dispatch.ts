@@ -190,6 +190,7 @@ export function parseCard(text: string): Card | { error: string } {
 
 export function checkStatus(card: Card): string | undefined {
   const status = card.status ?? '(none)'
+  if (status === 'parked') return `${card.id} is parked; set status: queued to dispatch it`
   return status === 'queued' || status === 'claimed' ? undefined : `${card.id} is status ${status}; /dispatch takes a queued or claimed card`
 }
 
