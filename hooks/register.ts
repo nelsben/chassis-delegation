@@ -214,7 +214,7 @@ import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, iss
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
-import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, type GateProgress } from './lib/gaterun'
+import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
@@ -3020,6 +3020,39 @@ async function isIgnored($: Host, dir: string, rel: string): Promise<boolean> {
   return r.ok && r.exitCode === 0
 }
 
+/**
+ * MOD-234: once per session, an old merge-gates.txt (over 64 KB, its task accepted or merged) is cut to its first line and
+ * its last 40. Examines at most 200 folders, rewrites at most 100; a file already cut, or one the host refuses to read
+ * (over 4 MiB), is skipped. Fails open.
+ */
+async function sweepMergeGates($: Host): Promise<void> {
+  try {
+    const root = await sessionRootOf($)
+    const base = `${root.replace(/\/+$/, '')}/.delegation`
+    const done = doneTasks((await ledgerAt($, root)).rows)
+    if (done.size === 0) return
+    const folders = (await $.fs.list(base)).filter(e => done.has(e.name)).slice(0, GATES_SWEEP_EXAMINE)
+    let rewritten = 0
+    for (const f of folders) {
+      if (rewritten >= GATES_SWEEP_REWRITE) break
+      try {
+        const path = `${base}/${f.name}/merge-gates.txt`
+        const st = await $.fs.stat(path)
+        if (st.kind !== 'file' || st.size <= GATES_SWEEP_BYTES) continue
+        const text = await $.fs.read(path)
+        const shaped = shapeOldGates(text)
+        if (shaped === undefined) continue
+        await $.fs.write(path, shaped)
+        rewritten += 1
+      } catch (err) {
+        debug($, `merge-gates sweep skipped ${f.name}: ${String(err)}`)
+      }
+    }
+  } catch (err) {
+    debug($, `merge-gates sweep skipped: ${String(err)}`)
+  }
+}
+
 /** `/delegation merge <ID> [--finish]` and the merge tool: one function, two doors. */
 async function runMerge($: Host, parsed: MergeArgs | { error: string }): Promise<string> {
   if ('error' in parsed) return parsed.error
@@ -3196,7 +3229,8 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
       } finally {
         await turn?.release()
       }
-      log.push(`## ${gid}: ${g.argv.join(' ')}`, ...(r.ok ? [r.stdout, r.stderr, `exit ${r.exitCode}`] : [`did not run: ${r.why}`]))
+      // MOD-234: a pass keeps its tail; a failure and a gate that did not run keep the full text
+      log.push(`## ${gid}: ${g.argv.join(' ')}`, ...(r.ok ? (r.exitCode === 0 ? passedGateLines(r.stdout, r.stderr) : [r.stdout, r.stderr, `exit ${r.exitCode}`]) : [`did not run: ${r.why}`]))
       if (!r.ok || r.exitCode !== 0) {
         await writeLog()
         const tail = r.ok ? lastLines(r.stdout, r.stderr, 20) : [r.why]
@@ -9293,6 +9327,7 @@ export const register: Register = (on, opts) => {
     await migrateTaskKeys($, true)
     await pruneStore($, 'start')
     await loadRepoConfig($)
+    void sweepMergeGates($)
     void sampleSpend($)
     try {
       await noteAgentTypes($, (await $.agent.list()).map(a => a.type))

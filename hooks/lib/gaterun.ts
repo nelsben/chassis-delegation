@@ -87,3 +87,36 @@ export function gateProgressText(p: GateProgress, now: number): string {
   const m = minutesSince(p.since, now)
   return p.phase === 'lock' ? `verifying (waiting for the engine gate ${m} min)` : `verifying (gate ${p.id} running ${m} min)`
 }
+
+// MOD-234: what merge-gates.txt keeps of a gate. A passing gate keeps its header, a count of the lines left out,
+// the last GATE_TAIL_LINES lines of stdout and stderr, and its exit line; a failing gate keeps all of it (the caller).
+export const GATE_TAIL_LINES = 40
+/** Sweep: a merge-gates.txt larger than this is cut. */
+export const GATES_SWEEP_BYTES = 64 * 1024
+/** Sweep: folders examined and files rewritten per run. */
+export const GATES_SWEEP_EXAMINE = 200
+export const GATES_SWEEP_REWRITE = 100
+
+/** The lines of `text` with trailing blank lines dropped. */
+const linesOf = (text: string): string[] => {
+  const lines = text.split('\n').map(l => l.replace(/\s+$/, ''))
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  return lines
+}
+
+/** The log lines of a gate that exited 0: `(pass) <n> lines elided`, the last 40 lines of stdout then stderr, `exit 0`. */
+export function passedGateLines(stdout: string, stderr: string): string[] {
+  const lines = [...linesOf(stdout), ...linesOf(stderr)]
+  const kept = lines.slice(-GATE_TAIL_LINES)
+  return [`(pass) ${lines.length - kept.length} lines elided`, ...kept, 'exit 0']
+}
+
+/** The whole-file shape for an old merge-gates.txt: its first line, `(older file) <n> lines elided`, its last 40 lines. Undefined when the file is already in that shape. */
+export function shapeOldGates(text: string): string | undefined {
+  const lines = linesOf(text)
+  if (lines.length > 1 && lines[1].startsWith('(older file) ')) return undefined
+  const first = lines.slice(0, 1)
+  const rest = lines.slice(1)
+  const kept = rest.slice(-GATE_TAIL_LINES)
+  return `${[...first, `(older file) ${rest.length - kept.length} lines elided`, ...kept].join('\n')}\n`
+}

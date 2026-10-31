@@ -181,6 +181,53 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(w.files.has(WT_CARD)).toBe(false)
   })
 
+  test('MOD-234: a passing gate keeps only its tail in merge-gates.txt; a failing gate keeps all of it', async ($, on) => {
+    const big = Array.from({ length: 3000 }, (_, i) => `row ${i + 1} ${'x'.repeat(30)}`).join('\n')
+    const w = world(on, { files: files(), dirs, store, run: happy(argv => (argv[0] === 'node' ? { exitCode: 0, stdout: big, stderr: '' } : undefined)) })
+    await $.session.start(sessionStart)
+    await $.command.run(mergeCmd(ID))
+    const log = w.files.get(`${ROOT}/.delegation/${ID}/merge-gates.txt`) ?? ''
+    expect(new TextEncoder().encode(log).length).toBeLessThan(8 * 1024)
+    expect(log).toContain('## node: node --no-warnings')
+    expect(log).toContain('(pass) 2960 lines elided')
+    expect(log).toContain('row 3000')
+    expect(log).not.toContain('row 100 ')
+    expect(log).toContain('exit 0')
+  })
+
+  test('MOD-234: a failing gate keeps its full output in merge-gates.txt', async ($, on) => {
+    const big = Array.from({ length: 300 }, (_, i) => `row ${i + 1}`).join('\n')
+    const w = world(on, { files: files(), dirs, store, run: happy(argv => (argv[0] === 'node' ? { exitCode: 1, stdout: big, stderr: '' } : undefined)) })
+    await $.session.start(sessionStart)
+    await $.command.run(mergeCmd(ID))
+    const log = w.files.get(`${ROOT}/.delegation/${ID}/merge-gates.txt`) ?? ''
+    expect(log).toContain('row 1\n')
+    expect(log).toContain('row 300')
+    expect(log.split('## node')[1]).not.toContain('elided')
+  })
+
+  test('MOD-234: session start cuts an old merge-gates.txt of a done task to its first line and last 40; others are left alone', async ($, on) => {
+    const DEL = `${ROOT}/.delegation`
+    const bigLog = (head: string) => [head, ...Array.from({ length: 3000 }, (_, i) => `row ${i + 1} ${'x'.repeat(30)}`), 'exit 0'].join('\n') + '\n'
+    const shaped = '## node: x\n(older file) 5 lines elided\nrow 1\n'
+    const ledger = ['A-1', 'A-3', 'A-4', 'A-5'].map((t, i) => JSON.stringify({ task: t, kind: i === 0 ? 'accepted' : 'spawn', how: i === 0 ? undefined : 'merged' })).join('\n') + '\n'
+    const w = world(on, {
+      files: { [`${ROOT}/.chassis-delegation.json`]: REPO_FILE, [LEDGER]: ledger, [`${DEL}/A-1/merge-gates.txt`]: bigLog('## node: a'), [`${DEL}/A-2/merge-gates.txt`]: bigLog('## node: b'), [`${DEL}/A-3/merge-gates.txt`]: '## node: c\nsmall\n', [`${DEL}/A-4/merge-gates.txt`]: shaped + 'y'.repeat(70000) },
+      dirs: { [DEL]: ['ledger.jsonl', 'A-1', 'A-2', 'A-3', 'A-4'] },
+    })
+    await $.session.start(sessionStart)
+    await new Promise(r => setTimeout(r, 50))
+    const cut = w.files.get(`${DEL}/A-1/merge-gates.txt`) ?? ''
+    const lines = cut.trimEnd().split('\n')
+    expect(lines[0]).toBe('## node: a')
+    expect(lines[1]).toBe('(older file) 2961 lines elided')
+    expect(lines.length).toBe(42)
+    expect(lines.at(-1)).toBe('exit 0')
+    expect(w.files.get(`${DEL}/A-2/merge-gates.txt`)).toContain('row 1 ')
+    expect(w.files.get(`${DEL}/A-3/merge-gates.txt`)).toBe('## node: c\nsmall\n')
+    expect(w.files.get(`${DEL}/A-4/merge-gates.txt`)?.length).toBeGreaterThan(70000)
+  })
+
   test('a failing gate stops the merge: the gate, the sha, the last 20 lines; no block, the later gates do not run', async ($, on) => {
     const noisy = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n')
     const w = world(on, { files: files(), dirs, store, run: happy(argv => (argv[0] === 'node' ? { exitCode: 1, stdout: noisy, stderr: '' } : undefined)) })
