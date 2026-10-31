@@ -4169,13 +4169,13 @@ async function treeImportWith($: Host, a: ReturnType<typeof parseTreeImportArgs>
         stop = `tree import: could not read #${n.issue} (${n.at}); remove its "issue" from the file if it is gone`
         return undefined
       }
-      // an OPEN issue, or a CLOSED one when the item is to be filed closed, is already filed
-      if (view.state === 'OPEN' || (view.state === 'CLOSED' && n.close !== undefined)) {
+      // an OPEN issue, or a CLOSED one (with or without close: MOD-221), is already filed
+      if (view.state === 'OPEN' || view.state === 'CLOSED') {
         num = n.issue
         wasClosed = view.state === 'CLOSED'
         isReused = true
         reused++
-        lines.push(`already filed #${num} ${n.title}`)
+        lines.push(`already filed #${num}${wasClosed ? ' (closed)' : ''} ${n.title}`)
       }
     }
     if (!isReused) {
@@ -4218,7 +4218,7 @@ async function treeImportWith($: Host, a: ReturnType<typeof parseTreeImportArgs>
       if (!r) return undefined
       if (!r.closed) childrenClosed = false
     }
-    let closed = false
+    let closed = wasClosed
     if (n.close !== undefined) {
       if (wasClosed) closed = true
       else if (childrenClosed) {
