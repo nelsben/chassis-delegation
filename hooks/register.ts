@@ -356,6 +356,7 @@ import { parseUserOptions, repoFileWith, repoProjectOf, resolveOptions, userFile
 import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg, parsePostMode, postModeLine, REDACT_EMPTY, renderPost, survivingWord, type IssueRow, type PostFinding, type PostMode } from './lib/findings'
 import { dropLocalQuotes, gitConfigValue, parseRedactList, redact, type RedactRules } from './lib/redact'
 import { allowOf, missingBlocks, missingBlockRefusal, noLocalRefusal, renderLocal, trackedRefusal, unreadableRefusal } from './lib/brieflocal'
+import { cardsOf, syncCardIndex, type CardIndex } from './lib/cardcache'
 import { abortedDeny, budgetDelay, decisionId, isStopped, outOfTimeDeny, stopper, turns, type Stopper } from './lib/serial'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
@@ -3854,6 +3855,16 @@ async function runLand($: Host, text: string): Promise<string> {
   return landWith($, parseLandArgs(text))
 }
 
+/** MOD-244: the parsed cards of every folder listed so far, keyed by path; a listing's (mtime, size) decides what is read again. */
+let cardIndex: CardIndex = new Map()
+/** The valid cards of `dir` ((file name, card), in listing order) from one $.fs.list and the reads of the cards that changed. Throws when the folder cannot be listed. */
+async function indexedCards($: Host, dir: string): Promise<{ name: string; card: Card }[]> {
+  const listing = (await $.fs.list(dir)).map(e => ({ name: e.name, size: e.size, mtimeMs: e.mtimeMs }))
+  const synced = await syncCardIndex(cardIndex, dir, listing, p => readText($, p))
+  cardIndex = synced.index
+  return cardsOf(cardIndex, dir, listing)
+}
+
 async function landWith($: Host, a: LandArgs | { error: string }): Promise<string> {
   if ('error' in a) return a.error
   await loadRepoConfig($)
@@ -3861,12 +3872,7 @@ async function landWith($: Host, a: LandArgs | { error: string }): Promise<strin
   const cardDir = cardDirPath(root, cfg.cardDir)
   const found: LandCard[] = []
   try {
-    for (const e of await $.fs.list(cardDir)) {
-      if (!e.name.endsWith('.md')) continue
-      const t = await readText($, `${cardDir}/${e.name}`)
-      const c = t === undefined ? undefined : parseCard(t)
-      if (c && !('error' in c)) found.push({ id: c.id, title: c.title, status: c.status, parent: c.fields.parent, scope: c.scope })
-    }
+    for (const { card: c } of await indexedCards($, cardDir)) found.push({ id: c.id, title: c.title, status: c.status, parent: c.fields.parent, scope: c.scope })
   } catch {
     // no card folder: no open cards
   }
@@ -3984,14 +3990,9 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
   const cardDir = cardDirPath(root, cfg.cardDir)
   const cards: TreeCard[] = []
   try {
-    for (const e of await $.fs.list(cardDir)) {
-      if (!e.name.endsWith('.md')) continue
-      const t = await readText($, `${cardDir}/${e.name}`)
-      const c = t === undefined ? undefined : parseCard(t)
-      if (c && !('error' in c)) {
-        const ref = issueRef(c.fields.issue, ownerRepo)
-        cards.push({ id: c.id, status: c.status, ...(ref !== undefined ? { issue: ref } : {}) })
-      }
+    for (const { card: c } of await indexedCards($, cardDir)) {
+      const ref = issueRef(c.fields.issue, ownerRepo)
+      cards.push({ id: c.id, status: c.status, ...(ref !== undefined ? { issue: ref } : {}) })
     }
   } catch {
     // no card folder: no cards
@@ -4076,12 +4077,7 @@ async function planWith($: Host, parsedIn: ReturnType<typeof parsePlan>): Promis
   const cardDir = cardDirPath(root, cfg.cardDir)
   const found: LandCard[] = []
   try {
-    for (const e of await $.fs.list(cardDir)) {
-      if (!e.name.endsWith('.md')) continue
-      const t = await readText($, `${cardDir}/${e.name}`)
-      const c = t === undefined ? undefined : parseCard(t)
-      if (c && !('error' in c)) found.push({ id: c.id, title: c.title, status: c.status, parent: c.fields.parent, scope: c.scope })
-    }
+    for (const { card: c } of await indexedCards($, cardDir)) found.push({ id: c.id, title: c.title, status: c.status, parent: c.fields.parent, scope: c.scope })
   } catch {
     // no card folder: no open cards
   }
@@ -6930,10 +6926,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const siblingScopes = new Map<string, string>()
   if (forbid === undefined && card.fields.parent !== undefined && !replay && scopeForbidClashes(headScope, headForbid).length > 0) {
     try {
-      for (const e of await $.fs.list(tasksDir)) {
-        if (!e.name.endsWith('.md')) continue
-        const sib = parseCard((await readText($, `${tasksDir}/${e.name}`)) ?? '')
-        if ('error' in sib || sib.id === id || String(sib.fields.parent) !== String(card.fields.parent)) continue
+      for (const { card: sib } of await indexedCards($, tasksDir)) {
+        if (sib.id === id || String(sib.fields.parent) !== String(card.fields.parent)) continue
         for (const g of sib.scope) if (!siblingScopes.has(g)) siblingScopes.set(g, sib.id)
       }
     } catch {
@@ -7607,10 +7601,16 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       }
     }
     const found: SiblingCard[] = []
-    for (const name of cardNames.filter(n => n.endsWith('.md'))) {
-      const text = await readText($, `${dir}/${name}`)
-      const sib = text === undefined ? undefined : parseCard(text)
-      if (sib && !('error' in sib)) found.push({ id: sib.id, status: sib.status, parent: sib.fields.parent, scope: sib.scope })
+    // MOD-244: through the index; the session's own board is read too when the target's folder differs, as cardNames above does
+    const folders = target ? [...new Set([dir, cardDirPath(root, cfg.cardDir)])] : [dir]
+    for (const folder of folders) {
+      let indexed: { name: string; card: Card }[] = []
+      try {
+        indexed = await indexedCards($, folder)
+      } catch {
+        // an unlistable folder holds no sibling
+      }
+      for (const { card: sib } of indexed) found.push({ id: sib.id, status: sib.status, parent: sib.fields.parent, scope: sib.scope })
     }
     siblings = openSiblings(found, parentIn, done)
   }
