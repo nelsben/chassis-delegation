@@ -217,8 +217,8 @@ import { artefactsCheck, defaultScratch, normalizePath, expandTilde, globList, g
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, type GateProgress } from './lib/gaterun'
 import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
-import { prunedLine, refusedRow, refusedWritesLine, retentionPlan, slimSpawns, storeBytes, storeLine, type StoreEntry } from './lib/retention'
-import { migratedLine, migrationPlan, scopedId, trimRepo } from './lib/taskkeys'
+import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
+import { BY_TASK_FAMILIES, migratedLine, migrationPlan, scopedId, trimRepo, type MigrationPlan } from './lib/taskkeys'
 import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLine, parseLedger, spawnRow, verdictAfter, withTail, type Fallback, type LedgerRow, type RowQuery } from './lib/storeloss'
 import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { cardsHandedBack, nudgeDown, nudgeText, nudgeUp, type EffortNudge } from './lib/nudge'
@@ -963,10 +963,35 @@ async function storeSet($: Host, key: string, value: unknown): Promise<void> {
   agentKeyChanged(key)
   try {
     await $.store.set(key, value)
+    sizeEst.set(key, value)
   } catch (err) {
     debug($, `store.set ${key} failed: ${String(err)}`)
     await storeRefused($, key, err)
   }
+}
+
+/**
+ * MOD-243: the store's size as a running estimate, so the full scan (every key read) is not run at each session
+ * start and verdict. The base is the bytes the last full prune left (`delegation.prune`); each `storeSet` adds the
+ * written value's bytes and a delete subtracts what this process knew. A refused write asks for a scan.
+ */
+const PRUNE_KEY = 'delegation.prune'
+const sizeEst = new SizeEstimate()
+let lastPrune: PruneRecord | undefined
+let pruneRead = false
+let scanWanted = false
+async function loadPrune($: Host): Promise<void> {
+  if (pruneRead) return
+  pruneRead = true
+  const v = await storeGet<unknown>($, PRUNE_KEY)
+  if (isPruneRecord(v)) {
+    lastPrune = v
+    sizeEst.seed(v.bytes)
+  }
+}
+async function scanIsDue($: Host): Promise<boolean> {
+  await loadPrune($)
+  return scanDue({ last: lastPrune, estimate: sizeEst.bytes, now: await now($), refused: scanWanted })
 }
 
 /**
@@ -976,6 +1001,7 @@ async function storeSet($: Host, key: string, value: unknown): Promise<void> {
 let refusedWrites: { count: number; last: string } = { count: 0, last: '' }
 async function storeRefused($: Host, key: string, err: unknown): Promise<void> {
   refusedWrites = { count: refusedWrites.count + 1, last: key }
+  scanWanted = true
   if (refusedWrites.count > 1) return
   const reason = (err instanceof Error ? err.message : String(err)).split('\n')[0] ?? ''
   const row = refusedRow(key, reason)
@@ -1006,9 +1032,14 @@ async function storeEntries($: Host): Promise<StoreEntry[]> {
 let pruning: Promise<void> | undefined
 function pruneStore($: Host, at: 'start' | 'verdict'): Promise<void> {
   if (pruning) return pruning
-  pruning = pruneOnce($, at).finally(() => {
-    pruning = undefined
-  })
+  pruning = (async () => {
+    // MOD-243: the full scan only when the estimate, the clock or a refused write says it is worth it
+    if (await scanIsDue($)) await pruneOnce($, at)
+  })()
+    .catch(err => debug($, `store prune skipped: ${String(err)}`))
+    .finally(() => {
+      pruning = undefined
+    })
   return pruning
 }
 async function pruneOnce($: Host, at: 'start' | 'verdict'): Promise<void> {
@@ -1053,6 +1084,12 @@ async function pruneOnce($: Host, at: 'start' | 'verdict'): Promise<void> {
         debug($, `store.delete ${key} failed: ${String(err)}`)
       }
     }
+    // MOD-243: the scan is recorded, and the estimate starts again from what it left
+    const rec: PruneRecord = { at: t, bytes: plan.after }
+    lastPrune = rec
+    await storeSet($, PRUNE_KEY, rec)
+    scanWanted = false
+    sizeEst.reset(plan.after)
     if (n === 0) return
     const line = prunedLine(n, plan.before, plan.after)
     debug($, line)
@@ -1066,7 +1103,14 @@ async function pruneOnce($: Host, at: 'start' | 'verdict'): Promise<void> {
 async function storeStatusLines($: Host): Promise<string[]> {
   let size: string[] = []
   try {
-    size = [storeLine(storeBytes(await storeEntries($)))]
+    // MOD-243: from the running estimate; a store with none known is read once
+    await loadPrune($)
+    let bytes = sizeEst.bytes
+    if (bytes === undefined) {
+      bytes = storeBytes(await storeEntries($))
+      sizeEst.reset(bytes)
+    }
+    size = [storeLine(bytes)]
   } catch (err) {
     debug($, `store size not read: ${String(err)}`)
   }
@@ -4787,7 +4831,14 @@ async function refOf($: Host, ref: TaskRef): Promise<{ task: string; repo: strin
 async function loadAttemptsRaw($: Host, ref: TaskRef): Promise<AttemptRecord[]> {
   const { task, keyRepo } = await refOf($, ref)
   const own = await storeGet<AttemptRecord[]>($, K.tasks(task, keyRepo))
-  return Array.isArray(own) ? own : []
+  if (Array.isArray(own)) return own
+  // MOD-243: no records under the repo's key: a bare key left after the migration marker moves now
+  if (keyRepo && keyRepo === (await rootKey($)) && migrationSkipped === keyRepo) {
+    await migrateBareTask($, task, keyRepo)
+    const moved = await storeGet<AttemptRecord[]>($, K.tasks(task, keyRepo))
+    if (Array.isArray(moved)) return moved
+  }
+  return []
 }
 
 async function loadAttempts($: Host, ref: TaskRef): Promise<AttemptRecord[]> {
@@ -4818,32 +4869,72 @@ function migrateTaskKeys($: Host, again = false): Promise<void> {
     return done
   })()
 }
+/** MOD-243: `delegation.migrated.<root>` = the mod version after a successful run for that root. */
+const migratedKey = (root: string): string => `delegation.migrated.${root}`
+/** MOD-243: the root whose full migration scan was skipped on its marker; a bare key of a task is then looked for at the task's first per-task read. */
+let migrationSkipped: string | undefined
+const bareChecked = new Set<string>()
+/** Writes a plan's keys, then deletes the bare ones; the number deleted, or undefined when a write failed (nothing is deleted then). */
+async function applyMigration($: Host, plan: MigrationPlan): Promise<number | undefined> {
+  for (const [key, value] of plan.set) {
+    try {
+      await $.store.set(key, value)
+      sizeEst.set(key, value)
+    } catch (err) {
+      // a bare key is never deleted before its rows are written elsewhere: the next session start tries again
+      debug($, `per-task keys not moved: store.set ${key} failed: ${String(err)}`)
+      await storeRefused($, key, err)
+      return undefined
+    }
+  }
+  let n = 0
+  for (const key of plan.delete) {
+    try {
+      await $.store.delete(key)
+      sizeEst.delete(key)
+      agentKeyChanged(key)
+      n += 1
+    } catch (err) {
+      debug($, `store.delete ${key} failed: ${String(err)}`)
+    }
+  }
+  recordsCache = undefined
+  return n
+}
 async function migrateOnce($: Host, root: string): Promise<void> {
   try {
+    if ((await storeGet<unknown>($, migratedKey(root))) === MOD_VERSION) {
+      migrationSkipped = root
+      return
+    }
+    migrationSkipped = undefined
     const plan = migrationPlan(await storeEntries($), root)
+    if (plan.delete.length > 0) {
+      const n = await applyMigration($, plan)
+      if (n === undefined) return
+      debug($, migratedLine(n))
+    }
+    await storeSet($, migratedKey(root), MOD_VERSION)
+  } catch (err) {
+    debug($, `per-task keys not moved: ${String(err)}`)
+  }
+}
+/** MOD-243: a bare key found after the marker was written moves at the first per-task read of its task (once per task per process). */
+async function migrateBareTask($: Host, task: string, root: string): Promise<void> {
+  if (migrationSkipped !== root || !root || bareChecked.has(`${root}\n${task}`)) return
+  bareChecked.add(`${root}\n${task}`)
+  try {
+    const entries: StoreEntry[] = []
+    for (const f of BY_TASK_FAMILIES) {
+      for (const key of [`delegation.${f}.${task}`, `delegation.${f}.${scopedId(task, root)}`]) {
+        const v = await storeGet<unknown>($, key)
+        if (v !== undefined) entries.push([key, v])
+      }
+    }
+    const plan = migrationPlan(entries, root)
     if (plan.delete.length === 0) return
-    for (const [key, value] of plan.set) {
-      try {
-        await $.store.set(key, value)
-      } catch (err) {
-        // a bare key is never deleted before its rows are written elsewhere: the next session start tries again
-        debug($, `per-task keys not moved: store.set ${key} failed: ${String(err)}`)
-        await storeRefused($, key, err)
-        return
-      }
-    }
-    let n = 0
-    for (const key of plan.delete) {
-      try {
-        await $.store.delete(key)
-        agentKeyChanged(key)
-        n += 1
-      } catch (err) {
-        debug($, `store.delete ${key} failed: ${String(err)}`)
-      }
-    }
-    recordsCache = undefined
-    debug($, migratedLine(n))
+    const n = await applyMigration($, plan)
+    if (n !== undefined) debug($, migratedLine(n))
   } catch (err) {
     debug($, `per-task keys not moved: ${String(err)}`)
   }
@@ -9192,6 +9283,12 @@ export const register: Register = (on, opts) => {
     await loadedTemplates($)
     // MOD-89: a new session counts its own refused writes, and starts with the store pruned
     refusedWrites = { count: 0, last: '' }
+    // MOD-243: the size estimate starts from the prune record
+    sizeEst.reset(undefined)
+    lastPrune = undefined
+    pruneRead = false
+    scanWanted = false
+    bareChecked.clear()
     // MOD-117: the bare per-task keys move to their repo's key before the prune walks them
     await migrateTaskKeys($, true)
     await pruneStore($, 'start')

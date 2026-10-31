@@ -253,3 +253,58 @@ export function slimSpawns(entries: readonly StoreEntry[], now: number, attemptK
   }
   return out
 }
+
+/** MOD-243: the full scan runs at least this often, whatever the estimate says. */
+export const FULL_SCAN_MS = 24 * 60 * 60 * 1000
+/** MOD-243: `delegation.prune`, written after each full prune: when it ran and the store's bytes after it. */
+export type PruneRecord = { at: number; bytes: number }
+export const isPruneRecord = (v: unknown): v is PruneRecord =>
+  !!v && typeof v === 'object' && typeof (v as PruneRecord).at === 'number' && Number.isFinite((v as PruneRecord).at) && typeof (v as PruneRecord).bytes === 'number' && Number.isFinite((v as PruneRecord).bytes)
+
+/**
+ * MOD-243: whether the full scan is worth it. Yes when a write was refused, when there is no prune record or no
+ * estimate, when the estimate is over PRESSURE_BYTES, or when the last scan is 24 h old (or in the future).
+ */
+export function scanDue(input: { last: PruneRecord | undefined; estimate: number | undefined; now: number; refused: boolean }): boolean {
+  if (input.refused || !input.last || input.estimate === undefined) return true
+  if (input.estimate > PRESSURE_BYTES) return true
+  const age = input.now - input.last.at
+  return age < 0 || age >= FULL_SCAN_MS
+}
+
+/** MOD-243: the running estimate of the store's bytes: a base (the last full scan's) and what this process wrote or deleted since. */
+export class SizeEstimate {
+  private base: number | undefined
+  private delta = 0
+  private readonly sizes = new Map<string, number>()
+  /** The base is the store's bytes at a full scan (or the last prune record's); the delta and the known sizes restart. */
+  reset(base: number | undefined): void {
+    this.base = base
+    this.delta = 0
+    this.sizes.clear()
+  }
+  /** Sets the base only when none is known (the prune record read); writes already counted stay. */
+  seed(base: number | undefined): void {
+    if (this.base === undefined) this.base = base
+  }
+  get known(): boolean {
+    return this.base !== undefined
+  }
+  /** A write of `value` at `key`: its bytes replace what this process knew of it (a key it never saw adds its comma too). */
+  set(key: string, value: unknown): void {
+    const was = this.sizes.get(key)
+    const now = entryBytes(key, value)
+    this.delta += was === undefined ? now + 1 : now - was
+    this.sizes.set(key, now)
+  }
+  /** A delete subtracts what this process knew of the key (nothing, for one it never saw: the estimate stays high). */
+  delete(key: string): void {
+    const was = this.sizes.get(key)
+    if (was === undefined) return
+    this.delta -= was + 1
+    this.sizes.delete(key)
+  }
+  get bytes(): number | undefined {
+    return this.base === undefined ? undefined : Math.max(2, this.base + this.delta)
+  }
+}
