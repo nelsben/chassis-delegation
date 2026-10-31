@@ -2,6 +2,7 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { sessionRecords, events, familyOf, sampleEvery, spendByModel, spendSeries, SPEND_CAP, worktreeRows, type SpendPoint, sparkText } from '../hooks/lib/live'
 import type { AttemptRecord } from '../hooks/lib/attempts'
+import { world, spawnInput, workerCall, SCRATCH } from './harness'
 import { brainLine, brainSummary, emptyBrain } from '../hooks/lib/brain'
 
 const NOW = 10_000_000
@@ -144,5 +145,45 @@ describe('MOD-37: the session filter and the line arithmetic', () => {
     const brain = { ...emptyBrain(), usd: 2, turns: 1, byModel: { 'claude-fable-5-1': { usd: 2, tokens: 10, turns: 1 } } }
     expect(brainLine(brainSummary(brain, 3, 2, 5, { usd: 1, agents: 1 }))).not.toContain('unattributed')
     expect(brainLine(brainSummary(brain, 3, 2, 4, { usd: 1, agents: 1 }))).not.toContain('unattributed')
+  })
+})
+
+// MOD-240: liveState and spawnByAgent are cached, so a repeat read of an unchanged session costs no store reads per agent.
+describe('MOD-240: liveState and spawnByAgent reads', () => {
+  const cmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const spawnRec = (i: number, closed: boolean) => ({ key: `k${i}`, task: `T-${i}`, subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 3, purpose: 'build', description: '', subagentType: 'general-purpose', agentId: `ag${i}`, at: NOW, ...(closed ? { verdictAttempt: 1 } : {}) })
+
+  test('a second liveState with no state change, over 30 finished agents and 1 live one, makes at most 2 store.get calls', async ($, on) => {
+    const w = world(on)
+    for (let i = 0; i < 31; i++) {
+      w.store.set(`delegation.agent.ag${i}`, `k${i}`)
+      w.store.set(`delegation.spawn.k${i}`, spawnRec(i, i < 30))
+      w.agents.push({ id: `ag${i}`, type: 'general-purpose', description: '', status: i < 30 ? 'completed' : 'running' })
+    }
+    await $.command.run(cmd('accept --owed'))
+    const before = w.storeGets
+    await $.command.run(cmd('accept --owed'))
+    expect(w.storeGets - before).toBeLessThanOrEqual(2)
+  })
+
+  test('an agent whose verdict is still out is never skipped: it stays pending on a repeat read', async ($, on) => {
+    const w = world(on)
+    w.store.set('delegation.agent.ag0', 'k0')
+    w.store.set('delegation.spawn.k0', spawnRec(0, false))
+    w.agents.push({ id: 'ag0', type: 'general-purpose', description: '', status: 'completed' })
+    await $.command.run(cmd('accept --owed'))
+    expect(String((await $.command.run(cmd('update'))).text)).toContain('T-0')
+  })
+
+  test('a worker Bash tool call resolves its spawn with at most 2 store.get calls across all tool.call hooks', { options: { gateMap: '{"prettier":"npx prettier --check {files}"}' } }, async ($, on) => {
+    const brief = `${SCRATCH}/briefs/T-7.brief.md`
+    const head = '[[brief v=1 task=T-7 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier spend=2 budget=3-attempts report=chassis.report.v1]]'
+    const w = world(on, { files: { [brief]: head + '\nbody' }, run: () => undefined, agentId: 'agent-7' })
+    ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async () => ({ result: 'ok' }))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${brief}.` }))
+    await workerCall($, w, 'agent-7', { tool: 'Bash', command: 'git status' })
+    const before = w.storeGets
+    await workerCall($, w, 'agent-7', { tool: 'Bash', command: 'git commit -m x' })
+    expect(w.storeGets - before).toBeLessThanOrEqual(2)
   })
 })

@@ -16,6 +16,8 @@ export type RunAnswer = { exitCode: number; stdout: string; stderr?: string }
 export type World = {
   /** `$.store.keys()` calls (GH-112: the dashboard's records cache). */
   storeKeyReads: number
+  /** MOD-240: `$.store.get` calls (a test reads how many reads a path made). */
+  storeGets: number
   store: Map<string, unknown>
   files: Map<string, string>
   /** MOD-28: every path `$.fs.read` was asked for, in order (a test reads which files the mod read, and how often). */
@@ -181,6 +183,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     closed: [],
     invalidations: 0,
     storeKeyReads: 0,
+    storeGets: 0,
     transcripts: new Map(Object.entries(options.transcripts ?? {})),
     mainTranscript: options.mainTranscript ?? [],
     aborted: [],
@@ -202,7 +205,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     (on as unknown as (n: string, h: unknown) => void)(n, n === 'clock.sleep' ? (($: unknown, e: { ms?: number }) => (w.clockSleeps.push(e?.ms ?? 0), h($, e))) : h)) as unknown as typeof on
   w.clock = mock.clock(recording, { now: NOW })
   mock.env(on, { TMPDIR: TMP, HOME, PATH: '/usr/local/bin:/usr/bin' })
-  hook('store.get', (e: { key: string }) => ({ value: w.store.get(e.key) }))
+  hook('store.get', (e: { key: string }) => ((w.storeGets += 1), { value: w.store.get(e.key) }))
   hook('store.set', (e: { key: string; value: unknown }) => (w.store.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }))
   hook('store.delete', (e: { key: string }) => (w.store.delete(e.key), { value: undefined }))
   hook('store.keys', () => ((w.storeKeyReads += 1), { value: [...w.store.keys()] }))
