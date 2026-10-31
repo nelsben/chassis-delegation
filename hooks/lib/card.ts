@@ -588,6 +588,8 @@ export function redTestWarnings(redTest: string, scope: readonly string[], forbi
       out.push(`warning: red_test names ${p}, which holds a placeholder ${ph[0]}; name the real file or command`)
       continue
     }
+    // MOD-219: red_test is read, not written; a path outside the repo (leading / or ~) is a read-only helper and never warns
+    if (isAbsoluteGlob(p)) continue
     const f = forbid.find(g => g !== '' && collides(p, g))
     if (f !== undefined) out.push(`warning: red_test names ${p}, which is inside forbid ${f}`)
     else if (!scope.some(s => s !== '' && namedBy(p, s))) out.push(`warning: red_test names ${p}, which is outside scope`)

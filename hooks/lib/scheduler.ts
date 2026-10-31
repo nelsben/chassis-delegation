@@ -81,8 +81,12 @@ export const startingOthers = (starting: Iterable<string>, label: string): strin
  * and the spawn hook both give (MOD-12): the agents live and the rows queued,
  * named apart.
  */
-export const queuedDeny = (task: string, live: readonly string[], queued: readonly string[], tier?: Tier, limit?: string): string =>
-  `${QUEUED_PREFIX}${task} — ${slotFrees(tier)} (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')}${limit ? `; limit: ${limit}` : ''})`
+export const queuedDeny = (task: string, live: readonly string[], queued: readonly string[], tier?: Tier, limit?: string, held?: { position: number; of: number; cap: number }): string =>
+  `${QUEUED_PREFIX}${task} — ${slotFrees(tier)} (${live.length} live: ${live.join(', ')}; ${queued.length} queued: ${queued.join(', ')}${limit ? `; limit: ${limit}` : ''})${tierQueueText(tier, held)}`
+
+/** MOD-219: ` — queued: position 3 of 7 (frontier cap 2 running)` for a lane a tier cap holds; empty otherwise. */
+export const tierQueueText = (tier?: Tier, held?: { position: number; of: number; cap: number }): string =>
+  tier && held ? ` — queued: position ${held.position} of ${held.of} (${tier} cap ${held.cap} running)` : ''
 
 /** HH:MM of a queue row's time, as the clock on the wall reads it. */
 export const clockText = (at: number): string => {
@@ -92,10 +96,11 @@ export const clockText = (at: number): string => {
 
 export const alreadyQueuedText = (at: number, position: number): string => `already queued since ${clockText(at)} (position ${position})`
 
-export const alreadyQueuedDeny = (task: string, at: number, position: number, tier?: Tier, limit?: string): string => `${QUEUED_PREFIX}${task} — ${slotFrees(tier)}; ${alreadyQueuedText(at, position)}${limit ? `; limit: ${limit}` : ''}`
+export const alreadyQueuedDeny = (task: string, at: number, position: number, tier?: Tier, limit?: string, held?: { position: number; of: number; cap: number }): string =>
+  `${QUEUED_PREFIX}${task} — ${slotFrees(tier)}; ${alreadyQueuedText(at, position)}${limit ? `; limit: ${limit}` : ''}${tierQueueText(tier, held)}`
 
 /** The "already queued since …" part of a deny, if it is that kind. */
-export const alreadyQueuedPart = (deny: string): string | undefined => (isQueuedDeny(deny) ? /already queued since \d\d:\d\d \(position \d+\)(?=$|; limit: )/.exec(deny)?.[0] : undefined)
+export const alreadyQueuedPart = (deny: string): string | undefined => (isQueuedDeny(deny) ? /already queued since \d\d:\d\d \(position \d+\)(?=$|; limit: | — queued: )/.exec(deny)?.[0] : undefined)
 
 /** Whole minutes a queued row waited. */
 export const waitedMinutes = (since: number, now: number): number => Math.max(0, Math.round((now - since) / 60000))

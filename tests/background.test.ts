@@ -187,7 +187,7 @@ describe('2F: the worker scheduler', () => {
     expect(w.spawns).toHaveLength(4)
     expect(w.spawns[3]).toMatchObject({ prompt: brief('T-3'), cwd: '/w3', model: 'sonnet' })
     expect(typeOf(w.spawns[3])).toBe('backend')
-    expect(w.toasts).toContain('started queued T-3 (waited 0 min)')
+    expect(w.toasts).toContain('T-3 started after 0 min in queue')
     expect(w.state.get('chassis-delegation.queue')).toEqual([])
     expect(records(w, 'T-3')[0]).toMatchObject({ attempt: 1, kind: 'spawn', verdict: 'pending', alias: 'sonnet' })
   })
