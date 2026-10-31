@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **`/delegation config` shows the repo file's `project` (including `none`) as the value in effect (MOD-223).** With a `project` in `.chassis-delegation.json`, `/delegation config project` and the short view show that value with the source `(repo)` and count it as a repo option, instead of the user option; with no repo `project` the view is as before. What land adds to is unchanged.
 - **A lane held by the total `maxWorkers` cap says its queue position (MOD-222).** Dispatch's queued result and its already-queued result end with ` — queued: position <k> of <n> (maxWorkers <m> running)`, as MOD-219 did for a tier cap. A lane held by a tier cap keeps its text, and a lane queued for a held resource still gets no position.
 - **Tree import reuses an item whose recorded issue is CLOSED even with no `close` (MOD-221).** It is no longer filed again: no `gh issue create` runs, it counts in `already filed`, its line reads `already filed #<n> (closed) <title>`, it counts as closed for its parent's `close` rule, and its children are still visited under its number. The preview, an OPEN or unreadable recorded issue, and a CLOSED one with `close` are unchanged.
 
