@@ -14,7 +14,7 @@ import { finalAlias, reviewerTier, type Alias, type Tier } from './tier'
 import type { Advice } from './verify'
 
 /** What a reviewer's `[[review v=1 task=<ID> confirmed=N refuted=N unverifiable=N]]` block counted. */
-export type ReviewCounts = ReviewResult & { task: string }
+export type ReviewCounts = ReviewResult & { task: string; attempt?: number; sha?: string }
 /** The counts a row is written from: a parsed block's, or a stored attempt's (which names no task). */
 export type ReviewTally = ReviewResult & { task?: string }
 
@@ -39,9 +39,45 @@ export function parseReviewBlock(text: string, task?: string): ReviewCounts | un
     const [confirmed, refuted, unverifiable] = ['confirmed', 'refuted', 'unverifiable'].map(k => kv.get(k) ?? '')
     if (kv.get('v') !== '1' || id === '' || (task !== undefined && id !== task)) continue
     if (![confirmed, refuted, unverifiable].every(n => COUNT.test(n as string))) continue
-    found = { task: id, confirmed: Number(confirmed), refuted: Number(refuted), unverifiable: Number(unverifiable) }
+    // MOD-224: the optional attempt= and sha= name which hand-back the reviewer read
+    const at = kv.get('attempt')
+    const sha = kv.get('sha')
+    found = {
+      task: id,
+      ...(at !== undefined && COUNT.test(at) && Number(at) >= 1 ? { attempt: Number(at) } : {}),
+      ...(sha !== undefined && /^[0-9a-fA-F]{7,40}$/.test(sha) ? { sha } : {}),
+      confirmed: Number(confirmed),
+      refuted: Number(refuted),
+      unverifiable: Number(unverifiable),
+    }
   }
   return found
+}
+
+/** What a verdict waits on: the task, the attempt and the sha its review is due for. */
+export type ReviewWait = { task: string; attempt: number; sha: string }
+export type ReviewMatch = { kind: 'none' } | { kind: 'match'; counts: ReviewCounts } | { kind: 'refused'; line: string }
+
+const sameShaWord = (a: string, b: string): boolean => {
+  const x = a.trim().toLowerCase()
+  const y = b.trim().toLowerCase()
+  return x.length >= 7 && y.length >= 7 && (x.startsWith(y) || y.startsWith(x))
+}
+
+/**
+ * MOD-224: does a hand-back carry the review a verdict waits on? Used when the reviewer's spawn record is gone (the
+ * lead's context was compacted while it ran), so the block alone must say whose review it is. It matches on task +
+ * attempt + sha, never on the task alone. No block for the task: none. A block that names another attempt or sha, or
+ * none, is refused with the one line the next verdict shows.
+ */
+export function matchReview(text: string, wait: ReviewWait): ReviewMatch {
+  const counts = parseReviewBlock(text, wait.task)
+  if (!counts) return { kind: 'none' }
+  const tail = 'spawn the reviewer again'
+  if (counts.attempt === undefined || counts.sha === undefined) return { kind: 'refused', line: `review seen for ${wait.task} but it names no attempt or sha, waiting on attempt ${wait.attempt} sha ${wait.sha}; ${tail}` }
+  if (counts.attempt !== wait.attempt) return { kind: 'refused', line: `review seen for ${wait.task} but it names attempt ${counts.attempt}, waiting on attempt ${wait.attempt}; ${tail}` }
+  if (!sameShaWord(counts.sha, wait.sha)) return { kind: 'refused', line: `review seen for ${wait.task} but it names sha ${counts.sha}, waiting on ${wait.sha}; ${tail}` }
+  return { kind: 'match', counts }
 }
 
 export type ReviewLabel = 'confirmed' | 'refuted' | 'unverifiable'
@@ -169,6 +205,10 @@ export function reviewerPick(workerTier: Tier, override: Tier | undefined, tierM
   return { tier: fableRewritten ? 'frontier' : tier, alias }
 }
 
+/** MOD-224: the closing line also names the hand-back read, so the mod can match the review without its spawn record (after a compaction). */
+const reviewKeys = (m: ReviewMarker): string =>
+  m.sha ? `\n\nIn that last line, write attempt=${m.attempt} sha=${m.sha} after the task, so the mod can match your review to this hand-back: [[review v=1 task=${m.task} attempt=${m.attempt} sha=${m.sha} confirmed=N refuted=N unverifiable=N]]` : ''
+
 /** What a reviewer's spawn block ends with: the brain makes the call; the reviewer edits nothing. */
 export const REVIEW_STARTS =
   'The reviewer starts when you make this Agent call: pass the JSON above as its input, verbatim. It reads the hand-back against the diff and edits nothing; the mod reads its [[review]] block and says what comes next.'
@@ -182,7 +222,7 @@ export function reviewPlan(i: ReviewPlanInput): ReviewPlan {
     subagent_type: 'general-purpose',
     model: alias,
     description: `${i.label} review ${tier} ${alias}`,
-    prompt: `${reviewMarker(i.marker)}\n${renderReview(i.template, i.vars)}`,
+    prompt: `${reviewMarker(i.marker)}\n${renderReview(i.template, i.vars)}${reviewKeys(i.marker)}`,
   }
   return { tier, alias, call, block: ['spawn: Agent', '```json', JSON.stringify(call, null, 2), '```', REVIEW_STARTS].join('\n') }
 }

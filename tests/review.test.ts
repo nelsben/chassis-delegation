@@ -13,6 +13,7 @@ import {
   reviewClause,
   reviewDue,
   reviewMarker,
+  matchReview,
   reviewPlan,
   reviewResumeText,
   reviewRows,
@@ -265,5 +266,47 @@ describe('MOD-21: the review option', () => {
     const bad = parseRepoConfig('{"reviewTier":"fast"}')
     expect(bad.errors.join()).toContain('reviewTier')
     expect(mergeConfig(bad.config, {}).reviewTier).toBe('')
+  })
+})
+
+describe('MOD-224: a review that arrives with no spawn record', () => {
+  const WAIT = { task: 'T-4', attempt: 2, sha: '1234abcdef' }
+  const block = (extra: string) => `confirmed: x — y\n[[review v=1 task=T-4${extra} confirmed=1 refuted=0 unverifiable=0]]`
+
+  test('a block naming the task, the attempt and the sha the verdict waits on is recorded, with no spawn record to go by', () => {
+    const m = matchReview(block(' attempt=2 sha=1234abc'), WAIT)
+    expect(m.kind).toBe('match')
+    if (m.kind === 'match') expect(m.counts).toEqual({ task: 'T-4', attempt: 2, sha: '1234abc', confirmed: 1, refuted: 0, unverifiable: 0 })
+  })
+
+  test('a wrong sha is not recorded and says so in one line', () => {
+    const m = matchReview(block(' attempt=2 sha=ffff000'), WAIT)
+    expect(m).toEqual({ kind: 'refused', line: 'review seen for T-4 but it names sha ffff000, waiting on 1234abcdef; spawn the reviewer again' })
+  })
+
+  test('a wrong attempt, and a block with no attempt or sha, are not recorded either; task alone never matches', () => {
+    expect(matchReview(block(' attempt=1 sha=1234abc'), WAIT)).toEqual({ kind: 'refused', line: 'review seen for T-4 but it names attempt 1, waiting on attempt 2; spawn the reviewer again' })
+    const bare = matchReview(block(''), WAIT)
+    expect(bare.kind).toBe('refused')
+    if (bare.kind === 'refused') expect(bare.line).toBe('review seen for T-4 but it names no attempt or sha, waiting on attempt 2 sha 1234abcdef; spawn the reviewer again')
+  })
+
+  test('no block, or another task\'s block, is not a review seen', () => {
+    expect(matchReview('no block here', WAIT).kind).toBe('none')
+    expect(matchReview('[[review v=1 task=T-9 attempt=2 sha=1234abc confirmed=1 refuted=0 unverifiable=0]]', WAIT).kind).toBe('none')
+  })
+
+  test('a normal spawn-and-return review is unchanged: the bare block parses as before, and the prompt asks for attempt and sha', () => {
+    expect(parseReviewBlock(BLOCK, 'T-4')).toEqual({ task: 'T-4', confirmed: 3, refuted: 1, unverifiable: 0 })
+    const p = reviewPlan({
+      template: 'Review {{id}}.\n[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]',
+      workerTier: 'standard',
+      tierMap: { economy: 'haiku', standard: 'sonnet', frontier: 'opus', premium: 'fable' },
+      label: 'T-4',
+      marker: { task: 'T-4', subtask: 'main', attempt: 2, sha: '1234abc' },
+      vars: { id: 'T-4' } as never,
+    })
+    expect(p.call.prompt).toContain('attempt=2 sha=1234abc')
+    expect(p.call.prompt).toContain('[[review v=1 task=T-4 confirmed=N refuted=N unverifiable=N]]')
   })
 })

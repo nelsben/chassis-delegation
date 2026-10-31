@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A review that arrives after the lead's context was compacted is taken, or refused in one line (MOD-224).** The break was the spawn record: a reviewer's hand-back was joined to its review only through the spawn record the spawn hook stored, and when that record was gone the hand-back was treated as an ad hoc agent's and its `[[review]]` block never read, so the verdict kept saying `next=review`. The reviewer's closing block now also carries `attempt=` and `sha=`; a block naming the task, the attempt and the sha the verdict waits on is recorded without the spawn record (never on the task alone). A block that names another attempt or sha, or none, is not recorded, and the next `verdict` adds `review seen for <id> but it names sha <x>, waiting on <y>; spawn the reviewer again`. A normal spawn-and-return review is unchanged.
+
 ### Added
 
 - **A busy machine is named as such (MOD-230, #323).** Dispatch adds `<k> lanes share the engine gate; it runs one at a time: expect verdict waits` when 3 or more live or queued briefed lanes have an engine gate. A verifier gate that is red or times out while the 1-minute load is at least twice the core count adds `machine loaded (load <x> on <n> cores): may be load, not the change; re-run with /dispatch <ID> --verify <sha> once it drops` to the verdict; the verdict itself is unchanged and a failed load read adds nothing. The load is read through `sysctl -n vm.loadavg hw.ncpu` and `nproc` (the two new exact allowlist entries) or `/proc/loadavg`. The brief template tells workers to re-run a gate that fails with timeouts once before handing back gate=fail.
