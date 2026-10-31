@@ -4,9 +4,9 @@ import { contained } from './scopetree'
 
 export const LAND_TYPES = ['feature', 'epic', 'story', 'task', 'bug', 'spike'] as const
 export type LandType = (typeof LAND_TYPES)[number]
-export const LAND_USAGE = `usage: /delegation land <${LAND_TYPES.join('|')}> <title> [--parent <n>] [--supersedes <n>] [--paths a,b] [--note <text>] [--dry-run] [--confirm] [--no-project]; type is one of ${LAND_TYPES.join(', ')}; --parent and --supersedes are whole numbers 1 or more; --confirm files the issue when the landAuto option is off`
+export const LAND_USAGE = `usage: /delegation land <${LAND_TYPES.join('|')}> <title> [--parent <n>] [--supersedes <n>] [--paths a,b] [--note <text>] [--closed <evidence>] [--dry-run] [--confirm] [--no-project]; type is one of ${LAND_TYPES.join(', ')}; --closed files the issue and closes it at once with the evidence text; --parent and --supersedes are whole numbers 1 or more; --confirm files the issue when the landAuto option is off`
 
-export type LandArgs = { type: LandType; title: string; parent?: number; /** MOD-200: the issue this one replaces; it is closed `superseded by #n` once this is filed. */ supersedes?: number; paths: string[]; note?: string; dryRun?: boolean; /** MOD-205: with landAuto off, true files; otherwise land only shows the issue. */ confirm?: boolean; /** MOD-218: skip the Project item-add for this call only. */ noProject?: boolean }
+export type LandArgs = { type: LandType; title: string; parent?: number; /** MOD-200: the issue this one replaces; it is closed `superseded by #n` once this is filed. */ supersedes?: number; paths: string[]; note?: string; dryRun?: boolean; /** MOD-205: with landAuto off, true files; otherwise land only shows the issue. */ confirm?: boolean; /** MOD-218: skip the Project item-add for this call only. */ noProject?: boolean; /** MOD-214: evidence the work was done before filing; the issue is closed at once with it. */ closed?: string }
 
 /** Words of the text; a double-quoted run is one word (the quotes dropped). */
 function words(text: string): { w: string; quoted: boolean }[] {
@@ -26,6 +26,7 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
   let parent: number | undefined
   let supersedes: number | undefined
   let paths: string[] = []
+  const closed: string[] = []
   let flag = ''
   let dryRun = false
   let confirm = false
@@ -49,7 +50,7 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
       flag = ''
       continue
     }
-    if (!quoted && /^--(parent|paths|note|supersedes)$/.test(w)) {
+    if (!quoted && /^--(parent|paths|note|supersedes|closed)$/.test(w)) {
       if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
       flag = w
       continue
@@ -66,13 +67,16 @@ export function parseLandArgs(text: string): LandArgs | { error: string } {
       paths = w.split(',').map(p => p.trim()).filter(p => p !== '')
       flag = ''
     } else if (flag === '--note') note.push(w)
+    else if (flag === '--closed') closed.push(w)
     else title.push(w)
   }
   if (flag === '--parent' || flag === '--paths' || flag === '--supersedes') return { error: LAND_USAGE }
   const t = title.join(' ').trim()
   if (t === '') return { error: LAND_USAGE }
   const n = note.join(' ').trim()
-  return { type, title: t, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(n !== '' ? { note: n } : {}), ...(dryRun ? { dryRun } : {}), ...(confirm ? { confirm } : {}), ...(noProject ? { noProject } : {}) }
+  const cl = closed.join(' ').trim()
+  if (flag === '--closed' && cl === '') return { error: LAND_USAGE }
+  return { type, title: t, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(n !== '' ? { note: n } : {}), ...(dryRun ? { dryRun } : {}), ...(confirm ? { confirm } : {}), ...(noProject ? { noProject } : {}), ...(cl !== '' ? { closed: cl } : {}) }
 }
 
 /** MOD-192: the land tool, answered by the same function as /delegation land. */
@@ -91,6 +95,7 @@ export const LAND_TOOL = {
       note: { type: 'string', description: 'Optional: text for the top of the issue body.' },
       dryRun: { type: 'boolean', description: 'true: write the body and print the gh line only; file nothing.' },
       project: { type: 'boolean', description: 'false: do not add this issue to the configured Project (this call only). Omit or true: add it as the project option says.' },
+      closed: { type: 'string', description: 'Optional: evidence that the work was already done before filing (for a backfill). The issue is filed as usual, then closed at once with the comment `done before filing: <evidence>`.' },
       confirm: { type: 'boolean', description: 'true only after the person has said yes to the issue shown; unless the landAuto option is on (off by default) the call files nothing without it. Ignored when landAuto is on.' },
     },
     required: ['type', 'title'],
@@ -116,7 +121,12 @@ export function parseLandTool(input: Record<string, unknown>): LandArgs | { erro
   }
   const paths = Array.isArray(input.paths) ? input.paths.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(p => p !== '') : []
   const note = typeof input.note === 'string' ? input.note.trim() : ''
-  return { type, title, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(note !== '' ? { note } : {}), ...(input.dryRun === true ? { dryRun: true } : {}), ...(input.confirm === true ? { confirm: true } : {}), ...(input.project === false ? { noProject: true } : {}) }
+  let closed = ''
+  if (input.closed !== undefined && input.closed !== null) {
+    closed = typeof input.closed === 'string' ? input.closed.replace(/\s+/g, ' ').trim() : ''
+    if (closed === '') return { error: LAND_USAGE }
+  }
+  return { type, title, ...(parent !== undefined ? { parent } : {}), ...(supersedes !== undefined ? { supersedes } : {}), paths, ...(note !== '' ? { note } : {}), ...(input.dryRun === true ? { dryRun: true } : {}), ...(input.confirm === true ? { confirm: true } : {}), ...(input.project === false ? { noProject: true } : {}), ...(closed !== '' ? { closed } : {}) }
 }
 
 /** MOD-192: the `project` option, `<owner>/<number>`; undefined when it is not that. */
@@ -146,9 +156,16 @@ export function issueLineOf(text: string): { number: number; url: string } | und
   return undefined
 }
 
-/** MOD-198: the landed text with its trailing `issue:` line (and the blank lines after it) removed. */
+/** MOD-214: the comment an already-done item is closed with. */
+export const doneBeforeFiling = (evidence: string): string => `done before filing: ${evidence.replace(/\s+/g, ' ').trim()}`
+
+/** MOD-214: the landed text with a `closed: <ISO time>` line added at the end. */
+export const withClosedLine = (text: string, iso: string): string => `${text.replace(/\n*$/, '\n')}closed: ${iso}\n`
+
+/** MOD-198: the landed text with its trailing `issue:` line (and the blank lines after it) removed; MOD-214: a `closed:` line after it goes too. */
 export function withoutIssueLine(text: string): string {
   const lines = text.replace(/\n*$/, '').split('\n')
+  if (lines.length > 0 && /^closed: \S+$/.test(lines[lines.length - 1] as string)) lines.pop()
   if (lines.length > 0 && ISSUE_LINE.test(lines[lines.length - 1] as string)) lines.pop()
   return `${lines.join('\n').replace(/\n*$/, '')}\n`
 }
@@ -203,14 +220,14 @@ export function freeName(slug: string, taken: ReadonlySet<string>): string {
   return `${slug}-${n}.md`
 }
 
-export type PlanItem = { title: string; type: LandType; paths: string[]; note?: string }
+export type PlanItem = { title: string; type: LandType; paths: string[]; note?: string; /** MOD-214: evidence the item was done before filing; it is closed at once with it. */ close?: string }
 export type Plan = { feature: PlanItem; tasks: PlanItem[]; /** MOD-213: an existing issue the top item is filed under. */ parent?: number; confirm: boolean; /** MOD-218: skip the Project item-add for this call only. */ noProject?: boolean }
 
 /** MOD-193: the land_plan tool. */
 export const LAND_PLAN_TOOL = {
   name: 'land_plan',
   description:
-    'Lands a settled plan on GitHub as a sub-issue tree: one feature (or epic) and its tasks, each task under the feature, each added to the configured Project; the top item may be filed under an existing issue with parent, and tasks may be left out. Plan in chat first. Call without confirm to show the tree: every body is written under .delegation/landed/ and nothing is filed. Show that tree to the person, and call again with confirm: true only after the person says yes in their own words. Every task path must sit inside the feature paths when the feature has paths, or the whole call is refused before anything is written; paths may be empty on a feature, epic or story (it then shows scope: none) but a task, bug or spike needs at least one.',
+    'Lands a settled plan on GitHub as a sub-issue tree: one feature (or epic) and its tasks, each task under the feature, each added to the configured Project; the top item may be filed under an existing issue with parent, and tasks may be left out. An item may carry close, evidence it was done before filing: it is filed, then closed with that evidence (a backfill); a parent is closed only when all its tasks are. Plan in chat first. Call without confirm to show the tree: every body is written under .delegation/landed/ and nothing is filed. Show that tree to the person, and call again with confirm: true only after the person says yes in their own words. Every task path must sit inside the feature paths when the feature has paths, or the whole call is refused before anything is written; paths may be empty on a feature, epic or story (it then shows scope: none) but a task, bug or spike needs at least one.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -221,6 +238,7 @@ export const LAND_PLAN_TOOL = {
           type: { type: 'string', enum: ['feature', 'epic'], description: 'Default feature.' },
           paths: { type: 'array', items: { type: 'string' }, description: 'The repo paths the whole feature may touch; may be empty or left out (scope: none), then its tasks are not constrained.' },
           note: { type: 'string', description: 'Optional: text for the top of the body.' },
+          close: { type: 'string', description: 'Optional: evidence the feature was already done before filing. It is closed only once every task in the plan is closed; otherwise it stays open and the result says so.' },
         },
         required: ['title'],
         additionalProperties: false,
@@ -236,6 +254,7 @@ export const LAND_PLAN_TOOL = {
             type: { type: 'string', enum: ['story', 'task', 'bug', 'spike'], description: 'Default task.' },
             paths: { type: 'array', items: { type: 'string' }, description: "The repo paths this task touches; each must sit inside the feature's paths when it has paths. At least one unless the type is story." },
             note: { type: 'string', description: 'Optional: text for the top of the body.' },
+            close: { type: 'string', description: 'Optional: evidence the task was already done before filing; it is filed, then closed with `done before filing: <evidence>`.' },
           },
           required: ['title'],
           additionalProperties: false,
@@ -263,7 +282,12 @@ const planItem = (raw: unknown, what: string, types: readonly LandType[], dflt: 
   const paths = Array.isArray(o.paths) ? o.paths.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(p => p !== '') : []
   if (paths.length === 0 && !NO_PATH_OK.includes(type)) return `land_plan: ${what} "${title}" needs at least one path`
   const note = typeof o.note === 'string' ? o.note.trim() : ''
-  return { title, type, paths, ...(note !== '' ? { note } : {}) }
+  let close = ''
+  if (o.close !== undefined && o.close !== null) {
+    close = typeof o.close === 'string' ? o.close.replace(/\s+/g, ' ').trim() : ''
+    if (close === '') return `land_plan: ${what} "${title}" has a close that is not evidence text`
+  }
+  return { title, type, paths, ...(note !== '' ? { note } : {}), ...(close !== '' ? { close } : {}) }
 }
 
 /** The land_plan input as a normalised plan, or a one-line error. A task path outside the feature's paths is an error. */
