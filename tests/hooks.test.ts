@@ -4352,7 +4352,7 @@ describe('MOD-20: a gate that ran beside another worker does not false-refute', 
     })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
-    expect(held).toMatchObject({ holder: 'T-4', since: NOW, until: NOW + 9 * 60 * 1000 })
+    expect(held).toMatchObject({ holder: 'T-4', since: NOW, until: NOW + 30 * 60 * 1000 }) // MOD-229: the default ceiling, 30 minutes
     expect(w.store.has(LOCK)).toBe(false)
     expect(delivered(w)).not.toContain('waited')
     expect(delivered(w)).toContain('verdict=consistent')

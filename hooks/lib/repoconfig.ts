@@ -33,7 +33,9 @@ export const DEFAULT_AGENT_TYPES: Readonly<Record<string, string>> = {}
 /** Tier → alias; an alias, never an id, so the engine's release moves the ladder. */
 export const DEFAULT_TIER_MAP: Readonly<Record<Tier, Alias>> = { economy: 'haiku', standard: 'sonnet', frontier: 'opus', premium: 'fable' }
 
-export const DEFAULT_GATE_TIMEOUT_MINUTES = 9
+/** MOD-229 (#323): the mod's own ceiling on one gate run (a spawned child, so the host's 10-minute run cap does not apply). */
+export const DEFAULT_GATE_TIMEOUT_MINUTES = 30
+export const MAX_GATE_TIMEOUT_MINUTES = 120
 export const DEFAULT_MAX_WORKERS = 2
 
 /** GH-16: globs always subtracted from a repo=here delta (the brain's own scratch). */
@@ -384,8 +386,8 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         else if (!(v === 0 && !strict)) errors.push(`maxWorkers${where}: needs a whole number of 1 or more (ignored)`)
         break
       case 'gateTimeoutMinutes':
-        if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10) config.gateTimeoutMinutes = v
-        else if (!(v === 0 && !strict)) errors.push(`gateTimeoutMinutes${where}: needs a whole number of minutes, 1 to 10, since the host caps one gate run at 10 minutes (ignored; 9 is used)`)
+        if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_GATE_TIMEOUT_MINUTES) config.gateTimeoutMinutes = v
+        else if (!(v === 0 && !strict)) errors.push(`gateTimeoutMinutes${where}: needs a whole number of minutes, 1 to ${MAX_GATE_TIMEOUT_MINUTES} (ignored; ${DEFAULT_GATE_TIMEOUT_MINUTES} is used)`)
         break
       case 'maxWorkersByTier': {
         const m = maxWorkersByTierOf(v, errors, where)
