@@ -1160,6 +1160,27 @@ function effectiveProject(): { owner: string; number: number } | undefined {
   return repoProject === 'none' ? undefined : parseProject(repoProject ?? cfg.project)
 }
 
+/** MOD-241: the stat signature of the config files the last loadRepoConfig read; undefined when none is held. */
+let repoSig: string | undefined
+/** Each path's `mtime:size` (or `missing` on ENOENT; '' path is skipped) joined; undefined when any stat fails otherwise. */
+async function configSignature($: Host, paths: string[]): Promise<string | undefined> {
+  const parts: string[] = [paths[0] ?? '']
+  for (const path of paths) {
+    if (path === '') {
+      parts.push('-')
+      continue
+    }
+    try {
+      const st = await $.fs.stat(path)
+      parts.push(`${st.mtimeMs}:${st.size}`)
+    } catch (err) {
+      if (!isEnoent(err)) return undefined
+      parts.push('missing')
+    }
+  }
+  return parts.join('|')
+}
+
 async function loadRepoConfig($: Host, force = false): Promise<void> {
   let root: string
   try {
@@ -1167,8 +1188,14 @@ async function loadRepoConfig($: Host, force = false): Promise<void> {
   } catch {
     return
   }
-  const text = (await readText($, `${root}/${REPO_CONFIG_FILE}`)) ?? null
   const home = await homeDir($)
+  // MOD-241: the three files' stats (mtime and size, or 'missing') are compared with the last load's; all unchanged
+  // returns with no fs.read. Accepted: an edit of identical size within the host's mtime resolution is missed.
+  // Any stat error other than ENOENT leaves no signature, so the files are read, as before.
+  const sig = await configSignature($, [`${root}/${REPO_CONFIG_FILE}`, home ? userOptionsPath(home) : '', `${$.plugin.root}/${PLUGIN_MANIFEST}`])
+  if (!force && sig !== undefined && sig === repoSig) return
+  repoSig = undefined
+  const text = (await readText($, `${root}/${REPO_CONFIG_FILE}`)) ?? null
   const uText = home ? ((await readText($, userOptionsPath(home))) ?? null) : null
   // MOD-18: the manifest is read beside the repo file, so a moved issueRepo default (after an update) is seen
   let manifest: string | null = null
@@ -1177,7 +1204,11 @@ async function loadRepoConfig($: Host, force = false): Promise<void> {
   } catch {
     manifest = null
   }
-  if (!force && text === repoText && manifest === modManifest && uText === userText) return
+  if (!force && text === repoText && manifest === modManifest && uText === userText) {
+    repoSig = sig
+    return
+  }
+  repoSig = sig
   const repoChanged = text !== repoText || manifest !== modManifest
   const userChanged = uText !== userText
   repoText = text
@@ -7346,6 +7377,7 @@ async function runInit($: Host, pathIn?: string): Promise<string> {
   }
   if (!target.other) {
     repoText = undefined
+    repoSig = undefined
     await loadRepoConfig($)
   }
   return [initText(root, plan, failed, !target.other), ...(await cardsLocalNote($, root, existing))].join('\n')
@@ -7458,6 +7490,7 @@ async function runSetup($: Host, viaTool = false, pathIn?: string): Promise<stri
   }
   if (!target.other) {
     repoText = undefined
+    repoSig = undefined
     await loadRepoConfig($)
   }
   const wroteConfig = plan.some(s => s.path === configPath && s.action === 'write' && !failed[s.path])
@@ -8582,6 +8615,7 @@ const INIT_TOOL = {
 export const register: Register = (on, opts) => {
   options = opts
   repoText = undefined
+  repoSig = undefined
   modManifest = undefined
   repoLayer = {}
   userText = undefined

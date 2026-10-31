@@ -1,4 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
+import { world, spawnInput, sessionStart, ROOT, HOME } from './harness'
 import { DEFAULT_DOMAINS, DEFAULT_IGNORE, isGitRef, manifestRepo, mergeConfig, parseRepoConfig, resolveIssueRepo, settingsLayer, REPO_CONFIG_FILE } from '../hooks/lib/repoconfig'
 
 describe('5B: the repo file .chassis-delegation.json', () => {
@@ -213,5 +214,23 @@ describe('MOD-122: gateMap._empty', () => {
     const { config, errors } = parseRepoConfig(JSON.stringify({ gateMap: { test: 'npm test', _empty: 'nope' } }))
     expect(config.gateMap).toEqual({ test: 'npm test' })
     expect(errors.join('\n')).toContain('gateMap._empty')
+  })
+})
+
+describe('MOD-241: loadRepoConfig reads its three files only when one changed', () => {
+  const FILE = `${ROOT}/.chassis-delegation.json`
+  const watched = (reads: string[]) => reads.filter(r => r === FILE || r.endsWith('/.claude-plugin/plugin.json') || r.startsWith(HOME))
+  test('a second load with unchanged files makes 0 fs.read calls; an edit between calls is picked up', async ($, on) => {
+    const w = world(on, { files: { [FILE]: '{"tierMap":{"standard":"opus"}}' } })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-8 subtask=main tier=standard]]\nDo it.' }))
+    expect(w.spawns[0]?.model).toBe('opus')
+    w.reads.length = 0
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-9 subtask=main tier=standard]]\nDo it.' }))
+    expect(watched(w.reads)).toEqual([])
+    expect(w.spawns[1]?.model).toBe('opus')
+    w.files.set(FILE, '{"tierMap":{"standard":"haiku"}}')
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-10 subtask=main tier=standard]]\nDo it.' }))
+    expect(w.spawns[2]?.model).toBe('haiku')
   })
 })
