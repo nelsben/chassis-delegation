@@ -373,6 +373,25 @@ describe('MOD-204: land hardening', () => {
     }
   })
 
+  test('MOD-259: the overlap list of a landed plan leaves out a parked card and a merged card, and keeps an open one', async ($, on) => {
+    const CARD_FILES = {
+      [`${CARDS}/MOD-1-a.md`]: card('MOD-1', 'queued', 'src/export/**'),
+      [`${CARDS}/MOD-4-d.md`]: card('MOD-4', 'parked', 'src/export/**'),
+      [`${CARDS}/MOD-5-e.md`]: card('MOD-5', 'merged', 'src/export/**'),
+    }
+    const w = world(on, { files: { ...files(), ...CARD_FILES, ...gitCfg('https://github.com/o/r.git') }, dirs: { [CARDS]: ['MOD-1-a.md', 'MOD-4-d.md', 'MOD-5-e.md'] } })
+    await $.session.start(sessionStart)
+    await planTool($, { feature: { title: 'Export rework', paths: ['src/export/**'] }, tasks: [{ title: 'Fix header', paths: ['src/export/a.ts'] }] })
+    const bodies = [...w.files.entries()].filter(([k]) => k.startsWith(LANDED) && k.endsWith('.md')).map(([, v]) => v)
+    expect(bodies.length).toBe(2)
+    for (const b of bodies) {
+      expect(b).toContain('## Landed from')
+      expect(b).toContain('- MOD-1 Card MOD-1')
+      expect(b.includes('MOD-4')).toBe(false)
+      expect(b.includes('MOD-5')).toBe(false)
+    }
+  })
+
   test('a retry after a partial failure reuses the filed items even when the open cards changed', async ($, on) => {
     let creates = 0
     let n = 49
