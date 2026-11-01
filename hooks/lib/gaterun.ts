@@ -14,6 +14,9 @@ const charBytes = (cp: number): number => (cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp <
 
 /** `text` cut to at most `max` UTF-8 bytes, never inside a character, and the bytes it kept. */
 export function cutToBytes(text: string, max: number): { text: string; bytes: number } {
+  // MOD-248: measured once; text already under the limit is returned as it came, with no walk
+  const total = new TextEncoder().encode(text).length
+  if (total <= max) return { text, bytes: total }
   let bytes = 0
   let end = 0
   for (const ch of text) {

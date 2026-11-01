@@ -4,6 +4,7 @@ import { world, spawnInput, turnInput, usage, agentResult, sessionStart, command
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER as PLAIN_HEADER } from './fixtures/sample-card'
 import { MOD_VERSION } from '../hooks/lib/version'
 import { DEFAULT_DEBRIEF_COOLDOWN_HOURS } from '../hooks/lib/cleanstop'
+import { MAP_CAPS, addBounded, setBounded } from '../hooks/lib/cut'
 // GH-106: /dispatch writes the tier's ceiling (frontier: $15) into the header
 const FIXTURE_HEADER = PLAIN_HEADER.replace(' budget=', ' spend=25 budget=')
 
@@ -6352,5 +6353,28 @@ describe('MOD-171: merge lists the amends the brief carried', () => {
     await $.session.start(sessionStart)
     const out = String((await $.command.run(mergeIn(`${ID} --finish`))).text)
     expect(out).not.toContain('amend:')
+  })
+})
+
+// MOD-248: the module maps that grew all session are bounded; the oldest-inserted entry goes first
+describe('MOD-248: bounded module maps', () => {
+  test('after 10x the cap of distinct ids each map holds at most its cap, newest kept', () => {
+    expect(MAP_CAPS).toEqual({ handedBackPosted: 200, taskRepos: 200, offered: 200, glyphLogged: 500, handbacks: 200, gateTails: 200 })
+    for (const name of ['handedBackPosted', 'offered', 'glyphLogged'] as const) {
+      const cap = MAP_CAPS[name]
+      const s = new Set<string>()
+      for (let i = 0; i < cap * 10; i++) addBounded(s, `k${i}`, cap)
+      expect(s.size).toBeLessThanOrEqual(cap)
+      expect(s.has(`k${cap * 10 - 1}`)).toBe(true)
+      expect(s.has('k0')).toBe(false)
+    }
+    for (const name of ['taskRepos', 'handbacks', 'gateTails'] as const) {
+      const cap = MAP_CAPS[name]
+      const m = new Map<string, number>()
+      for (let i = 0; i < cap * 10; i++) setBounded(m, `k${i}`, i, cap)
+      expect(m.size).toBeLessThanOrEqual(cap)
+      expect(m.get(`k${cap * 10 - 1}`)).toBe(cap * 10 - 1)
+      expect(m.has('k0')).toBe(false)
+    }
   })
 })
