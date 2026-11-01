@@ -27,6 +27,16 @@ export const MAX_WAIT_SECONDS = 900
 /** One wait step, a `sleep` process (MOD-72): a `$.clock.sleep` would count against the hook's 10-second budget (HookBudget.ms); a process wait does not. */
 export const POLL_MS = 5000
 
+/**
+ * MOD-246: the step of a wait that has run `elapsedMs` so far: 5 s for the first 30 s, 15 s until 2 minutes, then 30 s.
+ * A wait ends within one step of the thing it waits for, and spawns about a quarter of the `sleep` processes of a fixed 5 s step.
+ */
+export function pollStep(elapsedMs: number): number {
+  if (elapsedMs < 30_000) return POLL_MS
+  if (elapsedMs < 120_000) return 15_000
+  return 30_000
+}
+
 export type VerdictInput = { task: string; subtask: string; waitSeconds: number } | { error: string }
 
 /** The tool's input: a task id, an optional subtask, a wait of 1 to 900 seconds (default 600). */
