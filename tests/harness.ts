@@ -22,6 +22,8 @@ export type World = {
   storeSets: Record<string, number>
   /** MOD-239: `$.session.usage` calls. */
   usageCalls: number
+  /** MOD-249: `$.agent.list` calls (one per liveState). */
+  listCalls: number
   store: Map<string, unknown>
   files: Map<string, string>
   /** MOD-28: every path `$.fs.read` was asked for, in order (a test reads which files the mod read, and how often). */
@@ -190,6 +192,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     storeGets: 0,
     storeSets: {},
     usageCalls: 0,
+    listCalls: 0,
     transcripts: new Map(Object.entries(options.transcripts ?? {})),
     mainTranscript: options.mainTranscript ?? [],
     aborted: [],
@@ -302,7 +305,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     return { value: { code: answer.exitCode, signal: null } }
   })
   hook('model.classify', () => ({ value: options.classify }))
-  hook('agent.list', () => ({ value: w.agents.map(a => ({ ...a })) }))
+  hook('agent.list', () => (w.listCalls += 1, { value: w.agents.map(a => ({ ...a })) }))
   // the main conversation is empty here; an agent's is its transcript, else a deny
   hook('session.messages', (e: { agentId?: string }) => {
     if (e.agentId === undefined) return { value: JSON.parse(JSON.stringify(w.mainTranscript)) }
