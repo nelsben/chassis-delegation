@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Session start measured step by step (MOD-266); no step dominates, so none is changed.** On a typical test `world()` the `session.start` hook body takes about 12 ms the first time and about 6 ms after: `refreshBrainKey` 0.5, the 2 command and 11 tool registrations 0.2 to 0.5 each, `loadedTemplates` 0.7, `migrateTaskKeys` 1.1, `pruneStore` 2.2 (the prune is skipped by its own estimate), `loadRepoConfig` 1.9, `sweepMergeGates` (its synchronous part) 0.3, the rest under 1 ms; nothing is over 10 ms. The cost of a test's start is the load of the hook module graph (`hooks/register.ts` and `hooks/lib/**`, about 1.2 MB) that the engine does before the first event: about 250 ms for the first test of a file and about 130 to 140 ms for each later one, in proportion to the code loaded, not to any one module. No behaviour changed; the moves the card allows (early exit, cache, defer) would save under 3 ms of the hook and are not made.
+
 ### Fixed
 
 - **A reviewer hand-back with no spawn record, caught at a turn's end, shows its review line in the conversation (MOD-265).** MOD-224's `orphanReview` already recorded the review on the `turn.complete` path but dropped its line, so the brain saw it only by calling the verdict tool. The line is now appended to the conversation, wakes the brain once, and is stored as the attempt's posted row. A review is shown once: a review already recorded for the same reviewer returns nothing on the second path. The Agent hand-back path is unchanged. Tests in `tests/review.test.ts`.
