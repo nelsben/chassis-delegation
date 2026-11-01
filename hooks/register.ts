@@ -12,6 +12,7 @@
 import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUsage } from 'claude-code'
 
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
+import { addBounded, setBounded, MAP_CAPS } from './lib/cut'
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { addDrive, callKind, driveCall, driveLines, driveOutput, driveSpeaks, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
 import { extractPause, pauseCapLine, pauseRow, PAUSE_CAP, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
@@ -793,17 +794,19 @@ let cfg: Config = readConfig({}, {}).cfg
 const glyphOf = (alias: string | undefined): string => (cfg.glyphs === 'off' || !alias ? '' : modelGlyph(alias, cfg.glyphs))
 /** MOD-78: a description with the model's glyph in front, once; untouched with modelGlyphs off. */
 const glyphDescription = (description: string, alias: string | undefined): string => (cfg.glyphs === 'off' ? description : withGlyph(description, glyphOf(alias), cfg.glyphs))
+/** MOD-248: bounded at MAP_CAPS.glyphLogged (500), oldest-inserted dropped. */
 const glyphLogged = new Set<string>()
 /** MOD-78: a malformed modelGlyphs entry is named in the debug log, once. */
 function noteGlyphIssues($: Host): void {
   for (const line of glyphIssues(cfg.glyphsText)) {
     if (glyphLogged.has(line)) continue
-    glyphLogged.add(line)
+    addBounded(glyphLogged, line, MAP_CAPS.glyphLogged)
     debug($, line)
   }
 }
 const waiting = new Set<string>() // Agent tool calls still awaiting their result
 const resumeCalls = new Map<string, string>() // MOD-97 (#155): an ad hoc Agent call that resumed a briefed worker -> that worker's spawn key
+/** MOD-248: bounded at MAP_CAPS.handbacks (200), oldest-inserted dropped. */
 const handbacks = new Map<string, string>() // agentId → a SubagentHandback message a tool.call hook saw (the transcript is the live source: GH-2)
 const verifying = new Map<string, SpawnRecord>() // MOD-74: the spawn behind each attempt key in `finalizing`, for the status section
 const finalizing = new Map<string, Promise<Rendered>>() // attempt key → its verify, so a second fire waits on the first
@@ -816,6 +819,7 @@ const posted = new Set<string>() // attempt keys whose verdict row went to the c
  */
 const remembered = new Map<string, SpawnRecord>()
 const REMEMBER_CAP = 500
+/** MOD-248: bounded at MAP_CAPS.offered (200), oldest-inserted dropped. */
 const offered = new Set<string>()
 let seedingTypes = false
 /** GH-106: the turn id a subagent's `turn.start` carried (the engine gives none today), by agentId. */
@@ -893,7 +897,8 @@ let sessionRoot = ''
  * gh close and comment shapes for it; what keeps a worker from those shapes is the worker gh guard, not the allowlist.
  */
 let landRepo = ''
-/** MOD-44: the tasks that work in another local repo, by id: the checkout, its own domains and the gate commands its tasks may run. Filled when a task is dispatched or judged. */
+/** MOD-248: bounded at MAP_CAPS.taskRepos (200), oldest-inserted dropped.
+ * MOD-44: the tasks that work in another local repo, by id: the checkout, its own domains and the gate commands its tasks may run. Filled when a task is dispatched or judged. */
 const taskRepos = new Map<string, { path: string; domains: string[]; gateTemplates: string[][] }>()
 /** MOD-75: the task `/delegation merge` is working on, set only while that command runs (cleared in its finally); the allowlist's merge shapes pass for it alone. */
 let mergeCtx: MergeCtx | undefined
@@ -1186,7 +1191,7 @@ async function run($: Host, argv: string[], init?: { cwd?: string; env?: Record<
 /** MOD-229: where each verifier's gate is (waiting for the engine-gate lock, or running), by task label, for the row and the verdict tool. */
 const gateProgress = new Map<string, GateProgress>()
 
-/** MOD-253: the last lines the verifier's gates printed, by task label, for the review brief. */
+/** MOD-253: the last lines the verifier's gates printed, by task label, for the review brief. MOD-248: bounded at MAP_CAPS.gateTails (200), oldest-inserted dropped. */
 const gateTails = new Map<string, string[]>()
 
 /**
@@ -1429,7 +1434,7 @@ const oneOffGates = (t: Target, ids: readonly string[]): string[][] =>
 /** Lets the allowlist see this task's repo: `git -C <path> worktree add` for the task, and the repo's gate commands. */
 function registerTaskRepo(task: string, t: Target, gateIds: readonly string[]): void {
   const templates = [...gateTemplatesOf(t.gateMap), ...oneOffGates(t, gateIds)]
-  taskRepos.set(task, { path: t.path, domains: t.domains, gateTemplates: templates })
+  setBounded(taskRepos, task, { path: t.path, domains: t.domains, gateTemplates: templates }, MAP_CAPS.taskRepos)
 }
 
 /**
@@ -5823,7 +5828,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
           if (r.ok) {
             const key = taskLabel(spawn.task, spawn.subtask)
             const tail = `${r.stdout}\n${r.stderr}`.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '').slice(-GATE_TAIL_LINES)
-            gateTails.set(key, [...(gateTails.get(key) ?? []), `  [${init.id}] exit ${r.exitCode}`, ...tail.map(l => `  | ${l.trim()}`)])
+            setBounded(gateTails, key, [...(gateTails.get(key) ?? []), `  [${init.id}] exit ${r.exitCode}`, ...tail.map(l => `  | ${l.trim()}`)], MAP_CAPS.gateTails)
           }
           return r
         },
@@ -6837,13 +6842,14 @@ async function attemptUsd($: Host, spawn: SpawnRecord): Promise<number | undefin
   return now0 !== undefined && spawn.usdAtStart !== undefined ? round4(now0 - spawn.usdAtStart) : undefined
 }
 
+/** MOD-248: bounded at MAP_CAPS.handedBackPosted (200), oldest-inserted dropped. */
 const handedBackPosted = new Set<string>()
 /** MOD-74: one row when a briefed worker hands back, before its verification starts; silent posts none. MOD-114: `text` is the hand-back, read for a cards artefact. */
 async function postHandedBack($: Host, spawn: SpawnRecord, text = '') {
   if (spawn.adhoc || spawn.review || !postsRows(cfg.verbosity)) return
   const key = await attemptKey($, spawn)
   if (handedBackPosted.has(key)) return
-  handedBackPosted.add(key)
+  addBounded(handedBackPosted, key, MAP_CAPS.handedBackPosted)
   const t = await now($)
   const usd = await attemptUsd($, spawn)
   const block = extractReport(text)
@@ -9187,7 +9193,7 @@ export const register: Register = (on, opts) => {
     }
     if (e.agentId && String(e.tool) === 'SubagentHandback') {
       const message = (e as unknown as { message?: unknown }).message
-      if (typeof message === 'string') handbacks.set(e.agentId, message)
+      if (typeof message === 'string') setBounded(handbacks, e.agentId, message, MAP_CAPS.handbacks)
     }
     const out = await next(e)
     // MOD-217: what a recorded worker writes is logged against its spawn
@@ -9664,7 +9670,7 @@ export const register: Register = (on, opts) => {
   on('agent.offer', async ($, e, next) => {
     const out = await next(e)
     if (!offered.has(e.agent)) {
-      offered.add(e.agent)
+      addBounded(offered, e.agent, MAP_CAPS.offered)
       await noteAgentTypes($, [e.agent])
     }
     return out

@@ -935,7 +935,8 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         if (r.exitCode !== 0) {
           code = r.exitCode
           tail = outputTail(r.stdout, r.stderr)
-          fullOut = `${r.stdout}${r.stdout && r.stderr && !r.stdout.endsWith('\n') ? '\n' : ''}${r.stderr}`
+          // MOD-248: the whole output is kept only when it is to be written (outDir set); the tail is what the verdict needs
+          if (input.outDir) fullOut = `${r.stdout}${r.stdout && r.stderr && !r.stdout.endsWith('\n') ? '\n' : ''}${r.stderr}`
           break
         }
         passedOf[idOf(run)] = (passedOf[idOf(run)] ?? 0) + 1
