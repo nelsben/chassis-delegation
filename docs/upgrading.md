@@ -10,6 +10,13 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.41 to 0.9.42
+
+Nothing needs doing to upgrade.
+Changed: a repo=here or outside-root worker's script-written files count as its own; `/delegation config` notes a `project` the repo file overrides.
+Fixed: the band no longer shows a review as owed after a review accepted the attempt.
+Detail: [CHANGELOG 0.9.42](../CHANGELOG.md).
+
 ### From 0.9.40 to 0.9.41
 
 Nothing needs doing to upgrade. The first session start after it slims the stored spawn records (posted verdict text older than a day is dropped) and cuts old `merge-gates.txt` files to their tails, once.
