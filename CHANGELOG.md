@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.9.43 — 2026-11-01
 
 ### Fixed
 
 - **A sibling's write during a repo=here worker's Bash command is no longer charged to that worker (MOD-261).** MOD-256's before/after delta now runs through `chargeDelta` (`hooks/lib/norepo.ts`): a recorded worker's snapshotted command is a window in one sequence shared with every recorded worker's logged writes. A delta path a sibling logged (Edit, Write, NotebookEdit or its own Bash) inside that window is the sibling's only; a path changed while a sibling's own snapshotted command on the same checkout or outside root overlapped is charged to neither and listed in the verdict as `changed while <A> and <B> both ran: <paths>`, not as a scope refutation. With no sibling running, behaviour is unchanged; worktree cards and read-only Bash still take no snapshot. Tests in `tests/norepo.test.ts`.
+
+### Changed
+
+- **The engine suite runs in about 53 s instead of about 79 s (MOD-263).** `tests/hooks.test.ts` held 74 s of the suite's 79 s wall time; it is split along its top-level `describe` blocks into `tests/hooks.test.ts`, `hooks2`, `hooks3` and `hooks4`, each about 19 s, every test moved unchanged (393 tests, 1653 `expect(` calls before and after). A test's remaining fixed cost is `session.start`, about 350 ms. Tests only; no behaviour changed.
 
 ## 0.9.42 — 2026-11-01
 
