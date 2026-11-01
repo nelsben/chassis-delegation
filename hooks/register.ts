@@ -965,6 +965,7 @@ async function storeSet($: Host, key: string, value: unknown): Promise<void> {
   // MOD-94: a remembered worker's record follows every write of it, whether or not the store takes the write
   if (key.startsWith(K.spawn(''))) rememberWrite(value)
   agentKeyChanged(key)
+  snapKeyChanged(key)
   try {
     await $.store.set(key, value)
     sizeEst.set(key, value)
@@ -1484,6 +1485,7 @@ function landSeen($: Host, tool: 'land' | 'land_plan' | 'card' | 'dispatch' | 'v
 
 // ---- GH-112: the live dashboard (the band above the prompt and the pane) -----------
 function redraw($: Host) {
+  snapChanged()
   try {
     $.ui.invalidate('ui.render')
   } catch {
@@ -2165,6 +2167,7 @@ async function readQueue($: Host): Promise<QueuedSpawn[]> {
 }
 async function writeQueue($: Host, queue: QueuedSpawn[]): Promise<void> {
   armSample($)
+  snapChanged()
   try {
     await $.state.set(QUEUE, queue)
   } catch (err) {
@@ -2812,7 +2815,74 @@ async function ledgerAt($: Host, root: string): Promise<{ text: string; rows: Le
 }
 
 // ---- part 2E: the delegation state -------------------------------------------------
-async function snapshot($: Host): Promise<StateSnapshot> {
+/**
+ * MOD-238: prompt.compose asks for the snapshot once per model step of the brain. Its result is kept 3 s and handed out as a
+ * structuredClone (statusReport mutates what it gets); a write of a task, spawn, queue, recent, debrief, postAsk, evals or
+ * evalInflight key, a redraw, or a change in the agents' statuses drops it.
+ */
+const SNAP_TTL_MS = 3000
+let snapCache: { at: number; sig: string; snap: StateSnapshot } | undefined
+let snapGen = 0
+function snapChanged(): void {
+  snapCache = undefined
+  snapGen += 1
+}
+function snapKeyChanged(key: string): void {
+  if (key.startsWith(K.debrief('')) || key.startsWith(K.notes(''))) {
+    proposalsMemo.clear()
+    harnessMemo.clear()
+  }
+  if (
+    key.startsWith(K.tasks('')) || key.startsWith(K.spawn('')) || key.startsWith(K.recent('')) || key.startsWith(K.debrief('')) || key.startsWith(K.postAsk(''))
+    || key === K.evals || key === K.evalInflight
+  ) snapChanged()
+}
+/** MOD-238: the owed rows' last retire results, from the 15-minute timer; compose reads them and spawns no git. */
+let retireSeen = new Map<string, { retired: boolean; checked: boolean }>()
+let retireTimer: { cancel: () => void } | undefined
+const RETIRE_EVERY_MS = 15 * MIN_MS
+function armRetire($: Host): void {
+  if (retireTimer) return
+  try {
+    retireTimer = $.clock.after(RETIRE_EVERY_MS, () => {
+      retireTimer = undefined
+      void retireSweep($)
+    })
+  } catch (err) {
+    debug($, `retire timer not armed: ${String(err)}`)
+  }
+}
+async function retireSweep($: Host): Promise<void> {
+  try {
+    const sid = await sessionIdOf($)
+    if (!sid) return
+    const live = await liveState($)
+    const queue = await readQueue($)
+    const recent = readRecent($, (await storeGet<RecentVerdict[]>($, K.recent(sid))) ?? [])
+    const busy = new Set([...live.workers.map(w => w.label), ...live.pending.map(p => p.task), ...queue.map(q => queuedLabel(q))])
+    const t = await now($)
+    const seen = new Map<string, { retired: boolean; checked: boolean }>()
+    for (const r of owedRowsFrom(recent, busy)) seen.set(r.task, await retireCheck($, r.task, t))
+    retireSeen = seen
+    snapChanged()
+  } catch (err) {
+    debug($, `retire sweep failed: ${String(err)}`)
+  }
+}
+/** MOD-238: the snapshot for prompt.compose: cached 3 s, no inline retire check. */
+async function composeSnapshot($: Host): Promise<StateSnapshot> {
+  const t = await now($)
+  const sig = (await agentList($)).map(a => `${a.id}:${a.status}`).join(',')
+  const c = snapCache
+  if (c && c.sig === sig && t - c.at >= 0 && t - c.at < SNAP_TTL_MS) return structuredClone(c.snap)
+  const gen = snapGen
+  const snap = await snapshot($, { retire: false })
+  if (gen === snapGen) snapCache = { at: t, sig, snap }
+  return structuredClone(snap)
+}
+
+async function snapshot($: Host, opts: { retire?: boolean } = {}): Promise<StateSnapshot> {
+  const inline = opts.retire !== false
   const s = emptySnapshot()
   const sid = await sessionIdOf($)
   const live = await liveState($)
@@ -2854,7 +2924,7 @@ async function snapshot($: Host): Promise<StateSnapshot> {
   const rows: { task: string; text: string; at: number; checked?: boolean }[] = []
   const retired = new Set<string>()
   for (const r of owedRowsFrom(recent, busy)) {
-    const st = await retireCheck($, r.task, t)
+    const st = inline ? await retireCheck($, r.task, t) : (retireSeen.get(r.task) ?? { retired: false, checked: false })
     if (st.retired) retired.add(r.task)
     else rows.push({ task: r.task, text: r.owed as string, at: r.at, ...(st.checked ? { checked: true } : {}) })
   }
@@ -2869,7 +2939,7 @@ async function snapshot($: Host): Promise<StateSnapshot> {
     s.debrief = { at: debrief.lastAt, ...(debrief.agentId ? { agentId: debrief.agentId } : {}), ...(debrief.path ? { path: debrief.path } : {}), ...(debrief.finishedAt !== undefined ? { finishedAt: debrief.finishedAt } : {}) }
   }
   // MOD-33: the latest debrief's proposals with no record yet
-  const latest = await latestProposals($)
+  const latest = await latestProposals($, !inline)
   if (latest) {
     const open = openProposals(latest.proposals, latest.statuses)
     if (open > 0) s.proposalsOpen = open
@@ -3951,10 +4021,33 @@ async function runLesson($: Host, rest: string): Promise<string> {
 type LatestProposals = { debrief: string; findings: string; proposals: ReturnType<typeof parseProposals>; statuses: ProposalStatus[]; doc: Record<string, unknown> | undefined }
 
 /** The debrief files in the repo folder and the proposals of one: its findings file (beside it) holds the statuses. */
-async function proposalsAt($: Host, debrief: string): Promise<LatestProposals | undefined> {
+const proposalsMemo = new Map<string, { dKey: string; fKey: string; value: LatestProposals }>()
+/** MOD-238: the harness folder scan, kept 10 minutes per folder and session. */
+const harnessMemo = new Map<string, { at: number; mine: string[] }>()
+const HARNESS_SCAN_MS = 10 * MIN_MS
+/** `mtimeMs:size` of a file from one stat; undefined when it cannot be statted. */
+async function statKey($: Host, path: string): Promise<string | undefined> {
+  try {
+    const st = await $.fs.stat(path)
+    return `${st.mtimeMs}:${st.size}`
+  } catch {
+    return undefined
+  }
+}
+async function proposalsAt($: Host, debrief: string, memo = false): Promise<LatestProposals | undefined> {
+  const findings = findingsPathOf(debrief)
+  let dKey: string | undefined
+  let fKey = 'missing'
+  if (memo) {
+    // MOD-238: an unchanged debrief and findings file (same mtime and size) are not read again
+    dKey = await statKey($, debrief)
+    if (dKey === undefined) return undefined
+    fKey = (await statKey($, findings)) ?? 'missing'
+    const hit = proposalsMemo.get(debrief)
+    if (hit && hit.dKey === dKey && hit.fKey === fKey) return structuredClone(hit.value)
+  }
   const text = await readText($, debrief)
   if (text === undefined) return undefined
-  const findings = findingsPathOf(debrief)
   let doc: Record<string, unknown> | undefined
   try {
     const j: unknown = JSON.parse((await readText($, findings)) ?? 'null')
@@ -3962,7 +4055,9 @@ async function proposalsAt($: Host, debrief: string): Promise<LatestProposals | 
   } catch {
     doc = undefined
   }
-  return { debrief, findings, proposals: parseProposals(text), statuses: parseStatuses(doc?.proposals_status), doc }
+  const value: LatestProposals = { debrief, findings, proposals: parseProposals(text), statuses: parseStatuses(doc?.proposals_status), doc }
+  if (memo && dKey !== undefined) proposalsMemo.set(debrief, { dKey, fKey, value: structuredClone(value) })
+  return value
 }
 
 /** MOD-80: the names in a folder ending `ext`, sorted; [] when it cannot be listed. */
@@ -3975,8 +4070,13 @@ async function namesIn($: Host, folder: string, ext: string): Promise<string[]> 
 }
 
 /** MOD-80: the debrief file a name in the harness folder belongs to is this session's: its `session_id` is the session id. The folder is shared by every repo on the machine. */
-async function harnessMine($: Host, folder: string, names: readonly string[], sid: string, home: string): Promise<string[]> {
+async function harnessMine($: Host, folder: string, names: readonly string[], sid: string, home: string, scanned = false): Promise<string[]> {
   if (sid === '') return []
+  // MOD-238: compose scans the shared folder at most once per 10 minutes
+  const memoKey = `${folder}|${sid}`
+  const t = scanned ? await now($) : 0
+  const kept = scanned ? harnessMemo.get(memoKey) : undefined
+  if (kept && t - kept.at >= 0 && t - kept.at < HARNESS_SCAN_MS) return [...kept.mine]
   const mine: string[] = []
   for (const n of names.slice(-10)) {
     let debrief = `${folder}/${n.replace(/\.findings\.json$/, '.json')}`
@@ -3996,6 +4096,7 @@ async function harnessMine($: Host, folder: string, names: readonly string[], si
       // not readable: not this session's
     }
   }
+  if (scanned) harnessMemo.set(memoKey, { at: t, mine: [...mine] })
   return mine
 }
 
@@ -4004,7 +4105,8 @@ async function recordDebrief($: Host, sid: string, home: string): Promise<string
   const rec = sid ? await storeGet<DebriefRecord>($, K.debrief(sid)) : undefined
   if (!rec?.path) return undefined
   const p = expandHome(rec.path, home)
-  return (await readText($, p)) === undefined ? undefined : p
+  // MOD-238: an existence check, not a whole-file read
+  return (await exists($, p)) ? p : undefined
 }
 
 /** MOD-80: the findings file the by-hand doors read (see resolveFindings): the record's, the repo folder's newest, this session's newest in the harness folder. */
@@ -4029,13 +4131,13 @@ async function findFindings($: Host, root: string): Promise<{ path: string } | {
 }
 
 /** The latest debrief's proposals: the one this session's record names, else the newest in <root>/.delegation/debriefs, else this session's newest in the harness folder (MOD-80). */
-async function latestProposals($: Host): Promise<LatestProposals | undefined> {
-  const r = await findDebrief($)
-  return 'path' in r ? proposalsAt($, r.path) : undefined
+async function latestProposals($: Host, memo = false): Promise<LatestProposals | undefined> {
+  const r = await findDebrief($, memo)
+  return 'path' in r ? proposalsAt($, r.path, memo) : undefined
 }
 
 /** MOD-80: the debrief file `debrief apply` reads, or the folders looked in. A debrief with no findings file counts. */
-async function findDebrief($: Host): Promise<{ path: string } | { looked: string[] }> {
+async function findDebrief($: Host, memo = false): Promise<{ path: string } | { looked: string[] }> {
   const root = (await $.session.root()).replace(/\/+$/, '')
   const home = (await homeOf($)).replace(/\/+$/, '')
   const sid = await sessionIdOf($)
@@ -4047,7 +4149,7 @@ async function findDebrief($: Host): Promise<{ path: string } | { looked: string
   const repo = stemsOf(await namesIn($, repoFolder, '.json')).at(-1)
   if (repo !== undefined) return { path: `${repoFolder}/${repo}.json` }
   const hNames = (await namesIn($, harnessFolder, '.json')).filter(n => !n.endsWith('.findings.json') && !/\.post-\d+/.test(n))
-  const mine = await harnessMine($, harnessFolder, hNames, sid, home)
+  const mine = await harnessMine($, harnessFolder, hNames, sid, home, memo)
   const h = stemsOf(mine).at(-1)
   return h === undefined ? { looked: [repoFolder, harnessFolder] } : { path: `${harnessFolder}/${h}.json` }
 }
@@ -4099,6 +4201,8 @@ async function runDebriefApply($: Host, argText: string): Promise<string> {
   const doc = latest.doc ?? { debrief: latest.debrief, modVersion: MOD_VERSION, scrubbed: true, findings: [], host_findings: [] }
   try {
     await $.fs.write(latest.findings, JSON.stringify({ ...doc, proposals_status: next }, null, 2) + '\n')
+    proposalsMemo.clear()
+    snapChanged()
   } catch (err) {
     return `debrief apply: could not record it in ${latest.findings}: ${String(err).slice(0, 100)}`
   }
@@ -9308,6 +9412,7 @@ export const register: Register = (on, opts) => {
       await flushWakes($)
     }
     await noteUsage($)
+    armRetire($)
     return out
   })
 
@@ -9647,7 +9752,7 @@ export const register: Register = (on, opts) => {
     let section: ReturnType<typeof composeSection>
     try {
       const posture = cfg.delegateOnly !== 'off' && (await brainSeat($, e.model)) === 'fable' ? PREMIUM_POSTURE : []
-      section = composeSection(await snapshot($), posture, !cfg.wakeOnVerdict)
+      section = composeSection(await composeSnapshot($), posture, !cfg.wakeOnVerdict)
     } catch (err) {
       debug($, `delegation state section not built: ${String(err)}`)
       return out
