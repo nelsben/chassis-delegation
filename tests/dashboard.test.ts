@@ -234,6 +234,26 @@ describe('GH-112: the band and the pane', () => {
     const ui2 = await $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
     expect(await ui2.find({ type: 'Text', text: /ctx 40%/ })).toBeDefined()
   })
+  test('MOD-249: one tick that renders the Pane and then the band builds the live model once; a redraw rebuilds it', { options: { dashboardBand: true } }, async ($, on) => {
+    const w = world(on, { listAgents: true })
+    await spawnT7($)
+    const mountPane = () => $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'Pane', requestId: 'delegation-dash', props: PANE_PROPS })
+    const mountBand = () => $.ui.mount({ plugin: 'chassis-delegation', surface: 'terminal', component: 'AbovePrompt', props: BAND_PROPS })
+    await mountBand() // the first reads of the burst
+    await mountBand() // and whatever the spawn's own tail wrote
+    w.context = { window: 1_000_000, percent: 41 } // a new reading: one tick rebuilds
+    w.listCalls = 0
+    await mountPane()
+    await mountBand()
+    expect(w.listCalls).toBe(1)
+    expect(await (await mountBand()).find({ type: 'Text', text: /ctx 41%/ })).toBeDefined()
+    // a spawn moves the generation: the next render rebuilds, the one after reuses
+    await $.agent.spawn({ tool_use_id: 'toolu_C0000083', prompt: '[[brief v=1 task=T-9 subtask=main tier=standard]]\nDo it.', description: 'T-9', subagentType: 'general-purpose', provider: { kind: 'model' }, parentModel: 'claude-opus-5-5', background: true, fork: false } as never)
+    await mountBand()
+    w.listCalls = 0
+    await mountBand()
+    expect(w.listCalls).toBe(0)
+  })
   test('MOD-81: after a usage read moves the cost from $1.00 to $1.40 with no new sample, the band says $1.40', { options: { dashboardBand: true } }, async ($, on) => {
     const w = world(on, { listAgents: true })
     w.usd = 1

@@ -952,12 +952,17 @@ async function storeGet<T>($: Host, key: string): Promise<T | undefined> {
 const SPAWN_CACHE_MS = 5000
 const spawnCache = new Map<string, { at: number; rec: SpawnRecord | undefined }>()
 let spawnGen = 0
+/** MOD-249: the generation liveModel's result is keyed on; a task, spawn, queue or agent write, redraw() and MOD-240's cache clearing move it. */
+let modelGen = 0
+type LiveModel = Awaited<ReturnType<typeof liveModel>>
+let modelCache: { key: string; model: LiveModel } | undefined
 /** MOD-240: agentId → the generation at which liveState read the agent's spawn as closed (or found none). */
 const liveNotes = new Map<string, { gen: number; kind: 'closed' | 'none' }>()
 function agentKeyChanged(key: string): void {
   if (!key.startsWith(K.spawn('')) && !key.startsWith(K.agent(''))) return
   spawnCache.clear()
   spawnGen += 1
+  modelGen += 1
 }
 async function storeSet($: Host, key: string, value: unknown): Promise<void> {
   // a task's attempt records changed: the dashboard's copy is stale (GH-112)
@@ -1978,8 +1983,6 @@ function withGateProgress<R extends { task: string; kind: string; state: string 
 
 async function liveModel($: Host): Promise<{ view: LiveView; since: number; records: AttemptRecord[]; running: { label: string; alias: string; tier: string; at: number; repo?: string }[]; waits: ReadonlyMap<string, ResourceWait>; tierHeld: ReadonlyMap<string, Tier> }> {
   const t = await now($)
-  const live = await liveState($)
-  const queue = await readQueue($)
   let since = 0
   let usd = 0
   let ctx: number | undefined
@@ -1992,6 +1995,12 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     // unknown: the series and the records still draw
   }
   usd = latestUsage?.usd ?? 0
+  // MOD-249: the band and the pane of one redraw burst share the built model; the session's own readings are in the key, so a context or dollar move shows at once
+  const key = `${modelGen}|${since}|${ctx ?? ''}|${usd}`
+  if (modelCache?.key === key) return modelCache.model
+  const gen = modelGen
+  const live = await liveState($)
+  const queue = await readQueue($)
   let root = ''
   try {
     root = await $.session.root()
@@ -2032,7 +2041,10 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
   })
   // MOD-229: a row whose verdict is owed while its gate runs (or waits for the engine gate) says so, with the minutes
   if (gateProgress.size > 0) view.rows = view.rows.map(r => withGateProgress(r, t))
-  return { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits, tierHeld: queuePlan.tierHeld ?? new Map() }
+  const model = { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits, tierHeld: queuePlan.tierHeld ?? new Map() }
+  // a write that landed while this was building moved the generation: the result serves this caller only
+  modelCache = gen === modelGen ? { key, model } : undefined
+  return model
 }
 
 /**
@@ -2826,6 +2838,7 @@ let snapGen = 0
 function snapChanged(): void {
   snapCache = undefined
   snapGen += 1
+  modelGen += 1
 }
 function snapKeyChanged(key: string): void {
   if (key.startsWith(K.debrief('')) || key.startsWith(K.notes(''))) {
