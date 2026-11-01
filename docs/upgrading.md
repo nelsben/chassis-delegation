@@ -10,6 +10,14 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.40 to 0.9.41
+
+Nothing needs doing to upgrade. The first session start after it slims the stored spawn records (posted verdict text older than a day is dropped) and cuts old `merge-gates.txt` files to their tails, once.
+Added: the `loadThrottle` option (off by default: on a loaded machine, half the worker slots, at least 1).
+Changed: a smaller store and merge-gates.txt, merge skipping gates already green on the same tree, a worker's own engine-suite run taking the engine lock, fewer git, sleep and store calls, cached config, card, ledger and live-model reads, and a shorter brief.
+Fixed: an Agent spawn that only names a closed task's brief runs ad hoc instead of counting as an attempt.
+Detail: [CHANGELOG 0.9.41](../CHANGELOG.md).
+
 ### From 0.9.39 to 0.9.40
 
 Nothing needs doing to upgrade, except that `gateTimeoutMinutes` now defaults to 30 and takes 1 to 120: a value already set in a repo file or in /config is kept.
