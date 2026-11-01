@@ -2016,6 +2016,10 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     // no repo: no worktree rows
   }
   const records = await allRecords($)
+  // MOD-255: a task whose newest ledger row is a review saying next=accept owes nothing (the resolution merge and the verdict tool use)
+  const ledger = await ledgerText($)
+  const accepted = new Set(live.pending.map(p => p.task).filter(l => !l.includes('/') && reviewAcceptedAttempt(ledger, l) !== undefined))
+  const pendingLabels = live.pending.map(p => p.task).filter(l => !accepted.has(l))
   const brain = await readBrain($)
   const who = await ownerFields($)
   const adhoc = brain ? await adhocSpend($, since, who) : undefined
@@ -2042,13 +2046,14 @@ async function liveModel($: Host): Promise<{ view: LiveView; since: number; reco
     ...(adhoc ? { adhoc } : {}),
     usd,
     series: await readSpend($),
-    owed: live.pending.length,
+    owed: pendingLabels.length,
     labels: await liveLabels($, live.workers),
     ...(ctx !== undefined ? { ctx } : {}),
     ...(brain ? { brain } : {}),
   })
   // MOD-229: a row whose verdict is owed while its gate runs (or waits for the engine gate) says so, with the minutes
   if (gateProgress.size > 0) view.rows = view.rows.map(r => withGateProgress(r, t))
+  if (accepted.size > 0) view.rows = view.rows.map(r => (r.kind === 'owed' && [...accepted].some(l => r.task === l || r.task.startsWith(`${l} `)) ? { ...r, kind: 'verdict' as const, state: 'consistent', verdict: 'consistent' } : r))
   const model = { view, since, records, running: live.workers.map(w => ({ label: w.label, alias: w.spawn.alias, tier: w.spawn.tier, at: w.spawn.at ?? t, ...(w.spawn.repo ? { repo: w.spawn.repo } : {}) })), waits, tierHeld: queuePlan.tierHeld ?? new Map() }
   // a write that landed while this was building moved the generation: the result serves this caller only
   modelCache = gen === modelGen ? { key, model } : undefined
@@ -2799,6 +2804,7 @@ function appendLedger($: Host, row: Record<string, unknown>): Promise<unknown> {
         cur.rows.push(JSON.parse(JSON.stringify(row)) as LedgerRow)
         ledgerCache = { path, mtimeMs: after.mtimeMs, size: after.size, text, rows: cur.rows }
       } else ledgerCache = undefined
+      modelGen += 1 // MOD-255: a ledger row can change what the band owes
     },
     () => undefined,
   )
