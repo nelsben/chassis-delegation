@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A reviewer hand-back with no spawn record, caught at a turn's end, shows its review line in the conversation (MOD-265).** MOD-224's `orphanReview` already recorded the review on the `turn.complete` path but dropped its line, so the brain saw it only by calling the verdict tool. The line is now appended to the conversation, wakes the brain once, and is stored as the attempt's posted row. A review is shown once: a review already recorded for the same reviewer returns nothing on the second path. The Agent hand-back path is unchanged. Tests in `tests/review.test.ts`.
+
 ## 0.9.43 — 2026-11-01
 
 ### Fixed

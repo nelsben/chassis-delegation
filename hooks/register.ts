@@ -6740,9 +6740,10 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
  * spawn record joins the hand-back to its review). The block's own task + attempt + sha are matched against the
  * attempt the task's verdict waits on (consistent, review due): a match is finalized as that attempt's review; a
  * block that names another attempt or sha is not recorded, and the next verdict says so in one line. Never on the
- * task alone. Returns the review's row when one was recorded.
+ * task alone. Returns the review's row and its spawn record when one was recorded. MOD-265: a review whose record
+ * already holds a verdict (shown on the other path) returns nothing, so a review is shown once.
  */
-async function orphanReview($: Host, agentId: string | undefined, key: string, text: string): Promise<string | undefined> {
+async function orphanReview($: Host, agentId: string | undefined, key: string, text: string): Promise<{ line: string; spawn: SpawnRecord } | undefined> {
   if (!text.includes('[[review')) return undefined
   const seen = parseReviewBlock(text)
   if (!seen) return undefined
@@ -6758,6 +6759,8 @@ async function orphanReview($: Host, agentId: string | undefined, key: string, t
     return undefined
   }
   await storeSet($, K.reviewSeen(task), '')
+  const shownBefore = await storeGet<SpawnRecord>($, K.spawn(`review-${agentId ?? key}`))
+  if (shownBefore && shownBefore.verdictAttempt === shownBefore.attempt && hasVerdictText(shownBefore)) return undefined
   const worker = (await spawnByAgent($, latest.agentId)) ?? (latest.toolUseId ? await storeGet<SpawnRecord>($, K.spawn(latest.toolUseId)) : undefined)
   const spawn: SpawnRecord = {
     key: `review-${agentId ?? key}`,
@@ -6780,7 +6783,7 @@ async function orphanReview($: Host, agentId: string | undefined, key: string, t
   }
   await storeSet($, K.spawn(spawn.key), spawn)
   const rendered = await finalizeReview($, spawn, text, {})
-  return rendered.line
+  return { line: rendered.line, spawn }
 }
 
 /** MOD-224: the line a verdict that still waits on a review adds when a review was seen and not taken. */
@@ -9533,7 +9536,7 @@ export const register: Register = (on, opts) => {
     // MOD-224: a reviewer whose spawn record is gone is matched by its block's task + attempt + sha
     if (!spawn || spawn.adhoc) {
       const taken = await orphanReview($, agentId, e.tool_use_id, text)
-      if (taken !== undefined) return { ...ran, context: [...(ran.context ?? []), taken] }
+      if (taken !== undefined) return { ...ran, context: [...(ran.context ?? []), taken.line] }
     }
     // MOD-41, MOD-97 (#155): a judged worker the brain resumed in the foreground hands back its next attempt, against its brief
     if (spawn && agentId && !spawn.adhoc && !spawn.review && spawn.verdictAttempt === spawn.attempt) spawn = await resumedIfNew($, spawn, agentId, text)
@@ -9580,7 +9583,15 @@ export const register: Register = (on, opts) => {
       // MOD-94 (#157): a hand-back whose spawn record the store refused is judged from memory, else the ledger
       let spawn = await handbackSpawn($, agentId)
       // MOD-224: a reviewer whose spawn record is gone is matched by its block's task + attempt + sha
-      if ((!spawn || spawn.adhoc) && !warned) await orphanReview($, agentId, e.turnId ?? agentId, await saidOnce())
+      if ((!spawn || spawn.adhoc) && !warned) {
+        const taken = await orphanReview($, agentId, e.turnId ?? agentId, await saidOnce())
+        if (taken) {
+          // MOD-265: the review lands in the conversation like a background worker's verdict row, and is the verdict tool's answer
+          await storeSet($, K.postedRow(await attemptKey($, taken.spawn)), taken.line)
+          await appendRow($, taken.line)
+          await wakeBrain($, taken.line, taken.spawn)
+        }
+      }
       // MOD-41: the brain resumed a worker whose last attempt was judged and not advised a resume: a hand-back at a new sha is the next attempt
       if (!warned && spawn && !spawn.adhoc && !spawn.review && spawn.verdictAttempt === spawn.attempt) spawn = await resumedIfNew($, spawn, agentId, await saidOnce())
       // a worker just told to wrap up is going on: this turn's end is not its hand-back
