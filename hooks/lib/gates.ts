@@ -1,6 +1,6 @@
 // Gate commands: what a gate map may name, how a brief's `gate=` resolves to
 // the argv the verifier runs, and how the allowlist recognises those argv.
-// Pure: no `$`, no imports.
+// Pure: no `$`; the one import is drive.ts's cutText (MOD-235).
 //
 // A gate map (`gateMap`: id → command) is config the person writes (the repo
 // file or /config). A command is run by argv, never through a shell: it is
@@ -11,6 +11,8 @@
 // ` && ` (run in order, the first non-zero exit is the result). The allowlist
 // accepts an argv only when it is EXACTLY one of those commands with `{files}`,
 // `{worktree}` and `{outdir}` filled by absolute paths.
+
+import { cutText } from './drive'
 
 /** First words a gate command may never start with: deploys, network, privilege, deletion, git and gh. */
 export const GATE_DENY = [
@@ -166,6 +168,47 @@ export function resolveGateRuns(gate: string | undefined, map: Readonly<Record<s
 
 /** True when `argv` runs the engine suite: `claude plugin test <folder>`. */
 export const isEngineGate = (argv: readonly string[]): boolean => argv.length >= 3 && base(argv[0] as string) === 'claude' && argv[1] === 'plugin' && argv[2] === 'test'
+
+const WRAPPERS = new Set(['env', 'timeout', 'npx', 'nice', 'time', 'exec', 'command', 'nohup'])
+const VALUE_FLAGS = new Set(['-s', '-k', '--signal', '--kill-after', '-n', '--adjustment'])
+
+/** The words of one simple command with its wrappers (`VAR=1`, `env`, `timeout N`, `npx`, `nice`, `time`, `exec`, `command`, `nohup`) taken off. */
+function bareWords(segment: string): string[] {
+  const w = segment.split(/\s+/).filter(x => x !== '')
+  let i = 0
+  for (;;) {
+    const word = w[i]
+    if (word === undefined) break
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) i++
+    else if (WRAPPERS.has(base(word))) {
+      const name = base(word)
+      i++
+      while (w[i] !== undefined && (w[i] as string).startsWith('-')) i += (name === 'timeout' || name === 'nice') && VALUE_FLAGS.has(w[i] as string) ? 2 : 1
+      if (name === 'timeout' && /^\d/.test(w[i] ?? '')) i++
+    } else break
+  }
+  return w.slice(i)
+}
+
+/**
+ * MOD-235: whether a Bash command runs the engine suite (`claude plugin test ...`): plain, after `timeout N`, `env X=1`,
+ * `npx` and the like, inside `&&`, `;`, `|` chains, and inside a `bash|sh|zsh -c` body. Quoted prose and heredoc bodies
+ * are cut out first (cutText), so `echo "claude plugin test"` does not match. Pure.
+ */
+export function runsEngineSuite(command: string): boolean {
+  return cutText(command)
+    .split(/&&|\|\||[;|&\n()`'"]/)
+    .some(seg => isEngineGate(bareWords(seg)))
+}
+
+/** MOD-235: a tool result with `line` added at the end of its text (the text, else the result string, else its stdout). */
+export function withTrailingLine<T extends { text?: unknown; result?: unknown }>(out: T, line: string): T {
+  if (typeof out.text === 'string') return { ...out, text: `${out.text}\n${line}` }
+  if (typeof out.result === 'string') return { ...out, result: `${out.result}\n${line}` }
+  const r = out.result as { stdout?: unknown } | undefined
+  if (r && typeof r === 'object' && typeof r.stdout === 'string') return { ...out, result: { ...r, stdout: `${r.stdout}\n${line}` } }
+  return { ...out, text: line }
+}
 
 /** The store value `delegation.engineGate`: who runs the engine suite, and until when the claim stands. */
 export type EngineLock = { holder: string; token: string; since: number; until: number }
