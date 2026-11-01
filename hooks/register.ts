@@ -214,7 +214,7 @@ import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool,
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
-import { artefactsCheck, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
+import { artefactsCheck, bashReadOnly, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
 import { noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule, pollStep } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
@@ -297,7 +297,7 @@ import {
   type WorkPresent,
 } from './lib/verify'
 import { briefHasEngineGate, engineLanesLine, heldLoadLine, isLoaded, loadedWords, throttledSlots, NPROC_ARGV, parseProcLoad, parseSysctlLoad, PROC_LOADAVG, SYSCTL_LOAD_ARGV, type LoadReading } from './lib/load'
-import { BASE_REFS, briefContract, briefWantsRed, isMalformedReport, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
+import { BASE_REFS, briefContract, briefWantsRed, isMalformedReport, porcelainPaths, STATUS_ARGS, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds } from './lib/watch'
 import { allowance, bar, cellDay, dayIndex, dayKey, dayRecord, daySegments, inWindow, pace, parseRecord, rationKey, rationReport, rationText, resetsIn, segments, surplus, type DayRecord, type Window as RationWindow } from './lib/ration'
 import { MOD_VERSION } from './lib/version'
@@ -1880,7 +1880,7 @@ const WRITE_LOG_CAP = 2000
  * a Bash command, resolved against the worker's cwd, are added to its write log (capped). A reviewer, an ad hoc
  * agent and an unrecorded agent log nothing. Never throws: a call that cannot be logged is debug.
  */
-async function noteWrites($: Host, e: { tool: unknown; agentId?: string }): Promise<void> {
+async function noteWrites($: Host, e: { tool: unknown; agentId?: string }, extra: readonly string[] = []): Promise<void> {
   const tool = String(e.tool)
   if (!e.agentId || !(WRITE_TOOLS.includes(tool) || tool === 'Bash')) return
   try {
@@ -1890,7 +1890,7 @@ async function noteWrites($: Host, e: { tool: unknown; agentId?: string }): Prom
     const cwd = await bashCwd($, e.agentId)
     const home = (await $.env.get('HOME')) || undefined
     const raw = tool === 'Bash' ? bashWrites(typeof input.command === 'string' ? input.command : '', cwd, home).paths : toolPath(input)
-    const paths = raw.flatMap(p => {
+    const paths = [...raw, ...extra].flatMap(p => {
       const abs = isAbsolute(p) ? p : `${cwd.replace(/\/+$/, '')}/${p}`
       const n = normalizePath(abs)
       return n === undefined ? [] : [n]
@@ -1902,6 +1902,82 @@ async function noteWrites($: Host, e: { tool: unknown; agentId?: string }): Prom
     if (log.length > had.length) await storeSet($, key, log)
   } catch (err) {
     debug($, `write log not kept: ${String(err)}`)
+  }
+}
+
+/** MOD-256: what a repo=here or outside worker's Bash call could change: the dirty paths of the shared checkout, and the entries of each outside root. */
+type DeltaSnap = { here?: { dir: string; paths: Map<string, string> }; roots: Map<string, Map<string, string>> }
+/** MOD-256: the most dirty paths one snapshot stats for size and time; the rest are read by their porcelain code alone. */
+const SNAP_STAT_CAP = 300
+
+async function takeDeltaSnap($: Host, here: string | undefined, roots: readonly string[]): Promise<DeltaSnap | undefined> {
+  const snap: DeltaSnap = { roots: new Map() }
+  if (here !== undefined) {
+    const dir = here.replace(/\/+$/, '')
+    const r = await run($, ['git', '-C', dir, ...STATUS_ARGS], { cwd: dir, timeoutMs: 15000 })
+    if (!r.ok || r.exitCode !== 0) return undefined
+    const codes = new Map<string, string>()
+    for (const entry of r.stdout.split('\0')) if (entry.length >= 4) codes.set(entry.slice(3), entry.slice(0, 2))
+    const paths = new Map<string, string>()
+    let statted = 0
+    for (const p of porcelainPaths(r.stdout)) {
+      let state = codes.get(p) ?? ''
+      if (statted++ < SNAP_STAT_CAP) {
+        try {
+          const st = await $.fs.stat(`${dir}/${p}`)
+          state += `|${st.size}:${st.mtimeMs}`
+        } catch {
+          state += '|gone'
+        }
+      }
+      paths.set(`${dir}/${p}`, state)
+    }
+    snap.here = { dir, paths }
+  }
+  for (const root of roots) {
+    const l = await listRoot($, root)
+    if (!('entries' in l) || ('truncated' in l && l.truncated)) continue
+    const base = root.replace(/\/+$/, '')
+    snap.roots.set(root, new Map(l.entries.map(e => [e.path === '' ? base : `${base}/${e.path}`, `${e.size}:${e.mtimeMs}`])))
+  }
+  return snap.here === undefined && snap.roots.size === 0 ? undefined : snap
+}
+
+/**
+ * MOD-256: before a recorded worker's Bash command that is not read-only, on a repo=here or outside card, the delta
+ * paths are snapshotted; the paths that appeared or changed once the command has run are the worker's, added to its
+ * write log (a script's output the lexer cannot see). A read-only command, a worktree card and a reviewer take none.
+ * Never throws.
+ */
+async function snapBeforeBash($: Host, e: { tool: unknown; agentId?: string; command?: unknown }): Promise<DeltaSnap | undefined> {
+  if (!e.agentId || String(e.tool) !== 'Bash' || typeof e.command !== 'string' || bashReadOnly(e.command)) return undefined
+  try {
+    const spawn = await spawnByAgent($, e.agentId)
+    if (!spawn || spawn.adhoc || spawn.review) return undefined
+    const listing = await outsideFor($, spawn.task, spawn.repo)
+    const roots = (listing?.before ?? []).filter(l => 'entries' in l).map(l => l.root)
+    if (spawn.here === undefined && roots.length === 0) return undefined
+    return await takeDeltaSnap($, spawn.here, roots)
+  } catch (err) {
+    debug($, `delta snapshot skipped: ${String(err)}`)
+    return undefined
+  }
+}
+
+/** MOD-256: the paths that changed while the Bash command ran, against the snapshot taken before it. */
+async function bashDelta($: Host, before: DeltaSnap): Promise<string[]> {
+  try {
+    const after = await takeDeltaSnap($, before.here?.dir, [...before.roots.keys()])
+    if (!after) return []
+    const out = before.here && after.here ? deltaPaths(before.here.paths, after.here.paths) : []
+    for (const [root, was] of before.roots) {
+      const now = after.roots.get(root)
+      if (now) out.push(...deltaPaths(was, now))
+    }
+    return out
+  } catch (err) {
+    debug($, `delta after a command not read: ${String(err)}`)
+    return []
   }
 }
 
@@ -9237,9 +9313,11 @@ export const register: Register = (on, opts) => {
       const message = (e as unknown as { message?: unknown }).message
       if (typeof message === 'string') setBounded(handbacks, e.agentId, message, MAP_CAPS.handbacks)
     }
+    // MOD-256: a script the lexer cannot read is attributed by the delta it leaves (repo=here and outside cards only)
+    const snap = await snapBeforeBash($, e)
     const out = await next(e)
     // MOD-217: what a recorded worker writes is logged against its spawn
-    if (e.agentId && out.deny === undefined) await noteWrites($, e)
+    if (e.agentId && out.deny === undefined) await noteWrites($, e, snap ? await bashDelta($, snap) : [])
     // MOD-119: a Bash call's output tells a command that repeats from one that makes progress
     if (!e.agentId && String(e.tool) === 'Bash' && out.deny === undefined && typeof e.command === 'string') {
       const r = out.result as { stdout?: unknown; stderr?: unknown } | undefined

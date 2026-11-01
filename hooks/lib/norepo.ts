@@ -153,6 +153,54 @@ export function attributeWrites(paths: readonly string[], log: readonly string[]
   return { mine, foreign }
 }
 
+const READ_ONLY_CMDS = new Set(['ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg', 'pwd', 'echo', 'printf', 'which', 'type', 'stat', 'file', 'diff', 'cmp', 'sort', 'uniq', 'cut', 'tr', 'jq', 'basename', 'dirname', 'realpath', 'readlink', 'date', 'true', 'false', 'test', '[', 'cd', 'du', 'df', 'tree', 'less', 'more', 'sleep', 'whoami', 'id', 'uname', 'hostname'])
+const READ_ONLY_GIT = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame', 'grep', 'merge-base', 'cat-file', 'describe', 'rev-list', 'shortlog', 'ls-tree'])
+
+/**
+ * MOD-256: a Bash command that cannot write a file: every part (split on ; & | and newlines) starts with a
+ * read-only command, and there is no redirection, command substitution, `find -exec/-delete`, `sed -i`,
+ * `git branch/checkout/...` write. Conservative: anything not recognised is not read-only, so it is snapshotted.
+ */
+export function bashReadOnly(command: string): boolean {
+  const text = command.replace(/\d*>&\d+/g, ' ').replace(/\d*>\s*\/dev\/null/g, ' ')
+  if (text.trim() === '' || /[<>`]|\$\(/.test(text)) return false
+  for (const part of text.split(/&&|\|\||[;&|\n]/)) {
+    const words = part.trim().split(/\s+/).filter(w => w !== '' && !/^\w+=/.test(w))
+    const head = words[0]
+    if (head === undefined) continue
+    const cmd = head.slice(head.lastIndexOf('/') + 1)
+    if (cmd === 'git') {
+      const rest = words.slice(1)
+      const at = rest.findIndex((w, i) => !w.startsWith('-') && !(i > 0 && (rest[i - 1] === '-C' || rest[i - 1] === '-c')))
+      const verb = rest[at]
+      if (verb === undefined || !READ_ONLY_GIT.has(verb)) return false
+      continue
+    }
+    if (cmd === 'find') {
+      if (words.some(w => ['-exec', '-execdir', '-delete', '-ok', '-fprint', '-fprintf'].includes(w))) return false
+      continue
+    }
+    if (cmd === 'sed') {
+      if (words.some(w => w === '--in-place' || /^-[A-Za-z]*i/.test(w))) return false
+      continue
+    }
+    if (!READ_ONLY_CMDS.has(cmd)) return false
+    if (cmd === 'sort' && words.some(w => w === '-o' || w.startsWith('--output'))) return false
+  }
+  return true
+}
+
+/**
+ * MOD-256: the paths that appeared or changed between two snapshots (path to a state string: porcelain code,
+ * size and modification time). A path in `after` that is new, or whose state moved, or that left `before`, is returned.
+ */
+export function deltaPaths(before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): string[] {
+  const out: string[] = []
+  for (const [path, state] of after) if (before.get(path) !== state) out.push(path)
+  for (const path of before.keys()) if (!after.has(path)) out.push(path)
+  return out
+}
+
 /** The roots with any that lies inside another dropped, each once, in order. */
 const outermost = (roots: readonly string[]): string[] => {
   const all = [...new Set(roots)]

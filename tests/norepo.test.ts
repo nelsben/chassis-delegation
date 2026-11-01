@@ -1,9 +1,13 @@
 // 3A: verifying a task that has no git repo (pure).
 import { test, expect, describe } from 'claude-code/testing'
+import { world, turnInput, sessionStart, commandInput, brainSpawn, ROOT, SCRATCH, type RunAnswer } from './harness'
+import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 import { checkArgv } from '../hooks/lib/allow'
 import { gateTemplatesOf, resolveGateRuns, splitCommand } from '../hooks/lib/gates'
 import {
   attributeWrites,
+  bashReadOnly,
+  deltaPaths,
   isDelegationPath,
   globRoot,
   matchGlob,
@@ -302,5 +306,86 @@ describe('MOD-233: a truncated inline listing is unchecked', () => {
     expect(c?.detail).toContain('cut short')
     // a failure elsewhere still fails
     expect(outsideClaim({ before: [cut, { root: '/x', entries: [] }], after: [after, { root: '/x', entries: [e('z')] }], scope: [], forbid: [] })?.status).toBe('failed')
+  })
+})
+
+// MOD-256: a file a worker produced through a script it ran is read as the worker's own
+describe('MOD-256: a script the worker ran is attributed to it (repo=here)', () => {
+  const OPTS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full' as const, gateMap: '{"G2":"npx g2","G8p":"npx g8p"}' }
+  const LLM = 'app/billing/Rate*.ts'
+  const RED = { [`${ROOT}/.delegation/BE-101/red-1.txt`]: 'npx vitest run\nFAIL RateA.test.ts: expected 1 got 0\n' }
+  const dirs = { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME] }
+  const offered = { 'delegation.agentTypes': ['general-purpose', 'backend', 'frontend'] }
+  const report = (files: string) => `Done.\n[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=${files}]]`
+  const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
+  const edit = ($: any, file: string) => $.tool.call({ tool: 'Edit', file_path: file, old_string: 'a', new_string: 'b', agentId: 'agent-h' } as never)
+  const bash = ($: any, command: string) => $.tool.call({ tool: 'Bash', command, agentId: 'agent-h' } as never)
+  const passed = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+  // the dirty tree is a mutable list; `during` runs inside a Bash call, as a script would
+  const setup = (on: Parameters<typeof world>[0], tree: string[], during: () => void = () => undefined) => {
+    on('tool.call', { tool: 'Edit' }, passed)
+    on('tool.call', { tool: 'Bash' }, () => {
+      during()
+      return passed()
+    })
+    const run = (argv: string[]): RunAnswer | undefined => {
+      if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+      if (argv[3] === 'status') return { exitCode: 0, stdout: [...tree, ''].join('\0') }
+      return argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined
+    }
+    return world(on, { files: { [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: FIXTURE_CARD, ...RED }, dirs, run, agentId: 'agent-h', store: offered })
+  }
+  const statusRuns = (w: { runs: { argv: string[] }[] }) => w.runs.filter(r => r.argv[3] === 'status').length
+
+  test('an out-of-scope file a script wrote after an earlier in-scope Edit is refuted on scope', { options: OPTS }, async ($, on) => {
+    const tree = [' M app/billing/RateA.ts']
+    const w = setup(on, tree, () => void tree.push(' M x.txt'))
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text))
+    await edit($, `${ROOT}/app/billing/RateA.ts`)
+    await bash($, 'node gen.mjs')
+    await $.turn.complete(turnInput('agent-h', report('app/billing/RateA.ts,x.txt')))
+    const row = delivered(w)
+    expect(row).toContain('verdict=refuted task=BE-101')
+    expect(row).toContain('claim scope: failed — out-of-scope path: x.txt')
+  })
+
+  test('another session\'s change while no Bash of this worker ran is still not charged', { options: OPTS }, async ($, on) => {
+    const tree = [' M app/billing/RateA.ts']
+    const w = setup(on, tree)
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text))
+    await edit($, `${ROOT}/app/billing/RateA.ts`)
+    tree.push(' M src/sibling.ts')
+    await bash($, 'node gen.mjs')
+    await $.turn.complete(turnInput('agent-h', report('app/billing/RateA.ts')))
+    const row = delivered(w)
+    expect(row).toContain('verdict=consistent task=BE-101')
+    expect(row).toContain('changed during the run, not by this worker: src/sibling.ts')
+  })
+
+  test('read-only Bash does zero git', { options: OPTS }, async ($, on) => {
+    const tree = [' M app/billing/RateA.ts']
+    const w = setup(on, tree)
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput(`BE-101 --here --scope ${LLM}`))).text))
+    const before = statusRuns(w)
+    await bash($, 'ls -la && git status --short | head -5 && cat package.json')
+    expect(statusRuns(w)).toBe(before)
+    await bash($, 'node gen.mjs')
+    expect(statusRuns(w)).toBe(before + 2)
+  })
+})
+
+describe('MOD-256: read-only Bash and snapshot deltas (pure)', () => {
+  test('reads are read-only; a script, a redirection or a write verb is not', () => {
+    for (const c of ['ls -la', 'cat a.txt | head -5', 'git status --short && git diff', 'git -C /r log --oneline', 'grep -rn x src 2>&1', 'find . -name "*.ts"', 'sed -n 1,5p f', 'echo hi > /dev/null']) expect(bashReadOnly(c)).toBe(true)
+    for (const c of ['node gen.mjs', 'npm run build', 'ls > out.txt', 'git commit -m x', 'git checkout b', 'find . -delete', 'sed -i s/a/b/ f', 'cat $(make)', 'ls && node x.js', 'python3 gen.py', '']) expect(bashReadOnly(c)).toBe(false)
+  })
+  test('paths that appeared, changed or left between two snapshots', () => {
+    const a = new Map([['/r/a', ' M|1:1'], ['/r/b', ' M|2:2'], ['/r/c', ' M|3:3']])
+    const b = new Map([['/r/a', ' M|1:1'], ['/r/b', ' M|2:9'], ['/r/d', '??|4:4']])
+    expect(deltaPaths(a, b).sort()).toEqual(['/r/b', '/r/c', '/r/d'])
+    expect(deltaPaths(a, a)).toEqual([])
   })
 })
