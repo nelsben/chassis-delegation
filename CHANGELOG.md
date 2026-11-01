@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.42 — 2026-11-01
+
+### Changed
+
+- **The band stops owing a review for a task whose newest review row accepts it (MOD-255).** Since MOD-231 a newest review row with next=accept resolves the task to its consistent row and merge accepts it, but the band above the prompt kept drawing the review as owed. `liveModel` now drops such a task from the owed rows with `reviewAcceptedAttempt` (the function merge uses), so it draws as consistent; a refuting review still shows its next step. A ledger append advances the live model's generation, so the band redraws at once. Tests in `tests/landnudge-band.test.ts`.
+- **A file a repo=here or outside-root worker made through a script it ran is charged to that worker (MOD-256).** Around each of the worker's Bash commands that is not read-only (`bashReadOnly` in `hooks/lib/norepo.ts`; anything unrecognised counts as a write) the mod snapshots the delta paths before and after (git status for repo=here, the outside listing for an outside root, at most 300 paths) and adds those that appeared or changed (`deltaPaths`) to the worker's write log, so the verifier no longer lists them as changed by someone else. Worktree cards and read-only Bash take no snapshot. Known gap: a sibling's write during the same command is charged to the worker too (MOD-261). Tests in `tests/norepo.test.ts`.
+- **`/delegation config` says when the repo file's `project` overrides yours (MOD-257).** When `.chassis-delegation.json` sets `project` and your `/config` value differs, its line gains `(your /config value <v> is overridden by the repo file)` (`overriddenNote` in `hooks/lib/configcmd.ts`); other fields are unchanged.
+- **Tests only (MOD-258, MOD-259).** Engine tests for `orphanReview` (an unmatched reviewer hand-back is adopted once by task, attempt and sha) and the `N lanes share the engine gate` note (`tests/review.test.ts`, `tests/dispatchsays.test.ts`), and for the land overlap list leaving out a parked and a merged card (`tests/land.test.ts`). No behaviour changed.
+
 ## 0.9.41 — 2026-10-31
 
 ### Changed
