@@ -375,6 +375,39 @@ describe('MOD-258: orphanReview through the hooks (MOD-224)', () => {
     expect(ledger(w).filter(l => l.kind === 'review')).toHaveLength(1)
   })
 
+  test('MOD-265: at turn.complete an orphan review row is appended once, wakes the brain once and is the verdict tool row', { options: { ...OPTIONS, wakeOnVerdict: true } }, async ($, on) => {
+    const w = await handedBack($, on)
+    const before = w.appended.length
+    const woke = w.submitted.length
+    await $.turn.complete(turnInput('agent-9', block('T-4', ' attempt=1 sha=1234abcd'), usage('claude-haiku-4-5', 40_000, 2_000)))
+    const added = w.appended.slice(before).map(a => a.text)
+    expect(added.filter(t => t.includes('review'))).toHaveLength(1)
+    expect(w.submitted.length - woke).toBe(1)
+    // the same hand-back again adds nothing
+    await $.turn.complete(turnInput('agent-9', block('T-4', ' attempt=1 sha=1234abcd')))
+    expect(w.appended.slice(before)).toHaveLength(added.length)
+    expect(w.submitted.length - woke).toBe(1)
+  })
+
+  test('MOD-265: a refuting orphan review shows its row once at turn.complete', { options: { ...OPTIONS, wakeOnVerdict: true } }, async ($, on) => {
+    const w = await handedBack($, on)
+    const refuting = 'refuted: a/x.ts gains the parser — a/x.ts:12 has no parser\n[[review v=1 task=T-4 attempt=1 sha=1234abcd confirmed=0 refuted=1 unverifiable=0]]'
+    const before = w.appended.length
+    await $.turn.complete(turnInput('agent-9', refuting, usage('claude-haiku-4-5', 40_000, 2_000)))
+    const added = w.appended.slice(before).map(a => a.text)
+    expect(added.filter(t => t.includes('no parser'))).toHaveLength(1)
+    await $.turn.complete(turnInput('agent-9', refuting))
+    expect(w.appended.slice(before).filter(a => a.text.includes('no parser'))).toHaveLength(1)
+  })
+
+  test('MOD-265: a block that names another attempt or sha appends nothing at turn.complete', { options: OPTIONS }, async ($, on) => {
+    const w = await handedBack($, on)
+    const before = w.appended.length
+    await $.turn.complete(turnInput('agent-9', block('T-4', ' attempt=2 sha=1234abcd')))
+    await $.turn.complete(turnInput('agent-9', block('T-4', ' attempt=1 sha=deadbeef')))
+    expect(w.appended.slice(before).filter(a => a.text.includes('review'))).toHaveLength(0)
+  })
+
   test('an orphan review that names a task nothing waits on is ignored: no row, no record', { options: OPTIONS }, async ($, on) => {
     const w = await handedBack($, on)
     const before = { led: ledger(w).length, shown: delivered(w) }
