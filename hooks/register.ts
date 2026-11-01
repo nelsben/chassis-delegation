@@ -8393,7 +8393,10 @@ async function configView($: Host): Promise<CfgView> {
   const values: Record<string, unknown> = { ...r.resolved.values }
   const sources: Record<string, Source> = { ...r.resolved.sources }
   // MOD-223: the repo file's own project (owner/number or none) is what land adds to, so it is the value in effect
+  const overridden: Record<string, string> = {}
   if (repoProject !== undefined) {
+    const yours = values.project
+    if (sources.project !== 'default' && typeof yours === 'string' && yours.trim() !== '' && yours.trim() !== repoProject) overridden.project = yours.trim()
     values.project = repoProject
     sources.project = 'repo'
   }
@@ -8404,7 +8407,7 @@ async function configView($: Host): Promise<CfgView> {
     values[f] = v
     sources[f] = locked.has(f) ? 'locked' : JSON.stringify(v) !== JSON.stringify(def) ? 'host' : 'default'
   }
-  return { plugin, fields, values, sources, rows: mine, specs, derived: { issueRepo: r.cfg.issueRepo, cardDir: r.cfg.cardDir }, refusedGates: r.cfg.refusedGates }
+  return { plugin, fields, values, sources, rows: mine, specs, ...(Object.keys(overridden).length > 0 ? { overridden } : {}), derived: { issueRepo: r.cfg.issueRepo, cardDir: r.cfg.cardDir }, refusedGates: r.cfg.refusedGates }
 }
 
 /** A /config row the host has not got (it lists none for a folder-loaded mod): the set goes to the user options file instead. */

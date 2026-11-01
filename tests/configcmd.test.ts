@@ -300,6 +300,29 @@ describe('MOD-73: /delegation config shows what the mod runs with', () => {
     expect(await say($, '')).toContain(' project = acme/9 (repo)')
   })
 
+  test('MOD-257: repo project none with user acme/3 shows the overridden note in the long and short views', async ($, on) => {
+    bare(on, { [REPO_FILE]: JSON.stringify({ project: 'none' }) })
+    await $.session.start(sessionStart)
+    await say($, 'project acme/3')
+    const note = '(your /config value acme/3 is overridden by the repo file)'
+    expect(await say($, 'project')).toContain(note)
+    expect(await say($, '')).toContain(note)
+  })
+
+  test('MOD-257: repo acme/3 with user acme/3 shows no overridden note', async ($, on) => {
+    bare(on, { [REPO_FILE]: JSON.stringify({ project: 'acme/3' }) })
+    await $.session.start(sessionStart)
+    await say($, 'project acme/3')
+    expect(await say($, 'project')).not.toContain('overridden')
+    expect(await say($, '')).not.toContain('overridden')
+  })
+
+  test('MOD-257: repo project without a user value shows no overridden note', async ($, on) => {
+    bare(on, { [REPO_FILE]: JSON.stringify({ project: 'acme/9' }) })
+    await $.session.start(sessionStart)
+    expect(await say($, 'project')).not.toContain('overridden')
+  })
+
   test('MOD-223: no repo project shows the user value as yours', async ($, on) => {
     bare(on, { [REPO_FILE]: JSON.stringify({ maxWorkers: 3 }) })
     await $.session.start(sessionStart)
