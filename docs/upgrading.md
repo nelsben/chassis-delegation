@@ -10,6 +10,12 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.43 to 0.9.44
+
+Nothing needs doing to upgrade.
+Fixed: a reviewer hand-back with no spawn record, caught at a turn's end, now shows its review line in the conversation once.
+Detail: [CHANGELOG 0.9.44](../CHANGELOG.md).
+
 ### From 0.9.42 to 0.9.43
 
 Nothing needs doing to upgrade.
