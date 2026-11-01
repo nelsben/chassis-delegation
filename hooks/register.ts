@@ -8511,10 +8511,26 @@ type SpawnPlan = {
   records: AttemptRecord[]
   prior: number
   cwd?: string
+  /** MOD-250: the quiet line of a spawn that named a closed task's brief and so runs ad hoc. */
+  closedLine?: string
 }
 
 /** The brief file's header, as planSpawn read it (undefined: no brief file, or the prompt carries the header). */
 const briefText0 = (p: SpawnPlan): BriefHeader | undefined => (p.briefText !== undefined ? parseHeader(p.briefText) : undefined)
+
+/**
+ * MOD-250: the task's last accept or merged ledger row is newer than its last dispatch (K.handoff.at, absent: never
+ * dispatched since): it closed, and no dispatch has reopened it. No such row: not closed.
+ */
+async function taskClosed($: Host, task: string, named: string | undefined): Promise<boolean> {
+  const rows = (await ledgerOf($)).rows
+  let closedAt = -1
+  for (const r of rows) if ((r.kind === 'accept' || r.kind === 'merged') && r.task === task && typeof r.at === 'number' && r.at > closedAt) closedAt = r.at
+  if (closedAt < 0) return false
+  const path = named ?? `${(await $.session.root()).replace(/\/+$/, '')}/.delegation/briefs/${task}.brief.md`
+  const at = (await storeGet<{ at?: number }>($, K.handoff(path)))?.at
+  return typeof at !== 'number' || at <= closedAt
+}
 
 async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
   const t = await now($)
@@ -8522,7 +8538,7 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
   const key = e.tool_use_id || `plugin-${t}-${spawnSeq}`
   // MOD-135: a relative path is read from the spawn's folder, else the session root; one that climbs out is not read
   const written = findBriefPath(e.prompt)
-  const named = written !== undefined ? resolveBriefPath(written, e.cwd, await $.session.root()) : undefined
+  let named = written !== undefined ? resolveBriefPath(written, e.cwd, await $.session.root()) : undefined
   let briefText: string | undefined
   if (named) {
     try {
@@ -8531,7 +8547,15 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
       briefText = undefined
     }
   }
-  const header = parseHeader(e.prompt) ?? (briefText !== undefined ? parseHeader(briefText) : undefined)
+  let header = parseHeader(e.prompt) ?? (briefText !== undefined ? parseHeader(briefText) : undefined)
+  // MOD-250: a task closed since its last dispatch is not briefed by a prompt that only names its brief: the spawn runs ad hoc
+  let closedLine: string | undefined
+  if (header?.task && (await taskClosed($, header.task, named))) {
+    closedLine = `${header.task} is closed; this agent runs ad hoc`
+    header = undefined
+    named = undefined
+    briefText = undefined
+  }
   const adhoc = !header?.task
   const task = header?.task ?? `adhoc-${key.slice(-8)}`
   const subtask = header?.subtask ?? 'main'
@@ -8554,6 +8578,7 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
     ...(briefText !== undefined ? { briefText } : {}),
     ...(header ? { header } : {}),
     adhoc,
+    ...(closedLine ? { closedLine } : {}),
     subagentType: e.subagentType || 'general-purpose',
     task,
     subtask,
@@ -8685,8 +8710,9 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     const attempt = adhoc ? 1 : nextAttempt(records, subtask, lane)
     // GH-104: a briefed spawn's notice says which attempt it is spending
     const notice = noticeText(pick, alias, fableAsked, adhoc ? undefined : { attempt, budget })
+    if (p.closedLine) debug($, p.closedLine)
     try {
-      $.ui.notice(e.tool_use_id, notice)
+      $.ui.notice(e.tool_use_id, p.closedLine ? `${notice}\n${p.closedLine}` : notice)
     } catch {
       // a plugin's own spawn has no dialog to carry it
     }
