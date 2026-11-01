@@ -22,6 +22,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['effortByTier', 'Workers and models', 'How hard a worker thinks at each level, from low to max', 'effortMap', 'repo', ''],
   ['defaultBudget', 'Workers and models', 'How many tries a task gets when its instructions do not say', 'count', 'user', 3],
   ['maxWorkers', 'Workers and models', 'How many workers may run at the same time; more wait in line', 'count', 'repo', 0],
+  ['loadThrottle', 'Workers and models', 'On a loaded machine start half as many workers at once (at least 1); off by default', 'bool', 'user', false],
   ['maxWorkersByTier', 'Workers and models', 'A lower limit on workers at once for each level, such as frontier 2', 'countMap', 'repo', ''],
   ['agentTypes', 'Workers and models', 'Which kind of helper agent handles each kind of task', 'map', 'repo', ''],
   ['domains', 'Workers and models', 'The kinds of task you can hand to a worker', 'list', 'repo', ''],

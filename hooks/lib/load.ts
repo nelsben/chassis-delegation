@@ -58,3 +58,9 @@ export function briefHasEngineGate(briefText: string, gateMap: Readonly<Record<s
 
 /** `<k> lanes share the engine gate; it runs one at a time: expect verdict waits` for 3 or more, else none. */
 export const engineLanesLine = (k: number): string | undefined => (k >= 3 ? `${k} lanes share the engine gate; it runs one at a time: expect verdict waits` : undefined)
+
+/** MOD-252: the slots a loaded machine allows when loadThrottle is on: half, rounded down, never below 1. */
+export const throttledSlots = (slots: number): number => Math.max(1, Math.floor(slots / 2))
+
+/** MOD-252: the line a claim held by the load carries; the load is shown rounded to one decimal. */
+export const heldLoadLine = (r: LoadReading): string => `held: machine loaded (${Math.round(r.load * 10) / 10}/${r.cores})`
