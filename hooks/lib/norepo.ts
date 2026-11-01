@@ -201,6 +201,41 @@ export function deltaPaths(before: ReadonlyMap<string, string>, after: ReadonlyM
   return out
 }
 
+/** MOD-261: one recorded worker's Bash command that was snapshotted: the checkout and outside roots it watched, and its before/after sequence numbers (`end` unset while it runs). */
+export type DeltaWindow = { agentId: string; label: string; keys: readonly string[]; start: number; end?: number }
+/** MOD-261: a path a recorded worker logged as written, and the sequence number it was logged at. */
+export type WriteEvent = { agentId: string; path: string; seq: number }
+
+const sameOrNested = (a: string, b: string): boolean => {
+  const x = a.replace(/\/+$/, '')
+  const y = b.replace(/\/+$/, '')
+  return x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`)
+}
+
+/**
+ * MOD-261: who a Bash command's delta paths belong to when other recorded workers share its checkout or outside root.
+ * A path a sibling logged inside the command's window is the sibling's (already in its log). Of the rest, when a sibling's
+ * own snapshotted command overlapped the window, the owner cannot be told: the path is `both`, with the siblings' labels,
+ * charged to neither. With no sibling in the window every path is `mine`, as MOD-256 had it.
+ */
+export function chargeDelta(input: { agentId: string; start: number; end: number; keys: readonly string[]; delta: readonly string[]; events: readonly WriteEvent[]; windows: readonly DeltaWindow[] }): { mine: string[]; sibling: string[]; both: { path: string; labels: string[] }[] } {
+  const out = { mine: [] as string[], sibling: [] as string[], both: [] as { path: string; labels: string[] }[] }
+  const events = input.events.filter(e => e.agentId !== input.agentId && e.seq > input.start && e.seq < input.end)
+  const labels = [
+    ...new Set(
+      input.windows
+        .filter(w => w.agentId !== input.agentId && w.keys.some(k => input.keys.includes(k)) && w.start < input.end && (w.end === undefined || w.end > input.start))
+        .map(w => w.label),
+    ),
+  ]
+  for (const path of input.delta) {
+    if (events.some(e => sameOrNested(path, e.path))) out.sibling.push(path)
+    else if (labels.length > 0) out.both.push({ path, labels })
+    else out.mine.push(path)
+  }
+  return out
+}
+
 /** The roots with any that lies inside another dropped, each once, in order. */
 const outermost = (roots: readonly string[]): string[] => {
   const all = [...new Set(roots)]

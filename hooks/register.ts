@@ -214,7 +214,7 @@ import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool,
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
-import { artefactsCheck, bashReadOnly, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
+import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
 import { noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule, pollStep } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
@@ -407,6 +407,8 @@ const K = {
   cost: (agentId: string) => `delegation.cost.${agentId}`,
   /** MOD-217: the paths a worker's own tool calls wrote (absolute, capped), read at its verdict to charge scope only for what it wrote. */
   writes: (agentId: string) => `delegation.writes.${agentId}`,
+  /** MOD-261: paths that changed while this worker and a sibling both ran a command in one checkout; owner unknown, listed in the verdict. */
+  both: (agentId: string) => `delegation.both.${agentId}`,
   /** MOD-13: the card's own `effort:`, written at /dispatch; it wins over effortByTier. */
   effort: (task: string, repo = '') => `delegation.effort.${scopedId(task, repo)}`,
   /** Set once an attempt's verdict row is posted to the conversation. */
@@ -1872,6 +1874,32 @@ async function freshSessionGuard($: Host): Promise<void> {
   }
 }
 
+/** MOD-261: a path changed while two workers' commands overlapped, and who they were. */
+type BothRow = { who: string; path: string }
+/** MOD-261: the verdict lines for the paths that changed while this worker and a sibling both ran, owner unknown; not a scope refutation. */
+async function bothLines($: Host, agentId: string | undefined): Promise<string[]> {
+  if (!agentId) return []
+  try {
+    const rows = (await storeGet<BothRow[]>($, K.both(agentId))) ?? []
+    const by = new Map<string, string[]>()
+    for (const r of rows) by.set(r.who, [...(by.get(r.who) ?? []), r.path])
+    return [...by].map(([who, paths]) => `changed while ${who} both ran: ${paths.join(', ')}`)
+  } catch {
+    return []
+  }
+}
+
+/** MOD-261: what recorded workers logged and which snapshotted commands ran, in one sequence, so a delta can tell a sibling's write from its own. In memory, bounded. */
+let deltaSeq = 0
+const writeEvents: WriteEvent[] = []
+const deltaWindows: DeltaWindow[] = []
+const EVENT_CAP = 1000
+const WINDOW_CAP = 50
+function noteWriteEvent(agentId: string, path: string): void {
+  writeEvents.push({ agentId, path, seq: ++deltaSeq })
+  if (writeEvents.length > EVENT_CAP) writeEvents.splice(0, writeEvents.length - EVENT_CAP)
+}
+
 /** MOD-217: the most paths one worker's write log holds. */
 const WRITE_LOG_CAP = 2000
 
@@ -1896,6 +1924,7 @@ async function noteWrites($: Host, e: { tool: unknown; agentId?: string }, extra
       return n === undefined ? [] : [n]
     })
     if (paths.length === 0) return
+    for (const path of paths) noteWriteEvent(e.agentId, path)
     const key = K.writes(e.agentId)
     const had = (await storeGet<string[]>($, key)) ?? []
     const log = [...new Set([...had, ...paths])].slice(0, WRITE_LOG_CAP)
@@ -1906,7 +1935,7 @@ async function noteWrites($: Host, e: { tool: unknown; agentId?: string }, extra
 }
 
 /** MOD-256: what a repo=here or outside worker's Bash call could change: the dirty paths of the shared checkout, and the entries of each outside root. */
-type DeltaSnap = { here?: { dir: string; paths: Map<string, string> }; roots: Map<string, Map<string, string>> }
+type DeltaSnap = { here?: { dir: string; paths: Map<string, string> }; roots: Map<string, Map<string, string>>; /** MOD-261 */ win?: DeltaWindow }
 /** MOD-256: the most dirty paths one snapshot stats for size and time; the rest are read by their porcelain code alone. */
 const SNAP_STAT_CAP = 300
 
@@ -1957,7 +1986,13 @@ async function snapBeforeBash($: Host, e: { tool: unknown; agentId?: string; com
     const listing = await outsideFor($, spawn.task, spawn.repo)
     const roots = (listing?.before ?? []).filter(l => 'entries' in l).map(l => l.root)
     if (spawn.here === undefined && roots.length === 0) return undefined
-    return await takeDeltaSnap($, spawn.here, roots)
+    const snap = await takeDeltaSnap($, spawn.here, roots)
+    if (snap) {
+      snap.win = { agentId: e.agentId, label: taskLabel(spawn.task, spawn.subtask), keys: [...(snap.here ? [snap.here.dir] : []), ...snap.roots.keys()], start: ++deltaSeq }
+      deltaWindows.push(snap.win)
+      if (deltaWindows.length > WINDOW_CAP) deltaWindows.splice(0, deltaWindows.length - WINDOW_CAP)
+    }
+    return snap
   } catch (err) {
     debug($, `delta snapshot skipped: ${String(err)}`)
     return undefined
@@ -1978,6 +2013,33 @@ async function bashDelta($: Host, before: DeltaSnap): Promise<string[]> {
   } catch (err) {
     debug($, `delta after a command not read: ${String(err)}`)
     return []
+  } finally {
+    if (before.win) before.win.end = ++deltaSeq
+  }
+}
+
+/**
+ * MOD-261: the delta paths charged to the worker whose command made them: a path a sibling logged in the command's
+ * window is the sibling's, and a path changed while a sibling's own command also ran is charged to neither and kept
+ * for the verdict ("changed while A and B both ran"). Returns the worker's own paths. Never throws.
+ */
+async function chargedDelta($: Host, before: DeltaSnap, delta: readonly string[]): Promise<string[]> {
+  const win = before.win
+  if (!win || delta.length === 0) return [...delta]
+  try {
+    const c = chargeDelta({ agentId: win.agentId, start: win.start, end: win.end ?? ++deltaSeq, keys: win.keys, delta, events: writeEvents, windows: deltaWindows })
+    if (c.both.length > 0) {
+      const key = K.both(win.agentId)
+      const had = (await storeGet<BothRow[]>($, key)) ?? []
+      const base = win.keys[0] !== undefined ? `${win.keys[0]}/` : ''
+      const rows = c.both.map(b => ({ who: `${win.label} and ${b.labels.join(', ')}`, path: base !== '' && b.path.startsWith(base) ? b.path.slice(base.length) : b.path }))
+      const seen = new Set(had.map(r => `${r.who}\0${r.path}`))
+      await storeSet($, key, [...had, ...rows.filter(r => !seen.has(`${r.who}\0${r.path}`))].slice(0, WRITE_LOG_CAP))
+    }
+    return c.mine
+  } catch (err) {
+    debug($, `delta not attributed: ${String(err)}`)
+    return [...delta]
   }
 }
 
@@ -5877,6 +5939,8 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const allowed = (argv: readonly string[]) => checkArgv(argv, allowCfg()).ok
   // MOD-217: the paths this worker wrote, so scope is charged only for them
   const writes = spawn.agentId ? await storeGet<string[]>($, K.writes(spawn.agentId)) : undefined
+  // MOD-261: paths changed while this worker and a sibling both ran a command are listed, charged to neither
+  amendLines.push(...(await bothLines($, spawn.agentId)))
   if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes)
   // GH-16: repo=here verifies the session's own checkout, shared with the brain and other workers
   const here = header?.repo === 'here'
@@ -9320,7 +9384,8 @@ export const register: Register = (on, opts) => {
     const snap = await snapBeforeBash($, e)
     const out = await next(e)
     // MOD-217: what a recorded worker writes is logged against its spawn
-    if (e.agentId && out.deny === undefined) await noteWrites($, e, snap ? await bashDelta($, snap) : [])
+    if (e.agentId && out.deny === undefined) await noteWrites($, e, snap ? await chargedDelta($, snap, await bashDelta($, snap)) : [])
+    else if (snap?.win) snap.win.end = ++deltaSeq
     // MOD-119: a Bash call's output tells a command that repeats from one that makes progress
     if (!e.agentId && String(e.tool) === 'Bash' && out.deny === undefined && typeof e.command === 'string') {
       const r = out.result as { stdout?: unknown; stderr?: unknown } | undefined

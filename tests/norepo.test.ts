@@ -7,6 +7,7 @@ import { gateTemplatesOf, resolveGateRuns, splitCommand } from '../hooks/lib/gat
 import {
   attributeWrites,
   bashReadOnly,
+  chargeDelta,
   deltaPaths,
   isDelegationPath,
   globRoot,
@@ -377,6 +378,101 @@ describe('MOD-256: a script the worker ran is attributed to it (repo=here)', () 
   })
 })
 
+// MOD-261: a sibling's write while a worker's command ran is not charged to that worker
+describe('MOD-261: two repo=here workers on one checkout', () => {
+  const OPTS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full' as const, gateMap: '{"G2":"npx g2","G8p":"npx g8p"}' }
+  const CARD_B = FIXTURE_CARD.replace(/BE-101/g, 'BE-102')
+  const NAME_B = FIXTURE_CARD_NAME.replace('BE-101', 'BE-102')
+  const RED = { [`${ROOT}/.delegation/BE-101/red-1.txt`]: 'npx vitest run\nFAIL RateA.test.ts: expected 1 got 0\n' }
+  const dirs = { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME, NAME_B] }
+  const offered = { 'delegation.agentTypes': ['general-purpose', 'backend', 'frontend'] }
+  const report = (files: string) => `Done.\n[[report v=1 task=BE-101 subtask=main branch=main pr=none sha=HEAD gate=pass red=.delegation/BE-101/red-1.txt files=${files}]]`
+  const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
+  const tool = ($: any, agentId: string, input: Record<string, unknown>) => $.tool.call({ ...input, agentId } as never)
+  const edit = ($: any, agentId: string, file: string) => tool($, agentId, { tool: 'Edit', file_path: file, old_string: 'a', new_string: 'b' })
+  const passed = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+  // worker A's Bash call parks inside the engine until `release()`; `entered` resolves once it is there (its before-snapshot is taken)
+  const setup = (on: Parameters<typeof world>[0], tree: string[]) => {
+    let release = () => {}
+    let enter = () => {}
+    const gate = new Promise<void>(r => (release = r))
+    const entered = new Promise<void>(r => (enter = r))
+    let parked = 0
+    on('tool.call', { tool: 'Edit' }, passed)
+    on('tool.call', { tool: 'Bash' }, async () => {
+      // only the first Bash call parks; a sibling's Bash call runs through
+      if (parked++ === 0) {
+        enter()
+        await gate
+      }
+      return passed()
+    })
+    const run = (argv: string[]): RunAnswer | undefined => {
+      if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+      if (argv[3] === 'status') return { exitCode: 0, stdout: [...tree, ''].join('\0') }
+      return argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined
+    }
+    const w = world(on, { files: { [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: FIXTURE_CARD, [`${ROOT}/agents/tasks/${NAME_B}`]: CARD_B, ...RED }, dirs, run, agentId: 'agent-h', store: offered })
+    return { w, release, entered }
+  }
+  const start = async ($: any) => {
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('BE-101 --here --scope app/billing/Rate*.ts'))).text))
+    await brainSpawn($, String((await $.command.run(commandInput('BE-102 --here --scope y.txt'))).text), { tool_use_id: 'toolu_01BBBBBBBB' })
+  }
+
+  test('a sibling\'s Edit during A\'s command is not charged to A', { options: OPTS }, async ($, on) => {
+    const tree = [' M app/billing/RateA.ts']
+    const { w, release, entered } = setup(on, tree)
+    await start($)
+    await edit($, 'agent-h', `${ROOT}/app/billing/RateA.ts`)
+    const aBash = tool($, 'agent-h', { tool: 'Bash', command: 'node gen.mjs' })
+    await entered
+    tree.push(' M y.txt')
+    await edit($, 'agent-2', `${ROOT}/y.txt`)
+    release()
+    await aBash
+    await $.turn.complete(turnInput('agent-h', report('app/billing/RateA.ts')))
+    const row = delivered(w)
+    expect(row).not.toContain('claim scope: failed')
+    expect(row).toContain('verdict=consistent task=BE-101')
+    // the Edit is B's own write, and only B's
+    expect(w.store.get('delegation.writes.agent-2')).toEqual([`${ROOT}/y.txt`])
+    expect(w.store.get('delegation.writes.agent-h')).toEqual([`${ROOT}/app/billing/RateA.ts`])
+  })
+
+  test('a path changed while both workers ran Bash is charged to neither and listed', { options: OPTS }, async ($, on) => {
+    const tree = [' M app/billing/RateA.ts']
+    const { w, release, entered } = setup(on, tree)
+    await start($)
+    await edit($, 'agent-h', `${ROOT}/app/billing/RateA.ts`)
+    const aBash = tool($, 'agent-h', { tool: 'Bash', command: 'node gen.mjs' })
+    await entered
+    tree.push(' M z.txt')
+    await tool($, 'agent-2', { tool: 'Bash', command: 'node other.mjs' })
+    release()
+    await aBash
+    expect(w.store.get('delegation.writes.agent-h') ?? []).not.toContain(`${ROOT}/z.txt`)
+    expect(w.store.get('delegation.writes.agent-2') ?? []).not.toContain(`${ROOT}/z.txt`)
+    await $.turn.complete(turnInput('agent-h', report('app/billing/RateA.ts')))
+    const row = delivered(w)
+    expect(row).not.toContain('claim scope: failed')
+    expect(row).toContain('changed while BE-101 and BE-102 both ran: z.txt')
+  })
+
+  test('with no sibling running, a script\'s file is still the worker\'s', { options: OPTS }, async ($, on) => {
+    const tree = [' M app/billing/RateA.ts']
+    const { w, release, entered } = setup(on, tree)
+    await start($)
+    const aBash = tool($, 'agent-h', { tool: 'Bash', command: 'node gen.mjs' })
+    await entered
+    tree.push(' M x.txt')
+    release()
+    await aBash
+    expect(w.store.get('delegation.writes.agent-h')).toEqual([`${ROOT}/x.txt`])
+  })
+})
+
 describe('MOD-256: read-only Bash and snapshot deltas (pure)', () => {
   test('reads are read-only; a script, a redirection or a write verb is not', () => {
     for (const c of ['ls -la', 'cat a.txt | head -5', 'git status --short && git diff', 'git -C /r log --oneline', 'grep -rn x src 2>&1', 'find . -name "*.ts"', 'sed -n 1,5p f', 'echo hi > /dev/null']) expect(bashReadOnly(c)).toBe(true)
@@ -387,5 +483,23 @@ describe('MOD-256: read-only Bash and snapshot deltas (pure)', () => {
     const b = new Map([['/r/a', ' M|1:1'], ['/r/b', ' M|2:9'], ['/r/d', '??|4:4']])
     expect(deltaPaths(a, b).sort()).toEqual(['/r/b', '/r/c', '/r/d'])
     expect(deltaPaths(a, a)).toEqual([])
+  })
+})
+
+describe('MOD-261: chargeDelta (pure)', () => {
+  const base = { agentId: 'a', start: 10, end: 20, keys: ['/r'], delta: ['/r/x', '/r/y'] }
+  test('no sibling: every path is the worker\'s', () => {
+    expect(chargeDelta({ ...base, events: [], windows: [] })).toEqual({ mine: ['/r/x', '/r/y'], sibling: [], both: [] })
+  })
+  test('a sibling\'s write inside the window is the sibling\'s; one outside it is not', () => {
+    const r = chargeDelta({ ...base, events: [{ agentId: 'b', path: '/r/y', seq: 15 }, { agentId: 'b', path: '/r/x', seq: 5 }], windows: [] })
+    expect(r).toEqual({ mine: ['/r/x'], sibling: ['/r/y'], both: [] })
+  })
+  test('an overlapping sibling command makes the rest unattributable; a window on another checkout or after it does not', () => {
+    const w = (o: object) => ({ agentId: 'b', label: 'B-1', keys: ['/r'], start: 12, ...o })
+    expect(chargeDelta({ ...base, events: [], windows: [w({})] }).both).toEqual([{ path: '/r/x', labels: ['B-1'] }, { path: '/r/y', labels: ['B-1'] }])
+    expect(chargeDelta({ ...base, events: [], windows: [w({ end: 18 })] }).both.length).toBe(2)
+    expect(chargeDelta({ ...base, events: [], windows: [w({ keys: ['/other'] })] }).mine.length).toBe(2)
+    expect(chargeDelta({ ...base, events: [], windows: [w({ start: 2, end: 9 })] }).mine.length).toBe(2)
   })
 })
