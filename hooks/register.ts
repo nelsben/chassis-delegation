@@ -215,7 +215,7 @@ import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, do
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type OutsideInput, type RootListing } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
-import { noSuchAttempt, parseVerdictTool, POLL_MS, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule } from './lib/verdicttool'
+import { noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule, pollStep } from './lib/verdicttool'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
 import { BY_TASK_FAMILIES, migratedLine, migrationPlan, scopedId, trimRepo, type MigrationPlan } from './lib/taskkeys'
@@ -5482,15 +5482,17 @@ async function takeEngineTurn($: Host, label: string, progressKey?: string): Pro
     for (;;) {
       const t = await now($)
       const d = await alone(async () => {
-        const decision = engineLockDecision(readEngineLock(await $.store.get(K.engineGate)), t, token)
+        const lock = readEngineLock(await $.store.get(K.engineGate))
+        const decision = engineLockDecision(lock, t, token)
         if (decision.take) await $.store.set(K.engineGate, { holder: label, token, since: t, until: t + gateTimeoutMs() } satisfies EngineLock)
-        return decision
+        return decision.take ? decision : { ...decision, waitMs: Math.max(1, Math.min(pollStep(t - started), (lock?.until ?? t) - t)) }
       })
       if (d.take) break
       // MOD-229: the lock wait is shown apart from the gate's own time, and the ceiling starts only once the gate does
       if (holder === undefined && progressKey !== undefined) gateProgress.set(progressKey, { phase: 'lock', since: started })
       holder = d.holder
       // MOD-72: a process wait, so a long lock wait does not spend the hook's budget (HookBudget); a clock wait of 1 s at most when it cannot start
+      // MOD-246: d.waitMs is the adaptive step (pollStep), cut at the lock's expiry
       if (!(await pauseOffBudget($, d.waitMs))) await $.clock.sleep(Math.min(d.waitMs, 1000))
     }
   } catch (err) {
@@ -6719,7 +6721,7 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
       return lines.length > 0 ? `${found.text}\n${lines.join('\n')}` : found.text
     }
     if (waited >= limit) return stillVerifyingNow($, label, parsed.waitSeconds)
-    const step = Math.min(POLL_MS, limit - waited)
+    const step = Math.min(pollStep(waited), limit - waited)
     if (!(await pauseOffBudget($, step))) return stillVerifyingNow($, label, parsed.waitSeconds)
     waited += step
   }

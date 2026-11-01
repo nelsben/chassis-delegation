@@ -119,6 +119,32 @@ describe('MOD-64: the verdict tool', () => {
     expect(sleeps[0]?.argv).toEqual(['sleep', '5'])
   })
 
+  test('MOD-246: a 600 s verdict wait spawns few sleep processes (adaptive step)', { options: { ...GM } }, async ($, on) => {
+    const w = setup(on)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    const waiting = call($, { task: 'T-4' })
+    for (let i = 0; i < 130; i++) await w.clock.advance(5000)
+    expect(resultText(await waiting)).toBe('T-4: still verifying after 600s; call verdict again')
+    const sleeps = w.runs.filter(r => r.argv[0] === 'sleep')
+    // 5 s x 6 (to 30 s) + 15 s x 6 (to 120 s) + 30 s x 16 (to 600 s) = 28; the card said 25 but its own schedule gives 28
+    expect(sleeps.length).toBeLessThanOrEqual(28)
+    expect(sleeps.map(r => Number(r.argv[1])).reduce((a, b) => a + b, 0)).toBe(600)
+  })
+
+  test('MOD-246: a verdict that lands at 12 s is seen by 15 s', { options: { ...GM } }, async ($, on) => {
+    const w = setup(on, 12_000)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    let elapsed = 0
+    const done = $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
+    const waiting = call($, { task: 'T-4' })
+    let seenAt = -1
+    void waiting.then(() => { seenAt = elapsed })
+    for (let i = 0; i < 30; i++) { await w.clock.advance(1000); elapsed += 1000 }
+    await done
+    expect(resultText(await waiting)).toContain('consistent')
+    expect(seenAt).toBeLessThanOrEqual(15_000)
+  })
+
   test('MOD-72: a sleep that cannot start answers still-verifying at once', { options: { ...GM } }, async ($, on) => {
     const w = setup(on)
     sleepFails = true
