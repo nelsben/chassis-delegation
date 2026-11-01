@@ -65,7 +65,7 @@ export const briefDirFor = (root: string, configured: string): string =>
 /** Lockfiles at the repo root, in the order they decide the brief's install step. */
 export const INSTALL_FILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'requirements.txt'] as const
 const INSTALL_STEPS: Record<(typeof INSTALL_FILES)[number], string> = {
-  'package-lock.json': 'npm ci',
+  'package-lock.json': 'npm ci unless node_modules/.package-lock.json exists and is newer than package-lock.json',
   'pnpm-lock.yaml': 'pnpm i --frozen-lockfile',
   'yarn.lock': 'yarn install --immutable',
   'requirements.txt': 'pip install -r requirements.txt',
