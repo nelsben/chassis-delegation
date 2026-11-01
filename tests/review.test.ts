@@ -1,4 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
+import { world, spawnInput, turnInput, usage, ROOT, SCRATCH, type RunAnswer } from './harness'
 import { advise, type AdviseInput } from '../hooks/lib/verify'
 import { attemptsFor, nextAttempt, patchRecord, type AttemptRecord } from '../hooks/lib/attempts'
 import { parseRepoConfig, mergeConfig, settingsLayer } from '../hooks/lib/repoconfig'
@@ -328,5 +329,62 @@ describe('MOD-253: the review brief carries the verifier\'s gate record', () => 
   })
   test('the record renders into the template through {{gaterecord}}', () => {
     expect(renderReview('{{gaterecord}}\nend', { gaterecord: gateRecord([claim], []) }).includes(claim)).toBe(true)
+  })
+})
+
+describe('MOD-258: orphanReview through the hooks (MOD-224)', () => {
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=2-attempts report=chassis.report.v1]]'
+  const REPORT = '[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
+  const OPTIONS = { review: 'on', verdictVerbosity: 'full', gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const MB = 'b'.repeat(40)
+  const run = (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) return { exitCode: 0, stdout: `${last.slice(0, -'^{commit}'.length).padEnd(40, '0')}\n` }
+    if (sub[0] === 'rev-parse' && sub[1] === '--verify') return { exitCode: 0, stdout: `${last === 'origin/main' ? MB : '1234abcd'.padEnd(40, '0')}\n` }
+    if (sub[0] === 'rev-parse' && last === 'HEAD' && sub[1] !== '--abbrev-ref') return { exitCode: 0, stdout: `${'1234abcd'.padEnd(40, '0')}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: 'A\ta/x.ts\n' }
+    return undefined
+  }
+  const block = (task: string, extra: string) => `confirmed: a/x.ts gains the parser — a/x.ts:12\n[[review v=1 task=${task}${extra} confirmed=1 refuted=0 unverifiable=0]]`
+  const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
+  const recs = (w: { store: Map<string, unknown> }) => (w.store.get(`delegation.tasks.T-4@${ROOT}`) ?? []) as Record<string, unknown>[]
+  const ledger = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+  const handedBack = async ($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<typeof world>[0]) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Added the parser.\n' + REPORT))
+    return w
+  }
+
+  test('a reviewer hand-back with no spawn record is matched by task+attempt+sha and its row is written once', { options: OPTIONS }, async ($, on) => {
+    const w = await handedBack($, on)
+    expect(recs(w).filter(r => r.kind === 'review')).toHaveLength(0)
+    expect([...w.store.keys()].filter(k => k.startsWith('delegation.spawn.review-'))).toEqual([])
+    await $.turn.complete(turnInput('agent-9', block('T-4', ' attempt=1 sha=1234abcd'), usage('claude-haiku-4-5', 40_000, 2_000)))
+    // the record the orphan path rebuilds for the lost spawn, joined to the worker's attempt by task+attempt+sha
+    expect(w.store.get('delegation.spawn.review-agent-9')).toMatchObject({ task: 'T-4', attempt: 1, purpose: 'review', description: 'T-4 review (spawn record lost)', review: { worker: 'agent-4', sha: '1234abcd' }, verdictAttempt: 1 })
+    expect(ledger(w).filter(l => l.kind === 'review')).toHaveLength(1)
+    expect(ledger(w).at(-1)).toMatchObject({ task: 'T-4', kind: 'review', verdict: 'reviewed', next: 'accept' })
+    // the same hand-back again is not recorded twice
+    await $.turn.complete(turnInput('agent-9', block('T-4', ' attempt=1 sha=1234abcd')))
+    expect(ledger(w).filter(l => l.kind === 'review')).toHaveLength(1)
+  })
+
+  test('an orphan review that names a task nothing waits on is ignored: no row, no record', { options: OPTIONS }, async ($, on) => {
+    const w = await handedBack($, on)
+    const before = { led: ledger(w).length, shown: delivered(w) }
+    await $.turn.complete(turnInput('agent-9', block('T-9', ' attempt=1 sha=1234abcd')))
+    expect(ledger(w)).toHaveLength(before.led)
+    expect(ledger(w).some(l => l.kind === 'review')).toBe(false)
+    expect(recs(w).filter(r => r.kind === 'review')).toHaveLength(0)
+    expect(w.store.get('delegation.tasks.T-9@' + ROOT)).toBeUndefined()
+    expect([...w.store.keys()].filter(k => k.startsWith('delegation.spawn.review-'))).toEqual([])
+    const added = delivered(w).slice(before.shown.length).split('\n').filter(l => !l.includes('no transcript for'))
+    expect(added.join('\n').trim()).toBe('')
   })
 })

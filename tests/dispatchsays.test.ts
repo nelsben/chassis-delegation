@@ -1,7 +1,7 @@
 // MOD-219: dispatch says what it holds. A path named only in red_test is read, so an outside one does not warn;
 // a lane held by a tier cap says its position; a verdict whose gate was not re-run says so in the row.
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, sessionStart } from './harness'
+import { world, spawnInput, sessionStart, commandInput, brainSpawn, ROOT, SCRATCH } from './harness'
 import { redTestWarnings } from '../hooks/lib/card'
 import { verdictLine, gateNotRerun } from '../hooks/lib/verify'
 import { gateForDelta } from '../hooks/lib/gates'
@@ -64,5 +64,60 @@ describe('MOD-219/236: a verdict says why its gate was not re-run', () => {
     const line = gateForDelta('test', { test: 'npm test', fast: 'echo ok', _empty: 'fast' }, []).line
     expect(gateNotRerun([line as string])).toBeUndefined()
     expect(gateNotRerun(['claim gate: held — gate green at abc'])).toBeUndefined()
+  })
+})
+
+describe('MOD-258: the engine-lanes line on a dispatch (MOD-230)', () => {
+  const LINE = '3 lanes share the engine gate; it runs one at a time: expect verdict waits'
+  const card = (id: string, gate: string) =>
+    ['---', `id: ${id}`, `title: ${id}`, 'domain: ops', 'tier: standard', 'status: queued', 'repo: none', 'scope: [/out/x/**]', 'forbid: []', 'red_test: none', `gate: ${gate}`, 'budget: 2-attempts', '---', '## Why', '', 'Outside the repo.', ''].join('\n')
+  const OPTIONS = { briefDir: `${SCRATCH}/briefs`, gateMap: '{"engine":"claude plugin test {worktree}","quick":"checker {outdir}"}' }
+  const setup = (on: Parameters<typeof world>[0], gates: Record<string, string>) => {
+    const ids = Object.keys(gates)
+    return world(on, {
+      files: Object.fromEntries(ids.map(id => [`${ROOT}/agents/tasks/${id}-card.md`, card(id, gates[id] as string)])),
+      dirs: { [`${ROOT}/agents/tasks`]: ids.map(id => `${id}-card.md`) },
+      trees: ['/out/x'],
+      listAgents: true,
+      run: argv => (argv[0] === 'checker' ? { exitCode: 0, stdout: 'ok\n' } : undefined),
+    })
+  }
+  const dispatch = async ($: Parameters<typeof brainSpawn>[0] & { command: { run: (c: never) => Promise<{ text?: unknown }> } }, id: string, start = true) => {
+    const text = String((await $.command.run(commandInput(id))).text)
+    if (start && text.includes('spawn: Agent')) await brainSpawn($, text, { tool_use_id: `toolu_${id.replace(/\W/g, '')}0000` })
+    return text
+  }
+
+  test('3 engine lanes live: the dispatch output carries the line; 2 lanes: it does not', { options: { ...OPTIONS, maxWorkers: 6 } }, async ($, on) => {
+    setup(on, { 'OPS-1': 'engine', 'OPS-2': 'engine', 'OPS-3': 'engine' })
+    await $.session.start(sessionStart)
+    const first = await dispatch($, 'OPS-1')
+    const second = await dispatch($, 'OPS-2')
+    expect(first).not.toContain('lanes share the engine gate')
+    expect(second).not.toContain('lanes share the engine gate') // 2 lanes
+    const third = await dispatch($, 'OPS-3')
+    expect(third).toContain('spawn prepared')
+    expect(third.split('\n')).toContain(LINE)
+  })
+
+  test('lanes whose gate is not the engine suite are not counted', { options: { ...OPTIONS, maxWorkers: 6 } }, async ($, on) => {
+    setup(on, { 'OPS-1': 'engine', 'OPS-2': 'quick', 'OPS-3': 'engine' })
+    await $.session.start(sessionStart)
+    await dispatch($, 'OPS-1')
+    await dispatch($, 'OPS-2')
+    expect(await dispatch($, 'OPS-3')).not.toContain('lanes share the engine gate')
+  })
+
+  test('a spawn held in the queue carries the line after its queued text', { options: { ...OPTIONS, maxWorkers: 2 } }, async ($, on) => {
+    setup(on, { 'OPS-1': 'engine', 'OPS-2': 'engine', 'OPS-3': 'engine' })
+    await $.session.start(sessionStart)
+    await dispatch($, 'OPS-1')
+    await dispatch($, 'OPS-2')
+    const third = await dispatch($, 'OPS-3')
+    expect(third).toContain('queued')
+    expect(third).not.toContain('spawn: Agent')
+    const lines = third.split('\n')
+    expect(lines.at(-1)).toBe(LINE)
+    expect(lines.at(-2)).toContain('queued')
   })
 })
