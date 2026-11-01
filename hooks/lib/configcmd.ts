@@ -89,6 +89,8 @@ export type CfgView = {
   specs?: Readonly<Record<string, FieldSpec>>
   /** The repo /delegation debrief post files in ('' = none) and the card folder, for the `in effect:` lines. */
   derived?: { issueRepo?: string; cardDir?: string }
+  /** MOD-257: a field whose repo-file value beats a different value of yours, field → your value. */
+  overridden?: Readonly<Record<string, string>>
   /** MOD-98: gateMap entries the gate checker refused, id → why; shown under gateMap. */
   refusedGates?: Readonly<Record<string, string>>
 }
@@ -259,7 +261,9 @@ export const HOW = 'all: /delegation config all · one group: /delegation config
 
 const groupOf = (field: string): string => CONFIG_TABLE[field]?.group ?? OTHER_GROUP
 const ALL_GROUPS: readonly string[] = [...CONFIG_GROUPS, OTHER_GROUP]
-const fieldLine = (view: CfgView, f: string): string => cut(`${f} = ${shownValue(f, view.values[f])} (${view.sources[f] ?? 'default'})`)
+const fieldLine = (view: CfgView, f: string): string => cut(`${f} = ${shownValue(f, view.values[f])} (${view.sources[f] ?? 'default'})${overriddenNote(view, f)}`)
+/** MOD-257: the note after a value a repo file beats; empty when your value is not overridden. */
+const overriddenNote = (view: CfgView, f: string): string => (view.overridden?.[f] !== undefined ? ` (your /config value ${view.overridden[f]} is overridden by the repo file)` : '')
 /** MOD-98: one line per refused gateMap entry, under the gateMap line. */
 const refusedLines = (view: CfgView, f: string): string[] => (f === 'gateMap' ? Object.entries(view.refusedGates ?? {}).map(([id, why]) => cut(`  ${id}: refused: ${why}`)) : [])
 
@@ -271,7 +275,7 @@ export function configShort(view: CfgView): string {
   if (set.length === 0) return [head, `all ${view.fields.length} at their defaults`, HOW].join('\n')
   const body = ALL_GROUPS.flatMap(g => {
     const of = set.filter(f => groupOf(f) === g)
-    return of.length === 0 ? [] : [g, ...of.flatMap(f => [cut(` ${f} = ${shownValue(f, view.values[f])} (${view.sources[f]})`), ...refusedLines(view, f)])]
+    return of.length === 0 ? [] : [g, ...of.flatMap(f => [cut(` ${f} = ${shownValue(f, view.values[f])} (${view.sources[f]})${overriddenNote(view, f)}`), ...refusedLines(view, f)])]
   })
   return [head, ...body, HOW].join('\n')
 }
@@ -303,7 +307,7 @@ export function configShow(view: CfgView, field: string): string {
   const choices = e?.choices ?? view.rows[field]?.options ?? view.specs?.[field]?.options
   const description = view.rows[field]?.description ?? view.specs?.[field]?.description
   return [
-    `${field} = ${shownValue(field, v)} (${view.sources[field] ?? 'default'})`,
+    `${field} = ${shownValue(field, v)} (${view.sources[field] ?? 'default'})${overriddenNote(view, field)}`,
     ...gates,
     ...(e ? [`  ${e.summary}`] : []),
     `kind: ${kindWord(field, view)}`,
