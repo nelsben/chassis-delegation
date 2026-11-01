@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'claude-code/testing'
-import { world, spawnInput, turnInput, sessionStart, brainSpawn, ROOT, SCRATCH, type RunAnswer } from './harness'
+import { world, spawnInput, turnInput, sessionStart, brainSpawn, workerCall, ROOT, SCRATCH, NOW, type RunAnswer } from './harness'
 
 // MOD-152 (#246): the worker's worktree is locked while the verifier judges it, so a plain
 // `git worktree remove --force` cannot pull the directory away from the gate.
@@ -92,5 +92,82 @@ describe('MOD-152: the worktree is locked while the verifier runs', () => {
   test('repo=none runs no lock', { options: BRIEFS }, async ($, on) => {
     const { argvs } = await verifyRuns($ as never, on as never, 'none')
     expect(lockRuns(argvs)).toEqual([])
+  })
+})
+
+// MOD-235: a worker's own `claude plugin test` takes the engine lock a verifier or merge holds.
+describe('MOD-235: a worker engine-suite run takes the engine turn', () => {
+  const LOCKKEY = 'delegation.engineGate'
+  const MIN = 60_000
+  const held = (until: number) => ({ holder: 'X-9 verify', token: 'X-9#1', since: NOW, until })
+  const WCFG = (minutes: number) => ({ ...setup(''), files: { ...setup('').files, [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ domains: ['ops'], gateMap: { test: 'npm test' }, gateTimeoutMinutes: minutes }) } })
+  const start = async ($: any, on: any, minutes = 30) => {
+    const ran: string[] = []
+    const hooks = { onRun: undefined as undefined | (() => Promise<void>) }
+    const w = world(on, WCFG(minutes) as never)
+    ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async (_$: unknown, e: { command?: string }) => {
+      ran.push(String(e.command).replace(/^export [^;]*; /, ''))
+      await hooks.onRun?.()
+      return { result: { stdout: 'ok', stderr: '' }, text: 'ok' }
+    })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: DISPATCH, task: 'T-1' } as never))
+    await brainSpawn($, out)
+    return { w, ran, hooks }
+  }
+  const call = ($: any, w: any, command: string, extra: Record<string, unknown> = {}) => workerCall($, w, 'agent-4', { tool: 'Bash', command, ...extra }) as Promise<any>
+
+  test('RED: a worker `claude plugin test .` waits while a verifier holds the turn, and runs once it is released', { options: BRIEFS }, async ($, on) => {
+    const { w, ran } = await start($, on)
+    w.store.set(LOCKKEY, held(NOW + 20 * MIN))
+    const p = call($, w, 'claude plugin test .')
+    await w.clock.advance(10_000)
+    expect(ran).toEqual([])
+    w.store.delete(LOCKKEY)
+    await w.clock.advance(40_000)
+    const r = await p
+    expect(ran).toEqual(['claude plugin test .'])
+    expect(r.seen).toBe(true)
+    expect(w.store.get(LOCKKEY)).toBeUndefined()
+  })
+
+  test('a worker node command does not wait', { options: BRIEFS }, async ($, on) => {
+    const { w, ran } = await start($, on)
+    w.store.set(LOCKKEY, held(NOW + 20 * MIN))
+    await call($, w, 'node tests/x.js')
+    expect(ran).toEqual(['node tests/x.js'])
+  })
+
+  test('the wait ends at gateTimeoutMinutes: the command runs and the result gains the trailing line', { options: BRIEFS }, async ($, on) => {
+    const { w, ran } = await start($, on, 1)
+    w.store.set(LOCKKEY, held(NOW + 60 * MIN))
+    const p = call($, w, 'claude plugin test .')
+    await w.clock.advance(30_000)
+    expect(ran).toEqual([])
+    await w.clock.advance(90_000)
+    const r = await p
+    expect(ran).toEqual(['claude plugin test .'])
+    expect(JSON.stringify(r.result)).toContain('(engine lock not had after 1 min; ran anyway)')
+    expect(w.store.get(LOCKKEY)).toMatchObject({ token: 'X-9#1' })
+  })
+
+  test('a nested engine command from the holder takes no second turn', { options: BRIEFS }, async ($, on) => {
+    const { w, ran, hooks } = await start($, on)
+    let nested = 0
+    hooks.onRun = async () => {
+      if (nested++ === 0) await call($, w, 'bash -c "claude plugin test ."')
+    }
+    const r = await call($, w, 'claude plugin test .')
+    expect(r.seen).toBe(true)
+    expect(ran).toEqual(['claude plugin test .', 'bash -c "claude plugin test ."'])
+    expect(w.store.get(LOCKKEY)).toBeUndefined()
+  })
+
+  test('a background engine run is denied with one line', { options: BRIEFS }, async ($, on) => {
+    const { w, ran } = await start($, on)
+    const r = await call($, w, 'claude plugin test .', { run_in_background: true })
+    expect(r.result.deny).toMatch(/foreground/)
+    expect(r.result.deny).not.toContain('\n')
+    expect(ran).toEqual([])
   })
 })

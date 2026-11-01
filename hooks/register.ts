@@ -201,7 +201,7 @@ import {
   shouldEval,
   type EvalTier,
 } from './lib/evaltrigger'
-import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, waitedLine, type EngineLock } from './lib/gates'
+import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, runsEngineSuite, waitedLine, withTrailingLine, type EngineLock } from './lib/gates'
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
@@ -5466,6 +5466,8 @@ const alone = <T>(fn: () => Promise<T>): Promise<T> => {
   return next
 }
 let engineSeq = 0
+/** MOD-235: how many engine-suite Bash calls a briefed worker has open, by agent id; above 0 it holds the turn. */
+const workerEngineDepth = new Map<string, number>()
 
 /**
  * MOD-20: waits for this session's turn at the engine suite. Two engine gates at once blow the
@@ -5474,7 +5476,7 @@ let engineSeq = 0
  * time. The lock expires after the gate's own timeout, so a crashed holder never wedges the rest. A
  * store that cannot be read or written runs the gate without a turn rather than not at all.
  */
-async function takeEngineTurn($: Host, label: string, progressKey?: string): Promise<{ line?: string; release: () => Promise<void> }> {
+async function takeEngineTurn($: Host, label: string, progressKey?: string, maxWaitMs?: number): Promise<{ line?: string; gaveUp?: true; release: () => Promise<void> }> {
   const started = await now($)
   const token = `${label}#${started}#${(engineSeq += 1)}`
   let holder: string | undefined
@@ -5488,12 +5490,15 @@ async function takeEngineTurn($: Host, label: string, progressKey?: string): Pro
         return decision.take ? decision : { ...decision, waitMs: Math.max(1, Math.min(pollStep(t - started), (lock?.until ?? t) - t)) }
       })
       if (d.take) break
+      // MOD-235: a caller with a longest wait (a worker's own suite run) stops waiting there and runs without the turn
+      if (maxWaitMs !== undefined && t - started >= maxWaitMs) return { gaveUp: true, release: async () => undefined }
       // MOD-229: the lock wait is shown apart from the gate's own time, and the ceiling starts only once the gate does
       if (holder === undefined && progressKey !== undefined) gateProgress.set(progressKey, { phase: 'lock', since: started })
       holder = d.holder
       // MOD-72: a process wait, so a long lock wait does not spend the hook's budget (HookBudget); a clock wait of 1 s at most when it cannot start
       // MOD-246: d.waitMs is the adaptive step (pollStep), cut at the lock's expiry
-      if (!(await pauseOffBudget($, d.waitMs))) await $.clock.sleep(Math.min(d.waitMs, 1000))
+      const step = maxWaitMs === undefined ? d.waitMs : Math.max(1, Math.min(d.waitMs, maxWaitMs - (t - started)))
+      if (!(await pauseOffBudget($, step))) await $.clock.sleep(Math.min(step, 1000))
     }
   } catch (err) {
     debug($, `${label}: engine gate turn not taken (${String(err)}); the gate runs without it`)
@@ -9262,6 +9267,40 @@ export const register: Register = (on, opts) => {
     if (!worker || worker.adhoc || worker.review) return next(e)
     const run = withIdentity(command, worker)
     return next(run === command ? e : { ...e, command: run })
+  })
+
+  // ---- MOD-235: a briefed worker's own engine-suite run takes the engine turn ----------
+  // The last link before the engine's tool, after the identity hook. The brain (no agentId), an ad hoc agent, a
+  // reviewer and a command that is not the engine suite pass untouched. The turn is held while the command runs.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const command = typeof e.command === 'string' ? e.command : ''
+    if (!e.agentId || command === '' || !runsEngineSuite(command)) return next(e)
+    const worker = await spawnByAgent($, e.agentId)
+    if (!worker || worker.adhoc || worker.review) return next(e)
+    const who = taskLabel(worker.task, worker.subtask)
+    if ((e as unknown as { run_in_background?: unknown }).run_in_background === true) {
+      return { deny: `${who}: run the engine suite in the foreground (no run_in_background): the engine lock is held only while the command runs` }
+    }
+    const depth = workerEngineDepth.get(e.agentId) ?? 0
+    // a nested engine command from the agent that already holds the turn takes no second turn
+    if (depth > 0) {
+      workerEngineDepth.set(e.agentId, depth + 1)
+      try {
+        return await next(e)
+      } finally {
+        workerEngineDepth.set(e.agentId, (workerEngineDepth.get(e.agentId) ?? 1) - 1)
+      }
+    }
+    workerEngineDepth.set(e.agentId, 1)
+    let turn: Awaited<ReturnType<typeof takeEngineTurn>> | undefined
+    try {
+      turn = await takeEngineTurn($, `${who} worker`, undefined, gateTimeoutMs())
+      const out = await next(e)
+      return turn.gaveUp ? withTrailingLine(out, `(engine lock not had after ${cfg.gateTimeoutMinutes} min; ran anyway)`) : out
+    } finally {
+      workerEngineDepth.delete(e.agentId)
+      await turn?.release()
+    }
   })
 
   // ---- tool.call on Agent: capture the report, verify, hand the verdict back ------
