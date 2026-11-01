@@ -72,7 +72,7 @@ describe('5C: hooks/templates/brief.md is repo-neutral', () => {
     const { renderSections } = await import('../../hooks/lib/dispatch.ts')
     const t = read('hooks/templates/brief.md')
     const here = renderSections(t, true)
-    for (const want of ['repo=here: no worktree', 'You share this checkout with the brain and maybe other workers', 'touch only your scope', 'Do not commit unless the card says so', 'never push', 'branch={{branch}} pr=none sha=HEAD', 'else the short sha you committed']) {
+    for (const want of ['repo=here: no worktree', 'You share it with the brain and maybe other workers', 'touch only your scope', 'Do not commit unless the card says so', 'never push', 'branch={{branch}} pr=none sha=HEAD', 'else the short sha you committed']) {
       expect(here.includes(want)).toBe(true)
     }
     for (const gone of ['Work ONLY there', 'Leave the worktree clean', 'sha=<short sha>', '{{#', '{{/']) expect(here.includes(gone)).toBe(false)
@@ -223,5 +223,39 @@ describe('MOD-253: the review template reads the verifier\'s gate record', () =>
     expect(t.includes('run the suite')).toBe(true)
     expect(t.includes('a test run only if it writes nothing')).toBe(false)
     expect(t.trimEnd().endsWith('[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]')).toBe(true)
+  })
+})
+
+describe('MOD-245: the brief drops the red-test lines when red_test is none, and stays small', () => {
+  const mk = async (redTest, mode = 'worktree') => {
+    const { renderBrief, parseCard } = await import('../../hooks/lib/dispatch.ts')
+    const t = read('hooks/templates/brief.md')
+    const card = parseCard(`---\nid: OPS-9\ntitle: T\ndomain: ops\nscope: [a/**]\nred_test: ${redTest}\ngate: test\n---\nB\n`)
+    return renderBrief(t, { card, worktree: '/w/T-1', branch: 'agent/ops/OPS-9', cardPath: '/c.md', mode, spend: 5 })
+  }
+  test('red_test=none: no red-evidence line, no Red test first rule, the report says red=none', async () => {
+    for (const mode of ['worktree', 'here']) {
+      const out = await mk('none', mode)
+      expect(out.includes('Red test first')).toBe(false)
+      expect(out.includes('Red evidence')).toBe(false)
+      expect(out.includes('red-<attempt>')).toBe(false)
+      expect(out.includes(' red=none ')).toBe(true)
+    }
+  })
+  test('a real red test keeps both lines and red=<path>', async () => {
+    const out = await mk('node t.mjs')
+    expect(out.includes('Red test first: node t.mjs')).toBe(true)
+    expect(out.includes('Red evidence')).toBe(true)
+    expect(out.includes(' red=<path> ')).toBe(true)
+  })
+  test('the pause bullet and the gate-timeout sentence are never dropped', async () => {
+    for (const red of ['none', 'node t.mjs']) {
+      const out = await mk(red)
+      expect(out.includes('[[pause v=1 task=OPS-9 reason=<one line>]]')).toBe(true)
+      expect(out.includes('run it once more on its own before handing back gate=fail')).toBe(true)
+    }
+  })
+  test('the output folder line only renders with an outdir', async () => {
+    expect((await mk('none')).includes('Output folder')).toBe(false)
   })
 })

@@ -12,7 +12,7 @@ Running without the engine, known issues, the store and ledger, and developing t
 | `hooks/lib/gates.ts`, `hooks/lib/allow.ts` | the gate commands; the allowlist |
 | `hooks/lib/repoconfig.ts`, `hooks/lib/init.ts` | reads and scaffolds `.chassis-delegation.json` |
 | `hooks/lib/gitguard.ts` | the git guard |
-| `hooks/lib/dispatch.ts`, `hooks/lib/crossbrief.ts` | the card, brief and worktree; whether an existing brief is reused |
+| `hooks/lib/dispatch.ts`, `hooks/lib/crossbrief.ts` | the card, brief and worktree; whether an existing brief is reused. `hooks/templates/brief.md` has conditional sections (`renderSections` and `stageBrief`): the red-test rule and red-evidence block only when `red_test` is not `none` (else the report says `red=none`), the spend line only with a ceiling, the output-folder and scratch lines only with `outdir=` and `scratch=`, the Lessons only when the domain has a file, and one block per mode (worktree, here, none) |
 | `hooks/lib/cleanstop.ts`, `hooks/lib/evaltrigger.ts` | decide the debrief; decide the eval |
 | `hooks/lib/retention.ts` | the store prune plan |
 | `hooks/types/index.d.ts` | declares `$.state` |

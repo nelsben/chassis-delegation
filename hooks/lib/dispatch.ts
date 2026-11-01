@@ -326,7 +326,7 @@ export function renderSections(template: string, mode: BriefMode | boolean): str
   const on: BriefMode = mode === true ? 'here' : mode === false ? 'worktree' : mode
   // `{{#repo}}` is kept for a worktree or a repo=here brief and dropped for a repo=none one
   const off: string[] = [...(['worktree', 'here', 'none'] as const).filter(m => m !== on), ...(on === 'none' ? ['repo'] : [])]
-  const kept = [on, ...(on === 'none' ? [] : ['repo']), 'spend', 'outdir', 'scratch', 'lessons']
+  const kept = [on, ...(on === 'none' ? [] : ['repo']), 'spend', 'outdir', 'scratch', 'lessons', 'red']
   let out = template
   for (const m of off) out = out.replace(new RegExp(`\\{\\{#${m}\\}\\}[\\s\\S]*?\\{\\{/${m}\\}\\}\\n?`, 'g'), '')
   return out.replace(new RegExp(`\\{\\{[#/](?:${kept.join('|')})\\}\\}\\n?`, 'g'), '')
@@ -428,6 +428,9 @@ export const lessonsPath = (root: string, cardDir: string | undefined, domain: s
 export const lessonsCapWarning = (domain: string, n: number, path: string): string =>
   `warning: the ${domain} lessons file holds ${n} lines; the brief carries the first ${LESSONS_CAP} (${n - LESSONS_CAP} not carried): prune ${path}`
 
+/** MOD-245: whether a card's red_test names a test to run first (the literal `none` does not). */
+const hasRedTest = (redTest: string): boolean => redTest.trim().toLowerCase() !== 'none'
+
 /**
  * The template with its sections decided and its `{{key}}`s still in place, and the values they take.
  * MOD-28: split from the fill so a scan for a leftover marker can look at the template's own text, before
@@ -449,6 +452,8 @@ function stageBrief(template: string, v: BriefVars): { staged: string; values: R
     branch: v.branch,
     cardPath: v.cardPath,
     redTest: v.card.redTest,
+    // MOD-245: the report line's red= field: the red file's path, or none when the card has no red test
+    redField: hasRedTest(v.card.redTest) ? '<path>' : 'none',
     gate: v.card.gateText,
     body: v.card.body,
     lessons: v.lessons && lessonLineCount(v.lessons.text) > 0 ? lessonsSection(v.card.domain, v.lessons.text, v.lessons.path) : '',
@@ -457,7 +462,7 @@ function stageBrief(template: string, v: BriefVars): { staged: string; values: R
   const withSpend = template.replace(/\{\{#spend\}\}([\s\S]*?)\{\{\/spend\}\}\n?/g, (_, inner: string) => (v.spend && v.spend > 0 ? inner : ''))
   // MOD-22: `{{#outdir}}…{{/outdir}}` and `{{#scratch}}…{{/scratch}}` are kept only when the brief names the folder
   const keep = (text: string, name: string, on: boolean) => text.replace(new RegExp(`\\{\\{#${name}\\}\\}\\n?([\\s\\S]*?)\\{\\{/${name}\\}\\}\\n?`, 'g'), (_, inner: string) => (on ? inner : ''))
-  const withFolders = keep(keep(keep(withSpend, 'outdir', !!v.outdir), 'scratch', !!v.scratch), 'lessons', values.lessons !== '')
+  const withFolders = keep(keep(keep(keep(withSpend, 'outdir', !!v.outdir), 'scratch', !!v.scratch), 'lessons', values.lessons !== ''), 'red', hasRedTest(v.card.redTest))
   return { staged: renderSections(withFolders, v.mode ?? (v.here === true ? 'here' : 'worktree')), values }
 }
 
