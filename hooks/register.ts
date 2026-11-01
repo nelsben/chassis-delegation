@@ -296,7 +296,7 @@ import {
   type Verdict,
   type WorkPresent,
 } from './lib/verify'
-import { briefHasEngineGate, engineLanesLine, isLoaded, loadedWords, NPROC_ARGV, parseProcLoad, parseSysctlLoad, PROC_LOADAVG, SYSCTL_LOAD_ARGV, type LoadReading } from './lib/load'
+import { briefHasEngineGate, engineLanesLine, heldLoadLine, isLoaded, loadedWords, throttledSlots, NPROC_ARGV, parseProcLoad, parseSysctlLoad, PROC_LOADAVG, SYSCTL_LOAD_ARGV, type LoadReading } from './lib/load'
 import { BASE_REFS, briefContract, briefWantsRed, isMalformedReport, verifyCardless, verifyNative, type RedEvidence } from './lib/verify-native'
 import { aliasLines, driftMessage, newAgentTypes, nextSighting, parseSighting, parseCandidateIds } from './lib/watch'
 import { allowance, bar, cellDay, dayIndex, dayKey, dayRecord, daySegments, inWindow, pace, parseRecord, rationKey, rationReport, rationText, resetsIn, segments, surplus, type DayRecord, type Window as RationWindow } from './lib/ration'
@@ -661,6 +661,8 @@ type Config = {
   landNudge: boolean
   /** MOD-205: on files at once; off shows the issue and files only on confirm: true. */
   landAuto: boolean
+  /** MOD-252: on, a loaded machine (isLoaded) allows half the slots (at least 1); off by default. */
+  loadThrottle: boolean
   /** MOD-215: the most creates one tree import makes in a run, 1 to 100. */
   treeImportBatch: number
   /** MOD-31: ask | auto | off; /config only, never the (public, shared) repo file. */
@@ -762,6 +764,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       wakeOnVerdict: o.wakeOnVerdict === true,
       landNudge: o.landNudge !== false,
       landAuto: o.landAuto === true || o.landAuto === 'on',
+      loadThrottle: o.loadThrottle === true || o.loadThrottle === 'on',
       treeImportBatch: treeBatch(o.treeImportBatch),
       postFindings: parsePostMode(o.postFindings),
       readyFallbackMs: parseReadyFallbackMinutes(o.readyFallbackMinutes) * MIN_MS,
@@ -2270,7 +2273,12 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
     const blocked = resourceBlock(wants, heldResources(live.workers), label)
     // MOD-131 (#219): the workers of each tier running or starting (a spawn's own token is not counted against it)
     const heldByTier = countTiers([...live.workers.map(w => w.spawn.tier), ...[...starting.entries()].filter(([, l]) => l !== label).flatMap(([token]) => startingTiers.get(token) ?? [])])
-    const totalFree = hasSlot(live.workers.length, others.length, cfg.maxWorkers)
+    // MOD-252: read lazily, only with loadThrottle on; a loaded machine allows half the slots (at least 1). A running worker is never evicted.
+    const reading = cfg.loadThrottle ? await step(readMachineLoad($)) : undefined
+    const throttled = isLoaded(reading) && throttledSlots(cfg.maxWorkers) < cfg.maxWorkers
+    const slotsNow = throttled ? throttledSlots(cfg.maxWorkers) : cfg.maxWorkers
+    const totalFree = hasSlot(live.workers.length, others.length, slotsNow)
+    const heldByLoad = throttled && !totalFree && hasSlot(live.workers.length, others.length, cfg.maxWorkers) ? heldLoadLine(reading as LoadReading) : undefined
     // the tier's own cap is what holds it only when the total has room
     const tierHolds = totalFree && tierFull(tier, cfg.maxWorkersByTier, heldByTier)
     if (!blocked && totalFree && !tierHolds) {
@@ -2291,7 +2299,8 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
     const capHeld = (position: number, of: number) => ({ position, of, cap: slotTier ? cfg.maxWorkersByTier[slotTier] ?? 0 : cfg.maxWorkers })
     if (entered.existing) {
       const kept = entered.existing
-      return { deny: blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position, slotTier, limit, capHeld(kept.position, queue.length)) }
+      const again = blocked ? resourceDeny(shown, blocked.resource, blocked.holder, kept) : alreadyQueuedDeny(shown, kept.at, kept.position, slotTier, limit, capHeld(kept.position, queue.length))
+      return { deny: heldByLoad && !blocked && !slotTier ? `${again} — ${heldByLoad}` : again }
     }
     await writeQueue($, entered.queue)
     if (blocked) {
@@ -2299,7 +2308,8 @@ async function claimSlot($: Host, item: QueuedSpawn, label: string, claim = true
       return { deny: resourceDeny(shown, blocked.resource, blocked.holder) }
     }
     debug($, slotTier ? `queued ${label}: ${heldByTier[slotTier] ?? 0} workers hold the ${cfg.maxWorkersByTier[slotTier]} ${slotTier} slots` : `queued ${label}: ${holders.length} workers hold the ${cfg.maxWorkers} slots`)
-    return { deny: queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot)), slotTier, limit, capHeld(queuedIndex(entered.queue, item.task, item.subtask ?? 'main') + 1, entered.queue.length)) }
+    const denyText = queuedDeny(shown, holders, entered.queue.map(q => withRepoName(taskLabel(q.task, q.subtask ?? 'main'), q.repo, sessionRoot)), slotTier, limit, capHeld(queuedIndex(entered.queue, item.task, item.subtask ?? 'main') + 1, entered.queue.length))
+    return { deny: heldByLoad && !slotTier ? `${denyText} — ${heldByLoad}` : denyText }
   })
 }
 

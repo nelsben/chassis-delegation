@@ -345,6 +345,12 @@
       "description": "On by default. Two one-line leads in the band above the prompt, for the brain and not for you: after a prompt of yours that describes a bug, feature or idea and a turn that lands nothing (no land, land_plan or card call), `lead: land this as an issue (land or land_plan) or say it is not work`; and after a merge finish whose parent issue still has open tasks, `lead: parent #<n> has <k> open tasks; land the next or close it`. A land, land_plan, card or dispatch call clears them. Nothing is written to GitHub. Off draws and records neither",
       "default": true
     },
+    "loadThrottle": {
+      "type": "boolean",
+      "title": "Start fewer workers when the machine is loaded",
+      "description": "Off by default. On: when the 1-minute load is at least twice the core count, a new worker is held (`held: machine loaded (<load>/<cpus>)`, queued, and started when a slot frees or the load drops) once half the slots, rounded down and at least 1, are taken. A running worker is never stopped, and the only slot is never held. The load is read only when a claim needs it",
+      "default": false
+    },
     "landAuto": {
       "type": "boolean",
       "title": "Land files automatically",

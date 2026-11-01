@@ -766,6 +766,17 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.runs.some(x => x.argv[0] === 'gh' && x.argv[2] === 'create')).toBe(true)
   })
 
+  test('loadThrottle: set on, a loaded machine holds the second of two slots; the default grants it', { options: { maxWorkers: 2 } }, async ($, on) => {
+    const w = world(on, { listAgents: true, run: async (argv: string[]) => (argv[0] === 'sysctl' ? { exitCode: 0, stdout: '{ 20.00 0.00 0.00 }\n10\n' } : undefined) })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    await set($, 'loadThrottle', 'on')
+    expect((await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_B0000002' }))).deny).toContain('held: machine loaded (20/10)')
+    await set($, 'loadThrottle', 'off')
+    expect((await $.agent.spawn(spawnInput({ prompt: brief('T-2'), tool_use_id: 'toolu_C0000003' }))).deny).toBeUndefined()
+    expect(w.spawns).toHaveLength(2)
+  })
+
   test('readyFallbackMinutes: 1 starts a waiting task itself after a minute (the built-in 10)', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.session.start(sessionStart)
