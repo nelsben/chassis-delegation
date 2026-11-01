@@ -7,6 +7,17 @@ import { fileURLToPath } from 'node:url'
 
 const read = rel => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8')
 
+describe('MOD-254: the install line is conditional on the existing install', () => {
+  test('npm ci runs unless node_modules/.package-lock.json is newer than package-lock.json, first attempt and resume alike', async () => {
+    const { renderSections, installStep } = await import('../../hooks/lib/dispatch.ts')
+    const want = 'npm ci unless node_modules/.package-lock.json exists and is newer than package-lock.json'
+    expect(installStep(['package-lock.json'])).toBe(want)
+    const out = renderSections(read('hooks/templates/brief.md'), false)
+    expect(out.includes('{{install}}')).toBe(true)
+    expect(installStep(['package-lock.json']) === installStep(['package-lock.json', 'README.md'])).toBe(true)
+  })
+})
+
 describe('MOD-230: the brief tells the worker to re-run a timeout failure once', () => {
   test('every mode that runs the gate carries the sentence', async () => {
     const { renderSections } = await import('../../hooks/lib/dispatch.ts')

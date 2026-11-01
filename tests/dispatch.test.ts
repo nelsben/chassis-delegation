@@ -268,7 +268,7 @@ describe('5C: a portable brief folder and a repo-neutral brief', () => {
     expect(briefDirFor('/w/app', '/elsewhere/briefs/')).toBe('/elsewhere/briefs')
   })
   test('the install step is picked by the lockfile present at the root', () => {
-    expect(installStep(['package-lock.json', 'README.md'])).toBe('npm ci')
+    expect(installStep(['package-lock.json', 'README.md'])).toBe('npm ci unless node_modules/.package-lock.json exists and is newer than package-lock.json')
     expect(installStep(['pnpm-lock.yaml'])).toBe('pnpm i --frozen-lockfile')
     expect(installStep(['yarn.lock'])).toBe('yarn install --immutable')
     expect(installStep(['requirements.txt'])).toBe('pip install -r requirements.txt')
