@@ -167,6 +167,18 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/5')
   })
 
+  test('explore: 0.3 is the share in force; a value over 0.5 is refused, and a hand-briefed spawn (no dispatch) never explores', async ($, on) => {
+    const w = world(on)
+    await $.session.start(sessionStart)
+    await set($, 'explore', '0.3')
+    expect(await say($, 'explore')).toContain('explore = 0.3 (yours)')
+    expect(await say($, 'explore 0.9')).toContain('does not take')
+    expect(await say($, 'explore')).toContain('explore = 0.3 (yours)')
+    await set($, 'explore', '0.5')
+    await $.agent.spawn(spawnInput({ prompt: brief('T-5') }))
+    expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/3')
+  })
+
   test('maxWorkers: 3 lets a third briefed worker start at once (the built-in 2 queues it)', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.session.start(sessionStart)

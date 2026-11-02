@@ -1439,7 +1439,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(w.spawns).toHaveLength(0)
   })
 
-  test("the brain's Agent call carrying the brief is tiered, takes a slot and is recorded as attempt 1 (source brief); a second spawn of the same brief while it runs is denied naming it", { options: { ...BRIEFS, maxWorkers: 1 } }, async ($, on) => {
+  test("the brain's Agent call carrying the brief is tiered, takes a slot and is recorded as attempt 1 (source brief); a second spawn of the same brief while it runs is denied naming it", { options: { ...BRIEFS, maxWorkers: 1, explore: 0 } }, async ($, on) => {
     const w = world(on, { files: files(), dirs, store: offered, listAgents: true })
     await $.session.start(sessionStart)
     const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
@@ -1464,6 +1464,21 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     const again = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
     expect(again).toContain(String(second.deny))
     expect(spawnCallOf(again)).toBeUndefined()
+  })
+
+  test('MOD-274: a dispatched frontier card whose id draws below explore runs attempt 1 one effort level down, recorded on the attempt, the notice and the spawn row; explore 0 leaves it alone', { options: { ...BRIEFS, maxWorkers: 1, explore: 0.5 } }, async ($, on) => {
+    const w = world(on, { files: files(), dirs, store: offered, listAgents: true })
+    await $.session.start(sessionStart)
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    const r = await brainSpawn($, text, { tool_use_id: 'toolu_BRAIN0001' })
+    expect(r.deny).toBeUndefined()
+    expect(w.notices).toContain('tier=frontier → opus (brief) · attempt 1/3 · explore from high')
+    const rec = records(w, 'BE-101')[0] as Record<string, unknown>
+    expect(rec).toMatchObject({ attempt: 1, tier: 'frontier', alias: 'opus', effort: 'medium', effortSource: 'explore', explore: true, exploreFrom: 'opus/high' })
+    expect(String(rec.class)).toMatch(/^[a-z]+\/(small|large)$/)
+    for await (const chunk of $.turn.step(stepInput('agent-1', 'low'))) void chunk
+    expect(w.steps).toEqual([{ agentId: 'agent-1', effort: 'medium' }])
+    expect(records(w, 'BE-101')[0]).toMatchObject({ effort: 'medium', effortSource: 'explore' })
   })
 
   /** Another repo=here card in flight in ROOT: a pending record marked here, its brief, and the files it claimed so far. */

@@ -45,7 +45,7 @@ export function validUser(field: string, v: unknown): boolean {
   const e = CONFIG_TABLE[field]
   if (!e) return false
   if (typeof e.def === 'boolean') return typeof v === 'boolean'
-  if (typeof e.def === 'number') return typeof v === 'number' && Number.isFinite(v) && v >= (field === 'defaultBudget' ? 1 : 0)
+  if (typeof e.def === 'number') return typeof v === 'number' && Number.isFinite(v) && v >= (field === 'defaultBudget' ? 1 : 0) && (field !== 'explore' || v <= 0.5)
   if (e.choices) return typeof v === 'string' && e.choices.includes(v)
   return typeof v === 'string'
 }

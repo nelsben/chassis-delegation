@@ -105,6 +105,12 @@
       ],
       "default": "high"
     },
+    "explore": {
+      "type": "number",
+      "title": "Explore share",
+      "description": "The share of eligible first attempts (0 to 0.5) that run one step below the default, so the ledger learns what effort and model each kind of card needs: the effort one level down, or on a standard card the tier one down at the same effort. Never upward, never on attempt 2, never on a card that sets effort:, tier_reason: or effort_reason:, a release or docs card, or an economy card; a refuted exploratory attempt is not charged to the budget and does not escalate. Which cards explore is fixed by a hash of the task id. 0 = never explore",
+      "default": 0.2
+    },
     "effortNudge": {
       "type": "string",
       "title": "Effort nudge for you (JSON)",

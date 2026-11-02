@@ -346,10 +346,11 @@ export function gateNotRerun(lines: readonly string[]): string | undefined {
  * resolved `model` show when known; `next=` stays last because it runs to the
  * end of the line.
  */
-export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateNotRerun?: string }): string =>
+export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateNotRerun?: string; explore?: string }): string =>
   `chassis-delegation: verdict=${v.verdict} task=${v.task} attempt=${v.attempt}/${v.budget}` +
   (v.usd !== undefined && Number.isFinite(v.usd) ? ` usd=${v.usdApprox ? '~' : ''}${v.usd.toFixed(2)}` : '') +
   (v.model ? ` model=${v.model}` : '') +
+  (v.explore ? ` · ${v.explore}` : '') +
   (v.gateNotRerun ? ` · ${v.gateNotRerun}` : '') +
   (v.allow && v.allow.length > 0 ? ` · allow=${v.allow.join(',')} · next=${v.next}` : ` next=${v.next}`)
 

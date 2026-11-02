@@ -25,6 +25,7 @@ import { metricsFromRecords } from './lib/metrics'
 import { checkArgv, isSha, LOCK_REASON, refusedLine, type AllowConfig, type MergeCtx } from './lib/allow'
 import {
   attemptsFor,
+  budgetCount,
   escalationSource,
   holdSource,
   judgedShas,
@@ -214,6 +215,7 @@ import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut } from './lib/choice'
+import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
@@ -422,6 +424,8 @@ const K = {
   /** MOD-270: the card's `tier_reason:` and `effort_reason:`, written at /dispatch beside the effort; cleared when the card has none. */
   tierReason: (task: string, repo = '') => `delegation.tierReason.${scopedId(task, repo)}`,
   effortReason: (task: string, repo = '') => `delegation.effortReason.${scopedId(task, repo)}`,
+  /** MOD-274: the card's class and whether its choice was hand-set, written at /dispatch; a card with none never explores. */
+  cardClass: (task: string, repo = '') => `delegation.cardClass.${scopedId(task, repo)}`,
   /** Set once an attempt's verdict row is posted to the conversation. */
   posted: (attemptKey: string) => `delegation.posted.${attemptKey}`,
   /** MOD-64: the text appended for an attempt's verdict (the row and any ready: lines), which the verdict tool returns. */
@@ -700,6 +704,8 @@ type Config = {
   reviewEffort: Effort | ''
   /** MOD-271: the cap on every effort the mod applies. */
   maxEffort: Effort
+  /** MOD-274: the share (0 to 0.5) of eligible first attempts that run one step below the default. */
+  explore: number
 }
 
 /**
@@ -796,6 +802,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       reviewTier: eff.reviewTier,
       reviewEffort: eff.reviewEffort,
       maxEffort: isEffort(o.maxEffort) ? o.maxEffort : DEFAULT_MAX_EFFORT,
+      explore: clampExplore(o.explore),
     },
   }
 }
@@ -2904,12 +2911,22 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
   }
 }
 
+/** MOD-274: what /dispatch stores about a card for the spawn: its class, and whether it hand-set an effort or a reason. */
+type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean }
+
+/** MOD-274: the history line for a card: its class's pairs first, every class's when the class has no rows yet. */
+function historyOf(rows: readonly LedgerRow[], cls: string | undefined): string {
+  if (cls === undefined) return historyLine(pairHistory(rows))
+  const own = pairHistory(rows, cls)
+  return own.length > 0 ? historyLine(own, cls) : historyLine(pairHistory(rows), cls, true)
+}
+
 /** MOD-270: the choice line and the history line for a card (tier, final alias, the card's effort: and reasons). */
-function choiceLines(rows: readonly LedgerRow[], c: { tier: Tier; alias: string; tierReason: string; effort: string | undefined; effortReason: string }): string[] {
+function choiceLines(rows: readonly LedgerRow[], c: { tier: Tier; alias: string; tierReason: string; effort: string | undefined; effortReason: string; cls?: string }): string[] {
   const chosen = effortChoice(c.tier, c.effort, cfg.effortByTier)
   const effort = effortLabel(clampEffort(chosen.effort, cfg.maxEffort))
   const source = chosen.source
-  return [choiceLine({ tier: c.tier, alias: c.alias, tierReason: c.tierReason, ...(effort ? { effort } : {}), effortSource: source, effortReason: c.effortReason }), historyLine(pairHistory(rows))]
+  return [choiceLine({ tier: c.tier, alias: c.alias, tierReason: c.tierReason, ...(effort ? { effort } : {}), effortSource: source, effortReason: c.effortReason }), historyOf(rows, c.cls)]
 }
 
 // ---- MOD-13: the effort a worker steps at ----------------------------------------------
@@ -2932,7 +2949,9 @@ async function stepEffort($: Host, agentId: string): Promise<Effort | undefined>
   const records = await loadAttempts($, spawn)
   // MOD-270: a resume of the same agent keeps the effort its spawn started at; only a new worker (a re-dispatch) re-reads the card's
   const origin = spawn.attempt !== spawn.lineage ? attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.lineage && r.effort !== undefined) : undefined
-  const chosen = origin ? { effort: origin.effort as Effort, source: origin.effortSource ?? 'tier' } : effortChoice(spawn.tier, await storeGet<string>($, K.effort(spawn.task, repo)), cfg.effortByTier)
+  // MOD-274: an exploratory attempt's effort was chosen at its spawn and is on its record (the tier's, for a tier step)
+  const own = attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.attempt)
+  const chosen = origin ? { effort: origin.effort as Effort, source: origin.effortSource ?? 'tier' } : own?.explore ? { effort: own.effort as Effort | undefined, source: 'explore' as const } : effortChoice(spawn.tier, await storeGet<string>($, K.effort(spawn.task, repo)), cfg.effortByTier)
   // MOD-271: every effort the mod applies is held to maxEffort
   const effort = clampEffort(chosen.effort, cfg.maxEffort).effort
   const source = chosen.source
@@ -6605,7 +6624,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
       reportGate: report?.gate,
       ...(report?.sha ? { sha: report.sha } : {}),
       task: label,
-      attempts: attemptsFor(records, spawn.subtask, lane).length,
+      attempts: budgetCount(records, spawn.subtask, lane),
       budget: spawn.budget,
       lineageResumes: lineageResumes(records, spawn.subtask, spawn.lineage, lane),
       tier: spawn.tier,
@@ -6684,7 +6703,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const workLine = work ? workPresentLine(work) : undefined
   // MOD-124: the exceptions the brief allowed ride on the row
   const allow = spawn.adhoc ? [] : await allowIdsOf($, spawn)
-  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next, allow, gateNotRerun: gateNotRerun(lines) }) + downClause, workLine ? [workLine, ...lines] : lines)
+  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next, allow, gateNotRerun: gateNotRerun(lines), ...(judged?.explore && judged.exploreFrom ? { explore: exploreLabel(judged.exploreFrom, judged.alias, judged.effort) } : {}) }) + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
   const tail = from ? fallbackTail(from) : undefined
@@ -7018,7 +7037,7 @@ async function commentVerdict($: Host, task: string, subtask: string, row: strin
 }
 
 /** MOD-74: the row for a briefed worker that has started (or resumed); verdictVerbosity=silent posts none. MOD-114: with its effort and, when due, the down nudge. */
-async function postStarted($: Host, i: { label: string; task: string; repo?: string | undefined; alias: string; tier: Tier; attempt: number; budget: number; kind: StartKind }) {
+async function postStarted($: Host, i: { label: string; task: string; repo?: string | undefined; alias: string; tier: Tier; attempt: number; budget: number; kind: StartKind; explore?: { effort: Effort | undefined; label: string } }) {
   // MOD-200: a started or respawned (not resumed) attempt is said on the card's issue, whatever the row verbosity
   if (i.kind !== 'resumed') {
     try {
@@ -7030,11 +7049,12 @@ async function postStarted($: Host, i: { label: string; task: string; repo?: str
   }
   if (!postsRows(cfg.verbosity)) return
   const startRepo = await cardRepo($, i.repo)
-  const effort = effortLabel(clampEffort(effortFor(i.tier, await storeGet<string>($, K.effort(i.task, startRepo)), cfg.effortByTier), cfg.maxEffort))
+  // MOD-274: an exploratory attempt shows the effort it runs at (not the tier's) and where it moved from
+  const effort = effortLabel(clampEffort(i.explore ? i.explore.effort : effortFor(i.tier, await storeGet<string>($, K.effort(i.task, startRepo)), cfg.effortByTier), cfg.maxEffort))
   const why = reasonsCut((await storeGet<string>($, K.tierReason(i.task, startRepo))) || '', (await storeGet<string>($, K.effortReason(i.task, startRepo))) || '')
   // a resume of a nudged task is not the end of its judgment: no down nudge on it
   const nudge = i.kind === 'resumed' ? undefined : nudgeDownNow()
-  await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias), ...(effort ? { effort } : {}), ...(why ? { why } : {}), ...(nudge ? { nudge } : {}) }))
+  await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias), ...(effort ? { effort } : {}), ...(i.explore ? { explore: i.explore.label } : {}), ...(why ? { why } : {}), ...(nudge ? { nudge } : {}) }))
 }
 
 /** MOD-74: a worker's spend this attempt as the verdict row computes it (its own turns, else the session's growth), undefined while unknown. */
@@ -7173,7 +7193,7 @@ async function resumeTarget($: Host, address: string): Promise<{ spawn: SpawnRec
   if (!agentId || !spawn || spawn.adhoc || spawn.verdictAttempt !== spawn.attempt || !spawn.lastFailed || spawn.malformed !== undefined) return undefined
   const lane = laneOf(spawn)
   const records = await loadAttempts($, spawn)
-  const attempts = attemptsFor(records, spawn.subtask, lane).length
+  const attempts = budgetCount(records, spawn.subtask, lane)
   // GH-3: re-read the budget from the brief file named in the record; the record is not rewritten.
   let budget = spawn.budget
   if (spawn.briefPath) {
@@ -7788,8 +7808,12 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
     out.push('   note: the card scope reads as prose; the verifier leaves a prose scope unchecked unless the brief gains scope_globs= — pass scope globs')
   }
   // MOD-270: the choice (model and effort, each with its reason) and how each pair did; before the card says line the card tool adds
-  out.push(...choiceLines(await ledgerAt($, root).then(l => l.rows), { tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason) }).map(l => `   ${l}`))
   const shownHeader = parseHeader(shown)
+  // MOD-274: the card's class (kind and size), named first on the history line and written on its attempts
+  const classScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
+  const classKind = cardKind({ kind: card.fields.kind, title: card.title, scope: classScope })
+  const className = cardClassName(classKind, cardSize(tierHint({ tier, scope: classScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined))
+  out.push(...choiceLines(await ledgerAt($, root).then(l => l.rows), { tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason), cls: className }).map(l => `   ${l}`))
   const shownForbid = (shownHeader?.fields.forbid ?? '').split(',').filter(Boolean)
   // MOD-227: a forbid from elsewhere (the parent issue, a sibling card) wins as before; the line names where it came from
   for (const c of scopeForbidClashes((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, forbidOrigin)) {
@@ -7829,6 +7853,14 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   await storeSet($, K.effort(id, await cardRepo($, target?.path)), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
   await storeSet($, K.tierReason(id, await cardRepo($, target?.path)), cleanReason(card.fields.tier_reason))
   await storeSet($, K.effortReason(id, await cardRepo($, target?.path)), cleanReason(card.fields.effort_reason))
+  // MOD-274: the class, and whether the card hand-set its choice (an effort: or a reason: the tool always writes tier:, so a tier alone is not hand-set)
+  const cardClassRecord: CardClassRecord = {
+    name: className,
+    kind: classKind,
+    hasEffort: typeof card.fields.effort === 'string' && card.fields.effort.trim() !== '',
+    hasReason: cleanReason(card.fields.tier_reason) !== '' || cleanReason(card.fields.effort_reason) !== '',
+  }
+  await storeSet($, K.cardClass(id, await cardRepo($, target?.path)), cardClassRecord)
 
   // GH-103: a prose scope with no globs is caught here, before the worktree and the spawn
   const shownScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
@@ -8721,6 +8753,8 @@ type SpawnPlan = {
   /** The task's attempts, less the cardless ones (GH-1 item 2: on the record, never on the ladder). */
   records: AttemptRecord[]
   prior: number
+  /** MOD-274: `prior` less the failed exploratory attempts, which do not count against the budget. */
+  counted: number
   cwd?: string
   /** MOD-250: the quiet line of a spawn that named a closed task's brief and so runs ad hoc. */
   closedLine?: string
@@ -8810,6 +8844,7 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
     ...(lane ? { lane } : {}),
     records,
     prior: attemptsFor(records, subtask, lane).length,
+    counted: budgetCount(records, subtask, lane),
     ...(cwd ? { cwd } : {}),
   }
 }
@@ -8849,8 +8884,8 @@ async function gateSpawn($: Host, p: SpawnPlan, item: Omit<QueuedSpawn, 'task' |
   const step = <T>(q: Promise<T>): Promise<T> => (s ? s.race(q) : q)
   const running = await step(runningAttempt($, p))
   if (running) return { deny: runningDeny(p.label, running) }
-  if (p.prior >= p.budget) {
-    const deny = budgetDenyMessage(p.label, p.prior, p.named)
+  if (p.counted >= p.budget) {
+    const deny = budgetDenyMessage(p.label, p.counted, p.named)
     if (isFinalDeny(deny)) await dropQueued($, p.task, p.subtask)
     return { deny }
   }
@@ -8922,12 +8957,46 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       }
     }
     s?.check()
-    const { pick, tier, alias, fableRewritten } = pickFor(p, e.model, classified)
+    const picked = pickFor(p, e.model, classified)
+    const { pick, fableRewritten } = picked
+    let { tier, alias } = picked
     // GH-1 item 8: fable asked for (tier map, caller, or the brief's model=) and opus spawned is said out loud
     const fableAsked = fableRequested(alias, fableRewritten, header?.model)
     const attempt = adhoc ? 1 : nextAttempt(records, subtask, lane)
+    // MOD-274: the card's class, and the small share of first attempts that run one step below the default to teach the ledger
+    const cardCls = adhoc || lane ? undefined : await step(storeGet<CardClassRecord>($, K.cardClass(task, await cardRepo($, p.repo))))
+    let explored: ExplorePlan | undefined
+    if (cardCls && cardCls.name && attempt === 1 && cfg.explore > 0) {
+      let rows: LedgerRow[] = []
+      try {
+        rows = (await step(ledgerAt($, (await $.session.root()).replace(/\/+$/, '')))).rows
+      } catch (err) {
+        if (isStopped(err)) throw err
+        debug($, `${label}: explore: ledger not read: ${String(err)}`)
+      }
+      const here0 = tier
+      explored = explorePlan({
+        task,
+        attempt,
+        hasEffort: cardCls.hasEffort,
+        hasReason: cardCls.hasReason,
+        tier,
+        kind: cardCls.kind,
+        className: cardCls.name,
+        explore: cfg.explore,
+        baseEffort: effortChoice(tier, undefined, cfg.effortByTier).effort,
+        maxEffort: cfg.maxEffort,
+        aliasOfTier: t => (t === here0 ? (alias as Alias) : aliasFor({ tier: t, source: 'brief' }, header?.model).alias),
+        rows,
+      })
+      if (explored) {
+        tier = explored.tier
+        alias = explored.alias
+        debug($, `${label}: exploring ${explored.alias}/${explored.effort ?? 'default'} (from ${explored.from}; draw below ${cfg.explore})`)
+      }
+    }
     // GH-104: a briefed spawn's notice says which attempt it is spending
-    const notice = noticeText(pick, alias, fableAsked, adhoc ? undefined : { attempt, budget })
+    const notice = noticeText({ ...pick, tier }, alias, fableAsked, adhoc ? undefined : { attempt, budget }) + (explored ? ` · ${exploreLabel(explored.from, alias, explored.effort)}` : '')
     if (p.closedLine) debug($, p.closedLine)
     try {
       $.ui.notice(e.tool_use_id, p.closedLine ? `${notice}\n${p.closedLine}` : notice)
@@ -8997,6 +9066,8 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(here ? { here } : {}),
       ...(fableAsked ? { requestedAlias: 'fable' as const } : {}),
       ...(classifierTier ? { classifierTier } : {}),
+      ...(cardCls?.name ? { class: cardCls.name } : {}),
+      ...(explored ? { explore: true as const, exploreFrom: explored.from, ...(explored.effort ? { effort: explored.effort } : {}), effortSource: 'explore' as const } : {}),
     }
     rateHeld = undefined // MOD-56: the brain dispatched again
     if (adhoc) await storeSet($, K.adhoc, [...((await storeGet<AttemptRecord[]>($, K.adhoc)) ?? []), rec].slice(-200))
@@ -9039,7 +9110,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     } else if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
     // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
-    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t }, await sessionIdOf($)))
+    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t, ...(cardCls?.name ? { class: cardCls.name } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)))
     // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
     if (s?.stopped) {
       debug($, `${label}: started; its views skipped (the hook was ${s.stopped === 'abort' ? 'abandoned' : 'near its budget'})`)
@@ -9066,7 +9137,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
 
     await setWorkers($, list => [...list, { task, subtask, attempt, kind: 'spawn', tier, alias, ...(res.agentId ? { agentId: res.agentId } : {}), verdict: 'pending', at: t }])
     // MOD-74: a briefed worker's model is said where the person looks, once it has started
-    if (!adhoc) await postStarted($, { label, task, repo: other?.path, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started' })
+    if (!adhoc) await postStarted($, { label, task, repo: other?.path, alias, tier, attempt, budget, kind: fromQueue ? 'queue' : 'started', ...(explored ? { explore: { effort: explored.effort, label: exploreLabel(explored.from, alias, explored.effort) } } : {}) })
     // MOD-92: the usage read need not decide the spawn: the hook makes it once the next decision may run
     if (!s) await noteUsage($)
     return res

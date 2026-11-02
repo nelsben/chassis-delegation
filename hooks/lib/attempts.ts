@@ -91,10 +91,15 @@ export type AttemptRecord = {
   /** MOD-13: the effort the worker's steps were rewritten to (low … max); absent when the engine's default ran. */
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** MOD-270: what decided the effort: the card's own `effort:` or the tier's entry. */
-  effortSource?: 'card' | 'tier'
+  effortSource?: 'card' | 'tier' | 'explore'
   /** MOD-270: the card's `tier_reason:` and `effort_reason:` (one line each), when it has them. */
   tierReason?: string
   effortReason?: string
+  /** MOD-274: the card's class (`feature/large`), written on every attempt of a card that has one. */
+  class?: string
+  /** MOD-274: this attempt ran one step off the default to learn what the class needs; `exploreFrom` is the pair it moved from (`sonnet/medium`). */
+  explore?: true
+  exploreFrom?: string
   /** ms since the epoch at spawn (or resume). */
   at: number
   /** MOD-37: the id of the session whose brain made the spawn; absent on a record written before it. */
@@ -130,6 +135,13 @@ const FAILING: readonly AttemptVerdict[] = ['refuted', 'no-report']
 /** The worker's attempts of a subtask, oldest first: the ladder. A reviewer's attempt (MOD-21) is not on it. */
 export const attemptsFor = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): AttemptRecord[] =>
   records.filter(r => r.kind !== 'review' && r.subtask === subtask && inLane(r, lane)).sort((a, b) => a.attempt - b.attempt)
+
+/**
+ * MOD-274: the attempts that count against a subtask's budget. An exploratory attempt that failed (refuted, no-report or a
+ * confirmed gate=fail) is left out, as a reviewer's is; it still numbers the ladder (`attemptsFor`, `nextAttempt`).
+ */
+export const budgetCount = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): number =>
+  attemptsFor(records, subtask, lane).filter(r => !(r.explore && recordFailed(r))).length
 
 /** MOD-21: the reviewer attempts of a subtask (any attempt reviewed), oldest first. */
 export const reviewsFor = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): AttemptRecord[] =>
@@ -170,6 +182,8 @@ export const heldClaim = (r: Pick<AttemptRecord, 'verdict' | 'firstFailed'>): st
  */
 export function escalationSource(records: readonly AttemptRecord[], subtask: string, lane?: Lane): Tier | undefined {
   const last = attemptsFor(records, subtask, lane).at(-1)
+  // MOD-274: a failed exploratory attempt ran below the card's own pick; it says nothing about the card's tier
+  if (last?.explore) return undefined
   return last && escalatesOn(last.verdict, last.reportGate) && heldClaim(last) === undefined ? last.tier : undefined
 }
 
@@ -180,6 +194,7 @@ export function escalationSource(records: readonly AttemptRecord[], subtask: str
  */
 export function holdSource(records: readonly AttemptRecord[], subtask: string, lane?: Lane): Tier | undefined {
   const last = attemptsFor(records, subtask, lane).at(-1)
+  if (last?.explore) return undefined
   return last && (last.verdict === 'no-report' || heldClaim(last) !== undefined) ? last.tier : undefined
 }
 
