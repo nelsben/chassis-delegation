@@ -215,6 +215,15 @@ export function findBriefPath(text: string): string | undefined {
 }
 
 /**
+ * MOD-273: the prompt hands the brief at `path` only in the spawnPrompt form, `Your brief is the file <path>.` (the path bare
+ * or in backticks); a path cited anywhere else in the prompt is a mention.
+ */
+export function briefHanded(prompt: string, path: string): boolean {
+  const esc = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp('Your brief is the file\\s+(`?)' + esc + '\\1\\.(?![A-Za-z0-9_-])').test(prompt)
+}
+
+/**
  * MOD-135: a brief path as a file to read. An absolute path stands; a relative one is read from the spawn's folder,
  * else the session root, and is refused (undefined) when `..` climbs out of that folder.
  */
