@@ -178,6 +178,16 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/3')
   })
 
+  test('adaptive: off is the value in force; apply is refused with a line saying it is not shipped yet', async ($, on) => {
+    world(on)
+    await $.session.start(sessionStart)
+    expect(await say($, 'adaptive')).toContain('adaptive = suggest (default)')
+    await set($, 'adaptive', 'off')
+    expect(await say($, 'adaptive')).toContain('adaptive = off (yours)')
+    expect(await say($, 'adaptive apply')).toContain('apply is not shipped yet')
+    expect(await say($, 'adaptive')).toContain('adaptive = off (yours)')
+  })
+
   test('maxWorkers: 3 lets a third briefed worker start at once (the built-in 2 queues it)', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.session.start(sessionStart)
