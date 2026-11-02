@@ -60,6 +60,31 @@ export function tierOf(value: string | undefined): Tier | undefined {
   return alias ? tierOfAlias(alias) : undefined
 }
 
+/** MOD-276: the tiers that need a reason. */
+export const TOP_TIERS: readonly Tier[] = ['frontier', 'premium']
+
+/** MOD-276: the sentence a frontier or premium card without a (cleaned) tier_reason is refused with; undefined when the tier needs none or has one. The card tool and /dispatch share it. */
+export function topTierNeedsReason(tier: Tier, cleanedReason: string): string | undefined {
+  if (!TOP_TIERS.includes(tier) || cleanedReason !== '') return undefined
+  return `tier ${tier} needs a one-line tier_reason: saying why this card is not standard; add it, or drop to standard`
+}
+
+/** MOD-276: 'plan tiers: standard 5 · frontier 16 · economy 1 (frontier 16/22)'; tiers with no card are left out; undefined with fewer than two cards. */
+export function tierMixLine(tiers: readonly Tier[]): string | undefined {
+  if (tiers.length < 2) return undefined
+  const n = (t: Tier) => tiers.filter(x => x === t).length
+  const top = tiers.filter(t => TOP_TIERS.includes(t)).length
+  const parts = (['standard', 'frontier', 'premium', 'economy'] as const).filter(t => n(t) > 0).map(t => `${t} ${n(t)}`)
+  return `plan tiers: ${parts.join(' · ')} (${n('premium') > 0 ? 'frontier+premium' : 'frontier'} ${top}/${tiers.length})`
+}
+
+/** MOD-276: 'frontier share 0.73 is above maxFrontierShare 0.3' when maxFrontierShare is above 0 and the share of frontier and premium is greater than it; else undefined. */
+export function frontierShareWarning(tiers: readonly Tier[], max: number): string | undefined {
+  if (!(max > 0) || tiers.length === 0) return undefined
+  const share = tiers.filter(t => TOP_TIERS.includes(t)).length / tiers.length
+  return share > max ? `frontier share ${share.toFixed(2)} is above maxFrontierShare ${max}` : undefined
+}
+
 /** GH-108: the line for a tier written but unknown, which the mod runs at standard; undefined when absent or known. */
 export function tierWarning(value: string | undefined): string | undefined {
   const v = (value ?? '').trim()

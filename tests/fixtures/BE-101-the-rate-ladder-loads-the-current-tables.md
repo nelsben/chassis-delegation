@@ -3,6 +3,7 @@ id: BE-101
 title: The rate ladder loads the current tables — `RateCatalog` maps the standard tier to `table-2026-b` and the premium tier to `table-2026-c` (basic stays `table-2025-a`), and `RateProviderHttp` sends each one the request shape it accepts; an id swap alone is NOT safe, because the provider sends nothing for an id it does not know, both 2026 tables round by default, and rounding digits spend `max_digits` (the BE-77c truncation comes back)
 domain: backend
 tier: frontier
+tier_reason: cross-cutting contract change
 status: queued
 owner: backend
 priority: P3

@@ -121,6 +121,8 @@ export type RepoConfig = {
   reviewEffort?: Effort | ''
   /** MOD-274: the share (0 to 0.5) of eligible first attempts that run one step below the default; 0 in the repo file = never; unset = 0.2. */
   explore?: number
+  /** MOD-276: warn when the share of frontier and premium among the open cards is above this (0 to 1); 0 in the repo file = off; unset = 0. */
+  maxFrontierShare?: number
   /** MOD-275: whether the card tool's choice line suggests the cheapest pair that has passed for the card's class (off | suggest; apply is reserved). */
   adaptive?: AdaptiveMode
   /** MOD-170: whether a worker's `scope+=` amend applies on its word (apply | new-files | ask); default apply. */
@@ -129,7 +131,7 @@ export type RepoConfig = {
   project?: string
 }
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'reviewEffort', 'explore', 'adaptive', 'scopeAmends', 'project'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -165,6 +167,8 @@ export type Effective = {
   reviewEffort: Effort | ''
   /** MOD-274: 0 to 0.5. */
   explore: number
+  /** MOD-276: 0 to 1; 0 = off. */
+  maxFrontierShare: number
   /** MOD-275 */
   adaptive: AdaptiveMode
   scopeAmends: ScopeAmends
@@ -449,6 +453,10 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 0.5 && (v > 0 || strict)) config.explore = v
         else if (!(v === 0 && !strict)) errors.push(`explore${where}: needs a number from 0 to 0.5 (ignored)`)
         break
+      case 'maxFrontierShare':
+        if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1 && (v > 0 || strict)) config.maxFrontierShare = v
+        else if (!(v === 0 && !strict)) errors.push(`maxFrontierShare${where}: needs a number from 0 to 1 (ignored)`)
+        break
       case 'adaptive':
         if (typeof v === 'string' && v.trim().toLowerCase() === ADAPTIVE_RESERVED) errors.push(`adaptive${where}: ${APPLY_NOT_SHIPPED} (suggest is used)`)
         else if (typeof v !== 'string' || !(ADAPTIVE_MODES as readonly string[]).includes(v.trim().toLowerCase())) errors.push(`adaptive${where}: needs off or suggest (suggest is used)`)
@@ -582,6 +590,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
     reviewEffort: pick('reviewEffort', DEFAULT_REVIEW_EFFORT),
     explore: pick('explore', DEFAULT_EXPLORE),
+    maxFrontierShare: pick('maxFrontierShare', 0),
     adaptive: pick('adaptive', DEFAULT_ADAPTIVE),
     scopeAmends: pick('scopeAmends', 'apply'),
     project: pick('project', ''),

@@ -60,7 +60,7 @@ spec. The `card` tool writes it. `<ID>` is `<PREFIX>-<number>[letter]`, such as 
     title: One line that says what done looks like
     domain: ops                 # one of `domains`; the branch is agent/<domain>/<id>
     tier: standard              # economy | standard | frontier | premium, or haiku | sonnet | opus | fable; else standard with a warning
-    tier_reason: two modules    # optional: why this tier, one line (colons and newlines become spaces, cut to 120)
+    tier_reason: two modules    # why this tier, one line (colons and newlines become spaces, cut to 120); required for frontier and premium (dispatch refuses without it); a card with no tier: is standard
     effort: high                # optional: low | medium | high; else the tier's level (effortByTier)
     effort_reason: ambiguous    # optional: why this effort, cleaned the same way
     status: queued              # /dispatch takes queued or claimed; others are refused

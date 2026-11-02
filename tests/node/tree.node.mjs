@@ -55,3 +55,15 @@ describe('MOD-194: treeOf and treeText', () => {
     ])
   })
 })
+
+describe('MOD-276: the tree prints the tier mix of its in flight cards', () => {
+  test('a line after the counts with two or more in flight cards; none with fewer; a card with no tier is standard', async () => {
+    const { treeOf, treeText } = await lib()
+    const cards = [{ id: 'MOD-7', issue: 52, status: 'queued', tier: 'frontier' }, { id: 'MOD-8', issue: 53, status: 'queued', tier: 'standard' }, { id: 'MOD-9', issue: 54, status: 'queued' }]
+    const lines = treeText(treeOf(view, cards, new Set())).split('\n')
+    const at = lines.indexOf('1 done · 3 in flight · 0 planned')
+    expect(lines[at + 1]).toBe('plan tiers: standard 2 · frontier 1 (frontier 1/3)')
+    const one = treeText(treeOf(view, [cards[0]], new Set())).split('\n')
+    expect(one.some(l => l.startsWith('plan tiers'))).toBe(false)
+  })
+})

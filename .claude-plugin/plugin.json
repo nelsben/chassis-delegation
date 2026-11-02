@@ -111,6 +111,12 @@
       "description": "The share of eligible first attempts (0 to 0.5) that run one step below the default, so the ledger learns what effort and model each kind of card needs: the effort one level down, or on a standard card the tier one down at the same effort. Never upward, never on attempt 2, never on a card that sets effort:, tier_reason: or effort_reason:, a release or docs card, or an economy card; a refuted exploratory attempt is not charged to the budget and does not escalate. Which cards explore is fixed by a hash of the task id. 0 = never explore",
       "default": 0.2
     },
+    "maxFrontierShare": {
+      "type": "number",
+      "title": "Frontier share warning",
+      "description": "When above 0 (up to 1), /dispatch and its dry run add a warning line when the share of frontier and premium cards among the open cards of the card folder (queued, dispatched or held, with the card being dispatched) is greater than this, for example 'frontier share 0.73 is above maxFrontierShare 0.3'. It warns only and never refuses. 0 = no warning",
+      "default": 0
+    },
     "effortNudge": {
       "type": "string",
       "title": "Effort nudge for you (JSON)",

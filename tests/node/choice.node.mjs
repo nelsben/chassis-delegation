@@ -156,3 +156,50 @@ describe('MOD-270: pairHistory', () => {
     expect(historyLine(big)).toBe('history: sonnet/medium 120 · 100% · $1.00/card; haiku/low 40 · 100% · $0.02/card')
   })
 })
+
+describe('MOD-276: top tiers need a reason, the tier mix and the frontier share', () => {
+  const T = () => import('../../hooks/lib/tier.ts')
+  const tiers = (std, fr, eco = 0, prem = 0) => [...Array(std).fill('standard'), ...Array(fr).fill('frontier'), ...Array(eco).fill('economy'), ...Array(prem).fill('premium')]
+
+  test('the card tool refuses frontier and premium without a tierReason, in the dispatch words; with one, standard and economy pass', async () => {
+    const { cardFromFields } = await CARD()
+    const { topTierNeedsReason } = await T()
+    for (const tier of ['frontier', 'premium']) {
+      const r = cardFromFields({ ...base, tier }, ctx)
+      expect(r.error).toBe(topTierNeedsReason(tier, ''))
+      expect(r.error).toContain('tier_reason')
+      expect(cardFromFields({ ...base, tier, tierReason: ' : ' }, ctx).error).toContain('tier_reason')
+      expect(cardFromFields({ ...base, tier, tierReason: 'ambiguous' }, ctx).error).toBeUndefined()
+    }
+    expect(cardFromFields({ ...base, tier: 'standard' }, ctx).error).toBeUndefined()
+    expect(cardFromFields({ ...base, tier: 'economy' }, ctx).error).toBeUndefined()
+    expect(cardFromFields(base, ctx).error).toBeUndefined()
+  })
+
+  test('the mix line counts, orders, leaves out zero tiers, and is absent with one card', async () => {
+    const { tierMixLine } = await T()
+    expect(tierMixLine(tiers(5, 16, 1))).toBe('plan tiers: standard 5 · frontier 16 · economy 1 (frontier 16/22)')
+    expect(tierMixLine(tiers(4, 2))).toBe('plan tiers: standard 4 · frontier 2 (frontier 2/6)')
+    expect(tierMixLine(tiers(3, 0))).toBe('plan tiers: standard 3 (frontier 0/3)')
+    expect(tierMixLine(tiers(2, 1, 0, 1))).toBe('plan tiers: standard 2 · frontier 1 · premium 1 (frontier+premium 2/4)')
+    expect(tierMixLine(tiers(1, 0))).toBeUndefined()
+    expect(tierMixLine([])).toBeUndefined()
+  })
+
+  test('maxFrontierShare 0 never warns, 0.3 warns at 16/22 and not at 6/22; premium counts', async () => {
+    const { frontierShareWarning } = await T()
+    expect(frontierShareWarning(tiers(6, 16), 0)).toBeUndefined()
+    expect(frontierShareWarning(tiers(6, 16), 0.3)).toBe('frontier share 0.73 is above maxFrontierShare 0.3')
+    expect(frontierShareWarning(tiers(16, 6), 0.3)).toBeUndefined()
+    expect(frontierShareWarning(tiers(1, 0, 0, 1), 0.3)).toBe('frontier share 0.50 is above maxFrontierShare 0.3')
+    expect(frontierShareWarning(tiers(7, 3), 0.3)).toBeUndefined()
+  })
+
+  test('maxFrontierShare is a repo key from 0 to 1; 0 is the default, kept only in /config', async () => {
+    const { parseRepoConfig, mergeConfig } = await import('../../hooks/lib/repoconfig.ts')
+    expect(parseRepoConfig('{"maxFrontierShare":0.3}').config.maxFrontierShare).toBe(0.3)
+    expect(parseRepoConfig('{"maxFrontierShare":1.5}').errors.join()).toContain('maxFrontierShare')
+    expect(mergeConfig({}, {}).maxFrontierShare).toBe(0)
+    expect(mergeConfig({ maxFrontierShare: 0.3 }, {}).maxFrontierShare).toBe(0.3)
+  })
+})

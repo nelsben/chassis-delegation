@@ -66,7 +66,7 @@ describe('GH-111: cardFromFields', () => {
   })
 
   test('tier, budget, spend, forbid and gate are taken as given', () => {
-    const r = ok(cardFromFields(input({ tier: 'frontier', budget: 3, spend: 4, forbid: ['docs/**'], gate: 'lint' }), ctx()))
+    const r = ok(cardFromFields(input({ tier: 'frontier', tierReason: 'two modules', budget: 3, spend: 4, forbid: ['docs/**'], gate: 'lint' }), ctx()))
     const c = parseCard(r.text)
     if ('error' in c) throw new Error(c.error)
     expect(c).toMatchObject({ tier: 'frontier', budget: '3-attempts', spend: '4', forbid: ['docs/**'], gate: ['lint'] })

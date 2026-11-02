@@ -1,9 +1,11 @@
 // MOD-194: tree, the pure half. Reads the parsed `gh issue view` JSON of one issue and its sub-issues and says what is
 // done, in flight and planned, matched to the open cards. No I/O.
 
-export type TreeCard = { id: string; issue?: number; status?: string }
+import { tierMixLine, type Tier } from './tier'
+
+export type TreeCard = { id: string; issue?: number; status?: string; tier?: Tier }
 export type TreeRow = { number: number; title: string; kind: 'done' | 'in flight' | 'planned'; card?: string }
-export type Tree = { header: string; scope: string[]; forbid: string[]; rows: TreeRow[]; counts: { done: number; inFlight: number; planned: number } }
+export type Tree = { header: string; scope: string[]; forbid: string[]; rows: TreeRow[]; counts: { done: number; inFlight: number; planned: number }; /** MOD-276: the tier mix of the cards on in flight rows; absent with fewer than two. */ mix?: string }
 
 /** The lines of the first ```<name> fenced block, trimmed, blank lines dropped; [] when there is none. */
 export function fencedBlock(body: string, name: string): string[] {
@@ -46,7 +48,8 @@ export function treeOf(json: unknown, cards: readonly TreeCard[], done: Readonly
     return { number: s.number, title: s.title, kind: isDone ? 'done' : card ? 'in flight' : 'planned', ...(card ? { card: card.id } : {}) }
   })
   const count = (k: TreeRow['kind']) => rows.filter(r => r.kind === k).length
-  return { header: `#${String(j.number)} ${type}: ${String(j.title ?? '')} (${state})`, scope: fencedBlock(body, 'scope'), forbid: fencedBlock(body, 'forbid'), rows, counts: { done: count('done'), inFlight: count('in flight'), planned: count('planned') } }
+  const mix = tierMixLine(rows.filter(r => r.kind === 'in flight').map(r => cards.find(c => c.id === r.card)?.tier ?? 'standard'))
+  return { header: `#${String(j.number)} ${type}: ${String(j.title ?? '')} (${state})`, scope: fencedBlock(body, 'scope'), forbid: fencedBlock(body, 'forbid'), rows, counts: { done: count('done'), inFlight: count('in flight'), planned: count('planned') }, ...(mix ? { mix } : {}) }
 }
 
 export function treeText(t: Tree): string {
@@ -56,6 +59,7 @@ export function treeText(t: Tree): string {
     ...(t.forbid.length > 0 ? [`forbid: ${t.forbid.join(', ')}`] : []),
     ...t.rows.map(r => `${r.kind} #${r.number} ${r.title}${r.card ? ` ${r.card}` : ''}`),
     `${t.counts.done} done · ${t.counts.inFlight} in flight · ${t.counts.planned} planned`,
+    ...(t.mix ? [t.mix] : []),
     ...(t.scope.length > 0 ? [`parentScope for a task card: ${JSON.stringify(t.scope)}`] : []),
   ].join('\n')
 }
