@@ -155,4 +155,21 @@ describe('MOD-97: a card for another repo counts, resumes and verifies as a loca
     expect(row).toContain('chassis-delegation: verdict=refuted task=T-1 attempt=1/2')
     expect(row).toContain('out-of-scope path: docs/notes.md')
   })
+
+  test('MOD-268: a briefDir with a space in its path: the spawn is the task\'s attempt 1 at the card\'s tier, and the verdict tool returns its row', { options: { briefDir: `${SCRATCH}/Client Sandbox/briefs`, verdictVerbosity: 'full' } }, async ($, on) => {
+    const LOCAL = CARD.replace(`repo: ${OTHER}\n`, '')
+    const localFiles = { [`${ROOT}/agents/tasks/${CARD_NAME}`]: LOCAL, [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ domains: ['ops'], gateMap: { test: 'npm test' } }) }
+    const w = world(on, { files: localFiles, dirs: { [`${ROOT}/agents/tasks`]: [CARD_NAME], [`${ROOT}-T-1`]: [] }, run: otherRun(), agentId: 'agent-4', store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: DISPATCH, task: 'T-1' } as never))
+    expect(out).toContain(`\`${SCRATCH}/Client Sandbox/briefs/T-1.brief.md\``)
+    await brainSpawn($, out)
+    const mine = allOf(w)
+    expect(mine).toHaveLength(1)
+    expect(mine[0]).toMatchObject({ attempt: 1, kind: 'spawn', tier: 'standard', alias: 'sonnet' })
+    expect(String(mine[0]?.task)).not.toContain('adhoc')
+    await $.turn.complete(turnInput('agent-4', `Done.\n${report(HEAD)}`))
+    const asked = resultText(await $.tool.call({ tool: VERDICT, task: 'T-1', waitSeconds: 0 } as never))
+    expect(asked).toContain('verdict=consistent task=T-1 attempt=1/2')
+  })
 })

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A brief path or header path with a space in it is found and parsed, so the worker runs as its task, not ad hoc (MOD-268).** `findBriefPath` now tries a quoted absolute path first (backtick, double or single quotes, spaces allowed), then today's unquoted regex, then an unquoted absolute path with single spaces inside a segment (never a space before a `/`), then the relative form. `spawnPrompt` wraps a brief path in backticks when it holds whitespace; a path without any renders as before. The brief header renders `repo=`, `outdir=` and `scratch=` in double quotes when the value holds whitespace, and `setHeaderField` keeps a quoted value quoted. Tests in `tests/brief.test.ts`, `tests/dispatch.test.ts` and `tests/crossrepo.test.ts`.
+
 ## 0.9.44 — 2026-11-01
 
 ### Changed

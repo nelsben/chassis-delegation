@@ -211,6 +211,8 @@ export const PROSE_SCOPE_STOP = 'stopped: the card scope is prose; pass --scope 
 export const scopeLooksProse = (scope: readonly string[]): boolean => scope.some(s => /\s/.test(s) && !isSpacedPath(s))
 
 const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
+/** MOD-268: a header value with whitespace is double-quoted, as red_test= is; one without renders as it is. */
+const q = (v: string): string => (/\s/.test(v) ? `"${v.replace(/"/g, "'")}"` : v)
 
 /**
  * The brief header, exactly as SPEC amendment 1 A writes it. `scope` and
@@ -240,11 +242,11 @@ export function renderHeader(input: {
   const scope = input.scope ?? c.scope
   const forbid = input.forbid ?? c.forbid
   const here =
-    (input.repo ? ` repo=${input.repo}` : '') +
+    (input.repo ? ` repo=${q(input.repo)}` : '') +
     (input.base ? ` base=${input.base}` : '') +
     (input.ignore && input.ignore.length > 0 ? ` ignore=${input.ignore.join(',')}` : '') +
-    (input.outdir ? ` outdir=${input.outdir}` : '') +
-    (input.scratch ? ` scratch=${input.scratch}` : '') +
+    (input.outdir ? ` outdir=${q(input.outdir)}` : '') +
+    (input.scratch ? ` scratch=${q(input.scratch)}` : '') +
     (c.resources.length > 0 ? ` resources=${c.resources.join(',')}` : '') +
     // MOD-124: and `allow=<a,b>` after those
     (c.allow.length > 0 ? ` allow=${c.allow.join(',')}` : '')
@@ -663,7 +665,8 @@ export function agentTypeFor(domain: string, json: string | Readonly<Record<stri
   return known.includes(domain) ? domain : 'general-purpose'
 }
 
-export const spawnPrompt = (briefPath: string): string => `Your brief is the file ${briefPath}. Read it whole, then follow it exactly.`
+/** MOD-268: a brief path with whitespace in it is wrapped in backticks, so findBriefPath reads it whole. */
+export const spawnPrompt = (briefPath: string): string => `Your brief is the file ${/\s/.test(briefPath) ? `\`${briefPath}\`` : briefPath}. Read it whole, then follow it exactly.`
 export const spawnDescription = (id: string, title: string): string => `${id}: ${title.slice(0, 60)}`
 
 /** MOD-12: the Agent tool's input for a worker, in the tool's own spelling: the brain passes it verbatim. */

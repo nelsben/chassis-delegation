@@ -165,12 +165,14 @@ export function setHeaderField(text: string, key: string, value: string): { text
   if (prior !== undefined) {
     const hit = new RegExp(`(\\s${key}=)(?:"[^"]*"|\\S*)`).exec(h.raw)
     if (!hit) return { text }
-    raw = h.raw.slice(0, hit.index) + hit[1] + value + h.raw.slice(hit.index + hit[0].length)
+    // MOD-268: a value with whitespace, or one that was quoted, is written in double quotes
+    const shown = /\s/.test(value) || hit[0].endsWith('"') ? `"${value.replace(/"/g, "'")}"` : value
+    raw = h.raw.slice(0, hit.index) + hit[1] + shown + h.raw.slice(hit.index + hit[0].length)
   } else {
     const budget = h.raw.lastIndexOf(' budget=')
     const spend = /\sspend=\S+(?=\s+budget=)/.exec(h.raw.slice(0, budget < 0 ? 0 : budget + 8))
     const cut = spend ? spend.index : budget >= 0 ? budget : h.raw.length - 2
-    raw = `${h.raw.slice(0, cut)} ${key}=${value}${h.raw.slice(cut)}`
+    raw = `${h.raw.slice(0, cut)} ${key}=${/\s/.test(value) ? `"${value.replace(/"/g, "'")}"` : value}${h.raw.slice(cut)}`
   }
   return { text: text.slice(0, at) + raw + text.slice(at + h.raw.length), ...(prior !== undefined && prior !== '' ? { previous: prior } : {}) }
 }
@@ -200,8 +202,14 @@ export const lacksLine = (missing: readonly string[]): string => `the inline hea
  * `.delegation/briefs/T-1.brief.md` or `./.delegation/briefs/T-1.brief.md`), with the same delimiters for both.
  */
 export function findBriefPath(text: string): string | undefined {
+  // MOD-268: a quoted absolute path may hold spaces
+  const quoted = /(["'`])(\/[^"'`\n]*?\.brief\.md)\1/.exec(text)
+  if (quoted) return quoted[2] as string
   const abs = /(?:^|[\s"'`(<[])(\/[^\s"'`<>()[\]]*?\.brief\.md)(?![A-Za-z0-9_-])/.exec(text)
   if (abs) return abs[1] as string
+  // MOD-268: an unquoted absolute path with single spaces inside a segment, never a space before a `/` (that starts another path)
+  const spaced = /(?:^|[\s"'`(<[])(\/(?:[^\s"'`<>()[\]]| (?![\s/]))*?\.brief\.md)(?![A-Za-z0-9_-])/.exec(text)
+  if (spaced) return spaced[1] as string
   const rel = /(?:^|[\s"'`(<[])([^\s"'`<>()[\]/][^\s"'`<>()[\]]*?\.brief\.md)(?![A-Za-z0-9_-])/.exec(text)
   return rel ? (rel[1] as string) : undefined
 }
