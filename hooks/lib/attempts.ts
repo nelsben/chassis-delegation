@@ -90,6 +90,11 @@ export type AttemptRecord = {
   tokens?: number
   /** MOD-13: the effort the worker's steps were rewritten to (low … max); absent when the engine's default ran. */
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  /** MOD-270: what decided the effort: the card's own `effort:` or the tier's entry. */
+  effortSource?: 'card' | 'tier'
+  /** MOD-270: the card's `tier_reason:` and `effort_reason:` (one line each), when it has them. */
+  tierReason?: string
+  effortReason?: string
   /** ms since the epoch at spawn (or resume). */
   at: number
   /** MOD-37: the id of the session whose brain made the spawn; absent on a record written before it. */

@@ -60,6 +60,9 @@ spec. The `card` tool writes it. `<ID>` is `<PREFIX>-<number>[letter]`, such as 
     title: One line that says what done looks like
     domain: ops                 # one of `domains`; the branch is agent/<domain>/<id>
     tier: standard              # economy | standard | frontier | premium, or haiku | sonnet | opus | fable; else standard with a warning
+    tier_reason: two modules    # optional: why this tier, one line (colons and newlines become spaces, cut to 120)
+    effort: high                # optional: low | medium | high; else the tier's level (effortByTier)
+    effort_reason: ambiguous    # optional: why this effort, cleaned the same way
     status: queued              # /dispatch takes queued or claimed; others are refused
     scope: [src/feature/**, docs/feature.md]
     forbid: [src/secrets/**]
@@ -264,7 +267,7 @@ Two one-line leads sit in the band above the prompt, for the brain and not for y
 | `/dispatch <ID> --verify <sha>` | you, or the brain after a `work present` row | runs the verifier on the worktree at that sha, spawns nothing (see **Look before you respawn** under [How a report is verified](contracts.md#how-a-report-is-verified)) |
 | `mcp__chassis-delegation__dispatch` | the model | the same dispatch, as a tool |
 | `mcp__chassis-delegation__verdict` | the model | waits for a verdict: `task`, optional `subtask`, `waitSeconds` up to 900; returns the row and any `ready:` lines (see **Waking the brain** under [The contracts](contracts.md#the-contracts)) |
-| `mcp__chassis-delegation__card` | the model | writes the card, runs the dry run, returns the summary, `card says <tier> · classifier says <tier>` (or `· classifier agrees`; off with `classifierSecondOpinion`) and the brief header. `dispatch: true` dispatches. `repo`: `none` or `here` ([Research cards](contracts.md#research-cards)) or another checkout's path ([Delegating into another repo](contracts.md#delegating-into-another-repo)); `resources` and `lanes` ([Exclusive resources and fan-out](contracts.md#exclusive-resources-and-fan-out)); every lane card carries the shared `doneWhen`, and a lane's own `doneWhen` is added after it |
+| `mcp__chassis-delegation__card` | the model | writes the card, runs the dry run, returns the summary, `card says <tier> · classifier says <tier>` (or `· classifier agrees`; off with `classifierSecondOpinion`) and the brief header. `dispatch: true` dispatches. `tierReason`, `effort` (low, medium or high) and `effortReason` are written to the card as `tier_reason:`, `effort:` and `effort_reason:`; the dry run and the dispatch print `tier standard → sonnet (<reason or default>) · effort high (<reason>)` and a `history:` line of how each model and effort pair did per confirmed card (from the ledger; a pair under 5 cards is `thin`, under 20 `low confidence`). Re-dispatching a card after its `effort:` changed runs the next attempt at the new effort; a resume of the same agent keeps the effort it started at. `repo`: `none` or `here` ([Research cards](contracts.md#research-cards)) or another checkout's path ([Delegating into another repo](contracts.md#delegating-into-another-repo)); `resources` and `lanes` ([Exclusive resources and fan-out](contracts.md#exclusive-resources-and-fan-out)); every lane card carries the shared `doneWhen`, and a lane's own `doneWhen` is added after it |
 | `mcp__chassis-delegation__init` | the model | `/delegation init` (optional `path`) |
 | `mcp__chassis-delegation__setup` | the model | `/delegation setup` (optional `path`, see [Delegating into another repo](contracts.md#delegating-into-another-repo)) |
 | `mcp__chassis-delegation__merge` | the model | `/delegation merge`: `task`, `finish`, `review`, `reviewFile` |

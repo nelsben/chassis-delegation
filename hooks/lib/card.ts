@@ -8,6 +8,7 @@
 // and each lane's own scope.
 import { isSpacedPath, RESOURCE_NAME, scopeForbidClashes, scopeForbidClashLine, scopeOverlap } from './brief'
 import { dollars, spendCeiling } from './cost'
+import { cardEffort, cleanReason, type CardEffort } from './choice'
 import { scopeLooksProse, yamlScalar } from './dispatch'
 import { gateCommandTemplates } from './gates'
 import { matchGlob } from './norepo'
@@ -60,12 +61,16 @@ export type NewCard = {
   allow: string[]
   /** MOD-143: the command merge runs in the worktree before it rebases (`merge_check:` on the card), when the card names one. */
   mergeCheck?: string
+  /** MOD-270: the brain's choice, each with a one-line reason; absent when it made none. */
+  tierReason?: string
+  effort?: CardEffort
+  effortReason?: string
 }
 
 export const CARD_TOOL = {
   name: 'card',
   description:
-    'When the person describes work to delegate, look at the repo to choose scope globs, then call this with the task (research or extraction with outputs outside the repo: repo none or here, scope = the output folder). For several workers at once pass lanes: one { title, scope } per worker, each with its own output folder, and put what the lanes share but none may touch (a notes file) in forbid; name a live app only one worker may use in resources, and the queue runs the lanes that hold it one at a time. It writes the card (one per lane), runs the dry run and returns the brief; show the person the summary and dispatch when they say go (call dispatch, or call this with dispatch: true when they already said to go ahead). Never ask the person to edit a card file.',
+    'When the person describes work to delegate, look at the repo to choose scope globs, then call this with the task (research or extraction with outputs outside the repo: repo none or here, scope = the output folder). For several workers at once pass lanes: one { title, scope } per worker, each with its own output folder, and put what the lanes share but none may touch (a notes file) in forbid; name a live app only one worker may use in resources, and the queue runs the lanes that hold it one at a time. It writes the card (one per lane), runs the dry run and returns the brief; show the person the summary and dispatch when they say go (call dispatch, or call this with dispatch: true when they already said to go ahead). Never ask the person to edit a card file. Pick the model by the tier guide (tier, with tierReason); effort defaults to the tier\'s level, and the dry run prints a history line of how each model and effort pair did per confirmed card. That line compares pairs that were given different kinds of card (easy cards go to haiku, hard ones to opus), so it is not by itself a reason to downgrade. Any departure from the defaults is an experiment, at most one level, and needs a tierReason or effortReason.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -77,6 +82,9 @@ export const CARD_TOOL = {
       repo: { type: 'string', description: "worktree (default): the worker gets its own worktree; here: it works in this checkout; none: no repo at all. For research or extraction with outputs outside the repo use none or here, with scope = the output folder. An absolute path (the folder holding .git of another local repo, ~ allowed) delegates into that repo: the card goes in its card folder (or, with no .chassis-delegation.json there, under this session's .delegation/cards/<its folder name>/), the worktree is cut from its origin/main beside it, and the gate map, domains and spend are its own (with no config, its detected test command; gate may then be a one-off command such as \"npm run build\")" },
       redTest: { type: 'string', description: 'The command or test that fails now and passes after, or "none" for docs-only work' },
       tier: { type: 'string', description: 'economy, standard (default), frontier or premium' },
+      tierReason: { type: 'string', description: 'Why this tier, one line (colons and newlines become spaces, cut to 120 characters); written to the card as tier_reason' },
+      effort: { type: 'string', description: 'low, medium or high; absent keeps the tier default (economy low, standard medium, frontier high). Raise it one level for an ambiguous or cross-cutting card, or after an attempt refuted for reasoning; lower it one level for mechanical work (releases, renames, docs). Any departure is an experiment, at most one level, and needs a tierReason or effortReason' },
+      effortReason: { type: 'string', description: 'Why this effort, one line (cleaned and cut as tierReason); written to the card as effort_reason' },
       domain: { type: 'string', description: 'One of the repo domains (default: ops when the repo has it, else the first)' },
       gate: { type: 'string', description: 'Gate id(s) from gateMap, comma-separated (default: the first); for a repo given as a path also one command (words only, no comma), e.g. "npm run build"' },
       mergeCheck: { type: 'string', description: 'One command merge runs in the worktree before it rebases, e.g. "node check.cjs {card} {sha}"; {card}, {sha} (the full head) and {worktree} are filled in, and a non-zero exit refuses the merge. Same rules as a gateMap command. Optional: a mergeCheckMap entry for one of the card\'s gate ids applies when the card names none' },
@@ -270,6 +278,11 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   if (spendIn !== undefined && (!Number.isFinite(spendIn) || spendIn < 0)) return { error: 'spend must be dollars, 0 or more (0 = no ceiling)' }
   const spend = spendIn ?? spendCeiling(undefined, tier, ctx.spendByTier)
 
+  const eff = cardEffort(input.effort)
+  if ('error' in eff) return eff
+  const tierReason = cleanReason(input.tierReason)
+  const effortReason = cleanReason(input.effortReason)
+
   const prefix = domainPrefix(domain)
   const id = `${prefix}-${nextNumber(ctx.names, prefix) + at}`
   const body = `---
@@ -277,7 +290,7 @@ id: ${id}
 title: ${yamlScalar(title)}
 domain: ${domain}
 tier: ${tier}
-status: queued
+${tierReason !== '' ? `tier_reason: ${tierReason}\n` : ''}${eff.effort ? `effort: ${eff.effort}\n` : ''}${effortReason !== '' ? `effort_reason: ${effortReason}\n` : ''}status: queued
 ${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${parent !== undefined && parentScope.length > 0 ? `parentScope: [${parentScope.map(inList).join(', ')}]\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
 forbid: [${forbid.map(inList).join(', ')}]
 ${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
@@ -293,7 +306,7 @@ ${why}
 
 ${done.map(d => `- ${d}`).join('\n')}
 `
-  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow, ...(mergeCheck !== '' ? { mergeCheck } : {}) }
+  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow, ...(mergeCheck !== '' ? { mergeCheck } : {}), ...(tierReason !== '' ? { tierReason } : {}), ...(eff.effort ? { effort: eff.effort } : {}), ...(effortReason !== '' ? { effortReason } : {}) }
 }
 
 /**

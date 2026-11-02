@@ -12,9 +12,9 @@ export const glyphBefore = (glyph: string | undefined): string => (glyph ? `${gl
  * `started from queue`). MOD-114: `effort` is the level the worker's steps are rewritten to (absent: the engine's);
  * `nudge` is the brain's own effort clause, last.
  */
-export function startedRow(i: { label: string; alias: string; tier: string; attempt: number; budget: number; kind: StartKind; glyph?: string; effort?: string; nudge?: string }): string {
+export function startedRow(i: { label: string; alias: string; tier: string; attempt: number; budget: number; kind: StartKind; glyph?: string; effort?: string; why?: string; nudge?: string }): string {
   const verb = i.kind === 'resumed' ? 'resumed' : i.kind === 'queue' ? 'started from queue' : 'started'
-  return `chassis-delegation: ${i.label} ${verb} · ${glyphBefore(i.glyph)}${aliasLabel(i.alias)} (${i.tier}) · attempt ${i.attempt}/${i.budget}${i.effort ? ` · effort ${i.effort}` : ''}${i.nudge ? ` · ${i.nudge}` : ''}`
+  return `chassis-delegation: ${i.label} ${verb} · ${glyphBefore(i.glyph)}${aliasLabel(i.alias)} (${i.tier}) · attempt ${i.attempt}/${i.budget}${i.effort ? ` · effort ${i.effort}` : ''}${i.why ? ` · ${i.why.slice(0, 60)}` : ''}${i.nudge ? ` · ${i.nudge}` : ''}`
 }
 
 /** `MOD-1 handed back · sonnet · 12 min · $1.40 · verifying · land after the verdict`; `$?` while the spend is not known. MOD-114: `nudge` rides last. */

@@ -213,6 +213,7 @@ import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
+import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut } from './lib/choice'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
@@ -250,6 +251,7 @@ import {
   CLASSIFIER_LABELS,
   classifierText,
   effortFor,
+  effortChoice,
   effortText,
   fableRequested,
   finalAlias,
@@ -412,6 +414,9 @@ const K = {
   both: (agentId: string) => `delegation.both.${agentId}`,
   /** MOD-13: the card's own `effort:`, written at /dispatch; it wins over effortByTier. */
   effort: (task: string, repo = '') => `delegation.effort.${scopedId(task, repo)}`,
+  /** MOD-270: the card's `tier_reason:` and `effort_reason:`, written at /dispatch beside the effort; cleared when the card has none. */
+  tierReason: (task: string, repo = '') => `delegation.tierReason.${scopedId(task, repo)}`,
+  effortReason: (task: string, repo = '') => `delegation.effortReason.${scopedId(task, repo)}`,
   /** Set once an attempt's verdict row is posted to the conversation. */
   posted: (attemptKey: string) => `delegation.posted.${attemptKey}`,
   /** MOD-64: the text appended for an attempt's verdict (the row and any ready: lines), which the verdict tool returns. */
@@ -2888,6 +2893,12 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
   }
 }
 
+/** MOD-270: the choice line and the history line for a card (tier, final alias, the card's effort: and reasons). */
+function choiceLines(rows: readonly LedgerRow[], c: { tier: Tier; alias: string; tierReason: string; effort: string | undefined; effortReason: string }): string[] {
+  const { effort, source } = effortChoice(c.tier, c.effort, cfg.effortByTier)
+  return [choiceLine({ tier: c.tier, alias: c.alias, tierReason: c.tierReason, ...(effort ? { effort } : {}), effortSource: source, effortReason: c.effortReason }), historyLine(pairHistory(rows))]
+}
+
 // ---- MOD-13: the effort a worker steps at ----------------------------------------------
 const stepEfforts = new Map<string, Effort | null>() // agentId → the effort its steps are rewritten to (null: the engine's), until its turn ends
 
@@ -2898,12 +2909,19 @@ async function stepEffort($: Host, agentId: string): Promise<Effort | undefined>
   const spawn = await spawnByAgent($, agentId)
   // MOD-21: a reviewer steps at the engine's default; the card's effort belongs to its worker
   if (!spawn || spawn.adhoc || spawn.review) return undefined
-  const effort = effortFor(spawn.tier, await storeGet<string>($, K.effort(spawn.task, await cardRepo($, spawn.repo))), cfg.effortByTier)
+  const repo = await cardRepo($, spawn.repo)
+  const lane = laneOf(spawn)
+  const records = await loadAttempts($, spawn)
+  // MOD-270: a resume of the same agent keeps the effort its spawn started at; only a new worker (a re-dispatch) re-reads the card's
+  const origin = spawn.attempt !== spawn.lineage ? attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.lineage && r.effort !== undefined) : undefined
+  const chosen = origin ? { effort: origin.effort as Effort, source: origin.effortSource ?? 'tier' } : effortChoice(spawn.tier, await storeGet<string>($, K.effort(spawn.task, repo)), cfg.effortByTier)
+  const { effort, source } = chosen
   stepEfforts.set(agentId, effort ?? null)
-  if (effort) {
-    const lane = laneOf(spawn)
-    const records = await loadAttempts($, spawn)
-    await saveAttempts($, spawn, patchRecord(records, spawn.subtask, spawn.attempt, { effort }, lane))
+  // MOD-270: the reasons ride on the record even when the effort resolves to the engine's default
+  const tierReason = origin ? origin.tierReason || '' : (await storeGet<string>($, K.tierReason(spawn.task, repo))) || ''
+  const effortReason = origin ? origin.effortReason || '' : (await storeGet<string>($, K.effortReason(spawn.task, repo))) || ''
+  if (effort || tierReason || effortReason) {
+    await saveAttempts($, spawn, patchRecord(records, spawn.subtask, spawn.attempt, { ...(effort ? { effort, effortSource: source } : {}), ...(tierReason ? { tierReason } : {}), ...(effortReason ? { effortReason } : {}) }, lane))
   }
   return effort
 }
@@ -6991,10 +7009,12 @@ async function postStarted($: Host, i: { label: string; task: string; repo?: str
     }
   }
   if (!postsRows(cfg.verbosity)) return
-  const effort = effortFor(i.tier, await storeGet<string>($, K.effort(i.task, await cardRepo($, i.repo))), cfg.effortByTier)
+  const startRepo = await cardRepo($, i.repo)
+  const effort = effortFor(i.tier, await storeGet<string>($, K.effort(i.task, startRepo)), cfg.effortByTier)
+  const why = reasonsCut((await storeGet<string>($, K.tierReason(i.task, startRepo))) || '', (await storeGet<string>($, K.effortReason(i.task, startRepo))) || '')
   // a resume of a nudged task is not the end of its judgment: no down nudge on it
   const nudge = i.kind === 'resumed' ? undefined : nudgeDownNow()
-  await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias), ...(effort ? { effort } : {}), ...(nudge ? { nudge } : {}) }))
+  await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias), ...(effort ? { effort } : {}), ...(why ? { why } : {}), ...(nudge ? { nudge } : {}) }))
 }
 
 /** MOD-74: a worker's spend this attempt as the verdict row computes it (its own turns, else the session's growth), undefined while unknown. */
@@ -7747,6 +7767,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (!scope && scopeLooksProse(card.scope)) {
     out.push('   note: the card scope reads as prose; the verifier leaves a prose scope unchecked unless the brief gains scope_globs= — pass scope globs')
   }
+  // MOD-270: the choice (model and effort, each with its reason) and how each pair did; before the card says line the card tool adds
+  out.push(...choiceLines(await ledgerAt($, root).then(l => l.rows), { tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason) }).map(l => `   ${l}`))
   const shownHeader = parseHeader(shown)
   const shownForbid = (shownHeader?.fields.forbid ?? '').split(',').filter(Boolean)
   // MOD-227: a forbid from elsewhere (the parent issue, a sibling card) wins as before; the line names where it came from
@@ -7785,6 +7807,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   if (dryRun) return [...out, '', shown].join('\n')
   // MOD-13: the card's own effort: (it wins over effortByTier for this task's workers); cleared when the card has none
   await storeSet($, K.effort(id, await cardRepo($, target?.path)), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
+  await storeSet($, K.tierReason(id, await cardRepo($, target?.path)), cleanReason(card.fields.tier_reason))
+  await storeSet($, K.effortReason(id, await cardRepo($, target?.path)), cleanReason(card.fields.effort_reason))
 
   // GH-103: a prose scope with no globs is caught here, before the worktree and the spawn
   const shownScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
@@ -8311,7 +8335,8 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
         debug($, `classifier second opinion failed: ${String(err)}`)
       }
     }
-    shown.push([cardSummary(c, alias), ...(second ? [second] : []), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : [])].join('\n'))
+    const choice = choiceLines((await ledgerAt($, root)).rows, { tier: c.tier, alias, tierReason: c.tierReason ?? '', effort: c.effort, effortReason: c.effortReason ?? '' })
+    shown.push([cardSummary(c, alias), ...choice, ...(second ? [second] : []), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : [])].join('\n'))
     shownIds.push(c.id)
   }
   // a dry run that showed no header for the only card is its own answer, as it was before lanes

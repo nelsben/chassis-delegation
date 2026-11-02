@@ -225,10 +225,15 @@ export const isEffort = (v: unknown): v is Effort => typeof v === 'string' && (E
  * (premium reads the frontier's). Undefined: leave the engine's default.
  */
 export function effortFor(tier: Tier, cardEffort: string | undefined, table: Readonly<Record<EffortTier, EffortSetting>>): Effort | undefined {
+  return effortChoice(tier, cardEffort, table).effort
+}
+
+/** MOD-270: the effort and what decided it: `card` when the card's own `effort:` did, else `tier` (the table, or the engine's default). */
+export function effortChoice(tier: Tier, cardEffort: string | undefined, table: Readonly<Record<EffortTier, EffortSetting>>): { effort: Effort | undefined; source: 'card' | 'tier' } {
   const own = effortLevel(cardEffort)
-  if (own) return own
-  if (cardEffort?.trim() === '0') return undefined
-  return effortLevel(table[tier === 'premium' ? 'frontier' : tier])
+  if (own) return { effort: own, source: 'card' }
+  if (cardEffort?.trim() === '0') return { effort: undefined, source: 'tier' }
+  return { effort: effortLevel(table[tier === 'premium' ? 'frontier' : tier]), source: 'tier' }
 }
 
 /** The `/delegation` line: `effort: economy low · standard medium · frontier high`. */
