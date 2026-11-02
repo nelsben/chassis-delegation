@@ -244,6 +244,8 @@ describe('the argv /dispatch would run (never run for real here)', () => {
     expect(agentTypeFor('ops', { ops: 'frontend' })).toBe('frontend')
     expect(agentTypeFor('frontend', 'not json', ['frontend'])).toBe('frontend')
     expect(spawnPrompt('/s/briefs/BE-101.brief.md')).toBe('Your brief is the file /s/briefs/BE-101.brief.md. Read it whole, then follow it exactly.')
+    // MOD-268: a path with whitespace is wrapped in backticks
+    expect(spawnPrompt('/a/Client Sandbox/x/OPS-4.brief.md')).toBe('Your brief is the file `/a/Client Sandbox/x/OPS-4.brief.md`. Read it whole, then follow it exactly.')
     const d = spawnDescription('BE-101', 'x'.repeat(100))
     expect(d).toBe('BE-101: ' + 'x'.repeat(60))
   })

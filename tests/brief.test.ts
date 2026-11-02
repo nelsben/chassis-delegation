@@ -445,3 +445,38 @@ describe('MOD-227 (#304): a scope path under a forbid is flagged when the brief 
     expect('error' in r).toBe(false)
   })
 })
+
+// MOD-268: a brief path with a space in it is found
+describe('MOD-268: findBriefPath with spaces', () => {
+  test('the reporter prompt: an unquoted spaced absolute path', () => {
+    expect(findBriefPath('Your brief is the file /a/Client Sandbox/x/.delegation/briefs/OPS-4.brief.md. Read it whole, then follow it exactly.')).toBe('/a/Client Sandbox/x/.delegation/briefs/OPS-4.brief.md')
+  })
+  test('a quoted path may hold spaces (backtick, double, single)', () => {
+    expect(findBriefPath('Your brief is the file `/a/Client Sandbox/x/OPS-4.brief.md`. Read it')).toBe('/a/Client Sandbox/x/OPS-4.brief.md')
+    expect(findBriefPath('file "/a/My Dir/x.brief.md" now')).toBe('/a/My Dir/x.brief.md')
+    expect(findBriefPath("file '/a/My Dir/x.brief.md' now")).toBe('/a/My Dir/x.brief.md')
+  })
+  test('the unquoted no-space absolute path is as before, and never swallows an earlier path', () => {
+    expect(findBriefPath('see /x/y.brief.md')).toBe('/x/y.brief.md')
+    expect(findBriefPath('see /tmp and the file /x/y.brief.md')).toBe('/x/y.brief.md')
+    expect(findBriefPath('no file here /a b/c')).toBeUndefined()
+  })
+  test('the header quotes repo, outdir and scratch with whitespace, reads them back whole, and setHeaderField keeps them quoted', () => {
+    const c = parseCard('---\nid: OPS-1\ntitle: t\ndomain: ops\ntier: standard\nstatus: queued\nscope: [src/**]\nforbid: []\nred_test: none\ngate: test\n---\n## Why\n\nx\n')
+    if ('error' in c) throw new Error(c.error)
+    const plain = renderHeader({ card: c, tier: 'standard', alias: 'sonnet', budget: 2, repo: '/o/repo', outdir: '/o/out', scratch: '/o/s' })
+    expect(plain).toContain(' repo=/o/repo outdir=/o/out scratch=/o/s')
+    const header = renderHeader({ card: c, tier: 'standard', alias: 'sonnet', budget: 2, repo: '/o/My Repo', outdir: '/o/My Out', scratch: '/o/My Scratch' })
+    expect(header).toContain(' repo="/o/My Repo" outdir="/o/My Out" scratch="/o/My Scratch"')
+    const h = parseHeader(header)
+    expect(h?.fields.repo).toBe('/o/My Repo')
+    expect(h?.fields.outdir).toBe('/o/My Out')
+    expect(h?.fields.scratch).toBe('/o/My Scratch')
+    expect(h?.fields.task).toBe(parseHeader(plain)?.fields.task)
+    const set = setHeaderField(header, 'repo', '/p/Other Repo')
+    expect(set.text).toContain(' repo="/p/Other Repo" ')
+    expect(set.previous).toBe('/o/My Repo')
+    expect(parseHeader(set.text)?.fields.repo).toBe('/p/Other Repo')
+    expect(parseHeader(setHeaderField(plain, 'repo', '/p/q').text)?.fields.repo).toBe('/p/q')
+  })
+})
