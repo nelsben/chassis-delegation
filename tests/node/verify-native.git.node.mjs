@@ -280,3 +280,61 @@ describe('GH-16: repo=here against a real git checkout', () => {
     }
   })
 })
+
+describe('MOD-272: a worker rebased onto a newer main keeps only its own delta', () => {
+  const BRIEF_F = (base) => `[[brief v=1 task=T-1 subtask=main purpose=build tier=standard scope=src/**,docs/ forbid=secrets/** gate=check base=${base} budget=2-attempts report=chassis.report.v1]]\n\nbody\n`
+  // dispatch at X; another branch adds forbidden secrets/f.txt and is merged into main (Y); the worker branch is rebased onto Y
+  function setup(workerAddsF) {
+    const { dir } = makeRepo()
+    const x = sh(dir, 'rev-parse', 'main')
+    sh(dir, 'checkout', '-q', 'main')
+    write(dir, 'secrets/f.txt', 'f\n')
+    sh(dir, 'add', '-A')
+    sh(dir, 'commit', '-q', '-m', 'other card merged')
+    sh(dir, 'checkout', '-q', 'agent/ops/T-1')
+    if (workerAddsF) {
+      write(dir, 'secrets/mine.txt', 'm\n')
+      sh(dir, 'add', '-A')
+      sh(dir, 'commit', '-q', '-m', 'worker forbidden')
+    }
+    sh(dir, 'rebase', '-q', 'main')
+    return { dir, x, sha: sh(dir, 'rev-parse', '--short', 'HEAD') }
+  }
+  const run = (dir, x, sha, files) => verifyNative({ ...input(dir, { sha, files }), briefText: BRIEF_F(x) }, io())
+
+  test('the delta excludes the file main gained; the scope line names the rebase', async () => {
+    const { dir, x, sha } = setup(false)
+    try {
+      const r = await run(dir, x, sha, 'src/a.ts,docs/x.md')
+      expect(r.lines.some(l => l.startsWith('claim scope: held') && l.includes('since main (rebased past '))).toBe(true)
+      expect(r.lines).toContain('claim files: held — files= matches the sha delta exactly')
+      expect(r.verdict).toBe('consistent')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a worker that itself adds the forbidden file is still refuted', async () => {
+    const { dir, x, sha } = setup(true)
+    try {
+      const r = await run(dir, x, sha, 'src/a.ts,docs/x.md,secrets/mine.txt')
+      expect(r.lines.some(l => l.startsWith('claim scope: failed') && l.includes('secrets/mine.txt'))).toBe(true)
+      expect(r.verdict).toBe('refuted')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a worker that did not rebase gets the recorded base, no rebase note', async () => {
+    const { dir } = makeRepo()
+    try {
+      const x = sh(dir, 'rev-parse', 'main')
+      const sha = sh(dir, 'rev-parse', '--short', 'HEAD')
+      const r = await run(dir, x, sha, 'src/a.ts,docs/x.md')
+      expect(r.lines.some(l => l.includes('rebased past'))).toBe(false)
+      expect(r.verdict).toBe('consistent')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

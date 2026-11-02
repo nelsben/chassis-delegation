@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **After a worker rebases onto a newer main, the verdict's delta no longer counts the files other cards merged (MOD-272).** `verifyNative` now takes the delta from the newest of merge-base(recorded base, sha) and merge-base(ref, sha) for each of `BASE_REFS` and the config's `baseRef`, when the recorded base is an ancestor of the branch and one candidate has every other as an ancestor; otherwise the recorded base stays. A worker that did not rebase, repo=here and replay bases are unchanged; the scope line names the move (`since main (rebased past abc1234)`). Works with no remote. Tests in `tests/node/verify-native.git.node.mjs`.
 - **A brief path or header path with a space in it is found and parsed, so the worker runs as its task, not ad hoc (MOD-268).** `findBriefPath` now tries a quoted absolute path first (backtick, double or single quotes, spaces allowed), then today's unquoted regex, then an unquoted absolute path with single spaces inside a segment (never a space before a `/`), then the relative form. `spawnPrompt` wraps a brief path in backticks when it holds whitespace; a path without any renders as before. The brief header renders `repo=`, `outdir=` and `scratch=` in double quotes when the value holds whitespace, and `setHeaderField` keeps a quoted value quoted. Tests in `tests/brief.test.ts`, `tests/dispatch.test.ts` and `tests/crossrepo.test.ts`.
 
 ## 0.9.44 — 2026-11-01
