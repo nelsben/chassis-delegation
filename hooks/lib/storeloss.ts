@@ -32,6 +32,10 @@ export type SpawnRow = {
   here?: string
   replay?: true
   base?: string
+  /** MOD-274: the card's class, and an exploratory attempt's mark and the pair it moved from. */
+  class?: string
+  explore?: true
+  exploreFrom?: string
   sessionId?: string
 }
 
@@ -63,6 +67,8 @@ export function spawnRow(s: SpawnFields, sessionId?: string): SpawnRow {
     ...(s.resources && s.resources.length > 0 ? { resources: [...s.resources] } : {}),
     ...(s.here ? { here: s.here } : {}),
     ...(s.replay ? { replay: true as const, ...(s.base ? { base: s.base } : {}) } : {}),
+    ...(s.class ? { class: s.class } : {}),
+    ...(s.explore ? { explore: true as const, ...(s.exploreFrom ? { exploreFrom: s.exploreFrom } : {}) } : {}),
     ...(sessionId ? { sessionId } : {}),
   }
 }

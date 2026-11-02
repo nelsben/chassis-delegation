@@ -17,9 +17,9 @@ export function cardEffort(v: unknown): { effort?: CardEffort } | { error: strin
 }
 
 /** `tier standard → sonnet (<tier_reason, or default>) · effort high (<effort_reason>)`; without an effort level of its own, `effort medium (tier default)`. */
-export function choiceLine(i: { tier: string; alias: string; tierReason?: string; effort?: string; effortSource?: 'card' | 'tier'; effortReason?: string }): string {
+export function choiceLine(i: { tier: string; alias: string; tierReason?: string; effort?: string; effortSource?: 'card' | 'tier' | 'explore'; effortReason?: string }): string {
   const effort = i.effort ?? 'default'
-  const why = i.effortSource === 'card' ? (i.effortReason || 'card') : 'tier default'
+  const why = i.effortSource === 'card' ? (i.effortReason || 'card') : i.effortSource === 'explore' ? 'explore' : 'tier default'
   return `tier ${i.tier} → ${i.alias} (${i.tierReason || 'default'}) · effort ${effort} (${why})`
 }
 
@@ -51,8 +51,10 @@ const USD_KINDS = ['spawn', 'resume', 'review']
  * rows that carry usd (rows marked usdApprox count in n and the rate, not in usd). A card refuted only on scope, files, branch or pr
  * is a brief defect and is left out of the rate's denominator. Most used first, at most 6. A card that escalates stays with its
  * attempt-1 pair.
+ * MOD-274: with `cls` (`feature/large`) only the cards of that class count. A card whose attempt 1 explored (`explore: true`) is
+ * counted for the pair it ran: confirmed only when that attempt was, and only that attempt's usd (attempt 2 ran another pair).
  */
-export function pairHistory(rows: readonly LedgerRowLike[]): PairStat[] {
+export function pairHistory(rows: readonly LedgerRowLike[], cls?: string): PairStat[] {
   const cards = new Map<string, LedgerRowLike[]>()
   for (const r of rows) {
     if (typeof r.task !== 'string' || r.task === '' || typeof r.kind !== 'string') continue
@@ -63,13 +65,15 @@ export function pairHistory(rows: readonly LedgerRowLike[]): PairStat[] {
   for (const rs of cards.values()) {
     const first = rs.find(r => r.kind === 'spawn' && r.attempt === 1 && typeof r.verdict === 'string' && r.verdict !== '' && typeof r.effort === 'string' && r.effort !== '' && typeof r.alias === 'string')
     if (!first) continue
+    if (cls !== undefined && first.class !== cls) continue
     const alias = first.alias as string
     const effort = first.effort as string
-    const verdicts = rs.filter(r => typeof r.verdict === 'string' && r.kind !== 'accept' && r.kind !== 'merged')
+    const explored = first.explore === true
+    const verdicts = rs.filter(r => typeof r.verdict === 'string' && r.kind !== 'accept' && r.kind !== 'merged' && (!explored || r.attempt === 1))
     const confirmed = verdicts.some(r => readVerdict(r.verdict as string) === 'consistent')
     const refuted = verdicts.filter(r => r.verdict === 'refuted')
     const briefDefect = !confirmed && refuted.length > 0 && refuted.every(r => heldClaim({ verdict: 'refuted', firstFailed: typeof r.firstFailed === 'string' ? r.firstFailed : undefined }) !== undefined)
-    const usdRows = rs.filter(r => USD_KINDS.includes(r.kind as string) && typeof r.usd === 'number' && Number.isFinite(r.usd) && r.usdApprox !== true)
+    const usdRows = rs.filter(r => (!explored || r.attempt === 1) && USD_KINDS.includes(r.kind as string) && typeof r.usd === 'number' && Number.isFinite(r.usd) && r.usdApprox !== true)
     const key = `${alias}\u0000${effort}`
     const a = pairs.get(key) ?? { alias, effort, n: 0, confirmed: 0, counted: 0, usd: 0, withUsd: 0 }
     a.n += 1
@@ -94,13 +98,18 @@ export function pairHistory(rows: readonly LedgerRowLike[]): PairStat[] {
     }))
 }
 
-/** `history: sonnet/medium 120 · 88% · $0.71/card; haiku/low 40 · 98% · $0.02/card`; `history: none` with no pair. */
-export function historyLine(pairs: readonly PairStat[]): string {
+/**
+ * `history: sonnet/medium 120 · 88% · $0.71/card; haiku/low 40 · 98% · $0.02/card`; `history: none` with no pair.
+ * MOD-274: `cls` names the card's class first (`history feature/large: …`); `fellBack` says the class had no rows and the pairs are
+ * every class's (`history all classes (none for feature/large): …`).
+ */
+export function historyLine(pairs: readonly PairStat[], cls?: string, fellBack = false): string {
   if (pairs.length === 0) return 'history: none'
   const one = (p: PairStat): string => {
     const rate = p.rate === undefined ? '?' : `${Math.round(p.rate * 100)}%`
     const usd = p.usdPerConfirmed === undefined ? '$?/card' : `${p.approx ? '~' : ''}$${p.usdPerConfirmed.toFixed(2)}/card`
     return `${p.alias}/${p.effort} ${p.n}${p.mark ? ` ${p.mark}` : ''} · ${rate} · ${usd}`
   }
-  return `history: ${pairs.map(one).join('; ')}`
+  const head = cls === undefined ? 'history' : fellBack ? `history all classes (none for ${cls})` : `history ${cls}`
+  return `${head}: ${pairs.map(one).join('; ')}`
 }
