@@ -765,6 +765,29 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     if (base) {
       mb = firstLine(await out('merge-base', base, full))
       if (!mb && (await out('rev-parse', '--verify', '--quiet', base)) !== undefined) mb = base
+      // MOD-272: the worker rebased onto a newer main; the recorded base is still the dispatch sha, so another
+      // card's merged files would show in the delta. Take the newest of merge-base(recorded, sha) and merge-base(ref, sha)
+      // per ref (every candidate an ancestor of it); no single newest candidate keeps the recorded base. A replay base is unchanged.
+      if (mb && !input.base && contract.base && (await out('merge-base', '--is-ancestor', mb, full)) !== undefined) {
+        const cands = new Set<string>([mb])
+        for (const ref of [...BASE_REFS, ...(input.baseRef?.trim() ? [input.baseRef.trim()] : [])]) {
+          const c = firstLine(await out('merge-base', ref, full))
+          if (/^[0-9a-f]{40,64}$/i.test(c)) cands.add(c)
+        }
+        let newest = ''
+        for (const c of cands) {
+          let all = true
+          for (const o of cands) if (o !== c && (await out('merge-base', '--is-ancestor', o, c)) === undefined) all = false
+          if (all) {
+            newest = c
+            break
+          }
+        }
+        if (newest && newest !== mb) {
+          mb = newest
+          base = `main (rebased past ${/^[0-9a-f]{40,}$/i.test(contract.base) ? contract.base.slice(0, 7) : contract.base})`
+        }
+      }
     } else {
       // MOD-251: no rev-parse per candidate ref: merge-base itself says a ref does not resolve; a ref that resolves with no merge base is the base, as before
       for (const ref of BASE_REFS) {
