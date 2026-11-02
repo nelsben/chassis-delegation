@@ -394,6 +394,16 @@
       "description": "The GitHub Project that /delegation land and the land tool add a new issue to after filing it, written <owner>/<number> (for example acme/3). Empty: the issue is filed and not added to any Project. A value that is not <owner>/<number> is ignored. A project in the repo file (.chassis-delegation.json), including none, wins over this value; land and land_plan take project: false, and /delegation land takes --no-project, to skip the add for one call.",
       "default": ""
     },
+    "adaptive": {
+      "type": "string",
+      "title": "Adaptive picks (off | suggest)",
+      "description": "Whether the card tool's choice line suggests the cheapest model and effort that has passed for the card's class (kind/size, for example feature/large): `suggest sonnet/low for feature/large (n 24, lower bound 91% vs default 96%, $0.52 vs $0.89 per confirmed card)`. suggest: the line is added when a pair qualifies and the brain decides; off: no line. A pair qualifies with at least 20 cards, a Wilson 90% lower bound on its pass rate within 5 points of the default pair's rate, no failure in its last 10 cards, and a cost per confirmed card under the default's by more than one standard error. The evidence comes from the cards the explore option runs one step down. apply is reserved and refused: it is not shipped yet. A value here other than the default wins over the repo file (.chassis-delegation.json)",
+      "options": [
+        "off",
+        "suggest"
+      ],
+      "default": "suggest"
+    },
     "scopeAmends": {
       "type": "string",
       "title": "Scope amends (apply | new-files | ask | within-parent)",

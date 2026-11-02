@@ -5,6 +5,7 @@
 import { CONFIG_GROUPS, CONFIG_TABLE, GROUP_WORDS, OTHER_GROUP, RESERVED, TABLE_FIELDS, groupWord, type Render, type Source } from './configtable'
 import { parseRepoConfig } from './repoconfig'
 import { validUser } from './configeff'
+import { ADAPTIVE_RESERVED, APPLY_NOT_SHIPPED } from './adaptive'
 import { builtinGlyphText } from './glyph'
 
 export { CONFIG_GROUPS, CONFIG_TABLE, OTHER_GROUP }
@@ -445,6 +446,8 @@ export function valueFor(field: string, typed: string, forRepoFile = false): { v
     if ('error' in p) return p
     value = p.value
   } else if (r === 'choice') {
+    // MOD-275: a word reserved for a later card is named, not listed as a typo
+    if (field === 'adaptive' && typed.trim().toLowerCase() === ADAPTIVE_RESERVED) return { error: `${APPLY_NOT_SHIPPED}; nothing set` }
     const p = parseTyped(field, 'choice', e.choices, typed)
     if ('error' in p) return p
     value = p.value

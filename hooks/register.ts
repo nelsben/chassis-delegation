@@ -214,6 +214,7 @@ import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
+import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut } from './lib/choice'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
@@ -702,6 +703,8 @@ type Config = {
   reviewTier: Tier | ''
   /** MOD-271: the effort a reviewer steps at; '' = the engine's default. */
   reviewEffort: Effort | ''
+  /** MOD-275 */
+  adaptive: AdaptiveMode
   /** MOD-271: the cap on every effort the mod applies. */
   maxEffort: Effort
   /** MOD-274: the share (0 to 0.5) of eligible first attempts that run one step below the default. */
@@ -803,6 +806,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       reviewEffort: eff.reviewEffort,
       maxEffort: isEffort(o.maxEffort) ? o.maxEffort : DEFAULT_MAX_EFFORT,
       explore: clampExplore(eff.explore),
+      adaptive: eff.adaptive,
     },
   }
 }
@@ -2922,11 +2926,14 @@ function historyOf(rows: readonly LedgerRow[], cls: string | undefined): string 
 }
 
 /** MOD-270: the choice line and the history line for a card (tier, final alias, the card's effort: and reasons). */
-function choiceLines(rows: readonly LedgerRow[], c: { tier: Tier; alias: string; tierReason: string; effort: string | undefined; effortReason: string; cls?: string }): string[] {
+function choiceLines(rows: readonly LedgerRow[], c: { tier: Tier; alias: string; tierReason: string; effort: string | undefined; effortReason: string; cls?: string; suggestCls?: string }): string[] {
   const chosen = effortChoice(c.tier, c.effort, cfg.effortByTier)
   const effort = effortLabel(clampEffort(chosen.effort, cfg.maxEffort))
   const source = chosen.source
-  return [choiceLine({ tier: c.tier, alias: c.alias, tierReason: c.tierReason, ...(effort ? { effort } : {}), effortSource: source, effortReason: c.effortReason }), historyOf(rows, c.cls)]
+  // MOD-275: the cheapest pair that has passed for the class, when the class has enough cards; the brain decides
+  const suggestCls = c.suggestCls ?? c.cls
+  const pick = cfg.adaptive === 'suggest' && suggestCls !== undefined ? suggestPair(rows, suggestCls) : undefined
+  return [choiceLine({ tier: c.tier, alias: c.alias, tierReason: c.tierReason, ...(effort ? { effort } : {}), effortSource: source, effortReason: c.effortReason }), historyOf(rows, c.cls), ...(pick ? [suggestionLine(pick)] : [])]
 }
 
 // ---- MOD-13: the effort a worker steps at ----------------------------------------------
@@ -8387,7 +8394,9 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
         debug($, `classifier second opinion failed: ${String(err)}`)
       }
     }
-    const choice = choiceLines((await ledgerAt($, root)).rows, { tier: c.tier, alias, tierReason: c.tierReason ?? '', effort: c.effort, effortReason: c.effortReason ?? '' })
+    // MOD-275: the card's class, as the dry run names it, so the suggestion is for this kind of card
+    const cardClass = cardClassName(cardKind({ title: c.title, scope: c.scope }), cardSize(tierHint({ tier: c.tier, scope: c.scope, doneCount: doneStatementCount(doneWhenOf(c.text)), redTest: c.redTest }) !== undefined))
+    const choice = choiceLines((await ledgerAt($, root)).rows, { tier: c.tier, alias, tierReason: c.tierReason ?? '', effort: c.effort, effortReason: c.effortReason ?? '', suggestCls: cardClass })
     shown.push([cardSummary(c, alias), ...choice, ...(second ? [second] : []), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : [])].join('\n'))
     shownIds.push(c.id)
   }

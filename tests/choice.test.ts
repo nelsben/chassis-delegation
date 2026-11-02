@@ -69,6 +69,33 @@ describe('MOD-270: the card tool takes the choice', () => {
   })
 })
 
+describe('MOD-275: the choice line suggests the cheapest pair that has passed for the class', () => {
+  const input = { title: 'Rename the hair files', why: 'Mechanical.', doneWhen: ['the files are renamed'], redTest: 'none', repo: 'none', gate: 'check', scope: ['/out/hair/**'] }
+  // 60 default cards and 60 exploratory ones one effort level down, all passing, the exploratory ones cheaper; class feature/large
+  const ledger = () => {
+    const row = (task: string, effort: string, usd: number, over: Record<string, unknown> = {}) =>
+      JSON.stringify({ kind: 'spawn', task, attempt: 1, tier: 'standard', alias: 'sonnet', effort, class: 'feature/large', verdict: 'consistent', usd, effortSource: 'tier', ...over })
+    return [
+      ...Array.from({ length: 60 }, (_, i) => row(`D-${i}`, 'medium', i % 2 ? 0.99 : 0.79)),
+      ...Array.from({ length: 60 }, (_, i) => row(`E-${i}`, 'low', i % 2 ? 0.55 : 0.45, { effortSource: 'explore', explore: true, exploreFrom: 'sonnet/medium' })),
+    ].join('\n') + '\n'
+  }
+
+  test('suggest (the default): the line follows the history line', { options: OPTIONS }, async ($, on) => {
+    setup(on, { [`${tasksDir}/README.md`]: '', [`${ROOT}/.delegation/ledger.jsonl`]: ledger() })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: CARD_TOOL, ...input } as never))
+    expect(out).toMatch(/suggest sonnet\/low for feature\/large \(n 60, lower bound \d+% vs default 100%, \$0\.50 vs \$0\.89 per confirmed card\)/)
+  })
+
+  test('off: no suggestion line', { options: { ...OPTIONS, adaptive: 'off' } }, async ($, on) => {
+    setup(on, { [`${tasksDir}/README.md`]: '', [`${ROOT}/.delegation/ledger.jsonl`]: ledger() })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: CARD_TOOL, ...input } as never))
+    expect(out).not.toContain('suggest sonnet')
+  })
+})
+
 describe('MOD-270: dispatch stores the choice, the worker steps at it, the record and the started row carry it', () => {
   test('a card effort with reasons: the dispatch prints the choice line; the started row shows the reasons; the record says effortSource card', { options: OPTIONS }, async ($, on) => {
     const w = setup(on, { [`${tasksDir}/OPS-8-x.md`]: card('OPS-8', 'standard', ['tier_reason: two modules', 'effort: high', 'effort_reason: ambiguous scope']) })

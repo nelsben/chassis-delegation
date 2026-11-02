@@ -45,6 +45,53 @@ export type PairStat = {
 
 const USD_KINDS = ['spawn', 'resume', 'review']
 
+/** One card as `pairHistory` counts it (MOD-275: the same reading, card by card). */
+export type CardOutcome = {
+  task: string
+  alias: string
+  effort: string
+  /** The card's earliest attempt-1 spawn row with a verdict (its class, tier, effortSource, reasons and explore marks are read from it). */
+  first: LedgerRowLike
+  explored: boolean
+  confirmed: boolean
+  /** In the rate's denominator: not refuted only on a brief defect (scope, files, branch, pr). */
+  counted: boolean
+  /** The card's usd over its spawn, resume and review rows that carry one (an exploratory card: attempt 1 only); undefined with none. */
+  usd: number | undefined
+}
+
+/** Every card the ledger has a pair for, in the order its first row appears; with `cls` only that class's. `pairHistory` is a sum over these. */
+export function cardOutcomes(rows: readonly LedgerRowLike[], cls?: string): CardOutcome[] {
+  const cards = new Map<string, LedgerRowLike[]>()
+  for (const r of rows) {
+    if (typeof r.task !== 'string' || r.task === '' || typeof r.kind !== 'string') continue
+    cards.set(r.task, [...(cards.get(r.task) ?? []), r])
+  }
+  const out: CardOutcome[] = []
+  for (const [task, rs] of cards) {
+    const first = rs.find(r => r.kind === 'spawn' && r.attempt === 1 && typeof r.verdict === 'string' && r.verdict !== '' && typeof r.effort === 'string' && r.effort !== '' && typeof r.alias === 'string')
+    if (!first) continue
+    if (cls !== undefined && first.class !== cls) continue
+    const explored = first.explore === true
+    const verdicts = rs.filter(r => typeof r.verdict === 'string' && r.kind !== 'accept' && r.kind !== 'merged' && (!explored || r.attempt === 1))
+    const confirmed = verdicts.some(r => readVerdict(r.verdict as string) === 'consistent')
+    const refuted = verdicts.filter(r => r.verdict === 'refuted')
+    const briefDefect = !confirmed && refuted.length > 0 && refuted.every(r => heldClaim({ verdict: 'refuted', firstFailed: typeof r.firstFailed === 'string' ? r.firstFailed : undefined }) !== undefined)
+    const usdRows = rs.filter(r => (!explored || r.attempt === 1) && USD_KINDS.includes(r.kind as string) && typeof r.usd === 'number' && Number.isFinite(r.usd) && r.usdApprox !== true)
+    out.push({
+      task,
+      alias: first.alias as string,
+      effort: first.effort as string,
+      first,
+      explored,
+      confirmed,
+      counted: !briefDefect,
+      usd: usdRows.length > 0 ? usdRows.reduce((s, r) => s + (r.usd as number), 0) : undefined,
+    })
+  }
+  return out
+}
+
 /**
  * Per (alias, effort) pair across the whole ledger. A card's pair is that of its earliest kind 'spawn' attempt-1 row with a verdict
  * and an effort (cards without are left out). Confirmed: any verdict row consistent. usd: the sum over its spawn, resume and review
@@ -55,32 +102,16 @@ const USD_KINDS = ['spawn', 'resume', 'review']
  * counted for the pair it ran: confirmed only when that attempt was, and only that attempt's usd (attempt 2 ran another pair).
  */
 export function pairHistory(rows: readonly LedgerRowLike[], cls?: string): PairStat[] {
-  const cards = new Map<string, LedgerRowLike[]>()
-  for (const r of rows) {
-    if (typeof r.task !== 'string' || r.task === '' || typeof r.kind !== 'string') continue
-    cards.set(r.task, [...(cards.get(r.task) ?? []), r])
-  }
   type Acc = { alias: string; effort: string; n: number; confirmed: number; counted: number; usd: number; withUsd: number }
   const pairs = new Map<string, Acc>()
-  for (const rs of cards.values()) {
-    const first = rs.find(r => r.kind === 'spawn' && r.attempt === 1 && typeof r.verdict === 'string' && r.verdict !== '' && typeof r.effort === 'string' && r.effort !== '' && typeof r.alias === 'string')
-    if (!first) continue
-    if (cls !== undefined && first.class !== cls) continue
-    const alias = first.alias as string
-    const effort = first.effort as string
-    const explored = first.explore === true
-    const verdicts = rs.filter(r => typeof r.verdict === 'string' && r.kind !== 'accept' && r.kind !== 'merged' && (!explored || r.attempt === 1))
-    const confirmed = verdicts.some(r => readVerdict(r.verdict as string) === 'consistent')
-    const refuted = verdicts.filter(r => r.verdict === 'refuted')
-    const briefDefect = !confirmed && refuted.length > 0 && refuted.every(r => heldClaim({ verdict: 'refuted', firstFailed: typeof r.firstFailed === 'string' ? r.firstFailed : undefined }) !== undefined)
-    const usdRows = rs.filter(r => (!explored || r.attempt === 1) && USD_KINDS.includes(r.kind as string) && typeof r.usd === 'number' && Number.isFinite(r.usd) && r.usdApprox !== true)
-    const key = `${alias}\u0000${effort}`
-    const a = pairs.get(key) ?? { alias, effort, n: 0, confirmed: 0, counted: 0, usd: 0, withUsd: 0 }
+  for (const c of cardOutcomes(rows, cls)) {
+    const key = `${c.alias}\u0000${c.effort}`
+    const a = pairs.get(key) ?? { alias: c.alias, effort: c.effort, n: 0, confirmed: 0, counted: 0, usd: 0, withUsd: 0 }
     a.n += 1
-    if (confirmed) a.confirmed += 1
-    if (!briefDefect) a.counted += 1
-    if (usdRows.length > 0) a.withUsd += 1
-    a.usd += usdRows.reduce((s, r) => s + (r.usd as number), 0)
+    if (c.confirmed) a.confirmed += 1
+    if (c.counted) a.counted += 1
+    if (c.usd !== undefined) a.withUsd += 1
+    a.usd += c.usd ?? 0
     pairs.set(key, a)
   }
   return [...pairs.values()]
