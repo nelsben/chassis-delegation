@@ -81,10 +81,10 @@ describe('MOD-274: the draw', () => {
 })
 
 describe('MOD-274: who explores', () => {
-  test('the red case: attempt 1, no effort:, no reasons, standard, feature, draw below explore: effort one level down', async () => {
+  test('the red case: attempt 1, no effort:, no reasons, standard, feature, draw below explore: MOD-277, the tier one down at the same effort first', async () => {
     const { explorePlan } = await X()
     const plan = explorePlan(await base())
-    expect(plan).toMatchObject({ tier: 'standard', alias: 'sonnet', effort: 'low', axis: 'effort', from: 'sonnet/medium' })
+    expect(plan).toMatchObject({ tier: 'economy', alias: 'haiku', effort: 'medium', axis: 'tier', from: 'sonnet/medium' })
   })
   test('a draw at or above explore never explores', async () => {
     const { explorePlan } = await X()
@@ -123,18 +123,26 @@ describe('MOD-274: the step is one axis, downward only', () => {
   const row = (task, alias, effort, extra = {}) => ({ kind: 'spawn', task, attempt: 1, alias, effort, verdict: 'consistent', class: 'feature/large', ...extra })
   const many = (n, alias, effort) => Array.from({ length: n }, (_, i) => row(`R-${alias}${effort}-${i}`, alias, effort))
 
-  test('standard medium: effort down is chosen on a tie; with sonnet/low tried more, the tier step (haiku/medium) is', async () => {
-    const { explorePlan } = await X()
-    expect(explorePlan(await base({ rows: [] }))).toMatchObject({ axis: 'effort', alias: 'sonnet', effort: 'low' })
-    const plan = explorePlan(await base({ rows: many(3, 'sonnet', 'low') }))
-    expect(plan).toMatchObject({ axis: 'tier', tier: 'economy', alias: 'haiku', effort: 'medium', from: 'sonnet/medium' })
+  test('MOD-277 standard medium: the tier-down pair is the one target until it has 30 counted explored cards in the class, then the effort-down pair', async () => {
+    const { explorePlan, TIER_TARGET_CARDS } = await X()
+    expect(TIER_TARGET_CARDS).toBe(30)
+    expect(explorePlan(await base({ rows: [] }))).toMatchObject({ axis: 'tier', alias: 'haiku', effort: 'medium' })
+    // sonnet/low tried a lot does not move the target: only the tier pair's own explored cards do
+    expect(explorePlan(await base({ rows: many(9, 'sonnet', 'low') }))).toMatchObject({ axis: 'tier', alias: 'haiku' })
+    const ex = n => many(n, 'haiku', 'medium').map(r => ({ ...r, explore: true, exploreFrom: 'sonnet/medium' }))
+    expect(explorePlan(await base({ rows: ex(29) }))).toMatchObject({ axis: 'tier', alias: 'haiku' })
+    expect(explorePlan(await base({ rows: ex(30) }))).toMatchObject({ axis: 'effort', alias: 'sonnet', effort: 'low', from: 'sonnet/medium' })
   })
-  test('the least-tried pair of the class is chosen; other classes do not count', async () => {
+  test('MOD-277 only counted explored cards of the class and the pair move the target', async () => {
     const { explorePlan } = await X()
-    const other = many(5, 'sonnet', 'low').map(r => ({ ...r, class: 'bug/small' }))
-    expect(explorePlan(await base({ rows: other }))).toMatchObject({ axis: 'effort' })
-    const both = [...many(2, 'sonnet', 'low'), ...many(1, 'haiku', 'medium')]
-    expect(explorePlan(await base({ rows: both }))).toMatchObject({ axis: 'tier' })
+    const ex = (n, over = {}) => many(n, 'haiku', 'medium').map(r => ({ ...r, explore: true, exploreFrom: 'sonnet/medium', ...over }))
+    // not explored (default cards that happened to run haiku), another class, and uncounted (a scope refute) cards do not count
+    expect(explorePlan(await base({ rows: many(40, 'haiku', 'medium') }))).toMatchObject({ axis: 'tier' })
+    expect(explorePlan(await base({ rows: ex(40, { class: 'bug/small' }) }))).toMatchObject({ axis: 'tier' })
+    expect(explorePlan(await base({ rows: ex(40, { verdict: 'refuted', firstFailed: 'scope' }) }))).toMatchObject({ axis: 'tier' })
+    // a classless row takes classOf
+    expect(explorePlan(await base({ rows: ex(30, { class: undefined }), classOf: () => 'feature/large' }))).toMatchObject({ axis: 'effort' })
+    expect(explorePlan(await base({ rows: ex(30, { class: undefined }) }))).toMatchObject({ axis: 'tier' })
   })
   test('a standard card at low effort can only step the tier; at the engine default (no effort) too', async () => {
     const { explorePlan } = await X()
@@ -169,10 +177,12 @@ describe('MOD-274: the step is one axis, downward only', () => {
     expect(explorePlan(await base({ baseEffort: 'xhigh', maxEffort: 'high' }))).toBeUndefined()
     // default high, cap medium: the tier step keeps high, which the cap would lower; effort down (medium) is what the card already runs at
     expect(explorePlan(await base({ baseEffort: 'high', maxEffort: 'medium' }))).toBeUndefined()
-    // default high, cap high: effort down is taken
-    expect(explorePlan(await base({ baseEffort: 'high', maxEffort: 'high' }))).toMatchObject({ axis: 'effort', effort: 'medium' })
-    // cap not reached: both steps stand
-    expect(explorePlan(await base({ baseEffort: 'xhigh', maxEffort: 'max' }))).toMatchObject({ axis: 'effort', effort: 'high' })
+    // default high, cap high: a standard card aims at the tier pair first; a frontier card has only the effort step
+    expect(explorePlan(await base({ baseEffort: 'high', maxEffort: 'high' }))).toMatchObject({ axis: 'tier', effort: 'high' })
+    expect(explorePlan(await base({ baseEffort: 'high', maxEffort: 'high', tier: 'frontier' }))).toMatchObject({ axis: 'effort', effort: 'medium' })
+    // cap not reached: both steps stand, the tier step first (MOD-277)
+    expect(explorePlan(await base({ baseEffort: 'xhigh', maxEffort: 'max' }))).toMatchObject({ axis: 'tier', effort: 'xhigh' })
+    expect(explorePlan(await base({ baseEffort: 'xhigh', maxEffort: 'max', tier: 'frontier' }))).toMatchObject({ axis: 'effort', effort: 'high' })
   })
 })
 
@@ -251,18 +261,19 @@ describe('MOD-274: pairHistory by class', () => {
     expect(historyLine([], 'bug/small', true)).toBe('history: none')
     expect(historyLine(pairHistory(rows))).toMatch(/^history: sonnet\/medium 1 thin/)
   })
-  test('an exploratory card counts for the pair it ran: its own verdict, its own usd', async () => {
+  test('MOD-277: an exploratory card counts for the pair it ran, confirmed when any attempt was, with every attempt\'s usd', async () => {
     const { pairHistory } = await C()
     const rows = [
-      // explored sonnet/low, refuted on a gate; attempt 2 (sonnet/medium) confirmed and cost more: the explored pair did not pass
+      // explored sonnet/low, refuted on a gate; attempt 2 (sonnet/medium) confirmed and cost more: the card is confirmed, the rescue cost is the explored pair's
       row('E-1', 'feature/large', { effort: 'low', explore: true, exploreFrom: 'sonnet/medium', verdict: 'refuted', firstFailed: 'gate', usd: 0.4 }),
       { kind: 'spawn', task: 'E-1', attempt: 2, alias: 'sonnet', effort: 'medium', verdict: 'consistent', usd: 0.9 },
       row('E-2', 'feature/large', { effort: 'low', explore: true, exploreFrom: 'sonnet/medium', verdict: 'consistent', usd: 0.5 }),
     ]
     const low = pairHistory(rows, 'feature/large').find(p => p.effort === 'low')
     expect(low.n).toBe(2)
-    expect(low.confirmed).toBe(1)
-    expect(low.usdPerConfirmed).toBeCloseTo(0.9, 5) // 0.4 + 0.5 over one confirmed card
+    expect(low.confirmed).toBe(2)
+    expect(low.usdPerConfirmed).toBeCloseTo(0.9, 5) // (0.4 + 0.9 + 0.5) over two confirmed cards
+    expect(pairHistory(rows, 'feature/large').find(p => p.effort === 'medium')).toBeUndefined()
     expect(low.approx).toBe(false)
   })
 })

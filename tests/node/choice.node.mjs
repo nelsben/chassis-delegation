@@ -203,3 +203,62 @@ describe('MOD-276: top tiers need a reason, the tier mix and the frontier share'
     expect(mergeConfig({ maxFrontierShare: 0.3 }, {}).maxFrontierShare).toBe(0.3)
   })
 })
+
+describe('MOD-277: both arms are counted the same way', () => {
+  const sp = (task, over = {}) => ({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', verdict: 'consistent', usd: 1, class: 'feature/large', ...over })
+
+  test('an explored card refuted on attempt 1 and confirmed on attempt 2 counts as confirmed, with both attempts\' usd', async () => {
+    const { cardOutcomes, pairHistory } = await C()
+    const rows = [
+      sp('E-1', { effort: 'low', explore: true, exploreFrom: 'sonnet/medium', verdict: 'refuted', firstFailed: 'gate', usd: 0.4 }),
+      sp('E-1', { attempt: 2, effort: 'medium', verdict: 'consistent', usd: 0.9 }),
+    ]
+    const [c] = cardOutcomes(rows)
+    expect(c).toMatchObject({ task: 'E-1', explored: true, confirmed: true, counted: true, effort: 'low' })
+    expect(c.usd).toBeCloseTo(1.3, 5)
+    expect(pairHistory(rows)[0]).toMatchObject({ effort: 'low', n: 1, confirmed: 1 })
+  })
+  test('a default card is counted the same way', async () => {
+    const { cardOutcomes } = await C()
+    const rows = [sp('D-1', { verdict: 'refuted', firstFailed: 'gate', usd: 1 }), sp('D-1', { attempt: 2, verdict: 'consistent', usd: 2 })]
+    expect(cardOutcomes(rows)[0]).toMatchObject({ confirmed: true, counted: true, usd: 3 })
+  })
+  test('a card that never confirmed and has only no-report, unverified or held-claim verdicts is uncounted, explored or not', async () => {
+    const { cardOutcomes } = await C()
+    for (const explore of [false, true]) {
+      const ex = explore ? { explore: true, exploreFrom: 'sonnet/medium' } : {}
+      const rows = [
+        sp(`N-${explore}`, { ...ex, verdict: 'no-report' }),
+        sp(`U-${explore}`, { ...ex, verdict: 'unverified' }),
+        sp(`M-${explore}`, { ...ex, verdict: 'refuted', firstFailed: 'scope' }),
+        sp(`X-${explore}`, { ...ex, verdict: 'no-report' }),
+        sp(`X-${explore}`, { ...ex, attempt: 2, verdict: 'refuted', firstFailed: 'pr' }),
+        sp(`G-${explore}`, { ...ex, verdict: 'refuted', firstFailed: 'gate' }),
+        sp(`G2-${explore}`, { ...ex, verdict: 'no-report' }),
+        sp(`G2-${explore}`, { ...ex, attempt: 2, verdict: 'refuted', firstFailed: 'gate' }),
+      ]
+      const by = Object.fromEntries(cardOutcomes(rows).map(c => [c.task.split('-')[0], c.counted]))
+      expect(by).toEqual({ N: false, U: false, M: false, X: false, G: true, G2: true })
+    }
+  })
+  test('a no-report followed by a confirmed attempt is confirmed and counted', async () => {
+    const { cardOutcomes } = await C()
+    const rows = [sp('K-1', { verdict: 'no-report' }), sp('K-1', { attempt: 2, verdict: 'consistent' })]
+    expect(cardOutcomes(rows)[0]).toMatchObject({ confirmed: true, counted: true })
+  })
+})
+
+describe('MOD-277: classOf backfills a classless row', () => {
+  const sp = (task, over = {}) => ({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', verdict: 'consistent', usd: 1, ...over })
+
+  test('classOf fills a row with no class; a row\'s own class wins; no answer leaves it unclassed', async () => {
+    const { cardOutcomes, pairHistory } = await C()
+    const rows = [sp('A-1'), sp('A-2', { class: 'bug/small' }), sp('A-3')]
+    const classOf = t => (t === 'A-3' ? undefined : 'feature/large')
+    expect(cardOutcomes(rows, 'feature/large', classOf).map(c => c.task)).toEqual(['A-1'])
+    expect(cardOutcomes(rows, 'bug/small', classOf).map(c => c.task)).toEqual(['A-2'])
+    expect(cardOutcomes(rows, 'feature/large').map(c => c.task)).toEqual([])
+    expect(pairHistory(rows, 'feature/large', classOf)[0].n).toBe(1)
+    expect(cardOutcomes(rows, undefined, classOf)).toHaveLength(3)
+  })
+})

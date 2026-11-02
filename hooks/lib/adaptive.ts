@@ -5,7 +5,7 @@
 // error near 9 points, so a raw-rate rule would select noise. A pair is suggested only when it has enough cards (n >= 20), its Wilson 90%
 // lower bound on the pass rate is within 5 points of the default pair's point rate, and its mean usd per confirmed card is under the
 // default's by more than one standard error of its own mean.
-import { cardOutcomes, type CardOutcome, type LedgerRowLike } from './choice'
+import { cardOutcomes, type CardOutcome, type ClassOf, type LedgerRowLike } from './choice'
 
 // ---- the option ----------------------------------------------------------------------------------
 export const ADAPTIVE_MODES = ['off', 'suggest'] as const
@@ -113,8 +113,8 @@ export type Suggestion = {
  * usd per confirmed card under the default's by more than one standard error of its own. The cheapest qualifying pair is returned;
  * the default pair never is.
  */
-export function suggest(rows: readonly LedgerRowLike[], cls: string): Suggestion | undefined {
-  const cards = cardOutcomes(rows, cls).filter(eligible)
+export function suggest(rows: readonly LedgerRowLike[], cls: string, classOf?: ClassOf): Suggestion | undefined {
+  const cards = cardOutcomes(rows, cls, classOf).filter(eligible)
   const own = new Map<string, number>()
   for (const c of cards) if (!c.explored) own.set(`${c.alias}/${c.effort}`, (own.get(`${c.alias}/${c.effort}`) ?? 0) + 1)
   const def = [...own.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0]
