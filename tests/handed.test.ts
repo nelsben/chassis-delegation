@@ -15,7 +15,7 @@ describe('MOD-273: only a handed brief claims the spawn', () => {
     const w = setup(on)
     const r = await $.agent.spawn(spawnInput({ prompt: `Review the card (its brief: ${BRIEF})`, model: 'fable' }))
     expect(stored(w)).toEqual([])
-    expect((r as { model?: string }).model).toBe('fable')
+    expect((r as { model?: string }).model).toBe('claude-opus-5-5') // fable is rewritten to opus as for any ad hoc spawn; not the card's sonnet
     expect(said(w)).toContain(NOTE)
   })
 
