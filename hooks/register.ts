@@ -69,6 +69,7 @@ import {
   extractAmendBlocks,
   extractReport,
   findBriefPath,
+  briefHanded,
   resolveBriefPath,
   inlineHeaderMissing,
   lacksLine,
@@ -8714,6 +8715,13 @@ async function planSpawn($: Host, e: SpawnEvent): Promise<SpawnPlan> {
   let closedLine: string | undefined
   if (header?.task && (await taskClosed($, header.task, named))) {
     closedLine = `${header.task} is closed; this agent runs ad hoc`
+    header = undefined
+    named = undefined
+    briefText = undefined
+  }
+  // MOD-273: a brief path that is only mentioned (no inline header, not handed as `Your brief is the file <path>.`) does not claim the spawn
+  if (header?.task && !closedLine && parseHeader(e.prompt) === undefined && !(written !== undefined && briefHanded(e.prompt, written))) {
+    closedLine = `${header.task}'s brief is named but not handed; this agent runs ad hoc`
     header = undefined
     named = undefined
     briefText = undefined
