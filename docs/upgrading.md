@@ -10,15 +10,16 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
-### Unreleased (MOD-276)
+### From 0.9.44 to 0.9.45
 
 An existing frontier or premium card without a `tier_reason:` is now refused at dispatch until one is added (one line saying why the card is not standard), or its tier is dropped to standard. A card with no `tier:` is still standard. The new repo option `maxFrontierShare` is off (0) until set.
-Detail: [CHANGELOG Unreleased](../CHANGELOG.md).
-
-### Unreleased (MOD-271)
 
 A config that already asks for `xhigh` or `max` (a card's `effort:`, `effortByTier`) is now clamped to `high` unless you raise `maxEffort` (`/delegation config maxEffort max`); the started row says `effort high (capped from max)`. Reviewers now step at `reviewEffort` (default `medium`) instead of the engine's default; set `"reviewEffort": ""` in `.chassis-delegation.json` to keep the engine's.
-Detail: [CHANGELOG Unreleased](../CHANGELOG.md).
+
+New: frontier and premium workers need a reason, a share of first tries runs one step cheaper (explore, default 0.2) so the ledger learns what each class of card needs, and the dispatch dry run may suggest a cheaper model and effort (adaptive, default suggest). allowFable (default off) lets a card or reviewer that asks for fable run on it.
+
+Detail: [CHANGELOG 0.9.45](../CHANGELOG.md).
+
 
 ### From 0.9.43 to 0.9.44
 
