@@ -1060,7 +1060,7 @@ describe('GH-1: the adopter review leftovers (items 2, 5, 6, 8)', () => {
     expect(w.debugLogs).toContain('chassis-delegation: adhoc-00000003: tier=frontier picked by the classifier (classify called)')
   })
 
-  const FABLE = 'tier=frontier → opus (fable requested; fable is never spawned by the mod)'
+  const FABLE = 'tier=frontier → opus (fable requested; fable is never spawned by the mod; allow it with the allowFable option in /config)'
 
   test('item 8: a brief naming model=fable (or tier=premium) spawns opus, says so in the notice, and the record keeps requestedAlias', async ($, on) => {
     const w = world(on)

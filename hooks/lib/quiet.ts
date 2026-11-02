@@ -6,6 +6,7 @@
 //   full            part 1's multi-line row (the verdict line + claim lines)
 //   silent          no row at all; a toast; the brain reads the store
 
+import { aliasLabel } from './tier'
 import { reviewClause, type ReviewTally } from './review'
 
 export type Verbosity = 'line' | 'full' | 'silent'
@@ -124,7 +125,7 @@ export function quietLine(v: QuietInput): string {
   const gateNote = v.verdict === 'consistent' && v.reportGate === 'fail' ? ' (report gate=fail)' : ''
   const label = v.noRepo ? ' (no repo)' : ''
   const parts = [`chassis-delegation: ${v.task} attempt ${v.attempt}/${v.budget} ${v.verdict}${label}${gateNote}${reason ? ` ${reason}` : ''}`]
-  if (v.alias) parts.push(`${v.glyph ? `${v.glyph} ` : ''}${v.alias}`)
+  if (v.alias) parts.push(`${v.glyph ? `${v.glyph} ` : ''}${aliasLabel(v.alias)}`)
   if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
   parts.push(...amendClauses(v.lines))
   if (v.allow && v.allow.length > 0) parts.push(`allow ${v.allow.join(',')}`)
@@ -151,7 +152,7 @@ export type ReviewLineInput = {
  */
 export function reviewLine(v: ReviewLineInput): string {
   const parts = [`chassis-delegation: ${v.task} attempt ${v.attempt}/${v.budget} reviewed`]
-  if (v.alias) parts.push(`${v.glyph ? `${v.glyph} ` : ''}${v.alias}`)
+  if (v.alias) parts.push(`${v.glyph ? `${v.glyph} ` : ''}${aliasLabel(v.alias)}`)
   if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
   parts.push(reviewClause(v.counts))
   parts.push(`next=${shortNext(v.next)}`)

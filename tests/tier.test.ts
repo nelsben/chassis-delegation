@@ -72,19 +72,39 @@ describe('alias mapping', () => {
     expect(finalAlias({ tier: 'premium', source: 'caller', callerAlias: 'fable' }, undefined)).toEqual({ alias: 'opus', fableRewritten: true })
     expect(finalAlias({ tier: 'frontier', source: 'brief' }, 'claude-fable-1')).toEqual({ alias: 'opus', fableRewritten: true })
   })
+  test('MOD-269: allowFable on keeps fable only when it was explicitly asked for; off still rewrites', () => {
+    const on = { allowFable: true }
+    // a premium pick, a caller alias fable, a tierMap entry mapping to fable, a review at premium
+    expect(finalAlias({ tier: 'premium', source: 'brief' }, undefined, on)).toEqual({ alias: 'fable', fableRewritten: false, fableKept: true })
+    expect(finalAlias({ tier: 'premium', source: 'caller', callerAlias: 'fable' }, undefined, on)).toEqual({ alias: 'fable', fableRewritten: false, fableKept: true })
+    expect(finalAlias({ tier: 'standard', source: 'brief' }, 'claude-fable-1', on)).toEqual({ alias: 'fable', fableRewritten: false, fableKept: true })
+    expect(finalAlias({ tier: 'premium', source: 'review' }, undefined, on)).toEqual({ alias: 'fable', fableRewritten: false, fableKept: true })
+    // a card whose model= names fable
+    expect(finalAlias({ tier: 'frontier', source: 'brief' }, undefined, { allowFable: true, headerModel: 'fable' })).toEqual({ alias: 'fable', fableRewritten: false, fableKept: true })
+    // nothing else resolves to fable: frontier and standard stay opus and sonnet
+    expect(finalAlias({ tier: 'frontier', source: 'brief' }, undefined, on)).toEqual({ alias: 'opus', fableRewritten: false })
+    expect(finalAlias({ tier: 'standard', source: 'brief' }, undefined, on)).toEqual({ alias: 'sonnet', fableRewritten: false })
+    expect(finalAlias({ tier: 'frontier', source: 'caller', callerAlias: 'opus' }, undefined, { allowFable: true, headerModel: 'sonnet' })).toEqual({ alias: 'opus', fableRewritten: false })
+    // off (or absent): the rewrite stays
+    expect(finalAlias({ tier: 'premium', source: 'brief' }, undefined, { allowFable: false })).toEqual({ alias: 'opus', fableRewritten: true })
+    expect(finalAlias({ tier: 'premium', source: 'review' }, undefined)).toEqual({ alias: 'opus', fableRewritten: true })
+  })
   test('an id in the tier map is passed as its alias, never as the id', () => {
     expect(finalAlias({ tier: 'standard', source: 'brief' }, 'claude-sonnet-5-5')).toEqual({ alias: 'sonnet', fableRewritten: false })
   })
   test('notice text', () => {
     expect(noticeText({ tier: 'standard', source: 'brief' }, 'sonnet', false)).toBe('tier=standard → sonnet (brief)')
     // GH-1 item 8: the rewrite is said out loud, at the tier the spawn runs at
-    expect(noticeText({ tier: 'premium', source: 'brief' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod)')
-    expect(noticeText({ tier: 'premium', source: 'caller', callerAlias: 'fable' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod)')
+    expect(noticeText({ tier: 'premium', source: 'brief' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod; allow it with the allowFable option in /config)')
+    expect(noticeText({ tier: 'premium', source: 'caller', callerAlias: 'fable' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod; allow it with the allowFable option in /config)')
     expect(noticeText({ tier: 'economy', source: 'classified' }, 'haiku', false)).toBe('tier=economy → haiku (classified)')
+  })
+  test('MOD-269: a kept fable says break-glass, at its own tier', () => {
+    expect(noticeText({ tier: 'premium', source: 'brief' }, 'fable', false)).toBe('tier=premium → fable (break-glass; allowFable is on; costs about 2.5x opus) (brief)')
   })
   test('GH-104: a briefed spawn notice ends with its attempt of the budget', () => {
     expect(noticeText({ tier: 'standard', source: 'brief' }, 'sonnet', false, { attempt: 2, budget: 3 })).toBe('tier=standard → sonnet (brief) · attempt 2/3')
-    expect(noticeText({ tier: 'premium', source: 'brief' }, 'opus', true, { attempt: 1, budget: 2 })).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod) · attempt 1/2')
+    expect(noticeText({ tier: 'premium', source: 'brief' }, 'opus', true, { attempt: 1, budget: 2 })).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod; allow it with the allowFable option in /config) · attempt 1/2')
   })
 })
 
@@ -117,7 +137,7 @@ describe('GH-1 item 8: the tier source and the fable rewrite, said out loud', ()
     expect(fableRequested('opus', false, 'opus')).toBe(false)
     // the brief's model= is advisory: a tier that runs haiku is not a fable rewrite
     expect(fableRequested('haiku', false, 'fable')).toBe(false)
-    expect(noticeText({ tier: 'frontier', source: 'brief' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod)')
+    expect(noticeText({ tier: 'frontier', source: 'brief' }, 'opus', true)).toBe('tier=frontier → opus (fable requested; fable is never spawned by the mod; allow it with the allowFable option in /config)')
     expect(noticeText({ tier: 'frontier', source: 'brief' }, 'opus', false)).toBe('tier=frontier → opus (brief)')
   })
 })

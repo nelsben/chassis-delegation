@@ -1,12 +1,26 @@
 import { test, expect, describe } from 'claude-code/testing'
 import { world, spawnInput, turnInput, usage, sessionStart } from './harness'
 import { handedBackRow, runningSection, startedRow } from '../hooks/lib/rows'
+import { quietLine, reviewLine } from '../hooks/lib/quiet'
 
 // MOD-74: what reached the brain as a row (the appended user row, or the transcript log line the kit keeps)
 const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
 const brief = (task: string, extra = '') => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard budget=2-attempts${extra}]]\nDo it.`
 const REPORT = (task: string) => `[[report v=1 task=${task} subtask=main branch=b pr=none sha=abc1234 gate=pass files=a]]`
 const status = { command: 'delegation', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never
+
+describe('MOD-269: a fable worker is marked break-glass on its rows', () => {
+  test('started, handed-back and running rows carry `fable (break-glass)` with the glyph; other aliases are unchanged', () => {
+    expect(startedRow({ label: 'T-1', alias: 'fable', tier: 'premium', attempt: 1, budget: 2, kind: 'started', glyph: '🟠' })).toBe('chassis-delegation: T-1 started · 🟠 fable (break-glass) (premium) · attempt 1/2')
+    expect(handedBackRow({ label: 'T-1', alias: 'fable', minutes: 3, usd: 1, glyph: '🟠' })).toContain('handed back · 🟠 fable (break-glass) · 3 min')
+    expect(runningSection([{ label: 'T-1', alias: 'fable', tier: 'premium', state: 'running', minutes: 1, glyph: '🟠' }], undefined)[1]).toContain('🟠 fable (break-glass) (premium)')
+    expect(startedRow({ label: 'T-1', alias: 'opus', tier: 'frontier', attempt: 1, budget: 2, kind: 'started', glyph: '🟣' })).toContain('🟣 opus (frontier)')
+  })
+  test('the verdict and review lines carry it too', () => {
+    expect(quietLine({ task: 'T-1', attempt: 1, budget: 2, verdict: 'consistent', alias: 'fable', glyph: '🟠', next: 'accept', lines: [] } as never)).toContain(' · 🟠 fable (break-glass) · ')
+    expect(reviewLine({ task: 'T-1', attempt: 1, budget: 2, alias: 'fable', glyph: '🟠', counts: undefined, next: 'accept' })).toContain(' · 🟠 fable (break-glass) · ')
+  })
+})
 
 describe('MOD-74: a row when a worker starts', () => {
   test('a briefed spawn posts `MOD-1 started · sonnet (standard) · attempt 1/2` at spawn', async ($, on) => {
