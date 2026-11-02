@@ -160,7 +160,7 @@ describe('MOD-114: the nudge on the rows (engine)', () => {
   const card = (id: string, extra = '') =>
     ['---', `id: ${id}`, `title: ${id}`, 'domain: ops', 'tier: frontier', 'status: queued', 'repo: none', 'scope: [/out/hair/**]', 'forbid: []', 'red_test: none', 'gate: check', 'budget: 2-attempts', ...(extra ? [extra] : []), '---', '## Why', '', 'Outside the repo.', ''].join('\n')
   const NAMES = ['OPS-8-plain.md', 'OPS-9-cards.md']
-  const OPTIONS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'line' as const, gateMap: '{"check":"checker {outdir}"}' }
+  const OPTIONS = { maxEffort: 'max', briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'line' as const, gateMap: '{"check":"checker {outdir}"}' }
   const REPORT = (id: string, extra: string) => `[[report v=1 task=${id} subtask=main branch=none pr=none sha=none gate=pass red=none files=none ${extra}]]`
   const setup = (on: Parameters<typeof world>[0], extra: Record<string, unknown> = { effortNudge: { cards: 'cards/**' } }) =>
     world(on, {

@@ -121,10 +121,30 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, agentId: 'agent-4' })
     ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async () => ({ result: 'ok' }))
     await $.session.start(sessionStart)
+    await set($, 'maxEffort', 'max')
     await set($, 'effortByTier', 'standard=max')
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     for await (const chunk of $.turn.step(stepInput('agent-4', 'low'))) void chunk
     expect(w.steps).toEqual([{ agentId: 'agent-4', effort: 'max' }])
+  })
+
+  test('maxEffort: the default high lowers a standard=max worker to high; raised to max it lets max through', async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, agentId: 'agent-4' })
+    ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async () => ({ result: 'ok' }))
+    await $.session.start(sessionStart)
+    await set($, 'effortByTier', 'standard=max')
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    for await (const chunk of $.turn.step(stepInput('agent-4', 'low'))) void chunk
+    expect(w.steps).toEqual([{ agentId: 'agent-4', effort: 'high' }])
+  })
+
+  test('reviewEffort: high steps a reviewer at high', async ($, on) => {
+    const w = world(on, { agentId: 'agent-r' })
+    await $.session.start(sessionStart)
+    await set($, 'reviewEffort', 'high')
+    await $.agent.spawn(spawnInput({ prompt: '[[review-of v=1 task=T-4 subtask=main attempt=1]]\nReview.' }))
+    for await (const chunk of $.turn.step(stepInput('agent-r', 'low'))) void chunk
+    expect(w.steps).toEqual([{ agentId: 'agent-r', effort: 'high' }])
   })
 
   test('effortNudge: cards="" posts no nudge on a hand-back that names a cards artefact', async ($, on) => {

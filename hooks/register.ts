@@ -250,9 +250,14 @@ import {
   aliasOf,
   CLASSIFIER_LABELS,
   classifierText,
+  clampEffort,
+  DEFAULT_MAX_EFFORT,
+  effortLabel,
   effortFor,
   effortChoice,
   effortText,
+  isEffort,
+  reviewEffortFor,
   fableRequested,
   finalAlias,
   tierOf,
@@ -691,6 +696,10 @@ type Config = {
   review: ReviewMode
   /** MOD-21: the reviewer's tier; '' = one below the worker's. */
   reviewTier: Tier | ''
+  /** MOD-271: the effort a reviewer steps at; '' = the engine's default. */
+  reviewEffort: Effort | ''
+  /** MOD-271: the cap on every effort the mod applies. */
+  maxEffort: Effort
 }
 
 /**
@@ -785,6 +794,8 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       freshSessionTokens: num('freshSessionTokens', FRESH_SESSION_TOKENS),
       review: eff.review,
       reviewTier: eff.reviewTier,
+      reviewEffort: eff.reviewEffort,
+      maxEffort: isEffort(o.maxEffort) ? o.maxEffort : DEFAULT_MAX_EFFORT,
     },
   }
 }
@@ -2895,7 +2906,9 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
 
 /** MOD-270: the choice line and the history line for a card (tier, final alias, the card's effort: and reasons). */
 function choiceLines(rows: readonly LedgerRow[], c: { tier: Tier; alias: string; tierReason: string; effort: string | undefined; effortReason: string }): string[] {
-  const { effort, source } = effortChoice(c.tier, c.effort, cfg.effortByTier)
+  const chosen = effortChoice(c.tier, c.effort, cfg.effortByTier)
+  const effort = effortLabel(clampEffort(chosen.effort, cfg.maxEffort))
+  const source = chosen.source
   return [choiceLine({ tier: c.tier, alias: c.alias, tierReason: c.tierReason, ...(effort ? { effort } : {}), effortSource: source, effortReason: c.effortReason }), historyLine(pairHistory(rows))]
 }
 
@@ -2907,15 +2920,22 @@ async function stepEffort($: Host, agentId: string): Promise<Effort | undefined>
   const hit = stepEfforts.get(agentId)
   if (hit !== undefined) return hit ?? undefined
   const spawn = await spawnByAgent($, agentId)
-  // MOD-21: a reviewer steps at the engine's default; the card's effort belongs to its worker
-  if (!spawn || spawn.adhoc || spawn.review) return undefined
+  if (!spawn || spawn.adhoc) return undefined
+  // MOD-21: the card's effort belongs to its worker; MOD-271: a reviewer steps at reviewEffort ('' = the engine's default), held to the cap
+  if (spawn.review) {
+    const level = reviewEffortFor(cfg.reviewEffort, cfg.maxEffort).effort
+    stepEfforts.set(agentId, level ?? null)
+    return level
+  }
   const repo = await cardRepo($, spawn.repo)
   const lane = laneOf(spawn)
   const records = await loadAttempts($, spawn)
   // MOD-270: a resume of the same agent keeps the effort its spawn started at; only a new worker (a re-dispatch) re-reads the card's
   const origin = spawn.attempt !== spawn.lineage ? attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.lineage && r.effort !== undefined) : undefined
   const chosen = origin ? { effort: origin.effort as Effort, source: origin.effortSource ?? 'tier' } : effortChoice(spawn.tier, await storeGet<string>($, K.effort(spawn.task, repo)), cfg.effortByTier)
-  const { effort, source } = chosen
+  // MOD-271: every effort the mod applies is held to maxEffort
+  const effort = clampEffort(chosen.effort, cfg.maxEffort).effort
+  const source = chosen.source
   stepEfforts.set(agentId, effort ?? null)
   // MOD-270: the reasons ride on the record even when the effort resolves to the engine's default
   const tierReason = origin ? origin.tierReason || '' : (await storeGet<string>($, K.tierReason(spawn.task, repo))) || ''
@@ -7010,7 +7030,7 @@ async function postStarted($: Host, i: { label: string; task: string; repo?: str
   }
   if (!postsRows(cfg.verbosity)) return
   const startRepo = await cardRepo($, i.repo)
-  const effort = effortFor(i.tier, await storeGet<string>($, K.effort(i.task, startRepo)), cfg.effortByTier)
+  const effort = effortLabel(clampEffort(effortFor(i.tier, await storeGet<string>($, K.effort(i.task, startRepo)), cfg.effortByTier), cfg.maxEffort))
   const why = reasonsCut((await storeGet<string>($, K.tierReason(i.task, startRepo))) || '', (await storeGet<string>($, K.effortReason(i.task, startRepo))) || '')
   // a resume of a nudged task is not the end of its judgment: no down nudge on it
   const nudge = i.kind === 'resumed' ? undefined : nudgeDownNow()
@@ -8404,7 +8424,7 @@ async function statusReport($: Host): Promise<string> {
     ...(repoText == null ? ['not set up here: run /delegation setup'] : []),
     `gate map: ${Object.keys(cfg.gateMap).length > 0 ? Object.entries(cfg.gateMap).map(([k, v]) => `${k} → ${v}`).join('; ') : '(empty: gates are reported "not re-run")'}`,
     `tiers: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t}→${cfg.tierMap[t]}`).join(', ')} · max workers ${maxWorkersSourcedText(cfg.maxWorkers, cfg.maxWorkersByTier, resolvedNow?.sources)} · git guard ${cfg.gitGuard ? `on (${cfg.guardBranches.join(', ')})` : 'off'} · eval ${cfg.autoEval ? 'on' : 'off'}`,
-    effortText(cfg.effortByTier),
+    effortText(cfg.effortByTier, cfg.reviewEffort, cfg.maxEffort),
     nudgeText(cfg.effortNudge),
     ...(cfg.review !== 'off' ? [`review: ${cfg.review} · ${cfg.reviewTier ? `reviewer at ${cfg.reviewTier}` : "reviewer one tier below the worker's"}`] : []),
     ...aliasLines(Object.fromEntries((await Promise.all(['haiku', 'sonnet', 'opus'].map(async a => [a, await storeGet<unknown>($, K.alias(a))] as const))).filter(([, v]) => v !== undefined)), await now($)),
@@ -9132,7 +9152,9 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
   const reviewed = attemptsFor(before, marker.subtask, lane).find(r => r.attempt === marker.attempt)
   const { tier, alias } = reviewerPick(worker?.tier ?? reviewed?.tier ?? 'standard', cfg.reviewTier || undefined, cfg.tierMap, cfg.allowFable)
   try {
-    $.ui.notice(e.tool_use_id, noticeText({ tier, source: 'review' }, alias, false))
+    const level = reviewEffortFor(cfg.reviewEffort, cfg.maxEffort)
+    const eff = effortLabel(level)
+    $.ui.notice(e.tool_use_id, noticeText({ tier, source: 'review' }, alias, false) + (eff ? ` · effort ${eff}` : ''))
   } catch {
     // no dialog to carry it
   }

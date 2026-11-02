@@ -185,8 +185,8 @@ describe('MOD-13: effort by tier', () => {
     expect(effortFor('frontier', undefined, { economy: 'low', standard: 'medium', frontier: '' })).toBeUndefined()
   })
   test('the /delegation line', () => {
-    expect(effortText(DEFAULT_EFFORT_BY_TIER)).toBe('effort: economy low · standard medium · frontier high')
-    expect(effortText({ economy: 'low', standard: 0, frontier: 'max' })).toBe('effort: economy low · standard default · frontier max')
+    expect(effortText(DEFAULT_EFFORT_BY_TIER)).toBe('effort: economy low · standard medium · frontier high · review medium · cap high')
+    expect(effortText({ economy: 'low', standard: 0, frontier: 'max' })).toBe('effort: economy low · standard default · frontier max · review medium · cap high')
   })
   test('effortByTier merges per tier: repo file, then /config (JSON string); a bad entry is named', () => {
     expect(mergeConfig({}, {}).effortByTier).toEqual(DEFAULT_EFFORT_BY_TIER)

@@ -89,8 +89,21 @@
     "effortByTier": {
       "type": "string",
       "title": "Effort per tier (JSON)",
-      "description": "How hard a worker thinks at each step, per tier, e.g. {\"standard\":\"high\"}; built in: economy low, standard medium, frontier high; low, medium, high, xhigh or max, and 0 or empty leaves the engine's default. A card's own effort: wins. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
+      "description": "How hard a worker thinks at each step, per tier, e.g. {\"standard\":\"high\"}; built in: economy low, standard medium, frontier high; low, medium, high, xhigh or max (levels above maxEffort are clamped to it), and 0 or empty leaves the engine's default. A card's own effort: wins. Empty or 0 = the repo file (.chassis-delegation.json), else the built-in default; a value here wins over both",
       "default": ""
+    },
+    "maxEffort": {
+      "type": "string",
+      "title": "Highest effort",
+      "description": "The highest effort the mod ever applies: a card's effort:, the card tool's effort, effortByTier and reviewEffort are clamped to it, and a clamp is shown once on the spawn row as 'effort high (capped from max)'. xhigh and max cost far more for little gain on carded, gated work, so the built in cap is high; raise it to let them through",
+      "options": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "high"
     },
     "effortNudge": {
       "type": "string",
@@ -403,6 +416,19 @@
       "title": "Reviewer tier",
       "description": "The tier the reviewer runs at: economy, standard, frontier or premium (fable is never spawned; it becomes opus). Empty = one tier below the worker's, never below economy. Empty or 0 = the repo file (.chassis-delegation.json), else one below the worker's; a value here wins over it",
       "default": ""
+    },
+    "reviewEffort": {
+      "type": "string",
+      "title": "Reviewer effort",
+      "description": "How hard the reviewer thinks at each step: low, medium, high, xhigh or max (levels above maxEffort are clamped to it). Built in: medium. The repo file (.chassis-delegation.json) may say \"reviewEffort\": \"\" to leave the engine's default; a value here wins over the repo file",
+      "options": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "medium"
     },
     "readyFallbackMinutes": {
       "type": "number",

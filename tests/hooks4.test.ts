@@ -317,7 +317,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     expect(delivered(w)).not.toContain('review')
     expect(w.spawns).toHaveLength(1)
     expect(kinds(w, 'review')).toHaveLength(0)
-    expect(await delegationText($)).not.toContain('review')
+    expect(await delegationText($)).not.toContain('review:') // MOD-271: the effort line says 'review medium' whatever the review option
   })
 
   test('review on: a consistent hand-back prints next=review and the reviewer spawn block, one tier below the worker', ON, async ($, on) => {
@@ -388,7 +388,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     const r = await review($, w)
     expect(r.deny).toBeUndefined()
     expect(w.spawns[1]?.model).toBe('haiku')
-    expect(w.notices.at(-1)).toBe('tier=economy → haiku (review)')
+    expect(w.notices.at(-1)).toBe('tier=economy → haiku (review) · effort medium')
     expect(kinds(w, 'review')).toEqual([
       expect.objectContaining({ task: 'T-4', subtask: 'main', attempt: 1, kind: 'review', lineage: 1, tier: 'economy', alias: 'haiku', source: 'review', verdict: 'pending', agentId: 'agent-2', toolUseId: 'toolu_REVIEW01', briefPath: BRIEF }),
     ])
@@ -401,13 +401,13 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     expect(third.deny).toContain('budget exhausted for T-4 (2 attempts)')
   })
 
-  test('the reviewer runs where the worker ran and steps at the engine default effort; the worker record is left as it was', ON, async ($, on) => {
+  test('the reviewer runs where the worker ran and steps at reviewEffort (medium); the worker record is left as it was', ON, async ($, on) => {
     const wt = `${ROOT}-T-4`
     const w = await handBack($, on, { cwd: wt, dirs: { [wt]: [] } })
     await review($, w)
     expect(w.spawns[1]).toMatchObject({ cwd: wt })
     for await (const chunk of $.turn.step(stepInput('agent-2', 'xhigh'))) void chunk
-    expect(w.steps.at(-1)).toEqual({ agentId: 'agent-2', effort: 'xhigh' })
+    expect(w.steps.at(-1)).toEqual({ agentId: 'agent-2', effort: 'medium' }) // MOD-271
     expect(kinds(w, 'spawn')[0]?.effort).toBeUndefined()
     expect(kinds(w, 'review')[0]?.effort).toBeUndefined()
   })

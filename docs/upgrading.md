@@ -10,6 +10,11 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### Unreleased (MOD-271)
+
+A config that already asks for `xhigh` or `max` (a card's `effort:`, `effortByTier`) is now clamped to `high` unless you raise `maxEffort` (`/delegation config maxEffort max`); the started row says `effort high (capped from max)`. Reviewers now step at `reviewEffort` (default `medium`) instead of the engine's default; set `"reviewEffort": ""` in `.chassis-delegation.json` to keep the engine's.
+Detail: [CHANGELOG Unreleased](../CHANGELOG.md).
+
 ### From 0.9.43 to 0.9.44
 
 Nothing needs doing to upgrade.

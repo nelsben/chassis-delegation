@@ -1686,7 +1686,7 @@ describe('MOD-13: workers under the mod hooks', () => {
     expect(w.steps).toEqual([{ agentId: 'agent-9', effort: 'high' }])
   })
 
-  test('effort: the card effort: written at /dispatch wins over the tier entry', { options: { ...GM } }, async ($, on) => {
+  test('effort: the card effort: written at /dispatch wins over the tier entry', { options: { ...GM, maxEffort: 'max' } }, async ($, on) => {
     const w = await boot($, on, 'T-6', HEAD('T-6'), 'agent-6', nativeRun())
     w.store.set(`delegation.effort.T-6@${ROOT}`, 'xhigh')
     await runStep($, stepInput('agent-6', 'low'))
