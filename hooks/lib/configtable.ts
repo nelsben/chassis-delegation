@@ -23,6 +23,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['maxEffort', 'Workers and models', 'The highest effort the mod ever applies; higher levels are lowered to it', 'choice', 'user', 'high', ['low', 'medium', 'high', 'xhigh', 'max']],
   ['adaptive', 'Workers and models', 'Suggest the cheapest model and effort that has passed for a kind of card; off or suggest', 'choice', 'repo', 'suggest', ['off', 'suggest']],
   ['explore', 'Workers and models', 'Share of first tries run one step cheaper to learn what each kind of task needs; 0 to 0.5', 'count', 'repo', 0.2],
+  ['maxFrontierShare', 'Workers and models', 'Warn when over this share (0 to 1) of open tasks are frontier or premium; 0 = off', 'count', 'repo', 0],
   ['defaultBudget', 'Workers and models', 'How many tries a task gets when its instructions do not say', 'count', 'user', 3],
   ['maxWorkers', 'Workers and models', 'How many workers may run at the same time; more wait in line', 'count', 'repo', 0],
   ['loadThrottle', 'Workers and models', 'On a loaded machine start half as many workers at once (at least 1); off by default', 'bool', 'user', false],

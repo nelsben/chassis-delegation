@@ -14,7 +14,7 @@ import { gateCommandTemplates } from './gates'
 import { matchGlob } from './norepo'
 import { mergeCheckRefusal } from './repoconfig'
 import { strayGlob } from './scopetree'
-import { tierOf, type Tier } from './tier'
+import { tierOf, topTierNeedsReason, type Tier } from './tier'
 import { globMatches } from './verify-native'
 
 /** What the validation needs from the effective config and the card folder. */
@@ -281,6 +281,8 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   const eff = cardEffort(input.effort)
   if ('error' in eff) return eff
   const tierReason = cleanReason(input.tierReason)
+  const topTier = topTierNeedsReason(tier, tierReason)
+  if (topTier !== undefined) return { error: topTier }
   const effortReason = cleanReason(input.effortReason)
 
   const prefix = domainPrefix(domain)

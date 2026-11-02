@@ -1466,19 +1466,20 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(spawnCallOf(again)).toBeUndefined()
   })
 
-  test('MOD-274: a dispatched frontier card whose id draws below the explore in the repo file runs attempt 1 one effort level down, recorded on the attempt, the notice and the spawn row; a repo file explore of 0 leaves it alone (the MOD-12 test above)', { options: { ...BRIEFS, maxWorkers: 1 } }, async ($, on) => {
+  test('MOD-274, MOD-276: a dispatched frontier card always has a tier_reason, so it never explores even when its id draws below the explore in the repo file', { options: { ...BRIEFS, maxWorkers: 1 } }, async ($, on) => {
     const w = world(on, { files: { ...files(), [`${ROOT}/.chassis-delegation.json`]: '{"explore":0.5}' }, dirs, store: offered, listAgents: true })
     await $.session.start(sessionStart)
     const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
     const r = await brainSpawn($, text, { tool_use_id: 'toolu_BRAIN0001' })
     expect(r.deny).toBeUndefined()
-    expect(w.notices).toContain('tier=frontier → opus (brief) · attempt 1/3 · explore from high')
+    expect(w.notices).toContain('tier=frontier → opus (brief) · attempt 1/3')
     const rec = records(w, 'BE-101')[0] as Record<string, unknown>
-    expect(rec).toMatchObject({ attempt: 1, tier: 'frontier', alias: 'opus', effort: 'medium', effortSource: 'explore', explore: true, exploreFrom: 'opus/high' })
-    expect(String(rec.class)).toMatch(/^[a-z]+\/(small|large)$/)
+    expect(rec).toMatchObject({ attempt: 1, tier: 'frontier', alias: 'opus' })
+    expect(rec.explore).toBeUndefined()
     for await (const chunk of $.turn.step(stepInput('agent-1', 'low'))) void chunk
-    expect(w.steps).toEqual([{ agentId: 'agent-1', effort: 'medium' }])
-    expect(records(w, 'BE-101')[0]).toMatchObject({ effort: 'medium', effortSource: 'explore' })
+    expect(w.steps).toEqual([{ agentId: 'agent-1', effort: 'high' }])
+    expect(records(w, 'BE-101')[0]).toMatchObject({ effort: 'high', effortSource: 'tier', tierReason: 'cross-cutting contract change' })
+    expect((records(w, 'BE-101')[0] as Record<string, unknown>).explore).toBeUndefined()
   })
 
   /** Another repo=here card in flight in ROOT: a pending record marked here, its brief, and the files it claimed so far. */

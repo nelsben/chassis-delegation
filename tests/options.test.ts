@@ -178,6 +178,14 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/3')
   })
 
+  test('maxFrontierShare: off by default; the repo file value is the share in force; a value over 1 in the repo file is named and ignored', async ($, on) => {
+    world(on, { files: { [REPO_FILE]: '{"maxFrontierShare":0.3}' } })
+    await $.session.start(sessionStart)
+    expect(await say($, 'maxFrontierShare')).toContain('maxFrontierShare = 0.3 (repo)')
+    await set($, 'maxFrontierShare', '0.5')
+    expect(await say($, 'maxFrontierShare')).toContain('maxFrontierShare = 0.5 (yours)')
+  })
+
   test('adaptive: off is the value in force; apply is refused with a line saying it is not shipped yet', async ($, on) => {
     world(on)
     await $.session.start(sessionStart)

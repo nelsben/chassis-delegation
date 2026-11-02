@@ -158,7 +158,7 @@ describe('MOD-114: the rows (pure)', () => {
 
 describe('MOD-114: the nudge on the rows (engine)', () => {
   const card = (id: string, extra = '') =>
-    ['---', `id: ${id}`, `title: ${id}`, 'domain: ops', 'tier: frontier', 'status: queued', 'repo: none', 'scope: [/out/hair/**]', 'forbid: []', 'red_test: none', 'gate: check', 'budget: 2-attempts', ...(extra ? [extra] : []), '---', '## Why', '', 'Outside the repo.', ''].join('\n')
+    ['---', `id: ${id}`, `title: ${id}`, 'domain: ops', 'tier: frontier', 'tier_reason: hard', 'status: queued', 'repo: none', 'scope: [/out/hair/**]', 'forbid: []', 'red_test: none', 'gate: check', 'budget: 2-attempts', ...(extra ? [extra] : []), '---', '## Why', '', 'Outside the repo.', ''].join('\n')
   const NAMES = ['OPS-8-plain.md', 'OPS-9-cards.md']
   const OPTIONS = { maxEffort: 'max', briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'line' as const, gateMap: '{"check":"checker {outdir}"}' }
   const REPORT = (id: string, extra: string) => `[[report v=1 task=${id} subtask=main branch=none pr=none sha=none gate=pass red=none files=none ${extra}]]`
@@ -182,8 +182,8 @@ describe('MOD-114: the nudge on the rows (engine)', () => {
     await $.session.start(sessionStart)
     await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
     await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text), { tool_use_id: 'toolu_B0000008' })
-    expect(rows(w).find(l => l.includes('OPS-9 started'))).toBe('chassis-delegation: OPS-9 started · 🟣 opus (frontier) · attempt 1/2 · effort xhigh')
-    expect(rows(w).find(l => l.includes('OPS-8 started'))).toBe('chassis-delegation: OPS-8 started · 🟣 opus (frontier) · attempt 1/2 · effort high')
+    expect(rows(w).find(l => l.includes('OPS-9 started'))).toBe('chassis-delegation: OPS-9 started · 🟣 opus (frontier) · attempt 1/2 · effort xhigh · hard')
+    expect(rows(w).find(l => l.includes('OPS-8 started'))).toBe('chassis-delegation: OPS-8 started · 🟣 opus (frontier) · attempt 1/2 · effort high · hard')
     w.files.set('/out/hair/cards/H1.jpg', 'jpeg-bytes')
     w.files.set('/out/hair/model.glb', 'glb-bytes')
     await $.turn.complete(turnInput(agentOf(w, 'OPS-9'), `Done.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg')}`))
@@ -207,7 +207,7 @@ describe('MOD-114: the nudge on the rows (engine)', () => {
     await $.turn.complete(turnInput('agent-1', `Done.\n${REPORT('OPS-9', 'artefacts=cards/H1.jpg')}`))
     expect(rows(w).find(l => l.includes('OPS-9 handed back'))).toContain('· lead: judgment next, raise to high')
     await brainSpawn($, String((await $.command.run(commandInput('OPS-8'))).text))
-    expect(rows(w).find(l => l.includes('OPS-8 started'))).toBe('chassis-delegation: OPS-8 started · 🟣 opus (frontier) · attempt 1/2 · effort high · lead: back to medium')
+    expect(rows(w).find(l => l.includes('OPS-8 started'))).toBe('chassis-delegation: OPS-8 started · 🟣 opus (frontier) · attempt 1/2 · effort high · hard · lead: back to medium')
   })
 
   test('a resumed started row carries no down nudge, and the next fresh start of another task does', { options: OPTIONS }, async ($, on) => {

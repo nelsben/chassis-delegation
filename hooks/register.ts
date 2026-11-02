@@ -264,6 +264,9 @@ import {
   fableRequested,
   finalAlias,
   tierOf,
+  topTierNeedsReason,
+  tierMixLine,
+  frontierShareWarning,
   tierWarning,
   needsClassifier,
   noticeText,
@@ -709,6 +712,8 @@ type Config = {
   maxEffort: Effort
   /** MOD-274: the share (0 to 0.5) of eligible first attempts that run one step below the default. */
   explore: number
+  /** MOD-276 */
+  maxFrontierShare: number
 }
 
 /**
@@ -806,6 +811,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       reviewEffort: eff.reviewEffort,
       maxEffort: isEffort(o.maxEffort) ? o.maxEffort : DEFAULT_MAX_EFFORT,
       explore: clampExplore(eff.explore),
+      maxFrontierShare: eff.maxFrontierShare,
       adaptive: eff.adaptive,
     },
   }
@@ -4613,7 +4619,7 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
   try {
     for (const { card: c } of await indexedCards($, cardDir)) {
       const ref = issueRef(c.fields.issue, ownerRepo)
-      cards.push({ id: c.id, status: c.status, ...(ref !== undefined ? { issue: ref } : {}) })
+      cards.push({ id: c.id, status: c.status, tier: tierOf(c.tier) ?? 'standard', ...(ref !== undefined ? { issue: ref } : {}) })
     }
   } catch {
     // no card folder: no cards
@@ -7628,6 +7634,9 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   }
 
   const tier: Tier = tierOf(card.tier) ?? 'standard'
+  // MOD-276: a frontier or premium card says why; refused before any brief is written, the dry run alike
+  const topWhy = topTierNeedsReason(tier, cleanReason(card.fields.tier_reason))
+  if (topWhy !== undefined) return `/dispatch ${id}: refused, no brief written: ${topWhy}`
   const alias = finalAlias({ tier, source: 'brief' }, cfg.tierMap[tier], { allowFable: cfg.allowFable }).alias
   const budget = budgetAttempts(card.budget, cfg.defaultBudget)
   // GH-106: the card's spend: wins, else the tier's default; 0 is no ceiling
@@ -7821,6 +7830,19 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const classKind = cardKind({ kind: card.fields.kind, title: card.title, scope: classScope })
   const className = cardClassName(classKind, cardSize(tierHint({ tier, scope: classScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined))
   out.push(...choiceLines(await ledgerAt($, root).then(l => l.rows), { tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason), cls: className }).map(l => `   ${l}`))
+  // MOD-276: the tier mix of the open cards in this card folder, this card counted once; a share above maxFrontierShare warns
+  const mixTiers: Tier[] = [tier]
+  try {
+    for (const { card: c } of await indexedCards($, tasksDir)) {
+      if (c.id !== id && (c.status === 'queued' || c.status === 'dispatched' || c.status === 'held')) mixTiers.push(tierOf(c.tier) ?? 'standard')
+    }
+  } catch {
+    // an unreadable folder: this card alone, no line
+  }
+  const mixLine = tierMixLine(mixTiers)
+  if (mixLine) out.push(`   ${mixLine}`)
+  const shareWarn = frontierShareWarning(mixTiers, cfg.maxFrontierShare)
+  if (shareWarn) out.push(`   warning: ${shareWarn}`)
   const shownForbid = (shownHeader?.fields.forbid ?? '').split(',').filter(Boolean)
   // MOD-227: a forbid from elsewhere (the parent issue, a sibling card) wins as before; the line names where it came from
   for (const c of scopeForbidClashes((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, forbidOrigin)) {

@@ -56,7 +56,7 @@ describe('MOD-270: the card tool takes the choice', () => {
   test('a premium card shows the final alias: opus when fable is not allowed', { options: OPTIONS }, async ($, on) => {
     setup(on, { [`${tasksDir}/README.md`]: '' })
     await $.session.start(sessionStart)
-    const out = resultText(await $.tool.call({ tool: CARD_TOOL, ...input, tier: 'premium' } as never))
+    const out = resultText(await $.tool.call({ tool: CARD_TOOL, ...input, tier: 'premium', tierReason: 'default' } as never))
     expect(out).toContain('tier premium → opus (default) · effort high (tier default)')
   })
 
@@ -163,5 +163,80 @@ describe('MOD-270: a resume of the same agent keeps the effort it started at', (
     await runStep($, stepInput('agent-4'))
     expect(w.steps).toEqual([{ agentId: 'agent-4', effort: 'medium' }, { agentId: 'agent-4', effort: 'medium' }])
     expect(records(w, 'T-4').map(r => [r.attempt, r.kind, r.effort])).toEqual([[1, 'spawn', 'medium'], [2, 'resume', 'medium']])
+  })
+})
+
+describe('MOD-276: a frontier or premium card needs a tier_reason', () => {
+  test('dispatching a frontier card with no tier_reason: is refused with a message naming tier_reason; a dry run says the same; a reason, or standard, dispatches', { options: OPTIONS }, async ($, on) => {
+    const w = setup(on, {
+      [`${tasksDir}/OPS-30-x.md`]: card('OPS-30', 'frontier'),
+      [`${tasksDir}/OPS-31-x.md`]: card('OPS-31', 'frontier', ['tier_reason: ambiguous across two modules']),
+      [`${tasksDir}/OPS-32-x.md`]: card('OPS-32', 'premium'),
+      [`${tasksDir}/OPS-33-x.md`]: card('OPS-33', 'premium', ['tier_reason: ']),
+      [`${tasksDir}/OPS-34-x.md`]: card('OPS-34', 'standard'),
+    })
+    await $.session.start(sessionStart)
+    const refused = String((await $.command.run(commandInput('OPS-30'))).text)
+    expect(refused).toContain('OPS-30')
+    expect(refused).toContain('tier_reason')
+    expect(refused).toContain('drop to standard')
+    expect(w.spawns).toHaveLength(0)
+    expect(String((await $.command.run(commandInput('OPS-30 --dry-run'))).text)).toBe(refused)
+    expect(String((await $.command.run(commandInput('OPS-32'))).text)).toContain('tier_reason')
+    expect(String((await $.command.run(commandInput('OPS-33'))).text)).toContain('tier_reason')
+    expect(String((await $.command.run(commandInput('OPS-31'))).text)).toContain('tier frontier → opus (ambiguous across two modules)')
+    expect(String((await $.command.run(commandInput('OPS-34'))).text)).toContain('tier standard → sonnet (default)')
+  })
+
+  // the card being dispatched is OPS-40 (standard); the folder holds 4 queued standard, 1 held economy, 2 dispatched and 1 queued frontier,
+  // and a merged standard and a dropped frontier that are left out
+  const mixFiles = (frontier: number, standard: number): Record<string, string> => {
+    const files: Record<string, string> = { [`${tasksDir}/OPS-40-x.md`]: card('OPS-40', 'standard') }
+    let n = 100
+    const add = (count: number, tier: string, status: string) => {
+      for (let k = 0; k < count; k++, n++) files[`${tasksDir}/OPS-${n}-x.md`] = card(`OPS-${n}`, tier, tier === 'frontier' ? ['tier_reason: hard'] : []).replace('status: queued', `status: ${status}`)
+    }
+    add(standard, 'standard', 'queued')
+    add(frontier, 'frontier', 'dispatched')
+    add(1, 'standard', 'merged')
+    add(1, 'frontier', 'dropped')
+    return files
+  }
+
+  test('dispatch prints the tier mix of the open cards, counting itself, leaving out merged and dropped cards and zero tiers; with one open card there is no line', { options: OPTIONS }, async ($, on) => {
+    setup(on, mixFiles(0, 0))
+    await $.session.start(sessionStart)
+    expect(String((await $.command.run(commandInput('OPS-40 --dry-run'))).text)).not.toContain('plan tiers')
+  })
+
+  test('the mix line: standard, frontier and economy counted, the same in a dry run and a real dispatch', { options: OPTIONS }, async ($, on) => {
+    const files = mixFiles(2, 4)
+    files[`${tasksDir}/OPS-90-x.md`] = card('OPS-90', 'economy').replace('status: queued', 'status: held')
+    setup(on, files)
+    await $.session.start(sessionStart)
+    const dry = String((await $.command.run(commandInput('OPS-40 --dry-run'))).text)
+    expect(dry).toContain('\n   plan tiers: standard 5 · frontier 2 · economy 1 (frontier 2/8)\n')
+    expect(String((await $.command.run(commandInput('OPS-40'))).text)).toContain('   plan tiers: standard 5 · frontier 2 · economy 1 (frontier 2/8)')
+  })
+
+  test('maxFrontierShare 0 never warns; 0.3 warns at 16/22 and not at 6/22', { options: OPTIONS }, async ($, on) => {
+    setup(on, mixFiles(15, 5))
+    await $.session.start(sessionStart)
+    expect(String((await $.command.run(commandInput('OPS-40 --dry-run'))).text)).not.toContain('maxFrontierShare')
+  })
+
+  test('maxFrontierShare 0.3 warns when the share is above it and does not refuse', { options: { ...OPTIONS, maxFrontierShare: 0.3 } }, async ($, on) => {
+    setup(on, mixFiles(15, 5))
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(commandInput('OPS-40'))).text)
+    expect(out).toContain('   plan tiers: standard 6 · frontier 15 (frontier 15/21)')
+    expect(out).toContain('warning: frontier share 0.71 is above maxFrontierShare 0.3')
+    expect(out).toContain('spawn: Agent')
+  })
+
+  test('maxFrontierShare 0.3 stays quiet at a low share', { options: { ...OPTIONS, maxFrontierShare: 0.3 } }, async ($, on) => {
+    setup(on, mixFiles(1, 5))
+    await $.session.start(sessionStart)
+    expect(String((await $.command.run(commandInput('OPS-40 --dry-run'))).text)).not.toContain('maxFrontierShare')
   })
 })

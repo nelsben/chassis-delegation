@@ -179,7 +179,7 @@ describe('MOD-23: the card tool takes resources and lanes', () => {
   }
 
   test('two lanes write two cards with ids N and N+1, the shared forbid, resources, gate and tier, and each lane its own scope', () => {
-    const made = lanes(card.cardsFromFields(input({ tier: 'frontier' }), ctx()))
+    const made = lanes(card.cardsFromFields(input({ tier: 'frontier', tierReason: 'two modules' }), ctx()))
     expect(made.map(m => m.id)).toEqual(['OPS-5', 'OPS-6'])
     expect(made.map(m => m.file)).toEqual(['OPS-5-extract-the-hair-model.md', 'OPS-6-extract-the-eye-model.md'])
     const [hair, eyes] = made.map(m => parsed(m.text))
