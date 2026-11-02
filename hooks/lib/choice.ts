@@ -56,12 +56,22 @@ export type CardOutcome = {
   confirmed: boolean
   /** In the rate's denominator: not refuted only on a brief defect (scope, files, branch, pr). */
   counted: boolean
-  /** The card's usd over its spawn, resume and review rows that carry one (an exploratory card: attempt 1 only); undefined with none. */
+  /** The card's usd over all its spawn, resume and review rows that carry one (MOD-277: an exploratory card too, so a rescue lands on the pair that failed); undefined with none. */
   usd: number | undefined
+  /** The row's own class, else what `classOf` says for the task (MOD-277); undefined when neither names one. */
+  cls: string | undefined
 }
 
-/** Every card the ledger has a pair for, in the order its first row appears; with `cls` only that class's. `pairHistory` is a sum over these. */
-export function cardOutcomes(rows: readonly LedgerRowLike[], cls?: string): CardOutcome[] {
+/** MOD-277: maps a task id to its class (read from its card file); undefined when it cannot. */
+export type ClassOf = (task: string) => string | undefined
+
+/**
+ * Every card the ledger has a pair for, in the order its first row appears; with `cls` only that class's. `pairHistory` is a sum over these.
+ * MOD-277: an explored card and a default card are counted the same way (confirmed when any attempt confirmed, usd over every attempt); a
+ * card that never confirmed and whose every judged verdict is a held-claim refute (scope, files, branch, pr), a no-report or unverified is
+ * a reporting or brief defect and is not counted. A row without a `class` takes `classOf(task)` when one is given.
+ */
+export function cardOutcomes(rows: readonly LedgerRowLike[], cls?: string, classOf?: ClassOf): CardOutcome[] {
   const cards = new Map<string, LedgerRowLike[]>()
   for (const r of rows) {
     if (typeof r.task !== 'string' || r.task === '' || typeof r.kind !== 'string') continue
@@ -71,13 +81,15 @@ export function cardOutcomes(rows: readonly LedgerRowLike[], cls?: string): Card
   for (const [task, rs] of cards) {
     const first = rs.find(r => r.kind === 'spawn' && r.attempt === 1 && typeof r.verdict === 'string' && r.verdict !== '' && typeof r.effort === 'string' && r.effort !== '' && typeof r.alias === 'string')
     if (!first) continue
-    if (cls !== undefined && first.class !== cls) continue
+    const own = typeof first.class === 'string' && first.class !== '' ? first.class : classOf?.(task)
+    if (cls !== undefined && own !== cls) continue
     const explored = first.explore === true
-    const verdicts = rs.filter(r => typeof r.verdict === 'string' && r.kind !== 'accept' && r.kind !== 'merged' && (!explored || r.attempt === 1))
+    const verdicts = rs.filter(r => typeof r.verdict === 'string' && r.kind !== 'accept' && r.kind !== 'merged')
     const confirmed = verdicts.some(r => readVerdict(r.verdict as string) === 'consistent')
-    const refuted = verdicts.filter(r => r.verdict === 'refuted')
-    const briefDefect = !confirmed && refuted.length > 0 && refuted.every(r => heldClaim({ verdict: 'refuted', firstFailed: typeof r.firstFailed === 'string' ? r.firstFailed : undefined }) !== undefined)
-    const usdRows = rs.filter(r => (!explored || r.attempt === 1) && USD_KINDS.includes(r.kind as string) && typeof r.usd === 'number' && Number.isFinite(r.usd) && r.usdApprox !== true)
+    const judged = verdicts.filter(r => r.verdict === 'refuted' || r.verdict === 'no-report' || r.verdict === 'unverified')
+    const defect = (r: LedgerRowLike): boolean => r.verdict !== 'refuted' || heldClaim({ verdict: 'refuted', firstFailed: typeof r.firstFailed === 'string' ? r.firstFailed : undefined }) !== undefined
+    const briefDefect = !confirmed && judged.length > 0 && judged.every(defect)
+    const usdRows = rs.filter(r => USD_KINDS.includes(r.kind as string) && typeof r.usd === 'number' && Number.isFinite(r.usd) && r.usdApprox !== true)
     out.push({
       task,
       alias: first.alias as string,
@@ -87,6 +99,7 @@ export function cardOutcomes(rows: readonly LedgerRowLike[], cls?: string): Card
       confirmed,
       counted: !briefDefect,
       usd: usdRows.length > 0 ? usdRows.reduce((s, r) => s + (r.usd as number), 0) : undefined,
+      cls: own,
     })
   }
   return out
@@ -99,12 +112,13 @@ export function cardOutcomes(rows: readonly LedgerRowLike[], cls?: string): Card
  * is a brief defect and is left out of the rate's denominator. Most used first, at most 6. A card that escalates stays with its
  * attempt-1 pair.
  * MOD-274: with `cls` (`feature/large`) only the cards of that class count. A card whose attempt 1 explored (`explore: true`) is
- * counted for the pair it ran: confirmed only when that attempt was, and only that attempt's usd (attempt 2 ran another pair).
+ * counted for the pair it ran. MOD-277: counted like any card: confirmed when any attempt confirmed, usd over all its attempts, so the
+ * rescue of a failed exploration is the explored pair's cost; `classOf` supplies a class for rows that have none.
  */
-export function pairHistory(rows: readonly LedgerRowLike[], cls?: string): PairStat[] {
+export function pairHistory(rows: readonly LedgerRowLike[], cls?: string, classOf?: ClassOf): PairStat[] {
   type Acc = { alias: string; effort: string; n: number; confirmed: number; counted: number; usd: number; withUsd: number }
   const pairs = new Map<string, Acc>()
-  for (const c of cardOutcomes(rows, cls)) {
+  for (const c of cardOutcomes(rows, cls, classOf)) {
     const key = `${c.alias}\u0000${c.effort}`
     const a = pairs.get(key) ?? { alias: c.alias, effort: c.effort, n: 0, confirmed: 0, counted: 0, usd: 0, withUsd: 0 }
     a.n += 1

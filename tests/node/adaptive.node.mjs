@@ -3,9 +3,15 @@
 import { test, expect, describe } from './kit.mjs'
 
 const A = () => import('../../hooks/lib/adaptive.ts')
-import { rng, simulate, classOf, MEAN_USD, SEEDS, MANY_SEEDS, DOMINANT, CLASSES, RATE, DEFAULT, CHEAP } from './adaptivesim.mjs'
+import { rng, simulate as simulateWith, classOf, MEAN_USD, SEEDS, MANY_SEEDS, DOMINANT, CLASSES, RATE, DEFAULT, CHEAP } from './adaptivesim.mjs'
 
 const equal = () => RATE
+// MOD-277: scenarios (ii) to (iv) define a pair's quality by its first attempt alone: a failed card is not rescued (rescue: false), so a
+// lower rate shows as a lower pass rate. Everything else runs with the rescue (a failed card retries at the default pair, the card
+// confirms if the retry does, the usd sums), the way the ledger counts cards now; (vi) and (vii) below exercise it.
+const NO_RESCUE = { rescue: false }
+const simulate = (seed, rate, cards = undefined, opts = {}) => simulateWith(seed, rate, cards, opts)
+const lower = (seed, rate) => simulateWith(seed, rate, undefined, NO_RESCUE)
 /** The dominant class's suggestion over the first `n` cards' rows. */
 const suggestAt = async (sim, n, cls = DOMINANT) => (await A()).suggest(sim.rows.slice(0, sim.ends[n - 1]), cls)
 
@@ -23,7 +29,7 @@ describe('MOD-275: the suggestion is proven by a simulation built to be able to 
   test('(ii) the cheaper pair 15 points lower: none', async () => {
     const { suggest } = await A()
     for (const seed of SEEDS) {
-      const sim = await simulate(seed, pair => (pair === DEFAULT ? RATE : RATE - 0.15))
+      const sim = await lower(seed, pair => (pair === DEFAULT ? RATE : RATE - 0.15))
       expect(suggest(sim.rows, DOMINANT)).toBeUndefined()
     }
   })
@@ -32,7 +38,7 @@ describe('MOD-275: the suggestion is proven by a simulation built to be able to 
     const { suggest } = await A()
     const rates = pair => (pair === DEFAULT ? RATE : RATE - 0.07)
     for (const seed of SEEDS) {
-      const sim = await simulate(seed, rates)
+      const sim = await lower(seed, rates)
       const s = suggest(sim.rows, DOMINANT)
       if (s === undefined) continue
       // a fresh stream, run on the default for every class (always-default) and on the suggested pair for the dominant class (applied)
@@ -53,7 +59,7 @@ describe('MOD-275: the suggestion is proven by a simulation built to be able to 
   test('(iv) the cheaper pair drops 20 points after card 150: it is suggested at card 150 and the suggestion is withdrawn within 30 cards', async () => {
     const rates = (pair, i) => (pair === DEFAULT || i < 150 ? RATE : RATE - 0.2)
     for (const seed of SEEDS) {
-      const sim = await simulate(seed, rates)
+      const sim = await lower(seed, rates)
       const before = await suggestAt(sim, 150)
       expect(before === undefined ? 'none' : `${before.alias}/${before.effort}`).toBe(CHEAP)
       expect(await suggestAt(sim, 180)).toBeUndefined()
@@ -75,6 +81,61 @@ describe('MOD-275: the suggestion is proven by a simulation built to be able to 
   })
 })
 
+describe('MOD-277: the simulation counts a rescue', () => {
+  test('(vi) the cheaper pair 15 points lower on its first attempt, rescued by the default: the card is confirmed and its usd includes the rescue', async () => {
+    const { cardOutcomes } = await import('../../hooks/lib/choice.ts')
+    let rescued = 0
+    for (const seed of SEEDS) {
+      const sim = await simulate(seed, pair => (pair === DEFAULT ? RATE : RATE - 0.15))
+      const mine = cardOutcomes(sim.rows, DOMINANT)
+      const cheap = mine.filter(c => c.explored && `${c.alias}/${c.effort}` === CHEAP)
+      for (const c of cheap) {
+        const attempts = sim.rows.filter(r => r.task === c.task)
+        if (attempts.length === 1) continue
+        rescued++
+        expect(attempts.map(r => r.attempt)).toEqual([1, 2])
+        expect(attempts[0].verdict).toBe('refuted')
+        expect(c.confirmed).toBe(true)
+        expect(c.usd).toBeCloseTo(attempts[0].usd + attempts[1].usd, 8)
+      }
+    }
+    expect(rescued).toBeGreaterThan(0)
+  })
+  test('(vii) the cheaper pair 50 points lower, rescued: every card confirms, but a half-rescued card costs more than the default: none', async () => {
+    const { suggest } = await A()
+    for (const seed of SEEDS) {
+      const sim = await simulate(seed, pair => (pair === DEFAULT ? RATE : RATE - 0.5))
+      expect(suggest(sim.rows, DOMINANT)).toBeUndefined()
+    }
+  })
+  test('(viii) a standard-tier class with two candidates: every explored card goes to the tier-down pair until it has 30, then to the effort-down pair', async () => {
+    const { explorePlan } = await import('../../hooks/lib/explore.ts')
+    const { cardOutcomes } = await import('../../hooks/lib/choice.ts')
+    const aliasOfTier = t => ({ economy: 'haiku', standard: 'sonnet', frontier: 'opus', premium: 'fable' })[t]
+    const rows = []
+    const seen = []
+    for (let i = 0; i < 400; i++) {
+      const task = `V-${i}`
+      const plan = explorePlan({ task, attempt: 1, hasEffort: false, hasReason: false, tier: 'standard', kind: 'feature', className: 'feature/large', explore: 0.5, baseEffort: 'medium', maxEffort: 'high', aliasOfTier, rows })
+      if (!plan) {
+        rows.push({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', class: 'feature/large', verdict: 'consistent', usd: 0.9 })
+        continue
+      }
+      const tierCards = cardOutcomes(rows, 'feature/large').filter(c => c.explored && c.counted && c.alias === 'haiku' && c.effort === 'medium').length
+      seen.push([plan.axis, tierCards])
+      // every third explored card fails its first attempt and is rescued on the default pair: it still counts, for the pair it ran
+      const fail = seen.length % 3 === 0
+      rows.push({ kind: 'spawn', task, attempt: 1, alias: plan.alias, effort: plan.effort, class: 'feature/large', explore: true, exploreFrom: 'sonnet/medium', verdict: fail ? 'refuted' : 'consistent', ...(fail ? { firstFailed: 'gate' } : {}), usd: 0.5 })
+      if (fail) rows.push({ kind: 'spawn', task, attempt: 2, alias: 'sonnet', effort: 'medium', class: 'feature/large', verdict: 'consistent', usd: 0.9 })
+    }
+    expect(seen.filter(([axis]) => axis === 'tier').length).toBe(30)
+    for (const [axis, tierCards] of seen) expect(axis).toBe(tierCards < 30 ? 'tier' : 'effort')
+    expect(seen.slice(0, 30).every(([axis]) => axis === 'tier')).toBe(true)
+    expect(seen.slice(30).length).toBeGreaterThan(10)
+    expect(seen.slice(30).every(([axis]) => axis === 'effort')).toBe(true)
+  })
+})
+
 describe('MOD-275: the simulation over many seeds (rates, not a lucky seed)', () => {
   const name = s => (s === undefined ? 'none' : `${s.alias}/${s.effort}`)
   test('an equal rate is suggested on nearly every seed and never as the wrong pair; 15 points lower never; an equal cost rarely', async () => {
@@ -86,7 +147,7 @@ describe('MOD-275: the simulation over many seeds (rates, not a lucky seed)', ()
       const a = suggest((await simulate(seed, () => RATE)).rows, DOMINANT)
       if (name(a) === CHEAP) equalHit++
       else expect(name(a)).toBe('none')
-      if (suggest((await simulate(seed, pair => (pair === DEFAULT ? RATE : RATE - 0.15))).rows, DOMINANT)) lowerHit++
+      if (suggest((await lower(seed, pair => (pair === DEFAULT ? RATE : RATE - 0.15))).rows, DOMINANT)) lowerHit++
       const was = MEAN_USD[CHEAP]
       MEAN_USD[CHEAP] = MEAN_USD[DEFAULT]
       try {
@@ -104,7 +165,7 @@ describe('MOD-275: the simulation over many seeds (rates, not a lucky seed)', ()
     let had = 0
     let gone = 0
     for (const seed of MANY_SEEDS) {
-      const sim = await simulate(seed, (pair, i) => (pair === DEFAULT || i < 150 ? RATE : RATE - 0.2))
+      const sim = await lower(seed, (pair, i) => (pair === DEFAULT || i < 150 ? RATE : RATE - 0.2))
       if (!suggest(sim.rows.slice(0, sim.ends[149]), DOMINANT)) continue
       had++
       if (!suggest(sim.rows.slice(0, sim.ends[179]), DOMINANT)) gone++

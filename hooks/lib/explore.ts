@@ -3,7 +3,7 @@
 //
 // Exploration is downward only (an upward step hits a ceiling and always costs more), one axis at a time, and only for a card
 // nobody hand-set; the draw is a hash of the task id, so a card explores or not the same way every time it is asked.
-import { pairHistory, type LedgerRowLike } from './choice'
+import { cardOutcomes, type ClassOf, type LedgerRowLike } from './choice'
 import { clampEffort, EFFORTS, type Alias, type Effort, type Tier } from './tier'
 
 // ---- the class ---------------------------------------------------------------------------------
@@ -56,6 +56,8 @@ export const exploreDraw = (task: string): number => (fnv1a32(task) % 1000) / 10
 
 export const DEFAULT_EXPLORE = 0.2
 export const MAX_EXPLORE = 0.5
+/** MOD-277: counted explored cards the tier-down pair gathers in a class before a standard card's target moves to the effort-down pair. */
+export const TIER_TARGET_CARDS = 30
 
 /** The `explore` option held to 0 .. 0.5; the default when it is not a finite number. */
 export const clampExplore = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? Math.min(MAX_EXPLORE, Math.max(0, v)) : DEFAULT_EXPLORE)
@@ -71,7 +73,7 @@ export type ExploreInput = {
   hasReason: boolean
   tier: Tier
   kind: CardKind
-  /** `feature/large`: the class whose ledger rows say which pair is least tried. */
+  /** `feature/large`: the class whose ledger rows say how many cards the tier-down pair has. */
   className: string
   explore: number
   /** The effort the tier's default would run at (before the cap); undefined: the engine's. */
@@ -79,6 +81,8 @@ export type ExploreInput = {
   maxEffort: Effort
   aliasOfTier: (tier: Tier) => Alias
   rows: readonly LedgerRowLike[]
+  /** MOD-277: a class for a ledger row that has none (read from its card file). */
+  classOf?: ClassOf
 }
 
 export type ExplorePlan = {
@@ -94,7 +98,9 @@ export type ExplorePlan = {
  * Does this card explore, and how? Eligible: attempt 1, no `effort:`, no reason, tier standard or frontier, kind not release or docs.
  * It explores when its draw is below `explore`. The step is one axis, down: the effort one level down, or (standard only) the tier
  * one down at the same effort; a frontier card never changes tier. A step the maxEffort cap would change is skipped, never clamped.
- * Of the steps left the class's least-tried pair is taken; a tie goes to the effort step.
+ * MOD-277: one target at a time. A standard card aims at the tier-down pair (economy at the same effort) until that pair has
+ * TIER_TARGET_CARDS counted explored cards in the class, then at the effort-down pair; a step the cap skips leaves the other.
+ * A frontier card has its one effort-down candidate.
  */
 export function explorePlan(i: ExploreInput): ExplorePlan | undefined {
   if (i.attempt !== 1 || i.hasEffort || i.hasReason) return undefined
@@ -115,9 +121,13 @@ export function explorePlan(i: ExploreInput): ExplorePlan | undefined {
     candidates.push({ tier: 'economy', alias: i.aliasOfTier('economy'), effort: i.baseEffort, axis: 'tier', from })
   }
   if (candidates.length === 0) return undefined
-  const tried = pairHistory(i.rows, i.className)
-  const count = (c: ExplorePlan): number => tried.find(p => p.alias === c.alias && p.effort === (c.effort ?? ''))?.n ?? 0
-  return candidates.reduce((best, c) => (count(c) < count(best) ? c : best))
+  const tier = candidates.find(c => c.axis === 'tier')
+  const effort = candidates.find(c => c.axis === 'effort')
+  if (tier && effort) {
+    const done = cardOutcomes(i.rows, i.className, i.classOf).filter(c => c.explored && c.counted && c.alias === tier.alias && c.effort === (tier.effort ?? '')).length
+    return done < TIER_TARGET_CARDS ? tier : effort
+  }
+  return candidates[0]
 }
 
 /** The words a row adds for an exploratory attempt: `explore from medium` for an effort step, `explore from sonnet` for a tier step. */

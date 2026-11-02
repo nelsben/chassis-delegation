@@ -27,8 +27,9 @@ export const DOMINANT = CLASSES[0]
 // is the real explorePlan (a card nobody hand-set, attempt 1, least-tried pair first), so the explored cards are a random
 // share of the same population the default pair's cards come from. It models the BUDGET and NO ESCALATION of exploratory
 // attempts: a refuted exploratory attempt neither escalates nor spends budget, so each card is one attempt-1 row, on the
-// pair it ran, whose verdict is that attempt's alone (attempt 2 is the default pair's and is left out, as pairHistory leaves it out
-// for an exploratory card). Every pair's rate is its first-attempt pass rate; a default card's later rescue is not modelled.
+// pair it ran. MOD-277: a card counts the same way on either side (confirmed when any attempt confirmed, usd over every attempt), so
+// a failed card retries once at the default pair (`rescue`, on by default): the card confirms if the retry does and the usd sums,
+// and the rescue's cost lands on the pair that failed. Every pair's rate is its first-attempt pass rate.
 
 /** mulberry32: a seeded generator in [0, 1). */
 export function rng(seed) {
@@ -62,7 +63,7 @@ export const classOf = rand => {
 const TIER_MAP = { economy: 'haiku', standard: 'sonnet', frontier: 'opus', premium: 'fable' }
 
 /** The ledger a run of `cards` cards leaves; `rate(pair, i)` is a pair's true pass rate at card i. Row index after card i: `ends[i]`. */
-export async function simulate(seed, rate, cards = CARDS) {
+export async function simulate(seed, rate, cards = CARDS, { rescue = true } = {}) {
   const { explorePlan, cardKind } = await X()
   void cardKind
   const rand = rng(seed)
@@ -88,6 +89,16 @@ export async function simulate(seed, rate, cards = CARDS) {
       ...(scope ? { firstFailed: 'scope' } : !pass ? { firstFailed: 'gate' } : {}),
       usd: usdOf(rand, MEAN_USD[pair]),
     })
+    // MOD-277: a failed card (not a scope refute) retries at the default pair; the card confirms if the retry does, and the usd sums
+    if (rescue && !scope && !pass) {
+      const [rescueAlias = '', rescueEffort = ''] = DEFAULT.split('/')
+      rows.push({
+        kind: 'spawn', task, attempt: 2, tier: TIER, alias: rescueAlias, effort: rescueEffort, class: cls, effortSource: 'tier',
+        verdict: rand() < rate(DEFAULT, i) ? 'consistent' : 'refuted',
+        firstFailed: 'gate',
+        usd: usdOf(rand, MEAN_USD[DEFAULT]),
+      })
+    }
     ends.push(rows.length)
   }
   return { rows, ends }

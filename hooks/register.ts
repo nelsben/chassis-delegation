@@ -215,7 +215,8 @@ import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
-import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut } from './lib/choice'
+import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
+import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
@@ -2925,21 +2926,21 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
 type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean }
 
 /** MOD-274: the history line for a card: its class's pairs first, every class's when the class has no rows yet. */
-function historyOf(rows: readonly LedgerRow[], cls: string | undefined): string {
-  if (cls === undefined) return historyLine(pairHistory(rows))
-  const own = pairHistory(rows, cls)
-  return own.length > 0 ? historyLine(own, cls) : historyLine(pairHistory(rows), cls, true)
+function historyOf(rows: readonly LedgerRow[], cls: string | undefined, classOf?: ClassOf): string {
+  if (cls === undefined) return historyLine(pairHistory(rows, undefined, classOf))
+  const own = pairHistory(rows, cls, classOf)
+  return own.length > 0 ? historyLine(own, cls) : historyLine(pairHistory(rows, undefined, classOf), cls, true)
 }
 
 /** MOD-270: the choice line and the history line for a card (tier, final alias, the card's effort: and reasons). */
-function choiceLines(rows: readonly LedgerRow[], c: { tier: Tier; alias: string; tierReason: string; effort: string | undefined; effortReason: string; cls?: string; suggestCls?: string }): string[] {
+function choiceLines(rows: readonly LedgerRow[], c: { tier: Tier; alias: string; tierReason: string; effort: string | undefined; effortReason: string; cls?: string; suggestCls?: string; classOf?: ClassOf }): string[] {
   const chosen = effortChoice(c.tier, c.effort, cfg.effortByTier)
   const effort = effortLabel(clampEffort(chosen.effort, cfg.maxEffort))
   const source = chosen.source
   // MOD-275: the cheapest pair that has passed for the class, when the class has enough cards; the brain decides
   const suggestCls = c.suggestCls ?? c.cls
-  const pick = cfg.adaptive === 'suggest' && suggestCls !== undefined ? suggestPair(rows, suggestCls) : undefined
-  return [choiceLine({ tier: c.tier, alias: c.alias, tierReason: c.tierReason, ...(effort ? { effort } : {}), effortSource: source, effortReason: c.effortReason }), historyOf(rows, c.cls), ...(pick ? [suggestionLine(pick)] : [])]
+  const pick = cfg.adaptive === 'suggest' && suggestCls !== undefined ? suggestPair(rows, suggestCls, c.classOf) : undefined
+  return [choiceLine({ tier: c.tier, alias: c.alias, tierReason: c.tierReason, ...(effort ? { effort } : {}), effortSource: source, effortReason: c.effortReason }), historyOf(rows, c.cls, c.classOf), ...(pick ? [suggestionLine(pick)] : [])]
 }
 
 // ---- MOD-13: the effort a worker steps at ----------------------------------------------
@@ -3057,6 +3058,34 @@ async function ledgerAt($: Host, root: string): Promise<{ text: string; rows: Le
   const text = (await readText($, path)) ?? ''
   ledgerCache = { path, mtimeMs: key.mtimeMs, size: key.size, text, rows: parseLedger(text) }
   return ledgerCache
+}
+
+/** MOD-277: the class of tasks whose ledger rows have none, read from their card files; resolved tasks are kept for the session. */
+const classByTask = new Map<string, string>()
+const classOfByRows = new WeakMap<object, ClassOf>()
+async function classOfFor($: Host, root: string, rows: LedgerRow[]): Promise<ClassOf> {
+  const hit = classOfByRows.get(rows)
+  if (hit) return hit
+  const need = new Set<string>()
+  for (const r of rows) if (typeof r.task === 'string' && r.task !== '' && !(typeof r.class === 'string' && r.class !== '') && !classByTask.has(r.task)) need.add(r.task)
+  if (need.size > 0) {
+    const dir = `${root.replace(/\/+$/, '')}/${(cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')}`
+    let names: string[] = []
+    try {
+      names = (await $.fs.list(dir)).map(e => e.name).filter(n => n.endsWith('.md'))
+    } catch {
+      names = []
+    }
+    for (const name of names) {
+      const task = [...need].find(t => name.startsWith(`${t}-`))
+      if (task === undefined) continue
+      const cls = classOfCardText((await readText($, `${dir}/${name}`)) ?? '')
+      if (cls !== undefined) classByTask.set(task, cls)
+    }
+  }
+  const classOf: ClassOf = task => classByTask.get(task)
+  classOfByRows.set(rows, classOf)
+  return classOf
 }
 
 // ---- part 2E: the delegation state -------------------------------------------------
@@ -7829,7 +7858,8 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const classScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
   const classKind = cardKind({ kind: card.fields.kind, title: card.title, scope: classScope })
   const className = cardClassName(classKind, cardSize(tierHint({ tier, scope: classScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined))
-  out.push(...choiceLines(await ledgerAt($, root).then(l => l.rows), { tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason), cls: className }).map(l => `   ${l}`))
+  const classLedger = await ledgerAt($, root)
+  out.push(...choiceLines(classLedger.rows, { classOf: await classOfFor($, root, classLedger.rows), tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason), cls: className }).map(l => `   ${l}`))
   // MOD-276: the tier mix of the open cards in this card folder, this card counted once; a share above maxFrontierShare warns
   const mixTiers: Tier[] = [tier]
   try {
@@ -8418,7 +8448,8 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     }
     // MOD-275: the card's class, as the dry run names it, so the suggestion is for this kind of card
     const cardClass = cardClassName(cardKind({ title: c.title, scope: c.scope }), cardSize(tierHint({ tier: c.tier, scope: c.scope, doneCount: doneStatementCount(doneWhenOf(c.text)), redTest: c.redTest }) !== undefined))
-    const choice = choiceLines((await ledgerAt($, root)).rows, { tier: c.tier, alias, tierReason: c.tierReason ?? '', effort: c.effort, effortReason: c.effortReason ?? '', suggestCls: cardClass })
+    const choiceLedger = await ledgerAt($, root)
+    const choice = choiceLines(choiceLedger.rows, { classOf: await classOfFor($, root, choiceLedger.rows), tier: c.tier, alias, tierReason: c.tierReason ?? '', effort: c.effort, effortReason: c.effortReason ?? '', suggestCls: cardClass })
     shown.push([cardSummary(c, alias), ...choice, ...(second ? [second] : []), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : [])].join('\n'))
     shownIds.push(c.id)
   }
@@ -8999,8 +9030,11 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     let explored: ExplorePlan | undefined
     if (cardCls && cardCls.name && attempt === 1 && cfg.explore > 0) {
       let rows: LedgerRow[] = []
+      let classOf: ClassOf | undefined
       try {
-        rows = (await step(ledgerAt($, (await $.session.root()).replace(/\/+$/, '')))).rows
+        const exploreRoot = (await $.session.root()).replace(/\/+$/, '')
+        rows = (await step(ledgerAt($, exploreRoot))).rows
+        classOf = await step(classOfFor($, exploreRoot, rows))
       } catch (err) {
         if (isStopped(err)) throw err
         debug($, `${label}: explore: ledger not read: ${String(err)}`)
@@ -9019,6 +9053,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
         maxEffort: cfg.maxEffort,
         aliasOfTier: t => (t === here0 ? (alias as Alias) : aliasFor({ tier: t, source: 'brief' }, header?.model).alias),
         rows,
+        ...(classOf ? { classOf } : {}),
       })
       if (explored) {
         tier = explored.tier
