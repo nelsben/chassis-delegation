@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Fable break-glass: the `allowFable` option (MOD-269).** `allowFable` (boolean, user scope, default off) lets a card or reviewer that asks for fable run on fable instead of opus: a card tier `premium` or model `fable`, a caller's `model: fable` (an ad hoc call too), a `tierMap` entry of fable, or `reviewTier` `premium`. Nothing else resolves to fable. Off, behaviour is unchanged and the `fable requested` notice now ends with how to allow it. A fable worker or reviewer shows `fable (break-glass)` with the 🟠 glyph on its spawn, hand-back and verdict rows; the per-attempt spend ceiling applies (premium uses its own `spendByTier` entry, else the frontier's). Pure rule in `finalAlias` (`hooks/lib/tier.ts`); tests in `tests/tier.test.ts`.
+
 ### Fixed
 
 - **A prompt that only mentions a card's brief path no longer claims the spawn as that card's worker (MOD-273).** `planSpawn` claimed any spawn whose prompt held a `.brief.md` path, so a reviewer prompt that cited a brief to read it was recorded as that card's next attempt, with the card's tier and effort. A spawn now claims a card only when the prompt hands the brief (`Your brief is the file <path>.`, the path bare or in backticks) or carries an inline `[[brief ...]]` header; any other mention runs ad hoc on its own model and effort, spends no attempt, and says once `<ID>'s brief is named but not handed; this agent runs ad hoc`. `spawnPrompt` callers (fallback, resume, replay) and MOD-268's spaced paths are unchanged. `briefHanded` in `hooks/lib/brief.ts`; tests in `tests/handed.test.ts`.

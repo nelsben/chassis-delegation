@@ -124,14 +124,23 @@ export function pickTier(input: PickInput): TierPick {
   return pick
 }
 
+/** MOD-269: the allowFable option, and the card's advisory `model=` (a card whose model names fable asks for it too). */
+export type FableOpts = { allowFable?: boolean; headerModel?: string }
+
 /**
  * The alias the spawn gets: the caller's own family when the caller decided,
  * else the tier map's entry for the tier (an id is reduced to its alias), else
- * the built-in map. Fable is never a spawn target: it is rewritten to opus.
+ * the built-in map. Fable is rewritten to opus unless `allowFable` is on
+ * (MOD-269), and then it is kept only when it was explicitly asked for: a
+ * premium pick, a caller alias fable, a tierMap entry mapping to fable, or a
+ * brief pick whose `model=` names fable. Nothing else resolves to fable.
+ * `fableKept` is present (true) only when fable stays.
  */
-export function finalAlias(pick: TierPick, mappedTo: string | undefined): { alias: Alias; fableRewritten: boolean } {
+export function finalAlias(pick: TierPick, mappedTo: string | undefined, opts?: FableOpts): { alias: Alias; fableRewritten: boolean; fableKept?: true } {
   const mapped = aliasOf(mappedTo)
   const alias: Alias = pick.source === 'caller' && pick.callerAlias ? pick.callerAlias : mapped ?? BUILTIN_TIER_MAP[pick.tier]
+  const modelAsks = pick.source === 'brief' && aliasOf(opts?.headerModel) === 'fable'
+  if (opts?.allowFable && (alias === 'fable' || modelAsks)) return { alias: 'fable', fableRewritten: false, fableKept: true }
   return alias === 'fable' ? { alias: 'opus', fableRewritten: true } : { alias, fableRewritten: false }
 }
 
@@ -142,6 +151,12 @@ export function finalAlias(pick: TierPick, mappedTo: string | undefined): { alia
  */
 export const fableRequested = (alias: Alias, fableRewritten: boolean, headerModel?: string): boolean =>
   alias === 'opus' && (fableRewritten || aliasOf(headerModel) === 'fable')
+
+/** MOD-269: the words a fable spawn carries on its rows: `fable (break-glass)`. Other aliases are unchanged. */
+export const aliasLabel = (alias: string | undefined): string | undefined => (alias === 'fable' ? 'fable (break-glass)' : alias)
+
+/** MOD-269: how to allow fable, ending the notice when it was rewritten. */
+export const FABLE_HOW = 'allow it with the allowFable option in /config'
 
 /** A briefed spawn's place on its budget (GH-104): `attempt` of `budget`. */
 export type AttemptOf = { attempt: number; budget: number }
@@ -155,7 +170,8 @@ export type AttemptOf = { attempt: number; budget: number }
  */
 export function noticeText(pick: TierPick, alias: Alias, fableAsked: boolean, at?: AttemptOf): string {
   const tail = at ? ` · attempt ${at.attempt}/${at.budget}` : ''
-  if (fableAsked && alias === 'opus') return `tier=${pick.tier === 'premium' ? 'frontier' : pick.tier} → ${alias} (fable requested; fable is never spawned by the mod)${tail}`
+  if (alias === 'fable') return `tier=${pick.tier} → fable (break-glass; allowFable is on; costs about 2.5x opus) (${pick.source})${tail}`
+  if (fableAsked && alias === 'opus') return `tier=${pick.tier === 'premium' ? 'frontier' : pick.tier} → ${alias} (fable requested; fable is never spawned by the mod; ${FABLE_HOW})${tail}`
   return `tier=${pick.tier} → ${alias} (${pick.source})${tail}`
 }
 

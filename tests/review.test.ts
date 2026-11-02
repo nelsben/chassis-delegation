@@ -148,6 +148,15 @@ describe('MOD-21: the reviewer spawn block', () => {
     expect(p.tier).toBe('frontier')
   })
 
+  test('MOD-269: reviewTier premium with allowFable on is fable at the premium tier; off it stays opus', () => {
+    const p = plan({ override: 'premium', allowFable: true })
+    expect(p.alias).toBe('fable')
+    expect(p.tier).toBe('premium')
+    expect(p.call.model).toBe('fable')
+    expect(plan({ override: 'premium', allowFable: false }).alias).toBe('opus')
+    expect(plan({ override: 'frontier', allowFable: true }).alias).toBe('opus')
+  })
+
   test('the block is the Agent call as fenced JSON: the task, kind review, the model, and a prompt built from the template', () => {
     const p = plan()
     expect(p.call.model).toBe('haiku')

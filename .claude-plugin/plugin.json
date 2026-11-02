@@ -351,6 +351,12 @@
       "description": "Off by default. On: when the 1-minute load is at least twice the core count, a new worker is held (`held: machine loaded (<load>/<cpus>)`, queued, and started when a slot frees or the load drops) once half the slots, rounded down and at least 1, are taken. A running worker is never stopped, and the only slot is never held. The load is read only when a claim needs it",
       "default": false
     },
+    "allowFable": {
+      "type": "boolean",
+      "title": "Allow fable",
+      "description": "Off by default: a card or reviewer that asks for fable (tier premium, a model of fable, a tierMap entry of fable, a caller's model of fable, or reviewTier premium) runs on opus, and the spawn notice says so. On: it runs on fable, marked fable (break-glass) with the orange glyph on its rows. Fable costs about 2.5x opus; nothing else resolves to fable, and the per-attempt spend ceiling still applies (premium uses its own spendByTier entry, else the frontier's)",
+      "default": false
+    },
     "landAuto": {
       "type": "boolean",
       "title": "Land files automatically",

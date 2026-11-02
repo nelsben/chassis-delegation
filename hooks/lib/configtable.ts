@@ -39,6 +39,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['verdictVerbosity', 'Checking the work', 'How much detail shows when a worker\'s result is judged', 'choice', 'user', 'line', ['line', 'full', 'silent']],
   ['ledgerFile', 'Checking the work', 'Keep a log of every spawn and judged attempt inside the repo', 'bool', 'user', true],
   ['baseRef', 'Checking the work', 'The branch or commit that a worker\'s changes are compared against', 'text', 'repo', ''],
+  ['allowFable', 'Workers and models', 'Let a card or reviewer that asks for fable run on fable; it costs about 2.5x opus', 'bool', 'user', false],
   ['landAuto', 'Debriefs', 'Off: land shows the issue first and files on your yes; on: files at once', 'bool', 'user', false],
   ['treeImportBatch', 'Debriefs', 'Most issues one tree import creates in a run, 1 to 100; then run it again', 'count', 'user', 20],
   ['project', 'Debriefs', 'The GitHub board that issues filed by land are added to, as owner/number', 'text', 'repo', ''],

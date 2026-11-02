@@ -70,6 +70,11 @@ describe('GH-106: the spend ceiling (pure)', () => {
     expect(spendOf(parseHeader('[[brief v=1 task=T-1 spend=0 budget=3-attempts]]'))).toBeUndefined()
     expect(spendOf(parseHeader('[[brief v=1 task=T-1 spend=lots]]'))).toBeUndefined()
   })
+  test('MOD-269: a premium (fable) attempt uses its own spendByTier entry if set, else the frontier one', () => {
+    expect(spendCeiling(undefined, 'premium', { frontier: 25, premium: 60 })).toBe(60)
+    expect(spendCeiling(undefined, 'premium', { frontier: 25 })).toBe(25)
+    expect(spendCeiling('7', 'premium', { frontier: 25 })).toBe(7)
+  })
   test('under, at (warn), twice (stop)', () => {
     expect(ceilingState(1.99, 2)).toBe('under')
     expect(ceilingState(2, 2)).toBe('warn')

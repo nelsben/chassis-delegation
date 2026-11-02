@@ -664,6 +664,8 @@ type Config = {
   landNudge: boolean
   /** MOD-205: on files at once; off shows the issue and files only on confirm: true. */
   landAuto: boolean
+  /** MOD-269: a card or reviewer that asks for fable runs on fable instead of opus. */
+  allowFable: boolean
   /** MOD-252: on, a loaded machine (isLoaded) allows half the slots (at least 1); off by default. */
   loadThrottle: boolean
   /** MOD-215: the most creates one tree import makes in a run, 1 to 100. */
@@ -767,6 +769,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       wakeOnVerdict: o.wakeOnVerdict === true,
       landNudge: o.landNudge !== false,
       landAuto: o.landAuto === true || o.landAuto === 'on',
+      allowFable: o.allowFable === true || o.allowFable === 'on',
       loadThrottle: o.loadThrottle === true || o.loadThrottle === 'on',
       treeImportBatch: treeBatch(o.treeImportBatch),
       postFindings: parsePostMode(o.postFindings),
@@ -5227,7 +5230,7 @@ async function onRunnerComplete($: Host, agentId: string, said: () => Promise<st
 
 // ---- tier → alias: the built-in map, per repo through tierMap (5B) -----------------
 /** The alias a tier pick spawns on: the caller's own family when the caller decided, else `tierMap`. */
-const aliasFor = (pick: TierPick) => finalAlias(pick, cfg.tierMap[pick.tier])
+const aliasFor = (pick: TierPick, headerModel?: string) => finalAlias(pick, cfg.tierMap[pick.tier], { allowFable: cfg.allowFable, headerModel })
 
 async function replayBase($: Host, briefPath: string): Promise<{ base?: string }> {
   const base = await storeGet<string>($, K.replay(briefPath))
@@ -7558,7 +7561,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   }
 
   const tier: Tier = tierOf(card.tier) ?? 'standard'
-  const alias = finalAlias({ tier, source: 'brief' }, cfg.tierMap[tier]).alias
+  const alias = finalAlias({ tier, source: 'brief' }, cfg.tierMap[tier], { allowFable: cfg.allowFable }).alias
   const budget = budgetAttempts(card.budget, cfg.defaultBudget)
   // GH-106: the card's spend: wins, else the tier's default; 0 is no ceiling
   const spend = spendCeiling(card.spend, tier, target ? target.spendByTier : cfg.spendByTier)
@@ -8293,7 +8296,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       shown.push(dry)
       continue
     }
-    const alias = finalAlias({ tier: c.tier, source: 'brief' }, cfg.tierMap[c.tier]).alias
+    const alias = finalAlias({ tier: c.tier, source: 'brief' }, cfg.tierMap[c.tier], { allowFable: cfg.allowFable }).alias
     const notes = lines.filter(l => /^\s+(note|warning|hint|repo|merge check):/.test(l)).map(l => l.trim())
     // GH-114: one classifier call per card written, on the dry run only
     let second: string | undefined
@@ -8776,7 +8779,7 @@ function pickFor(p: SpawnPlan, callerModel: string | undefined, classified?: str
     escalateFrom: p.adhoc ? undefined : escalationSource(p.records, p.subtask, p.lane),
     holdAt: p.adhoc ? undefined : holdSource(p.records, p.subtask, p.lane),
   })
-  const { alias, fableRewritten } = aliasFor(pick)
+  const { alias, fableRewritten } = aliasFor(pick, p.header?.model)
   return { pick, tier: fableRewritten ? 'frontier' : pick.tier, alias, fableRewritten }
 }
 
@@ -9102,7 +9105,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
   const before = await step(loadAttempts($, worker ?? marker.task))
   s?.check()
   const reviewed = attemptsFor(before, marker.subtask, lane).find(r => r.attempt === marker.attempt)
-  const { tier, alias } = reviewerPick(worker?.tier ?? reviewed?.tier ?? 'standard', cfg.reviewTier || undefined, cfg.tierMap)
+  const { tier, alias } = reviewerPick(worker?.tier ?? reviewed?.tier ?? 'standard', cfg.reviewTier || undefined, cfg.tierMap, cfg.allowFable)
   try {
     $.ui.notice(e.tool_use_id, noticeText({ tier, source: 'review' }, alias, false))
   } catch {
@@ -9192,6 +9195,7 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
     workerTier: spawn.tier,
     ...(cfg.reviewTier ? { override: cfg.reviewTier } : {}),
     tierMap: cfg.tierMap,
+    allowFable: cfg.allowFable,
     label,
     marker: { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, ...(spawn.agentId ? { worker: spawn.agentId } : {}), ...(input.sha ? { sha: input.sha } : {}) },
     vars: {

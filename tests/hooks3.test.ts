@@ -1660,6 +1660,17 @@ describe('MOD-13: workers under the mod hooks', () => {
     expect((await $.tool.call({ tool: 'Read', file_path: '/x' } as never) as { deny?: string }).deny).toBeUndefined()
   })
 
+  test('MOD-269: a fable attempt (allowFable on) over its ceiling is stopped the same way an opus one is', { options: { ...GM, allowFable: true } }, async ($, on) => {
+    const w = await boot($, on, 'T-6', HEAD('T-6').replace('tier=standard model=sonnet', 'tier=premium model=fable'), 'agent-6', nativeRun())
+    expect(w.spawns[0]?.model).toBe('fable')
+    await $.turn.complete(turnInput('agent-6', 'working', usage(SONNET, 600_000, 100_000))) // $2.20
+    expect(wrapRows(w).filter(l => l.includes('T-6') && l.includes('$2 ceiling'))).toHaveLength(1)
+    await $.turn.complete(turnInput('agent-6', 'more', usage(SONNET, 1_000_000, 0))) // $4.20
+    expect(records(w, 'T-6')[0]).toMatchObject({ alias: 'fable', tier: 'premium', verdict: 'over-spend' })
+    const denied = await workerCall($, w, 'agent-6', { tool: 'Read', file_path: '/x' })
+    expect(denied.seen ? denied.result.deny : undefined).toBe('chassis-delegation: T-6 is over twice its $2 ceiling; hand back now with what you have (SubagentHandback)')
+  })
+
   test('effort: a standard worker steps at medium, a frontier worker at high; the brain and an unrecorded agent are left alone; the attempt records it', { options: { ...GM } }, async ($, on) => {
     const w = await boot($, on, 'T-6', HEAD('T-6'), 'agent-6', nativeRun())
     await runStep($, stepInput('agent-6', 'xhigh'))

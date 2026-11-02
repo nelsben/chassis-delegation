@@ -338,6 +338,49 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(spawnCallOf(delivered(w))?.model).toBe('opus')
   })
 
+  test('allowFable: off rewrites fable to opus (card, caller, reviewer) and says how to allow it; on keeps it, marks the rows, and leaves a frontier card on opus', async ($, on) => {
+    const premium = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=premium budget=2-attempts]]\nDo it.`
+    const marker = '[[review-of v=1 task=T-4 subtask=main attempt=1 worker=agent-4 sha=1234abcd]]\nReview it.'
+    const w = world(on)
+    await $.session.start(sessionStart)
+    await set($, 'reviewTier', 'premium')
+    // off (the default): unchanged, and the notice ends with the option name and /config
+    await $.agent.spawn(spawnInput({ prompt: premium('T-5'), tool_use_id: 'toolu_A0000001' }))
+    expect(w.spawns[0]?.model).toBe('opus')
+    expect(w.notices.at(-1)).toContain('allowFable option in /config')
+    await $.agent.spawn(spawnInput({ prompt: 'Review this.', model: 'fable', tool_use_id: 'toolu_B0000002' }))
+    expect(w.spawns[1]?.model).toBe('opus')
+    expect(w.notices.at(-1)).toContain('allowFable option in /config')
+    await $.agent.spawn(spawnInput({ prompt: marker, tool_use_id: 'toolu_C0000003' }))
+    expect(w.spawns[2]?.model).toBe('opus')
+    expect(delivered(w)).not.toContain('fable (break-glass)')
+    // on: fable on each explicit path, nothing else
+    await set($, 'allowFable', 'on')
+    await $.agent.spawn(spawnInput({ prompt: premium('T-6'), tool_use_id: 'toolu_D0000004' }))
+    expect(w.spawns[3]?.model).toBe('fable')
+    expect(w.notices.at(-1)).toContain('fable (break-glass')
+    expect(records(w, 'T-6')[0]).toMatchObject({ tier: 'premium', alias: 'fable' })
+    expect(delivered(w)).toContain('T-6 started · 🟠 fable (break-glass) (premium)')
+    await $.agent.spawn(spawnInput({ prompt: 'Review this.', model: 'fable', tool_use_id: 'toolu_E0000005' }))
+    expect(w.spawns[4]?.model).toBe('fable')
+    await $.agent.spawn(spawnInput({ prompt: marker, tool_use_id: 'toolu_F0000006' }))
+    expect(w.spawns[5]?.model).toBe('fable')
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-7 subtask=main purpose=build tier=frontier budget=2-attempts]]\nDo it.', tool_use_id: 'toolu_G0000007' }))
+    expect(w.spawns[6]?.model).toBe('opus')
+    expect(records(w, 'T-7')[0]).toMatchObject({ tier: 'frontier', alias: 'opus' })
+  })
+
+  test('MOD-269: with allowFable on, a tierMap entry of fable is kept, and a card model=fable too', async ($, on) => {
+    const w = world(on)
+    await $.session.start(sessionStart)
+    await set($, 'allowFable', 'on')
+    await set($, 'tierMap', 'standard=fable')
+    await $.agent.spawn(spawnInput({ prompt: brief('T-1'), tool_use_id: 'toolu_A0000001' }))
+    expect(w.spawns[0]?.model).toBe('fable')
+    await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-2 subtask=main purpose=build tier=economy model=fable budget=2-attempts]]\nDo it.', tool_use_id: 'toolu_B0000002' }))
+    expect(w.spawns[1]?.model).toBe('fable')
+  })
+
   test('verdictVerbosity: silent posts no row, a toast only', async ($, on) => {
     const w = handBackWorld(on)
     await $.session.start(sessionStart)

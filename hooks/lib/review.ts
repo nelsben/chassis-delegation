@@ -203,16 +203,18 @@ export type ReviewPlanInput = {
   /** The reviewTier option. */
   override?: Tier
   tierMap: Readonly<Record<Tier, string>>
+  /** MOD-269: the allowFable option. */
+  allowFable?: boolean
   /** The task label, `T-4` or `T-4/ui`. */
   label: string
   marker: ReviewMarker
   vars: ReviewVars
 }
 
-/** The tier and alias a reviewer runs at (fable is never spawned: it becomes opus, at the frontier tier). */
-export function reviewerPick(workerTier: Tier, override: Tier | undefined, tierMap: Readonly<Record<Tier, string>>): { tier: Tier; alias: Alias } {
+/** The tier and alias a reviewer runs at (fable becomes opus, at the frontier tier, unless allowFable is on: MOD-269). */
+export function reviewerPick(workerTier: Tier, override: Tier | undefined, tierMap: Readonly<Record<Tier, string>>, allowFable?: boolean): { tier: Tier; alias: Alias } {
   const tier = reviewerTier(workerTier, override)
-  const { alias, fableRewritten } = finalAlias({ tier, source: 'review' }, tierMap[tier])
+  const { alias, fableRewritten } = finalAlias({ tier, source: 'review' }, tierMap[tier], { allowFable })
   return { tier: fableRewritten ? 'frontier' : tier, alias }
 }
 
@@ -228,7 +230,7 @@ export type ReviewPlan = { tier: Tier; alias: Alias; call: SpawnCall; block: str
 
 /** The reviewer's Agent call for one hand-back: the model one tier below the worker's, the description `<label> review <tier> <alias>`, the prompt the marker line then the filled template. */
 export function reviewPlan(i: ReviewPlanInput): ReviewPlan {
-  const { tier, alias } = reviewerPick(i.workerTier, i.override, i.tierMap)
+  const { tier, alias } = reviewerPick(i.workerTier, i.override, i.tierMap, i.allowFable)
   const call: SpawnCall = {
     subagent_type: 'general-purpose',
     model: alias,
