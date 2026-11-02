@@ -15,6 +15,7 @@ import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
 import { EMPTY_GATE_KEY } from './gates'
 import { SCOPE_AMENDS_MODES, type ScopeAmends } from './brief'
 import { DEFAULT_EFFORT_BY_TIER, DEFAULT_REVIEW_EFFORT, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
+import { DEFAULT_EXPLORE } from './explore'
 import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, nudgeCardsFor, type EffortNudge } from './nudge'
 
 export const REPO_CONFIG_FILE = '.chassis-delegation.json'
@@ -117,13 +118,15 @@ export type RepoConfig = {
   reviewTier?: Tier
   /** MOD-271: the effort a reviewer steps at; "" = the engine's default; unset = medium. */
   reviewEffort?: Effort | ''
+  /** MOD-274: the share (0 to 0.5) of eligible first attempts that run one step below the default; 0 in the repo file = never; unset = 0.2. */
+  explore?: number
   /** MOD-170: whether a worker's `scope+=` amend applies on its word (apply | new-files | ask); default apply. */
   scopeAmends?: ScopeAmends
   /** MOD-192: the GitHub Project `/delegation land` adds a new issue to, `<owner>/<number>`; unset = none. */
   project?: string
 }
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'reviewEffort', 'scopeAmends', 'project'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'reviewEffort', 'explore', 'scopeAmends', 'project'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -157,6 +160,8 @@ export type Effective = {
   reviewTier: Tier | ''
   /** MOD-271: '' = the engine's default. */
   reviewEffort: Effort | ''
+  /** MOD-274: 0 to 0.5. */
+  explore: number
   scopeAmends: ScopeAmends
   /** MOD-192: '' = none. */
   project: string
@@ -435,6 +440,10 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
           else errors.push(`reviewTier${where}: needs economy, standard, frontier or premium (ignored)`)
         }
         break
+      case 'explore':
+        if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 0.5 && (v > 0 || strict)) config.explore = v
+        else if (!(v === 0 && !strict)) errors.push(`explore${where}: needs a number from 0 to 0.5 (ignored)`)
+        break
       case 'reviewEffort':
         if (typeof v !== 'string') errors.push(`reviewEffort${where}: not a string (ignored)`)
         else if (v.trim() !== '') {
@@ -561,6 +570,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     review: pick('review', 'on-frontier'),
     reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
     reviewEffort: pick('reviewEffort', DEFAULT_REVIEW_EFFORT),
+    explore: pick('explore', DEFAULT_EXPLORE),
     scopeAmends: pick('scopeAmends', 'apply'),
     project: pick('project', ''),
     sources,

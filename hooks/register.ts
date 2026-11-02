@@ -802,7 +802,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       reviewTier: eff.reviewTier,
       reviewEffort: eff.reviewEffort,
       maxEffort: isEffort(o.maxEffort) ? o.maxEffort : DEFAULT_MAX_EFFORT,
-      explore: clampExplore(o.explore),
+      explore: clampExplore(eff.explore),
     },
   }
 }
