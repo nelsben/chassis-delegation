@@ -190,6 +190,8 @@ export function inEffect(field: string, values: Readonly<Record<string, unknown>
     case 'reviewTier':
       if (values.review === 'off') return 'unused (review is off)'
       return empty(v) ? 'one tier below the worker' : undefined
+    case 'reviewEffort':
+      return values.review === 'off' ? 'unused (review is off)' : undefined
     case 'maxWorkers':
       return v === 0 ? '2' : undefined
     case 'maxWorkersByTier':

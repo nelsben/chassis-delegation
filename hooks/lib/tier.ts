@@ -236,6 +236,25 @@ export function effortChoice(tier: Tier, cardEffort: string | undefined, table: 
   return { effort: effortLevel(table[tier === 'premium' ? 'frontier' : tier]), source: 'tier' }
 }
 
-/** The `/delegation` line: `effort: economy low · standard medium · frontier high`. */
-export const effortText = (table: Readonly<Record<EffortTier, EffortSetting>>): string =>
-  `effort: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t} ${effortLevel(table[t]) ?? 'default'}`).join(' · ')}`
+/** MOD-271: the cap on every effort the mod applies (config `maxEffort`); high unless raised. */
+export const DEFAULT_MAX_EFFORT: Effort = 'high'
+/** MOD-271: config `reviewEffort` default: a reviewer steps at medium; '' leaves the engine's default. */
+export const DEFAULT_REVIEW_EFFORT: Effort = 'medium'
+const EFFORT_RANK: Record<Effort, number> = { low: 0, medium: 1, high: 2, xhigh: 3, max: 4 }
+
+/** MOD-271: an effort held to the cap; `cappedFrom` is present only when it was lowered. Undefined stays undefined. */
+export function clampEffort(effort: Effort | undefined, cap: Effort): { effort: Effort | undefined; cappedFrom?: Effort } {
+  if (!effort || EFFORT_RANK[effort] <= EFFORT_RANK[cap]) return { effort }
+  return { effort: cap, cappedFrom: effort }
+}
+
+/** MOD-271: how a row names a clamped effort: `high (capped from max)`; the level alone when it was not lowered. */
+export const effortLabel = (c: { effort: Effort | undefined; cappedFrom?: Effort }): string | undefined =>
+  c.effort ? (c.cappedFrom ? `${c.effort} (capped from ${c.cappedFrom})` : c.effort) : undefined
+
+/** MOD-271: the effort a reviewer's steps are rewritten to: reviewEffort, held to the cap; undefined for '' (the engine's default). */
+export const reviewEffortFor = (reviewEffort: Effort | '', cap: Effort): { effort: Effort | undefined; cappedFrom?: Effort } => clampEffort(reviewEffort === '' ? undefined : reviewEffort, cap)
+
+/** The `/delegation` line: `effort: economy low · standard medium · frontier high · review medium · cap high`. */
+export const effortText = (table: Readonly<Record<EffortTier, EffortSetting>>, reviewEffort: Effort | '' = DEFAULT_REVIEW_EFFORT, cap: Effort = DEFAULT_MAX_EFFORT): string =>
+  `effort: ${(['economy', 'standard', 'frontier'] as const).map(t => `${t} ${effortLevel(table[t]) ?? 'default'}`).join(' · ')} · review ${reviewEffort || 'default'} · cap ${cap}`

@@ -14,7 +14,7 @@ import { DEFAULT_SPEND_BY_TIER } from './cost'
 import { checkGateEntry, DEFAULT_DOMAINS } from './allow'
 import { EMPTY_GATE_KEY } from './gates'
 import { SCOPE_AMENDS_MODES, type ScopeAmends } from './brief'
-import { DEFAULT_EFFORT_BY_TIER, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
+import { DEFAULT_EFFORT_BY_TIER, DEFAULT_REVIEW_EFFORT, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
 import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, nudgeCardsFor, type EffortNudge } from './nudge'
 
 export const REPO_CONFIG_FILE = '.chassis-delegation.json'
@@ -115,13 +115,15 @@ export type RepoConfig = {
   review?: ReviewMode
   /** MOD-21: the tier the reviewer runs at; unset = one below the worker's. */
   reviewTier?: Tier
+  /** MOD-271: the effort a reviewer steps at; "" = the engine's default; unset = medium. */
+  reviewEffort?: Effort | ''
   /** MOD-170: whether a worker's `scope+=` amend applies on its word (apply | new-files | ask); default apply. */
   scopeAmends?: ScopeAmends
   /** MOD-192: the GitHub Project `/delegation land` adds a new issue to, `<owner>/<number>`; unset = none. */
   project?: string
 }
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'scopeAmends', 'project'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'reviewEffort', 'scopeAmends', 'project'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -153,6 +155,8 @@ export type Effective = {
   review: ReviewMode
   /** '' = one tier below the worker's. */
   reviewTier: Tier | ''
+  /** MOD-271: '' = the engine's default. */
+  reviewEffort: Effort | ''
   scopeAmends: ScopeAmends
   /** MOD-192: '' = none. */
   project: string
@@ -431,6 +435,13 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
           else errors.push(`reviewTier${where}: needs economy, standard, frontier or premium (ignored)`)
         }
         break
+      case 'reviewEffort':
+        if (typeof v !== 'string') errors.push(`reviewEffort${where}: not a string (ignored)`)
+        else if (v.trim() !== '') {
+          if (isEffort(v.trim().toLowerCase())) config.reviewEffort = v.trim().toLowerCase() as Effort
+          else errors.push(`reviewEffort${where}: needs low, medium, high, xhigh or max (or empty for the engine's default) (ignored)`)
+        } else if (strict) config.reviewEffort = '' // the repo file's own "" is the engine's default; in /config an empty string is "unset"
+        break
       case 'project':
         if (typeof v !== 'string') errors.push(`project${where}: not a string (ignored)`)
         else if (v.trim() !== '') {
@@ -549,6 +560,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     issueRepo: pick('issueRepo', ''),
     review: pick('review', 'on-frontier'),
     reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
+    reviewEffort: pick('reviewEffort', DEFAULT_REVIEW_EFFORT),
     scopeAmends: pick('scopeAmends', 'apply'),
     project: pick('project', ''),
     sources,
