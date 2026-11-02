@@ -167,14 +167,13 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/5')
   })
 
-  test('explore: 0.3 is the share in force; a value over 0.5 is refused, and a hand-briefed spawn (no dispatch) never explores', async ($, on) => {
-    const w = world(on)
+  test('explore: the repo file value is the share in force; /config takes 0.3; a value over 0.5 in the repo file is named and ignored', async ($, on) => {
+    const w = world(on, { files: { [REPO_FILE]: '{"explore":0.9}' } })
     await $.session.start(sessionStart)
+    expect(await say($, 'explore')).toContain('explore = 0.2 (default)')
     await set($, 'explore', '0.3')
     expect(await say($, 'explore')).toContain('explore = 0.3 (yours)')
-    expect(await say($, 'explore 0.9')).toContain('does not take')
-    expect(await say($, 'explore')).toContain('explore = 0.3 (yours)')
-    await set($, 'explore', '0.5')
+    // a hand-briefed spawn (no dispatch) never explores
     await $.agent.spawn(spawnInput({ prompt: brief('T-5') }))
     expect(w.notices).toContain('tier=standard → sonnet (brief) · attempt 1/3')
   })

@@ -1439,8 +1439,8 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(w.spawns).toHaveLength(0)
   })
 
-  test("the brain's Agent call carrying the brief is tiered, takes a slot and is recorded as attempt 1 (source brief); a second spawn of the same brief while it runs is denied naming it", { options: { ...BRIEFS, maxWorkers: 1, explore: 0 } }, async ($, on) => {
-    const w = world(on, { files: files(), dirs, store: offered, listAgents: true })
+  test("the brain's Agent call carrying the brief is tiered, takes a slot and is recorded as attempt 1 (source brief); a second spawn of the same brief while it runs is denied naming it", { options: { ...BRIEFS, maxWorkers: 1 } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), [`${ROOT}/.chassis-delegation.json`]: '{"explore":0}' }, dirs, store: offered, listAgents: true })
     await $.session.start(sessionStart)
     const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
     const r = await brainSpawn($, text, { tool_use_id: 'toolu_BRAIN0001' })
@@ -1466,8 +1466,8 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(spawnCallOf(again)).toBeUndefined()
   })
 
-  test('MOD-274: a dispatched frontier card whose id draws below explore runs attempt 1 one effort level down, recorded on the attempt, the notice and the spawn row; explore 0 leaves it alone', { options: { ...BRIEFS, maxWorkers: 1, explore: 0.5 } }, async ($, on) => {
-    const w = world(on, { files: files(), dirs, store: offered, listAgents: true })
+  test('MOD-274: a dispatched frontier card whose id draws below the explore in the repo file runs attempt 1 one effort level down, recorded on the attempt, the notice and the spawn row; a repo file explore of 0 leaves it alone (the MOD-12 test above)', { options: { ...BRIEFS, maxWorkers: 1 } }, async ($, on) => {
+    const w = world(on, { files: { ...files(), [`${ROOT}/.chassis-delegation.json`]: '{"explore":0.5}' }, dirs, store: offered, listAgents: true })
     await $.session.start(sessionStart)
     const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
     const r = await brainSpawn($, text, { tool_use_id: 'toolu_BRAIN0001' })
