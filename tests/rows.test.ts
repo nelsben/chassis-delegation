@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, usage, sessionStart } from './harness'
 import { handedBackRow, runningSection, startedRow } from '../hooks/lib/rows'
 import { quietLine, reviewLine } from '../hooks/lib/quiet'

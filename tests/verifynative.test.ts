@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { parseReport } from '../hooks/lib/brief'
 import { world, spawnInput, turnInput, ROOT, type RunAnswer } from './harness'
 import { BASE_REFS, briefContract, filesClaim, ignoredLine, nameStatusDelta, NO_BRIEF_REASON, pathMatchesAny, porcelainPaths, prNumber, redClaim, redTestCommand, RED_NO_MARKER_HINT, subtractDelta, verifyCardless, verifyNative, type ExecOut, type RedEvidence } from '../hooks/lib/verify-native'

@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, sessionStart, ROOT, HOME } from './harness'
 import { DEFAULT_DOMAINS, DEFAULT_IGNORE, isGitRef, manifestRepo, mergeConfig, parseRepoConfig, resolveIssueRepo, settingsLayer, REPO_CONFIG_FILE } from '../hooks/lib/repoconfig'
 

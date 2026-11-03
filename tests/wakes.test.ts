@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, stepInput, ROOT, SCRATCH, type RunAnswer } from './harness'
 
 // MOD-51: a wake held while the brain's turn is open is dropped at delivery when its task has moved on.

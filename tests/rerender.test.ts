@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, commandInput, spawnInput, ROOT, SCRATCH } from './harness'
 
 // MOD-141 (#232): an existing brief follows the card and the --scope/--forbid flags, unless a worker on the task is live.

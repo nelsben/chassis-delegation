@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { DEFAULT_GUARD_BRANCHES, gitWrites, guardDeny, joinDir, parseGuardBranches, tokenize } from '../hooks/lib/gitguard'
 
 const G = [...DEFAULT_GUARD_BRANCHES]

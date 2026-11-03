@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { windowOf, windowAsk, checkDebrief, splitFindings, quoteEvidenced, userMessagesFromJsonl, userMessagesOf, transcriptPath, MOD_SURFACES } from '../hooks/lib/debriefcheck'
 import { debriefPrompt, builtInDebriefPrompt, MOD_FINDINGS_ASK } from '../hooks/lib/cleanstop'
 

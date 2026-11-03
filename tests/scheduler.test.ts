@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import * as sched from '../hooks/lib/scheduler'
 import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
 import { startingOthers, hasSlot, queuedDeny, isQueuedDeny, alreadyQueuedDeny, alreadyQueuedPart, enqueue, dequeue, promptKey, queuedText, parseMaxWorkers, readyCount, readyLine, runningDeny, parseReadyFallbackMinutes, DEFAULT_READY_FALLBACK_MINUTES, fallbackDue, fallbackDelay, fallbackKind, readyWaitLine, fallbackRow, limitSourceText, maxWorkersSourcedText } from '../hooks/lib/scheduler'

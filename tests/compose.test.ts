@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, composeInput, ROOT, HOME } from './harness'
 
 // MOD-238: prompt.compose does not rebuild the delegation snapshot from disk on every brain model request.

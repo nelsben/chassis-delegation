@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, ROOT, SCRATCH, type RunAnswer } from './harness'
 
 // MOD-144 (#234): the session's own card wins; the store's remembered repo only finds a card the session does not hold.

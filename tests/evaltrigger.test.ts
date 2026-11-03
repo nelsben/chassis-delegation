@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import {
   DEFAULT_EVAL_COMMAND,
   DEFAULT_EVAL_LIVE_COMMAND,

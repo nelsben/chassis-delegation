@@ -1,7 +1,8 @@
 // Part 2 hook tests: the dispatch tool, quiet verdicts, the clean-stop debrief,
 // the eval trigger, compaction + the system prompt section, the scheduler.
 // Every spawn here lands in the harness; nothing real runs.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, mainTurn, agentResult, sessionStart, commandInput, compactInput, composeInput, brainSpawn, spawnCallOf, DEBRIEF_TEMPLATE, ROOT, SCRATCH, HOME, NOW, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 

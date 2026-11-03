@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, turnInput, sessionStart, brainSpawn, ROOT, type RunAnswer } from './harness'
 
 // MOD-117 (#185, #184): card ids restart in each repo, and the store is one per machine. Two repos that both have

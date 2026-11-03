@@ -1,5 +1,6 @@
 // MOD-273: a spawn is a card's worker only when its prompt hands the brief; a prompt that merely cites the path runs ad hoc.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, ROOT } from './harness'
 
 const BRIEF = `${ROOT}/.delegation/briefs/T-1.brief.md`

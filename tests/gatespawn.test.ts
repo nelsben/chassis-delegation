@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, ROOT, SCRATCH, NOW, type RunAnswer, type World } from './harness'
 import { mergeConfig, parseRepoConfig } from '../hooks/lib/repoconfig'
 import { VERDICT_TOOL_NAME } from '../hooks/lib/verdicttool'

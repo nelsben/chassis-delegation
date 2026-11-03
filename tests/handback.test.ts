@@ -1,5 +1,6 @@
 // GH-2 (GH-2): a hand-back read from the worker's own transcript. Pure.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { handbackMessages, workerSaid } from '../hooks/lib/handback'
 import { extractReport } from '../hooks/lib/brief'
 

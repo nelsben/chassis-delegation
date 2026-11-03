@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, workerCall, SCRATCH } from './harness'
 import { ghWrites } from '../hooks/lib/ghguard'
 

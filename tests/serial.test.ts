@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { abortedDeny, budgetDelay, decisionId, DECISION_RESERVE_MS, isStopped, outOfTimeDeny, stopper, turns, type Stopped } from '../hooks/lib/serial'
 
 /** What a call throws (its message), or undefined; the node kit has no toThrow. */

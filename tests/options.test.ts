@@ -4,7 +4,8 @@
 // in the user options file; the case then asserts a change in what the mod does.
 // Every field showed an effect, so no case is skipped. tests/node/configtable.node.mjs
 // holds that this file names every field of the manifest, one case each.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import type { TestBody } from 'claude-code/testing'
 import { world, spawnInput, turnInput, mainTurn, sessionStart, commandInput, spawnCallOf, stepInput, bandProps, usage, ROOT, SCRATCH, HOME, NOW, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'

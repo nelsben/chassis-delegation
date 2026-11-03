@@ -1,5 +1,6 @@
 // MOD-271: effort per role (reviewEffort) and the maxEffort cap (default high).
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, sessionStart, stepInput, ROOT, SCRATCH } from './harness'
 import { reviewMarker } from '../hooks/lib/review'
 import { clampEffort, effortLabel, effortText } from '../hooks/lib/tier'

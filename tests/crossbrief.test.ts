@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, commandInput, ROOT, SCRATCH } from './harness'
 
 // MOD-95 (#154): a dispatch never reuses a brief written for another repo, and a brief for another repo carries that repo's briefExtra.

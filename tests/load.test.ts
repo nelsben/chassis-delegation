@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { briefHasEngineGate, engineLanesLine, isLoaded, loadedWords, parseProcLoad, parseSysctlLoad } from '../hooks/lib/load'
 import { verifyNative, type ExecOut, type NativeIo, type NativeInput } from '../hooks/lib/verify-native'
 

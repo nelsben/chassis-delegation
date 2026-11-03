@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { DISPATCH_TOOL, DISPATCH_TOOL_NAME, HERE_NO_REPLAY, parseDispatchArgs, parseDispatchTool, REPLAY_NEEDS_BASE, VERIFY_ALONE, verifyShaRefusal } from '../hooks/lib/dispatch'
 
 describe('the dispatch tool (2A)', () => {

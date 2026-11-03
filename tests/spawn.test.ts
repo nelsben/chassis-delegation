@@ -1,5 +1,6 @@
 // MOD-250: a spawn is a briefed worker of a task only while the task is open: a prompt that merely names the brief of a task closed since its last dispatch runs ad hoc.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, ROOT, NOW } from './harness'
 import { reviewMarker } from '../hooks/lib/review'
 

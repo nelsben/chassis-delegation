@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, usage, sessionStart } from './harness'
 
 // MOD-78: the model glyph on the host's row (the spawn's description) and on every mod row

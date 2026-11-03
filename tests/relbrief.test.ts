@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, ROOT, type RunAnswer } from './harness'
 
 // MOD-135 (#222): the verifier finds a brief the mod did not write into the prompt: a relative path the spawn prompt

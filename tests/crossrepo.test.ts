@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, sessionStart, brainSpawn, ROOT, SCRATCH, type RunAnswer } from './harness'
 
 // MOD-97 (#155, #163, #164): a card dispatched into another local repo is counted, resumed and verified as a local one is.

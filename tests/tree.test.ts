@@ -1,5 +1,6 @@
 // MOD-194: the tree tool and /delegation tree <n>: one read-only gh issue view, printed as planned / in flight / done.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, ROOT } from './harness'
 
 const CARDS = `${ROOT}/docs/cards`

@@ -1,5 +1,6 @@
 // MOD-247: the ledger is held as parsed rows keyed on the (mtimeMs, size) of .delegation/ledger.jsonl.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, spawnInput, ROOT, NOW } from './harness'
 import * as attempts from '../hooks/lib/attempts'
 import * as storeloss from '../hooks/lib/storeloss'

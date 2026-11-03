@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { coveredBy, parsePostArg, renderPost, survivingWord, type PostFinding } from '../hooks/lib/findings'
 
 const F: PostFinding = {

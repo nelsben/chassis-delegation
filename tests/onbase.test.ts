@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, ROOT, type RunAnswer } from './harness'
 
 // MOD-150 (follow-up to #222): a refuted hand-back whose branch commits are already on the base (cherry-picked or merged)

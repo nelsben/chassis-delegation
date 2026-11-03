@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { DEFAULT_SPEND_BY_TIER } from '../hooks/lib/cost'
 import { allRequiredHold, proposedSpend, BRAIN_HANDOVER, configLines, detectGate, foundOf, handoverText, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from '../hooks/lib/setup'
 import { CONFIG_TEMPLATE } from '../hooks/lib/init'

@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { renderState, isEmptyState, compactBlock, appendInstructions, composeSection, emptySnapshot, owedRowsFrom, splitOwed, KEEP_VERBATIM, SECTION_ID, ACT_POSTURE, actPending, isRespawnOwed, type StateSnapshot } from '../hooks/lib/compaction'
 
 // 2026-10-03 14:00Z

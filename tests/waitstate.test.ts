@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, SCRATCH, type RunAnswer } from './harness'
 import { saysWaiting, waitStep, waitText, stallText } from '../hooks/lib/waitstate'
 

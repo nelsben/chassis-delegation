@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { aliasLines, driftMessage, newAgentTypes, parseCandidateIds } from '../hooks/lib/watch'
 
 describe('alias drift', () => {

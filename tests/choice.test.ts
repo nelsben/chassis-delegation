@@ -1,5 +1,6 @@
 // MOD-270: the brain picks each worker's model and effort with a reason; the dry run and dispatch print the choice and the history.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, sessionStart, commandInput, brainSpawn, stepInput, ROOT, SCRATCH } from './harness'
 
 const CARD_TOOL = 'mcp__chassis-delegation__card'

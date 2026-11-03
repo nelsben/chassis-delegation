@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import * as updateLib from '../hooks/lib/update'
 import { MOD_VERSION } from '../hooks/lib/version'
 import { classifyRoot, changelogSlice, migrateConfig, updateLine, upToDateLine, behindLine, CLONE_URL } from '../hooks/lib/update'

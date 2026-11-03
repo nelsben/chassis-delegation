@@ -1,7 +1,8 @@
 // MOD-143 (#231 part 2): a card can name a merge check, `merge_check:` in the card or a `mergeCheckMap` entry for
 // one of its gate ids. Merge runs it in the worktree, by argv, before it rebases; a non-zero exit refuses the merge.
 // Every command here is answered by the harness; nothing real runs.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, ROOT, NOW, type RunAnswer } from './harness'
 import { cardFromFields, type CardCtx } from '../hooks/lib/card'
 

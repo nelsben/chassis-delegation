@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { verifyTarget, retireDue, retirePatch, cardReadsMerged, RETIRE_EVERY_MS, type AttemptRecord } from '../hooks/lib/attempts'
 
 const rec = (attempt: number, verdict: AttemptRecord['verdict'], sha?: string): AttemptRecord => ({

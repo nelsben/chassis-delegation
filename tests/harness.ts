@@ -1,7 +1,16 @@
 // Test world for the hook tests: every `$` call the module makes is answered
 // here from memory and recorded, so a test can read what the mod did.
 import type { On } from 'claude-code'
-import { mock, type MockClock } from 'claude-code/testing'
+import { mock, test as engineTest, type MockClock, type TestBody, type TestOptions } from 'claude-code/testing'
+
+/** 20 s: the first test of a file boots the mod, gate and clock tests take 1 to 5 s, and a loaded machine triples that. */
+export const TEST_TIMEOUT_MS = 20000
+
+/** The engine's `test` with the TEST_TIMEOUT_MS default: the same signature, and a caller's own timeoutMs wins. */
+export const test = (name: string, ...rest: [body: TestBody] | [options: TestOptions, body: TestBody]) => {
+  const [options, body] = rest.length === 2 ? rest : [{} as TestOptions, rest[0]]
+  engineTest(name, { ...options, timeoutMs: options.timeoutMs ?? TEST_TIMEOUT_MS }, body)
+}
 
 export const ROOT = '/repo/acme-app'
 export const SCRATCH = '/s/scratchpad'

@@ -1,5 +1,6 @@
 // MOD-137: the review note as the debrief. `/delegation debrief ingest <note.md>` and the notes-mode clean stop.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, mainTurn, ROOT, HOME, NOW } from './harness'
 
 const MIN = 60_000

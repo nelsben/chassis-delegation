@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { BUILTIN_GLYPHS, glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from '../hooks/lib/glyph'
 import { bandLines, openItemLines } from '../hooks/lib/dashboard'
 import { quietLine } from '../hooks/lib/quiet'

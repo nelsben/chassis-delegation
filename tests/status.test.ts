@@ -1,5 +1,6 @@
 // MOD-200: the pure status module.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { startedComment, statusFailure, statusFile, superseded, verdictComment } from '../hooks/lib/status'
 
 describe('MOD-200: status', () => {
