@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Auto mode: a worker's Bash runs as typed, a host-refused attempt stops without spending budget, and an exploring pick is shown before the spawn (MOD-279).** In auto mode the host refuses a tool call a hook changed after review, and MOD-16's identity hook changed every recorded worker's Bash, so a dispatched worker could run nothing, reported `sha=unknown`, and two attempts were spent. The attempt and spawn records now carry `permissionMode` (the spawn's pinned mode, which the worker inherits); a worker spawned in `auto` has its Bash passed on unchanged (no `CHASSIS_SESSION_ID`), and its spawn notice ends ` · auto mode: Bash runs as typed (no CHASSIS_SESSION_ID)`. A worker in any other mode whose rewritten call comes back denied, or as an error saying `changed this call's input`, is latched: the result ends `(chassis-delegation: auto mode cannot review a rewritten command; ...run it again)` and that agent's later Bash runs as typed. The git guard, gh guard, engine-turn and write-log hooks never change `e.command`; a test pins it. A worker whose Bash calls the host refused (the engine's refusal, not a guard's deny) and whose report has no usable sha (`unknown`, `none` or missing) gets the verdict `blocked by environment: Bash refused by the host (<first 80 chars>)` with `next=stop`; the attempt is stored `unverified` with `blocked`, is left out of `budgetCount`, does not escalate and is not shown as a fabrication. `/dispatch` (dry run and real) prints `this attempt explores: haiku/medium (from sonnet/medium)` above the spawn block when `explorePlan` would explore attempt 1, from the same function the spawn hook now calls (`explorationOf`); the spawn block is unchanged. A resume of an attempt that explored keeps the explored effort on its record and its `resumed` row (it showed the tier's effort before). Tests in `tests/automode.test.ts`.
+
 ## 0.9.45 — 2026-11-02
 
 ### Added

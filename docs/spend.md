@@ -93,6 +93,7 @@ The `tool.call` hook gives each worker its own identity, since a lock keyed on t
 - It is an `export`, so `a && b` and scripts see it.
 - Never rewritten: the brain's Bash; ad hoc agents; the debrief and eval runners;
   a worker started after `readyFallbackMinutes`; a command that already assigns `CHASSIS_SESSION_ID` (`x=… cmd`, `export`, `env`).
+- In auto mode (the parent's permission mode when the worker was spawned) the host refuses a command a hook changed, so a worker started in auto mode runs its Bash as typed, without `CHASSIS_SESSION_ID`, and its spawn notice says so; a worker whose rewritten call the host refuses anyway runs as typed from then on, with a note on that result.
 - The git guard, `delegateOnly` and the spend check judge the command as typed. No option.
 
 ## The cost formula

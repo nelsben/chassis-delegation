@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### Unreleased (MOD-279)
+
+In auto mode a recorded worker's Bash is no longer prefixed with `export CHASSIS_SESSION_ID=…` (the host refuses a command a hook changed), so a lock keyed on that variable sees the inherited id for that worker; other modes are unchanged. A host-refused attempt now ends `blocked by environment` with `next=stop` and is not charged. Detail: [CHANGELOG Unreleased](../CHANGELOG.md).
+
 ### From 0.9.44 to 0.9.45
 
 An existing frontier or premium card without a `tier_reason:` is now refused at dispatch until one is added (one line saying why the card is not standard), or its tier is dropped to standard. A card with no `tier:` is still standard. The new repo option `maxFrontierShare` is off (0) until set.

@@ -100,6 +100,10 @@ export type AttemptRecord = {
   /** MOD-274: this attempt ran one step off the default to learn what the class needs; `exploreFrom` is the pair it moved from (`sonnet/medium`). */
   explore?: true
   exploreFrom?: string
+  /** MOD-279: the parent's permission mode at the spawn (`auto`, `default`, ...), which the worker inherits. */
+  permissionMode?: string
+  /** MOD-279: the attempt could not run because the host refused its Bash calls; the text is the verdict row's `blocked by environment: ...`. It is not charged and does not escalate. */
+  blocked?: string
   /** ms since the epoch at spawn (or resume). */
   at: number
   /** MOD-37: the id of the session whose brain made the spawn; absent on a record written before it. */
@@ -138,10 +142,10 @@ export const attemptsFor = (records: readonly AttemptRecord[], subtask: string, 
 
 /**
  * MOD-274: the attempts that count against a subtask's budget. An exploratory attempt that failed (refuted, no-report or a
- * confirmed gate=fail) is left out, as a reviewer's is; it still numbers the ladder (`attemptsFor`, `nextAttempt`).
+ * confirmed gate=fail) is left out, as a reviewer's is; MOD-279: so is an attempt blocked by the environment (the host refused its Bash); it still numbers the ladder (`attemptsFor`, `nextAttempt`).
  */
 export const budgetCount = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): number =>
-  attemptsFor(records, subtask, lane).filter(r => !(r.explore && recordFailed(r))).length
+  attemptsFor(records, subtask, lane).filter(r => !(r.explore && recordFailed(r)) && r.blocked === undefined).length
 
 /** MOD-21: the reviewer attempts of a subtask (any attempt reviewed), oldest first. */
 export const reviewsFor = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): AttemptRecord[] =>
