@@ -63,11 +63,11 @@ export const saysInputChanged = (text: unknown): boolean => typeof text === 'str
 /** The words of a tool result: core's `text`, else a string `result`. */
 export const resultWords = (out: { text?: unknown; result?: unknown }): string | undefined => (typeof out.text === 'string' ? out.text : typeof out.result === 'string' ? out.result : undefined)
 
-/** What a tool result says when the host refused the call: its deny text, else the words of an error that says it was denied or changed. */
+/** What a tool result says when the host refused the call: its deny text, else the words of an error that says the input was changed after review (an ordinary failed command is no host refusal). */
 export function hostRefusalText(out: { deny?: unknown; isError?: unknown; text?: unknown; result?: unknown }): string | undefined {
   if (typeof out.deny === 'string') return out.deny
   const words = resultWords(out)
-  if (out.isError === true && words !== undefined && (saysInputChanged(words) || /\bauto mode\b/i.test(words) || /\b(?:permission|request)\b[^\n]{0,60}\b(?:denied|refused)\b/i.test(words) || /\bdenied by (?:the )?(?:user|classifier|permission)/i.test(words))) return words
+  if (out.isError === true && words !== undefined && saysInputChanged(words)) return words
   return undefined
 }
 

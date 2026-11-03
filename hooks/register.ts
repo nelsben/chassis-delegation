@@ -5762,7 +5762,7 @@ const workerEngineDepth = new Map<string, number>()
 /** MOD-279: agents whose rewritten Bash the host refused; their Bash runs as typed from then on (bounded, oldest dropped). */
 const asTyped = new Set<string>()
 /** MOD-279: per agent, the Bash calls the host refused (the engine's refusal, not a mod guard's deny): how many, and the first text. */
-const hostRefusals = new Map<string, { n: number; first: string }>()
+const hostRefusals = new Map<string, { n: number; attempted: number; first?: string }>()
 /** MOD-279: the host's refusal of the call in flight, per agent (set by the last hook before the engine's tool, read by the identity hook). */
 const lastRefusal = new Map<string, string>()
 
@@ -6615,7 +6615,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   if (!spawn.adhoc && !spawn.review && spawn.agentId) {
     const refused = hostRefusals.get(spawn.agentId)
     hostRefusals.delete(spawn.agentId)
-    if (refused && !rateLimit && !usableSha(report?.sha)) {
+    if (refused && refused.first !== undefined && refused.n >= 1 && refused.n === refused.attempted && !rateLimit && !usableSha(report?.sha)) {
       blocked = blockedByEnvironment(refused.first)
       verdict = 'unverified'
       lines = [`note: ${blocked}; ${refused.n} Bash call${refused.n === 1 ? '' : 's'} refused, so the worker could not run its commands and its claims were not judged`]
@@ -9771,13 +9771,16 @@ export const register: Register = (on, opts) => {
     const out = await next(e)
     if (!e.agentId) return out
     const text = hostRefusalText(out)
+    const had = hostRefusals.get(e.agentId)
+    // MOD-281: every Bash call is counted; the verdict is blocked only when every one of them was refused
+    const attempted = (had?.attempted ?? 0) + 1
     if (text === undefined) {
       lastRefusal.delete(e.agentId)
+      setBounded(hostRefusals, e.agentId, { n: had?.n ?? 0, attempted, ...(had?.first !== undefined ? { first: had.first } : {}) }, MAP_CAPS.handbacks)
       return out
     }
     lastRefusal.set(e.agentId, text)
-    const had = hostRefusals.get(e.agentId)
-    setBounded(hostRefusals, e.agentId, { n: (had?.n ?? 0) + 1, first: had?.first ?? text }, MAP_CAPS.handbacks)
+    setBounded(hostRefusals, e.agentId, { n: (had?.n ?? 0) + 1, attempted, first: had?.first ?? text }, MAP_CAPS.handbacks)
     return out
   })
 

@@ -58,7 +58,7 @@ You were started by the brain's own Agent call: the mod recorded this attempt, s
 {{/lessons}}
 - To stop while your own background job runs, print as the last line of that message a pause line, not a report: `[[pause v=1 task={{id}} reason=<one line>]]`. A pause is not an attempt; a third in one attempt, or a stop with neither line, is charged.
 - Keep any foreground wait under 5 minutes; kill what hangs.
-- The mod already exports `CHASSIS_SESSION_ID={{id}}-a<attempt>`, `CHASSIS_TASK` and `CHASSIS_ATTEMPT` in every Bash call you make; do not set them yourself.
+- The mod already exports `CHASSIS_SESSION_ID={{id}}-a<attempt>`, `CHASSIS_TASK` and `CHASSIS_ATTEMPT` in every Bash call you make, except in auto mode, where your Bash runs as typed; do not set them yourself.
 {{extra}}
 
 ## The card
