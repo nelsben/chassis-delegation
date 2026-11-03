@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { parseReport } from '../hooks/lib/brief'
 import { engineLockDecision, ENGINE_POLL_MS, isEngineGate, readEngineLock, waitedLine } from '../hooks/lib/gates'
 import { advise, gateNotRerun } from '../hooks/lib/verify'

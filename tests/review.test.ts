@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, usage, ROOT, SCRATCH, type RunAnswer } from './harness'
 import { advise, type AdviseInput } from '../hooks/lib/verify'
 import { attemptsFor, nextAttempt, patchRecord, type AttemptRecord } from '../hooks/lib/attempts'

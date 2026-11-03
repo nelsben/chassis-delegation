@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { checkArgv, checkGateCommand, isRemoteArgv, refusedLine, type AllowConfig } from '../hooks/lib/allow'
 import { gateTemplatesOf, resolveGateRuns, fillFiles } from '../hooks/lib/gates'
 import { parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'

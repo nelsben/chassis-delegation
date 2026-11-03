@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, ROOT, type RunAnswer } from './harness'
 
 // MOD-148 (#222): a briefless spawn whose report names task= is adopted onto the task's brief; its attempt is on

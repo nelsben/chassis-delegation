@@ -1,5 +1,6 @@
 // GH-113: the brain's own spend, priced and kept apart from the workers', and the delegate-only decision table (pure).
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, usage } from './harness'
 import { priceFor } from '../hooks/lib/cost'
 import { brainTurn, brainEdit, brainSplit, brainFamily, brainSummary, brainLine, brainTileText, bashWrites, bashCommits, delegateDecision, DELEGATE_DENY, PREMIUM_POSTURE } from '../hooks/lib/brain'

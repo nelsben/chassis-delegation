@@ -2,7 +2,8 @@
 // (public issue #1): the report is consistent with git, nothing read the diff.
 // What the mod writes says consistent; the old word is still read, as
 // consistent, until 0.9.0. Pure: the engine half is in hooks.test.ts.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { parseReport } from '../hooks/lib/brief'
 import { advise, verdictLine, type AdviseInput } from '../hooks/lib/verify'
 import { escalatesOn, escalationSource, readLine, readRecord, readVerdict, type AttemptRecord } from '../hooks/lib/attempts'

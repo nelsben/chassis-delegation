@@ -1,5 +1,6 @@
 // 3A: verifying a task that has no git repo (pure).
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, turnInput, sessionStart, commandInput, brainSpawn, ROOT, SCRATCH, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 import { checkArgv } from '../hooks/lib/allow'

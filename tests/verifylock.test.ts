@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, sessionStart, brainSpawn, workerCall, ROOT, SCRATCH, NOW, type RunAnswer } from './harness'
 
 // MOD-152 (#246): the worker's worktree is locked while the verifier judges it, so a plain

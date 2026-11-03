@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { isRepoPath, normRepoPath, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName, worktreePath } from '../hooks/lib/paths'
 
 const ROOT = '/Users/b/api-server'

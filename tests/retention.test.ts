@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, sessionStart, delegationCommand, ROOT, NOW as WNOW, SCRATCH } from './harness'
 import { MOD_VERSION } from '../hooks/lib/version'
 import { FULL_SCAN_MS, SizeEstimate, entryBytes, scanDue, MIB, PRESSURE_BYTES, RATION_RETAIN_MS, RETAIN_MS, TARGET_BYTES, prunedLine, refusedRow, refusedWritesLine, retentionPlan, slimSpawns, storeBytes, storeLine, type StoreEntry } from '../hooks/lib/retention'

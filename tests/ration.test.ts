@@ -1,5 +1,6 @@
 // MOD-128: the rationing meter, through the engine: the footer label, the day record, the report, the pane, and no status line.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, spawnInput, NOW } from './harness'
 import { dayKey } from '../hooks/lib/ration'
 

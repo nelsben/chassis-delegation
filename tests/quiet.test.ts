@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { parseVerbosity, parseClaimLine, verdictReason, amendClauses, shortNext, quietLine, deliveryFor } from '../hooks/lib/quiet'
 
 const RESUME = 'resume agent=agent-4 — SendMessage it the verifier lines below'

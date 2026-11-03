@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { migratedLine, migrationPlan, rowRoot, scopedAttemptKey, scopedId, trimRepo } from '../hooks/lib/taskkeys'
 import { RETAIN_MS, retentionPlan } from '../hooks/lib/retention'
 import { world, sessionStart, spawnInput, ROOT, SCRATCH } from './harness'

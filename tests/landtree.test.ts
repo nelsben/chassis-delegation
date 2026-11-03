@@ -1,5 +1,6 @@
 // MOD-215: /delegation tree import and the tree_import tool: a multi-level plan file filed in one reviewed step.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, ROOT } from './harness'
 import { parseTreePlan } from '../hooks/lib/landtree'
 

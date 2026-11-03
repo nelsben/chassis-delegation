@@ -1,6 +1,7 @@
 // MOD-252: loadThrottle. On a loaded machine the queue starts fewer workers at once: the effective slot count is
 // max(1, floor(slots / 2)); a claim beyond it is held; a running worker is never touched.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput } from './harness'
 
 const brief = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard model=sonnet]]\nDo it.`

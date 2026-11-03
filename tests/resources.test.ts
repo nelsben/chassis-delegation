@@ -1,7 +1,8 @@
 // MOD-23: exclusive resources and fan-out. A card names the resources it holds (one live app at
 // a time), the queue enforces it, and the card tool writes several research lanes from one
 // sentence. Pure. The modules are imported whole so a missing function fails its own test.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import * as brief from '../hooks/lib/brief'
 import * as card from '../hooks/lib/card'
 import * as compaction from '../hooks/lib/compaction'

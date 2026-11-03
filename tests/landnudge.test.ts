@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { describesWork, nudgeLine, parentNudge } from '../hooks/lib/landnudge'
 
 // MOD-201: the land nudge's pure parts.

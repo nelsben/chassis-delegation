@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, sessionStart, ROOT } from './harness'
 
 // MOD-175: what fires when the brain resumes a briefed worker with SendMessage, and what the mod counts.

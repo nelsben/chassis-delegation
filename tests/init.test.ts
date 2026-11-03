@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { CONFIG_TEMPLATE, GITIGNORE_LINE, INIT_FILES, initPlan, initText, SAMPLE_CARD, TASKS_README } from '../hooks/lib/init'
 import { parseCard } from '../hooks/lib/dispatch'
 import { mergeConfig, parseRepoConfig } from '../hooks/lib/repoconfig'

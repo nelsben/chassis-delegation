@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, sessionStart, ROOT, SCRATCH, NOW, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 import { latestVerdictRow } from '../hooks/lib/mergecmd'

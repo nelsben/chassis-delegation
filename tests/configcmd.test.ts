@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, HOME } from './harness'
 import { REDACT_EMPTY } from '../hooks/lib/findings'
 import { configPlan, cut, editDistance, inEffect, manifestDefaults, rowsByField, shownValue, unknownName, configShow, configShort, HOW, type CfgRow, type CfgView } from '../hooks/lib/configcmd'

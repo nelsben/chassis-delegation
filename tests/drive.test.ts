@@ -1,5 +1,6 @@
 // MOD-48: what the brain's driving costs it: the call kinds, the split's lines, and the warn row (pure).
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { priceFor, usdOf } from '../hooks/lib/cost'
 import { callKind, cutText, isPoll, commandKey, driveCall, driveLines, driveOutput, driveStep, driveTurn, emptyDrive, emptyWatch, DRIVE_THRESHOLD_TOKENS, freshSessionRow } from '../hooks/lib/drive'
 

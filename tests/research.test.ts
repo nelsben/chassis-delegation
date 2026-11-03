@@ -1,7 +1,8 @@
 // MOD-22: research cards. A card whose outputs live outside the repo: an output folder
 // (outdir), a scratch folder, a before-and-after listing of the absolute scope and forbid
 // roots, {outdir} in a gate command, and artefacts= / metrics= in the report. Pure.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { checkArgv, checkGateEntry } from '../hooks/lib/allow'
 import { parseHeader, parseReport } from '../hooks/lib/brief'
 import { parseCard, renderBrief, renderHeader, renderSections } from '../hooks/lib/dispatch'

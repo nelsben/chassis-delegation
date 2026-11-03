@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { redact, parseRedactList, ownerNameOf, gitConfigValue } from '../hooks/lib/redact'
 import { scrubbedFindings, findingsPathOf, findingsLines } from '../hooks/lib/cleanstop'
 

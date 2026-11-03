@@ -1,5 +1,6 @@
 // MOD-190: /delegation land writes a redacted issue body under .delegation/landed/ and prints the gh line; it files and dispatches nothing.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, ROOT } from './harness'
 import { LAND_USAGE, LAND_TOOL, parseLandArgs, parseLandTool } from '../hooks/lib/land'
 

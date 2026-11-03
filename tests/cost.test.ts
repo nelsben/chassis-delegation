@@ -1,5 +1,6 @@
 // 3B: honest per-worker cost, from each turn's usage (pure).
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { addTurn, priceFor, usdOf, usdText, PRICES, tokensOf, type Spend } from '../hooks/lib/cost'
 
 const turn = (model: string, input: number, output: number, read = 0, write = 0) => ({

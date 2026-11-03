@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Engine tests get a 20-second timeout through `tests/harness.ts` (its `test` wraps the engine's, `TEST_TIMEOUT_MS`), and `tests/node/testimports.node.mjs` keeps every test file on it (MOD-282).
+
 ## 0.9.46 — 2026-11-03
 
 ### Fixed

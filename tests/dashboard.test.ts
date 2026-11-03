@@ -1,5 +1,6 @@
 // 4A/4B/3D: the band's lines, the pane's blocks, the sparklines and the status text (pure).
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import {
   base64,
   bandLines,

@@ -1,7 +1,8 @@
 // MOD-75: `/delegation merge <ID>` does the local half of the merge pipeline (rebase, the merged
 // card, the gates) and prints the remote half as one block the brain runs verbatim; `--finish`
 // cleans up after the PR lands. Every git call here is answered by the harness; nothing real runs.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, ROOT, NOW, type RunAnswer } from './harness'
 import { isRemoteArgv } from '../hooks/lib/allow'
 import { cardDiff, labelIsMerged, markMerged, parseMergeArgs, prBody, readsMerged } from '../hooks/lib/mergecmd'

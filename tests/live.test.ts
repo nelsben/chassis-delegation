@@ -1,5 +1,6 @@
 // GH-112: the live delegation model (pure): the spend series, the events, the worktree rows, spend by model.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { sessionRecords, events, familyOf, sampleEvery, spendByModel, spendSeries, SPEND_CAP, worktreeRows, type SpendPoint, sparkText } from '../hooks/lib/live'
 import type { AttemptRecord } from '../hooks/lib/attempts'
 import { world, spawnInput, workerCall, SCRATCH, sessionStart } from './harness'

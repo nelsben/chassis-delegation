@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { CARD_TOOL, cardFromFields, cardsFromFields, cardSummary, donePaths, forbidCollisions, redTestWarnings, type CardCtx } from '../hooks/lib/card'
 import { parseCard } from '../hooks/lib/dispatch'
 

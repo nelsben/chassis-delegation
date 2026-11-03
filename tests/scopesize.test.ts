@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { SCOPE_FILES_MAX, TIER_HINT_SCOPE_MAX, TIER_HINT_DONE_MAX, scopeSizeWarning, tierHint } from '../hooks/lib/dispatch'
 import { doneStatementCount } from '../hooks/lib/card'
 import { world, commandInput, sessionStart, ROOT } from './harness'

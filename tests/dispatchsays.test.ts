@@ -1,6 +1,7 @@
 // MOD-219: dispatch says what it holds. A path named only in red_test is read, so an outside one does not warn;
 // a lane held by a tier cap says its position; a verdict whose gate was not re-run says so in the row.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, sessionStart, commandInput, brainSpawn, ROOT, SCRATCH } from './harness'
 import { redTestWarnings } from '../hooks/lib/card'
 import { verdictLine, gateNotRerun } from '../hooks/lib/verify'

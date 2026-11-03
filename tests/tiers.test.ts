@@ -1,6 +1,7 @@
 // MOD-131 (#219): per-tier worker slots. maxWorkersByTier caps the briefed workers of each tier beside
 // the maxWorkers total; the queue plans per tier; the queued deny and /delegation name the tier.
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, sessionStart, HOME } from './harness'
 
 const cmd = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never

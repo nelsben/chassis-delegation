@@ -1,5 +1,6 @@
 // 4C: per-session metrics bookkeeping and the sparkline series (pure).
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import {
   applyMetric,
   emptyMetrics,

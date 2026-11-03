@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, spawnInput, turnInput, sessionStart, ROOT, SCRATCH, type RunAnswer } from './harness'
 
 // MOD-136: a task already merged is closed. A late hand-back for it is recorded as closed, with no verify and no owed row.

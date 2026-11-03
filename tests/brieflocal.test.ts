@@ -1,7 +1,8 @@
 // MOD-124 (#188): briefLocal copies a gitignored rules file into every brief under a marked
 // section the debrief drops; a card's allow: [id] pulls a named exception block into the brief
 // and onto the verdict row. Engine tests (the pure section split is in tests/node/brieflocal.node.mjs).
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import type { TestBody } from 'claude-code/testing'
 import { world, commandInput, sessionStart, spawnInput, turnInput, ROOT, SCRATCH, type RunAnswer } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'

@@ -1,4 +1,5 @@
-import { test, expect, describe } from 'claude-code/testing'
+import { expect, describe } from 'claude-code/testing'
+import { test } from './harness'
 import { world, sessionStart, bandProps, ROOT, NOW } from './harness'
 
 // MOD-201: the band draws the nudge line alone, and last beside the live view.
