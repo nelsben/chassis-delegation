@@ -208,7 +208,7 @@ import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta,
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
-import { withIdentity } from './lib/identity'
+import { AUTO_NOTICE, LATCH_LINE, blockedByEnvironment, hostRefusalText, isAutoMode, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
@@ -553,6 +553,8 @@ type SpawnRecord = {
   agentId?: string
   /** The model id the alias resolved to at spawn; a resume keeps it. */
   resolvedModel?: string
+  /** MOD-279: the parent's permission mode at the spawn (which the worker inherits); `auto` leaves the worker's Bash as typed. */
+  permissionMode?: string
   usdAtStart?: number
   /** GH-106: the brief's `spend=` ceiling in dollars (absent: none). */
   spend?: number
@@ -2924,6 +2926,33 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
 
 /** MOD-274: what /dispatch stores about a card for the spawn: its class, and whether it hand-set an effort or a reason. */
 type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean }
+
+/**
+ * MOD-279: whether a card's attempt explores, and how. One decision for the spawn hook and for /dispatch (which prints it before the
+ * spawn): the draw is deterministic in the task, so the same rows, class and options give the same answer in both places.
+ */
+function explorationOf(o: { task: string; attempt: number; cardCls: CardClassRecord | undefined; tier: Tier; alias: Alias; headerModel: string | undefined; rows: readonly LedgerRow[]; classOf?: ClassOf }): ExplorePlan | undefined {
+  if (!o.cardCls || !o.cardCls.name || o.attempt !== 1 || !(cfg.explore > 0)) return undefined
+  const here0 = o.tier
+  return explorePlan({
+    task: o.task,
+    attempt: o.attempt,
+    hasEffort: o.cardCls.hasEffort,
+    hasReason: o.cardCls.hasReason,
+    tier: o.tier,
+    kind: o.cardCls.kind,
+    className: o.cardCls.name,
+    explore: cfg.explore,
+    baseEffort: effortChoice(o.tier, undefined, cfg.effortByTier).effort,
+    maxEffort: cfg.maxEffort,
+    aliasOfTier: t => (t === here0 ? o.alias : aliasFor({ tier: t, source: 'brief' }, o.headerModel).alias),
+    rows: o.rows,
+    ...(o.classOf ? { classOf: o.classOf } : {}),
+  })
+}
+
+/** MOD-279: `this attempt explores: haiku/medium (from sonnet/medium)`. */
+const exploresLine = (x: ExplorePlan): string => `this attempt explores: ${x.alias}/${x.effort ?? 'default'} (from ${x.from})`
 
 /** MOD-274: the history line for a card: its class's pairs first, every class's when the class has no rows yet. */
 function historyOf(rows: readonly LedgerRow[], cls: string | undefined, classOf?: ClassOf): string {
@@ -5730,6 +5759,12 @@ const alone = <T>(fn: () => Promise<T>): Promise<T> => {
 let engineSeq = 0
 /** MOD-235: how many engine-suite Bash calls a briefed worker has open, by agent id; above 0 it holds the turn. */
 const workerEngineDepth = new Map<string, number>()
+/** MOD-279: agents whose rewritten Bash the host refused; their Bash runs as typed from then on (bounded, oldest dropped). */
+const asTyped = new Set<string>()
+/** MOD-279: per agent, the Bash calls the host refused (the engine's refusal, not a mod guard's deny): how many, and the first text. */
+const hostRefusals = new Map<string, { n: number; first: string }>()
+/** MOD-279: the host's refusal of the call in flight, per agent (set by the last hook before the engine's tool, read by the identity hook). */
+const lastRefusal = new Map<string, string>()
 
 /**
  * MOD-20: waits for this session's turn at the engine suite. Two engine gates at once blow the
@@ -6574,6 +6609,18 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     red = { ...(v.red !== undefined ? { red: v.red } : {}), ...(v.redHash !== undefined ? { redHash: v.redHash } : {}), redHeld: v.redHeld }
   }
   if (pauseCharge) lines = [...lines, pauseCharge]
+  // MOD-279: a worker whose Bash the host refused and whose report has no usable sha was blocked by its environment: that is no
+  // failure of the work (not charged, not escalated, not shown as a fabrication). The count is per attempt: read once, then cleared.
+  let blocked: string | undefined
+  if (!spawn.adhoc && !spawn.review && spawn.agentId) {
+    const refused = hostRefusals.get(spawn.agentId)
+    hostRefusals.delete(spawn.agentId)
+    if (refused && !rateLimit && !usableSha(report?.sha)) {
+      blocked = blockedByEnvironment(refused.first)
+      verdict = 'unverified'
+      lines = [`note: ${blocked}; ${refused.n} Bash call${refused.n === 1 ? '' : 's'} refused, so the worker could not run its commands and its claims were not judged`]
+    }
+  }
 
   const t = await now($)
   // GH-106: the worker's own cost from its turn usage; else the session's growth, marked ~ (other workers inflate it)
@@ -6649,6 +6696,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
         // GH-115: the first failed claim, so a scope or files refute holds the tier on a respawn
         ...(verdict === 'refuted' && firstFailedClaim(lines) ? { firstFailed: firstFailedClaim(lines)?.name } : {}),
         verdictAt: t,
+        ...(blocked ? { blocked } : {}),
         ...(usd !== undefined ? { usd } : {}),
       ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
         ...(tokens !== undefined ? { tokens } : {}),
@@ -6680,6 +6728,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   }
   // MOD-211 (#271): a report line with no sha= is a line to resend, not a failed attempt: nothing is charged and nothing is resumed or escalated
   const malformed = !spawn.adhoc && block !== undefined && verdict === 'refuted' && isMalformedReport(lines)
+  if (blocked) advice = { kind: 'none', next: 'stop' }
   if (malformed) advice = { kind: 'check', next: `resend the report line with the fields named below (not a failed attempt: attempt ${spawn.attempt} stays open)` }
   // MOD-150: a refuted or unverified hand-back whose commits are all on the base already is not resumed or escalated
   if (!spawn.adhoc && spawn.briefPath && report?.sha && (advice.kind === 'resume' || advice.kind === 'respawn') && (verdict === 'refuted' || verdict === 'unverified')) {
@@ -6710,7 +6759,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   }
   // a prove resume (GH-1 item 5) counts against the budget as a failing verdict's resume does
   const prove = advice.kind === 'resume' && isProveResume(verdict, report?.gate)
-  spawn = { ...spawn, verdictAttempt: spawn.attempt, lastFailed: isFailing(verdict, report?.gate) || prove, ...(malformed && block !== undefined ? { malformed: block } : {}) }
+  spawn = { ...spawn, verdictAttempt: spawn.attempt, lastFailed: !blocked && (isFailing(verdict, report?.gate) || prove), ...(malformed && block !== undefined ? { malformed: block } : {}) }
   await storeSet($, K.spawn(spawn.key), spawn)
 
   let next = advice.next
@@ -6736,7 +6785,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     respawn = 'deny' in prepared ? (isQueuedDeny(prepared.deny) ? `respawn ${prepared.deny}` : `respawn not prepared: ${prepared.deny}`) : spawnBlock(prepared.call)
   }
 
-  const shownVerdict = rateLimit ? rateLimitedVerdict(rateLimit) : noRepo ? `${verdict} (no repo)` : verdict
+  const shownVerdict = rateLimit ? rateLimitedVerdict(rateLimit) : blocked ? blocked : noRepo ? `${verdict} (no repo)` : verdict
   // MOD-114: this attempt's hand-back is judged now; the accept of another task, with no cards hand-back waiting, says the judgment work is over
   const wasNudged = nudgedUp.delete(await attemptKey($, spawn))
   const down = !wasNudged && !spawn.adhoc && advice.kind === 'accept' ? nudgeDownNow() : undefined
@@ -6751,7 +6800,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const tail = from ? fallbackTail(from) : undefined
   if (from) debug($, fallbackLog(shownLabel, shownAttempt, from))
   const full = withTailIf(spawnText ? `${verdictRows}\n${spawnText}` : verdictRows, tail)
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + (pauseCharge ? ` · ${pauseCharge}` : '') + downClause
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit || blocked ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + (pauseCharge ? ` · ${pauseCharge}` : '') + downClause
   const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   const { malformed: _old, pausedAs: _pausedAs, ...latestClean } = latest
@@ -7195,6 +7244,9 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   const lane = laneOf(spawn)
   const t = await now($)
   const attempt = nextAttempt(records, spawn.subtask, lane)
+  // MOD-279: a resume of an attempt that explored keeps the alias and effort it explored at (its record, and so its started row and its steps)
+  const origin = attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.lineage && r.explore && r.effort !== undefined)
+  hostRefusals.delete(agentId)
   const rec: HereRecord = {
     ...(await ownerFields($, spawn.repo)),
     task: spawn.task,
@@ -7212,6 +7264,8 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
     purpose: spawn.purpose,
     ...laneFields(lane),
     ...(spawn.here ? { here: spawn.here } : {}),
+    ...(origin ? { effort: origin.effort as Effort, effortSource: 'explore' as const } : {}),
+    ...(spawn.permissionMode ? { permissionMode: spawn.permissionMode } : {}),
   }
   await saveAttempts($, spawn, [...records, rec])
   const usdAtStart = await sessionUsd($)
@@ -7219,7 +7273,7 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   const next: SpawnRecord = { ...fresh, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
   await storeSet($, K.spawn(spawn.key), next)
   await setWorkers($, list => [...list, { task: spawn.task, subtask: spawn.subtask, attempt, kind: 'resume', tier: spawn.tier, alias: spawn.alias, agentId, verdict: 'pending', at: t }])
-  if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), task: spawn.task, repo: spawn.repo, alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed' })
+  if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), task: spawn.task, repo: spawn.repo, alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed', ...(origin?.exploreFrom ? { explore: { effort: origin.effort as Effort, label: exploreLabel(origin.exploreFrom, origin.alias, origin.effort) } } : {}) })
   return next
 }
 
@@ -7860,6 +7914,21 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   const className = cardClassName(classKind, cardSize(tierHint({ tier, scope: classScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined))
   const classLedger = await ledgerAt($, root)
   out.push(...choiceLines(classLedger.rows, { classOf: await classOfFor($, root, classLedger.rows), tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason), cls: className }).map(l => `   ${l}`))
+  // MOD-279: an exploring attempt 1 is said here, above the spawn block (the draw is the spawn hook's own)
+  if (!replay) {
+    const priorRecords = (await loadAttempts($, { task: id, ...(target ? { repo: target.path } : {}) })).filter(r => (r as HereRecord).adhoc !== true)
+    const exploring = explorationOf({
+      task: id,
+      attempt: nextAttempt(priorRecords, 'main'),
+      cardCls: { name: className, kind: classKind, hasEffort: typeof card.fields.effort === 'string' && card.fields.effort.trim() !== '', hasReason: cleanReason(card.fields.tier_reason) !== '' || cleanReason(card.fields.effort_reason) !== '' },
+      tier,
+      alias: alias as Alias,
+      headerModel: shownHeader?.model,
+      rows: classLedger.rows,
+      classOf: await classOfFor($, root, classLedger.rows),
+    })
+    if (exploring) out.push(`   ${exploresLine(exploring)}`)
+  }
   // MOD-276: the tier mix of the open cards in this card folder, this card counted once; a share above maxFrontierShare warns
   const mixTiers: Tier[] = [tier]
   try {
@@ -9039,22 +9108,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
         if (isStopped(err)) throw err
         debug($, `${label}: explore: ledger not read: ${String(err)}`)
       }
-      const here0 = tier
-      explored = explorePlan({
-        task,
-        attempt,
-        hasEffort: cardCls.hasEffort,
-        hasReason: cardCls.hasReason,
-        tier,
-        kind: cardCls.kind,
-        className: cardCls.name,
-        explore: cfg.explore,
-        baseEffort: effortChoice(tier, undefined, cfg.effortByTier).effort,
-        maxEffort: cfg.maxEffort,
-        aliasOfTier: t => (t === here0 ? (alias as Alias) : aliasFor({ tier: t, source: 'brief' }, header?.model).alias),
-        rows,
-        ...(classOf ? { classOf } : {}),
-      })
+      explored = explorationOf({ task, attempt, cardCls, tier, alias: alias as Alias, headerModel: header?.model, rows, ...(classOf ? { classOf } : {}) })
       if (explored) {
         tier = explored.tier
         alias = explored.alias
@@ -9062,7 +9116,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       }
     }
     // GH-104: a briefed spawn's notice says which attempt it is spending
-    const notice = noticeText({ ...pick, tier }, alias, fableAsked, adhoc ? undefined : { attempt, budget }) + (explored ? ` · ${exploreLabel(explored.from, alias, explored.effort)}` : '')
+    const notice = noticeText({ ...pick, tier }, alias, fableAsked, adhoc ? undefined : { attempt, budget }) + (explored ? ` · ${exploreLabel(explored.from, alias, explored.effort)}` : '') + (!adhoc && isAutoMode(e.permissionMode) ? AUTO_NOTICE : '')
     if (p.closedLine) debug($, p.closedLine)
     try {
       $.ui.notice(e.tool_use_id, p.closedLine ? `${notice}\n${p.closedLine}` : notice)
@@ -9132,6 +9186,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(here ? { here } : {}),
       ...(fableAsked ? { requestedAlias: 'fable' as const } : {}),
       ...(classifierTier ? { classifierTier } : {}),
+      ...(e.permissionMode ? { permissionMode: e.permissionMode } : {}),
       ...(cardCls?.name ? { class: cardCls.name } : {}),
       ...(explored ? { explore: true as const, exploreFrom: explored.from, ...(explored.effort ? { effort: explored.effort } : {}), effortSource: 'explore' as const } : {}),
     }
@@ -9156,6 +9211,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(p.cwd ? { cwd: p.cwd } : {}),
       ...(res.agentId ? { agentId: res.agentId } : {}),
       ...(res.model ? { resolvedModel: res.model } : {}),
+      ...(e.permissionMode ? { permissionMode: e.permissionMode } : {}),
       ...(usdAtStart !== undefined ? { usdAtStart } : {}),
       ...(spend !== undefined && !adhoc ? { spend } : {}),
       ...(p.resources.length > 0 && !adhoc ? { resources: p.resources } : {}),
@@ -9658,8 +9714,20 @@ export const register: Register = (on, opts) => {
     const worker = await spawnByAgent($, e.agentId)
     // MOD-21: a reviewer is no attempt of its task: it keeps the inherited environment
     if (!worker || worker.adhoc || worker.review) return next(e)
+    // MOD-279: in auto mode the host reviews each call and refuses one a hook changed, so the worker's Bash runs as typed;
+    // so does a worker whose rewritten call the host refused (the latch below)
+    if (isAutoMode(worker.permissionMode) || asTyped.has(e.agentId)) return next(e)
     const run = withIdentity(command, worker)
-    return next(run === command ? e : { ...e, command: run })
+    if (run === command) return next(e)
+    lastRefusal.delete(e.agentId)
+    const out = await next({ ...e, command: run })
+    const refused = lastRefusal.get(e.agentId)
+    if (refused !== undefined && (out.deny !== undefined || saysInputChanged(resultWords(out)))) {
+      addBounded(asTyped, e.agentId, MAP_CAPS.handbacks)
+      debug($, `${taskLabel(worker.task, worker.subtask)}: the host refused a rewritten Bash call (${refused.slice(0, 120)}); this worker's Bash now runs as typed`)
+      return out.deny !== undefined ? { ...out, deny: `${out.deny}\n${LATCH_LINE}` } : withTrailingLine(out, LATCH_LINE)
+    }
+    return out
   })
 
   // ---- MOD-235: a briefed worker's own engine-suite run takes the engine turn ----------
@@ -9694,6 +9762,23 @@ export const register: Register = (on, opts) => {
       workerEngineDepth.delete(e.agentId)
       await turn?.release()
     }
+  })
+
+  // ---- MOD-279: what the host refuses of a recorded worker's Bash ---------------------------
+  // The last link before the engine's tool (registered after every mod guard and rewrite), so a deny or an error it
+  // sees is the host's own, not a guard's. It decides the latch above and the `blocked by environment` verdict.
+  on('tool.call', { tool: 'Bash' }, async (_$, e, next) => {
+    const out = await next(e)
+    if (!e.agentId) return out
+    const text = hostRefusalText(out)
+    if (text === undefined) {
+      lastRefusal.delete(e.agentId)
+      return out
+    }
+    lastRefusal.set(e.agentId, text)
+    const had = hostRefusals.get(e.agentId)
+    setBounded(hostRefusals, e.agentId, { n: (had?.n ?? 0) + 1, first: had?.first ?? text }, MAP_CAPS.handbacks)
+    return out
   })
 
   // ---- tool.call on Agent: capture the report, verify, hand the verdict back ------
