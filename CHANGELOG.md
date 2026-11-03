@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Engine tests get a 20-second timeout through `tests/harness.ts` (its `test` wraps the engine's, `TEST_TIMEOUT_MS`), and `tests/node/testimports.node.mjs` keeps every test file on it (MOD-282).
+- **Blocked by environment fires only when every Bash call of the attempt was refused as changed after review, never on an ordinary failed command (MOD-281).** `hostRefusalText` now counts a deny or an error saying `changed this call's input`; a failed `git push`, an EACCES or output saying `auto mode` no longer counts. The bottom Bash hook also counts the Bash calls attempted (`hostRefusals` holds `{ n, attempted, first }`), and the verdict is `blocked by environment` only when `n >= 1` and `n === attempted`; otherwise the attempt is judged and charged as before. The brief template says the identity export does not apply in auto mode. Tests in `tests/automode.test.ts`.
 
 ## 0.9.46 — 2026-11-03
 

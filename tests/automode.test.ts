@@ -113,6 +113,42 @@ describe('MOD-279: auto mode - a worker Bash runs as typed', () => {
     expect(budgetCount(recs as never, 'main')).toBe(0)
   })
 
+  // MOD-281: only a refusal the host made (a deny, or an error saying the input was changed after review) counts, and only when every Bash call of the attempt was refused.
+  test('MOD-281: an ordinary failed command (Permission denied (publickey)) is no host refusal: the attempt is judged and counts against the budget', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody' }, run: branchRun('agent/mod/T-1'), agentId: 'agent-1' })
+    let first = true
+    bottom(on, () => {
+      if (!first) return undefined
+      first = false
+      return { isError: true, result: 'git@github.com: Permission denied (publickey).' }
+    })
+    await spawnBrief($, 'T-1', 'toolu_A0000001', 'default')
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'git push' })
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'git status' })
+    await $.turn.complete(turnInput('agent-1', 'Done.\n[[report v=1 task=T-1 subtask=main branch=agent/mod/T-1 pr=none sha=unknown gate=fail files=a/x.ts]]'))
+    expect([...w.appended.map(a => a.text), ...w.logs].join('\n')).not.toContain('blocked by environment')
+    const recs = (w.store.get(`delegation.tasks.T-1@${ROOT}`) ?? []) as { blocked?: string }[]
+    expect(recs[0]?.blocked).toBeUndefined()
+    expect(budgetCount(recs as never, 'main')).toBe(1)
+  })
+
+  test('MOD-281: one call refused as changed followed by one that ran, report sha=none: not blocked, judged as before', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody' }, run: branchRun('agent/mod/T-1'), agentId: 'agent-1' })
+    let first = true
+    bottom(on, () => {
+      if (!first) return undefined
+      first = false
+      return { isError: true, result: CHANGED }
+    })
+    await spawnBrief($, 'T-1', 'toolu_A0000001')
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'pwd' })
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'pwd' })
+    await $.turn.complete(turnInput('agent-1', 'Done.\n[[report v=1 task=T-1 subtask=main branch=agent/mod/T-1 pr=none sha=none gate=fail files=a/x.ts]]'))
+    expect([...w.appended.map(a => a.text), ...w.logs].join('\n')).not.toContain('blocked by environment')
+    const recs = (w.store.get(`delegation.tasks.T-1@${ROOT}`) ?? []) as { blocked?: string }[]
+    expect(recs[0]?.blocked).toBeUndefined()
+  })
+
   test('not blocked: a usable sha, or no refusal, is judged as before', { options: { ...GM } }, async ($, on) => {
     const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody' }, run: branchRun('agent/mod/T-1'), agentId: 'agent-1' })
     bottom(on)
