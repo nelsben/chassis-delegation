@@ -228,7 +228,7 @@ import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, do
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
-import { mergedVerdict, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule, pollStep } from './lib/verdicttool'
+import { mergedVerdict, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
@@ -7305,6 +7305,28 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
   }
 }
 
+/** MOD-297 (#336): a throw in the verdict tool comes back as one line naming the error and the band row, never an empty result. */
+async function runVerdictSafe($: Host, input: Record<string, unknown>): Promise<string> {
+  try {
+    return await runVerdict($, input)
+  } catch (err) {
+    const task = typeof input.task === 'string' ? input.task.trim() : ''
+    const message = err instanceof Error ? err.message : String(err)
+    debug($, `verdict failed for ${task}: ${message.split('\n')[0]}`)
+    let row: { verdict: string; next?: string } | undefined
+    try {
+      const subtask = typeof input.subtask === 'string' && input.subtask.trim() !== '' ? input.subtask.trim() : 'main'
+      const { rows } = await ledgerOf($)
+      const spawn = latestSpawnRow(rows, { task, subtask })
+      const done = spawn ? verdictAfter(rows, spawn) : undefined
+      if (done) row = { verdict: done.verdict, next: done.next }
+    } catch {
+      // the row is optional: the line still names the error and the band
+    }
+    return verdictFailLine(task, message, row)
+  }
+}
+
 // ---- MOD-114: the brain's effort nudge ------------------------------------------------
 // The mod never touches the brain's effort (the user's /model setting). A hand-back whose
 // report names a cards artefact ends its row `lead: judgment next, raise to high`; the key
@@ -10596,7 +10618,7 @@ export const register: Register = (on, opts) => {
     return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|tree <n>|tree import <file>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => (landSeen($, 'card'), { result: await runCard($, e as unknown as Record<string, unknown>) }))
-  on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => (landSeen($, 'verdict'), { result: await runVerdict($, e as unknown as Record<string, unknown>) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => (landSeen($, 'verdict'), { result: await runVerdictSafe($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__init' as never }, async ($, e) => ({ result: await runInit($, pathOfCall(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__setup' as never }, async ($, e) => ({ result: await runSetup($, true, pathOfCall(e)) }))
   // MOD-75: the merge tool, the command's second door
