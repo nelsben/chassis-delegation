@@ -4,6 +4,7 @@
 
 ### Added
 
+- **The guide gains 'Adopting the issue tree in an existing repo' (the ordered steps and 'What closes what') and a 'When you say ... run ...' table near the top, the owner's words mapped to tools and commands (#335).**
 - **`/delegation tree reconcile <n> [--confirm]` and the `tree` tool with `reconcile: true` list the open sub-issues that merged cards already did, the sub-issues closed by hand with open children, and the ones that match nothing, with the `gh issue close` lines; `--confirm` runs the done-elsewhere closes only (MOD-288).**
 - **A card cut with no `issue:` is matched against the planned tasks the mod filed: the `card` tool and `/dispatch`'s dry run name the one to pass, and the `issueMatch` option (`suggest` by default, or `require`) can refuse the card (MOD-287, #334).**
 - **`/delegation setup` and the `setup` tool print a Tree group of advice: the six type labels, the project option, `scopeAmends` with parent cards, and open issues with no `type:` label, each with its fix line (MOD-285).** Read-only `gh label list` and `gh issue list` reads (the two exact shapes are added to the host-command allowlist, landRepo only); gh absent, no GitHub origin or a failed read prints `tree checks skipped: <reason>`. `/delegation init` does not run them. Pure helpers in `hooks/lib/setup.ts`.
