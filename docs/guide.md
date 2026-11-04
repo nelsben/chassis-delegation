@@ -6,6 +6,20 @@ The main model (the "brain") hands a task card to a worker with one `dispatch`
 call, then makes the Agent call it gets back. The mod needs no network. The
 card-to-merge flow is in [How it works](how-it-works.md).
 
+## When you say ... run ...
+
+Owner's words, and the step each one means. One row per phrase; the tool and the command do the same thing.
+
+| When you say | Run | What it does |
+| --- | --- | --- |
+| `check this` | the `tree` tool, or `/delegation tree <n>`; `/delegation` for the status band | reads a plan issue and its sub-issues, or shows what is running, queued and owed. Read-only. |
+| `file this` | the `land` tool, or `/delegation land <type> <title> [--parent <n>]` | writes the issue body and shows it. It files only with `confirm: true` after your yes (or on the brain's call when `landAuto` is on). |
+| `plan this` | the `land_plan` tool for a settled plan, or `tree_import` / `/delegation tree import <file> --dry-run` for a backlog file | shows the tree first and files nothing until you say yes, then `confirm: true` or `--confirm`. |
+| `card this` | the `card` tool, or `/dispatch <ID> --dry-run` | writes the card and runs the dry run. Pass the `issue:` and `parent:` it suggests. |
+| `do it` | the `dispatch` tool, or `/dispatch <ID>` | cuts the worktree and returns the spawn block; the worker starts on the Agent call it names. |
+| `is it done` | the `verdict` tool, then the `merge` tool or `/delegation merge <ID>`; after the PR lands, `/delegation merge <ID> --finish` | a consistent verdict goes to merge; the finish closes the task and its ancestors. |
+| `release` | a card of the release shape: `kind: release`, a scope of only `CHANGELOG.md` and the version files, and a title that starts `Release` | the release extras (tag, push) are in [Merging a card](review-and-merge.md#merging-a-card). |
+
 ## Sixty seconds
 
 1. **Set up, then say the task.** Run `/delegation setup` once. Then tell
@@ -251,6 +265,35 @@ While parents are in use, set `/delegation config scopeAmends within-parent`. A 
 ### Land nudge
 
 Two one-line leads sit in the band above the prompt, for the brain and not for you. After a prompt of yours that describes a bug, feature or idea, if the turn ends without a `land`, `land_plan` or `card` call, the band says `lead: land this as an issue (land or land_plan) or say it is not work`. After a merge finish whose parent issue still has open tasks, it says `lead: parent #<n> has <k> open tasks; land the next or close it`. A later land, land_plan or card call clears the first; land, land_plan, card or dispatch clears the second. Nothing is written to GitHub. Turn them off with `/delegation config landNudge off`.
+
+## Adopting the issue tree in an existing repo
+
+The steps, in order, for a repo that has its work in a backlog or in people's heads. Each step names the command and what it prints. The levels are in [Planning on GitHub](#planning-on-github).
+
+1. **Run setup and act on its Tree lines.** `/delegation setup` runs read-only `gh label list` and `gh issue list` reads and prints a Tree group. Act on each line it gives: a missing `type:` label (`gh label create type:<x> --repo <owner/repo>`), the `project` option when it is unset (`/delegation config project <owner>/<number>`), `scopeAmends` (`/delegation config scopeAmends within-parent`) once a card has a `parent:`, and the count of open issues with no `type:` label (`gh issue edit <n> --repo <owner/repo> --add-label type:task` for the first ten). If it prints `tree checks skipped: <reason>`, fix the reason (gh not on PATH, no GitHub origin) and run setup again.
+
+2. **Write the backlog as a plan file.** Write `.delegation/plans/<name>.json`; any other folder is refused. The items go in this order: an `epic`, then an optional `feature`, an optional `story`, then `task`, `bug` or `spike`. A child ranks below its parent, and a feature under a story is refused with the item named (`items[1].children[0]`). A task needs `paths`, and a child's paths sit inside its parent's when the parent has paths. The file has the shape in [Tree import](#tree-import).
+
+3. **Dry run the import.** Run `/delegation tree import .delegation/plans/<name>.json --dry-run`, or the `tree_import` tool with `dryRun: true`. It prints the whole tree indented, the count per type, and how many items are new and how many are already filed. It runs no `gh`. Show the tree to the person.
+
+4. **Confirm in batches.** After the person says yes, run `/delegation tree import .delegation/plans/<name>.json --confirm` (or `confirm: true`). Each run files at most `treeImportBatch` issues (default 20), a second apart, and ends `filed k of n; run again to continue`. Run it again until it reports that all are filed. A re-run prints `already filed #<n> (...)` for each item it skips.
+
+5. **Cut every card from its issue.** From now on pass the issue's number as `issue:` and its parent's as `parent:`, with `parentScope` and `parentForbid` from `/delegation tree <parent>` (its last line is `parentScope for a task card: [...]`). A card cut with no `issue:` gets a line such as `planned task #12 "export drops a row" (under #9) overlaps this scope; pass issue: 12, parent: 9` from the `card` tool and from `/dispatch --dry-run`. With `/delegation config issueMatch require`, the `card` tool and `/dispatch` refuse a card with no `issue` while a candidate overlaps and end `pass issue: <n> (or set issueMatch suggest)`.
+
+6. **Retire what already shipped.** Once for each top-level item, run `/delegation tree reconcile <n>`. It prints three lists, one row each: `done in <ID> (#<pr>)` for an open sub-issue a merged card already did, `closed, <k> children open` for a sub-issue closed by hand, and `no match` for an open sub-issue with no card. It prints a `gh issue close` line for each done-elsewhere row, and a commented `# gh issue close ... --comment 'not planned'` line for each no-match row, for you to run by hand. Then run `/delegation tree reconcile <n> --confirm`: it closes the done-elsewhere rows only, at most `treeImportBatch` per run, and reports `closed #<n>` or `close #<n> failed: <why>`.
+
+### What closes what
+
+| Event | What closes | What prints |
+| --- | --- | --- |
+| The merge finish of a task (`/delegation merge <ID> --finish`) | the task, with `merged in #<pr>` or `merged at <sha7>` | `closed #<n>` |
+| The task was the last open task of its parent | the parent, with `all <k> tasks done` | `closed #<n>` |
+| Each ancestor above the task, up to four levels, whose sub-issues are all closed | that ancestor, with `all <k> sub-issues done` | `# parent #<n>: k of m still open` for the first one left open |
+| `tree reconcile <n> --confirm` | an open sub-issue a merged card already did (a planned task done by an unlinked card) | `closed #<n>` |
+| A parent closed by hand with open children | nothing: reconcile lists it and leaves it for the person | `closed, <k> children open (#a, #b)` |
+| Two commands close an issue as a side effect of filing | `land --supersedes <old>` closes the old issue; `land --closed <evidence>` or a `close:` item files a done item and closes it | `closed #<old> as superseded by #<new>` / `done before filing: <evidence>` |
+
+Nothing else in the mod closes an issue.
 
 ## Commands and tools
 
