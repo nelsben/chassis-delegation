@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **A spawn row recorded under a suffixed task id (`<task> <agent>`) reads closed once a later accept, merge or consistent or reviewed row for the plain id is written (`superseded by <task> attempt <n>`), so merged tasks no longer show as running (MOD-296, #398).**
+
 - **A brief whose header names a report format other than `chassis.report.v1` is not refuted as malformed: its report's missing `sha=`, `branch=` and `red=` are not checked, and the verdict says `report format <value>: fields not checked by the mod` (MOD-295).**
 
 - **A round-2 hand-back's `files=` is held when it matches that round's own delta since the earlier consistent attempt's sha or the cumulative branch delta, and a refute names the base it compared against (`round base <sha7>` / `dispatch base <sha7>`) with every omitted and invented path in full (MOD-294, #388).**

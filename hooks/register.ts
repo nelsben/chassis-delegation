@@ -234,7 +234,7 @@ import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from '
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
 import { BY_TASK_FAMILIES, migratedLine, migrationPlan, scopedId, trimRepo, type MigrationPlan } from './lib/taskkeys'
 import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLine, parseLedger, spawnRow, verdictAfter, withTail, type Fallback, type LedgerRow, type RowQuery } from './lib/storeloss'
-import { handedBackRow, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
+import { closesTask, handedBackRow, plainTaskOf, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { cardsHandedBack, nudgeDown, nudgeText, nudgeUp, type EffortNudge } from './lib/nudge'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { DEFAULT_CARD_DIR, fillMergeCheck, ignoreWithCards, isGitRef, mergeCheckRefusal, mergeChecksFor, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
@@ -2405,6 +2405,13 @@ type Live = {
 
 const isOpen = (s: SpawnRecord): boolean => s.verdictAttempt !== s.attempt
 
+/** MOD-296 (#398): a spawn under a suffixed id that a later ledger row for its plain id closed (an accept, a merge, or a consistent or reviewed verdict) is not running. */
+function supersededSpawn(rows: readonly LedgerRow[], label: string, at: number | undefined): boolean {
+  const plain = plainTaskOf(label)
+  if (plain === undefined || at === undefined) return false
+  return rows.some(r => typeof r.at === 'number' && r.at > at && r.task === plain && closesTask({ task: plain, attempt: 0, kind: r.kind as string | undefined, verdict: r.verdict as string | undefined }))
+}
+
 /** The session's delegation as it stands; `exclude` is an agent whose turn just ended. */
 async function liveState($: Host, exclude?: string): Promise<Live> {
   const out: Live = { running: 0, workers: [], pending: [], queued: 0 }
@@ -2422,6 +2429,7 @@ async function liveState($: Host, exclude?: string): Promise<Live> {
     if (!isOpen(spawn)) liveNotes.set(a.id, { gen, kind: 'closed' })
     else liveNotes.delete(a.id)
     const label = taskLabel(spawn.task, spawn.subtask)
+    if (supersededSpawn((await ledgerOf($)).rows, label, spawn.at)) continue
     if (a.status === 'running') {
       out.running += 1
       // MOD-21: a running reviewer holds no worker slot; its task's verdict is pending until it hands back
