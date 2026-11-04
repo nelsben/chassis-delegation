@@ -45,6 +45,6 @@ describe('MOD-294: the files claim of a later round', () => {
     const bad = await run('src/a.ts', R1)
     expect(bad.verdict).toBe('refuted')
     expect(bad.lines.some(l => l.includes('omits docs/x.md') && l.includes('round base bbbbbbb'))).toBe(true)
-    expect((await run('src/a.ts')).lines).toContain('claim files: compared against dispatch base 0000000')
+    expect((await run('src/a.ts')).lines).toContain('claim files: compared against dispatch base origin/main')
   })
 })
