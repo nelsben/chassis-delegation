@@ -16,8 +16,8 @@ const creates = (w: any) => gh(w).filter((a: string[]) => a[2] === 'create')
 const planJson = (over: Record<string, unknown> = {}) => ({
   version: 1,
   items: [
-    { type: 'feature', title: 'Alpha', children: [
-      { type: 'epic', title: 'Beta', paths: ['src/**'], children: [
+    { type: 'epic', title: 'Alpha', children: [
+      { type: 'feature', title: 'Beta', paths: ['src/**'], children: [
         { type: 'task', title: 'Gamma', paths: ['src/a.ts'] },
         { type: 'task', title: 'Delta', paths: ['src/b.ts'] },
       ] },
@@ -64,8 +64,8 @@ describe('MOD-215: tree import', () => {
     const out = text(await importTool($, { file: rel, confirm: true, dryRun: true }))
     const out2 = String((await cmd($, `${rel} --dry-run`)).text)
     for (const o of [out, out2]) {
-      expect(o).toContain('feature: Alpha [scope: none]')
-      expect(o).toContain('  epic: Beta [src/**]')
+      expect(o).toContain('epic: Alpha [scope: none]')
+      expect(o).toContain('  feature: Beta [src/**]')
       expect(o).toContain('    task: Gamma [src/a.ts]')
       expect(o).toContain('counts: feature 1, epic 1, story 0, task 2 (4 items); new 4, may reuse 0, filed closed 0')
       expect(o).toContain('nothing filed')
@@ -88,8 +88,8 @@ describe('MOD-215: tree import', () => {
     await $.session.start(sessionStart)
     const out = text(await importTool($, { file: rel, confirm: true }))
     expect(creates(w).map((a: string[]) => [a[a.indexOf('--title') + 1], a[a.indexOf('--label') + 1], a.includes('--parent') ? a[a.indexOf('--parent') + 1] : ''])).toEqual([
-      ['Alpha', 'type:feature', ''],
-      ['Beta', 'type:epic', '50'],
+      ['Alpha', 'type:epic', ''],
+      ['Beta', 'type:feature', '50'],
       ['Gamma', 'type:task', '51'],
       ['Delta', 'type:task', '51'],
     ])

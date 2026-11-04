@@ -117,6 +117,17 @@ describe('MOD-193: parsePlan', () => {
   })
 })
 
+describe('MOD-284: the order of a land_plan tree', () => {
+  test('epic > task and feature > bug are accepted', async () => {
+    const { parsePlan } = await lib()
+    const epic = parsePlan({ feature: { title: 'E', type: 'epic', paths: ['src/**'] }, tasks: [{ title: 'T', paths: ['src/a.ts'] }] })
+    expect(epic.error).toBe(undefined)
+    const bug = parsePlan({ feature: { title: 'F', paths: ['src/**'] }, tasks: [{ title: 'B', type: 'bug', paths: ['src/a.ts'] }] })
+    expect(bug.error).toBe(undefined)
+    expect(bug.tasks.map(t => t.type)).toEqual(['bug'])
+  })
+})
+
 describe('MOD-198: issueLineOf', () => {
   test('reads the number and url back; the last matching line wins; else undefined', async () => {
     const { issueLineOf } = await lib()
