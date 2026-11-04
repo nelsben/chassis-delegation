@@ -38,7 +38,7 @@
 // hand-back (norepo.ts outsideCheck) against the absolute entries. The report's artefacts= are
 // stat'ed, a gate may name {outdir}, and metrics= are shown, never judged.
 // Pure apart from `io`: no `$`.
-import { effectiveList, parseAmends, parseHeader, type Report } from './brief'
+import { effectiveList, foreignReportFormat, notCheckedLine, parseAmends, parseHeader, type Report } from './brief'
 import { checkGateWords, gateForDelta, isEngineGate, resolveGateRuns, splitCommand, type GateResolution, type GateRun } from './gates'
 import { artefactsCheck, attributeWrites, isAbsolute, isDelegationPath, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
 import { isGitRef } from './repoconfig'
@@ -702,6 +702,9 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   const { repo, report } = input
   const here = input.here === true
   const lines = [...contract.lines]
+  // MOD-295: a report in another repo's format is not judged on the mod's sha=, branch= and red= fields
+  const otherFormat = cardless ? undefined : foreignReportFormat(input.briefText)
+  if (otherFormat !== undefined) lines.push(notCheckedLine(otherFormat))
   let anyFailed = false
   let anyUnchecked = false
   const claim = (name: string, status: 'held' | 'failed' | 'unchecked', detail: string) => {
@@ -765,6 +768,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
 
   // 2. the sha exists and is on the branch (a sha that does not exist is the fabrication case)
   if (treeSha) claim('sha', 'held', `sha=${sha}: the delta is the working tree (git status: staged, unstaged and untracked)`)
+  else if (sha === '' && otherFormat !== undefined) claim('sha', 'unchecked', notCheckedLine(otherFormat))
   else if (sha === '') claim('sha', 'failed', malformedReportDetail(report, { here, cardless, wantsRed: briefWantsRed(contract.redTest) }))
   else if (!full) claim('sha', 'failed', `sha '${sha}' does not exist in ${repo} (fabrication)`)
   else if (here) claim('sha', 'held', `${full.slice(0, 9)} resolves in ${repo}`)
@@ -1055,6 +1059,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   // 6. the red evidence (GH-20): when the brief has a red test, red= names its failing output in this tree
   let red: NativeResult['red']
   if (cardless) claim('red', 'unchecked', NO_BRIEF_REASON)
+  else if (otherFormat !== undefined && briefWantsRed(contract.redTest) && redUnnamed(report.red)) claim('red', 'unchecked', notCheckedLine(otherFormat))
   else if (briefWantsRed(contract.redTest)) {
     const named = (report.red ?? '').trim()
     let ev: RedEvidence = { exists: false }

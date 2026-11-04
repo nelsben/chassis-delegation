@@ -628,3 +628,19 @@ export function spendOf(h: Pick<BriefHeader, 'spend'> | undefined): number | und
   const n = Number(v)
   return Number.isFinite(n) && n > 0 ? n : undefined
 }
+
+/** MOD-295: the report format the mod checks the fields of (sha=, branch=, red=). */
+export const MOD_REPORT_FORMAT = 'chassis.report.v1'
+
+/**
+ * MOD-295: the header's report= value when it names a format other than the mod's own (a repo's
+ * `<repo>.report.v1`), else undefined (absent, empty or chassis.report.v1). The mod does not check that
+ * format's fields, so the verifier says so instead of refuting the report on them.
+ */
+export function foreignReportFormat(briefText: string): string | undefined {
+  const value = (parseHeader(briefText)?.fields.report ?? '').trim()
+  return value === '' || value === MOD_REPORT_FORMAT ? undefined : value
+}
+
+/** MOD-295: the verdict line for a report in a foreign format. */
+export const notCheckedLine = (format: string): string => `report format ${format}: fields not checked by the mod`
