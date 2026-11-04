@@ -148,6 +148,86 @@ export function setupChecks(p: SetupProbe): SetupLine[] {
   return out
 }
 
+/** MOD-285: the six type labels the issue tree files with. */
+export const TREE_LABELS = ['type:feature', 'type:epic', 'type:story', 'type:task', 'type:bug', 'type:spike'] as const
+
+/** What register.ts read for the tree group. `skipped` is the reason the reads could not run. */
+export type TreeProbe = {
+  skipped?: string
+  ownerRepo?: string
+  /** The label names on origin. */
+  labels?: readonly string[]
+  /** The project option is set, or the repo file says none. */
+  projectSet?: boolean
+  /** Some card in the card folder has a parent: field. */
+  hasParentCards?: boolean
+  /** The effective scopeAmends. */
+  scopeAmends?: string
+  /** Open issues on origin with no type: label. */
+  untyped?: readonly number[]
+}
+
+/** The names in `gh label list --json name`; undefined when it is not that. */
+export function labelNames(json: string): string[] | undefined {
+  try {
+    const v: unknown = JSON.parse(json)
+    if (!Array.isArray(v)) return undefined
+    return v.map(x => (x as { name?: unknown })?.name).filter((n): n is string => typeof n === 'string')
+  } catch {
+    return undefined
+  }
+}
+
+/** The numbers of the issues in `gh issue list --json number,labels` with no type: label; undefined when it is not that. */
+export function untypedIssues(json: string): number[] | undefined {
+  try {
+    const v: unknown = JSON.parse(json)
+    if (!Array.isArray(v)) return undefined
+    const out: number[] = []
+    for (const i of v as { number?: unknown; labels?: unknown }[]) {
+      if (typeof i?.number !== 'number') continue
+      const names = Array.isArray(i.labels) ? i.labels.map(l => (l as { name?: unknown })?.name) : []
+      if (!names.some(n => typeof n === 'string' && n.startsWith('type:'))) out.push(i.number)
+    }
+    return out
+  } catch {
+    return undefined
+  }
+}
+
+/** MOD-285: the tree group, advice only: the labels, the project, scopeAmends with parents, open issues with no type. */
+export function treeLines(t: TreeProbe): SetupLine[] {
+  if (t.skipped !== undefined) return [{ level: 'advice', ok: true, text: `tree checks skipped: ${t.skipped}` }]
+  const repo = t.ownerRepo ?? ''
+  const out: SetupLine[] = []
+  const adv = (text: string, fix?: string): void => void out.push({ level: 'advice', ok: true, text, ...(fix ? { fix } : {}) })
+  const missing = TREE_LABELS.filter(l => !(t.labels ?? []).includes(l))
+  if (missing.length === 0) adv('tree: the six type labels exist on origin')
+  else adv(`tree: ${missing.length} of the six type labels missing on origin: ${missing.join(', ')}`, missing.map(l => `gh label create ${l} --repo ${repo}`).join('\n    '))
+  if (t.projectSet) adv('tree: the project option is set (or the repo file says none)')
+  else adv('tree: the project option is not set; new issues join no project', '/delegation config project <owner>/<number>')
+  if (t.hasParentCards && t.scopeAmends !== 'within-parent') adv(`tree: cards have a parent: and scopeAmends is ${t.scopeAmends ?? 'apply'}, not within-parent`, '/delegation config scopeAmends within-parent')
+  else adv('tree: scopeAmends fits the cards (no parent: cards, or within-parent)')
+  const u = t.untyped ?? []
+  if (u.length === 0) adv('tree: every open issue has a type: label')
+  else {
+    const fixes = u.slice(0, 10).map(n => `gh issue edit ${n} --repo ${repo} --add-label type:task`)
+    if (u.length > 10) fixes.push(`... and ${u.length - 10} more`)
+    adv(`tree: ${u.length} open issue${u.length === 1 ? '' : 's'} ${u.length === 1 ? 'has' : 'have'} no type: label`, fixes.join('\n    '))
+  }
+  return out
+}
+
+/** The tree group's lines, each fix indented under it. */
+export function treeText(lines: readonly SetupLine[]): string {
+  const out: string[] = []
+  for (const l of lines) {
+    out.push(`· ${l.text}`)
+    if (l.fix) out.push(`    ${l.fix}`)
+  }
+  return out.join('\n')
+}
+
 /** The count of required checks that hold, and the total. */
 export const requiredTally = (lines: readonly SetupLine[]): { held: number; total: number } => {
   const r = lines.filter(l => l.level === 'required')

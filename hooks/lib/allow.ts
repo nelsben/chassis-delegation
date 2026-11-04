@@ -230,6 +230,7 @@ function checkWorktreeLock(action: 'lock' | 'unlock', dirs: readonly string[], a
 function checkGh(args: readonly string[], allow: AllowConfig): Check {
   if (args[0] === 'issue') return checkGhIssue(args.slice(1), allow)
   if (args[0] === 'project') return checkGhProject(args.slice(1), allow)
+  if (args[0] === 'label') return setupLabelListOk(args.slice(1), allow) ? ok : refuse('gh label is not on the list: only label list --repo <landRepo> --json name --limit 100')
   if (args[0] !== 'pr' || (args[1] !== 'list' && args[1] !== 'view')) return refuse(`gh ${args.slice(0, 2).join(' ')} is not on the list`)
   const bad = args.find(a => a === '--web' || a === '-w')
   return bad ? refuse(`gh pr ${args[1]} ${bad} is not on the list`) : ok
@@ -269,6 +270,7 @@ function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
   }
   if (verb === 'close') return statusCloseOk(t, allow) ? ok : shape('close <number> --repo <landRepo> --comment <text not starting with ->')
   if (verb === 'comment' && statusCommentOk(t, allow)) return ok
+  if (verb === 'list' && setupIssueListOk(t, allow)) return ok
   if (!issueRepoSet) return refuse('gh issue is not on the list: no issueRepo is configured')
   if (verb === 'comment') {
     const exact = t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === repo && t[3] === '--body-file' && debriefBodyOk(t[4] as string, allow.root)
@@ -279,6 +281,16 @@ function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
     return exact ? ok : shape('list --repo <issueRepo> --state all --limit 200 --json number,title,body')
   }
   return refuse(`gh issue ${verb ?? ''} is not on the list`.replace('  ', ' '))
+}
+
+/** MOD-285: setup's two read-only tree reads, args in exactly this order, the landRepo only. */
+const setupLabelListOk = (t: readonly string[], allow: AllowConfig): boolean => {
+  const lr = landRepoOf(allow)
+  return lr !== '' && t.join(' ') === `list --repo ${lr} --json name --limit 100`
+}
+const setupIssueListOk = (t: readonly string[], allow: AllowConfig): boolean => {
+  const lr = landRepoOf(allow)
+  return lr !== '' && t.join(' ') === `--repo ${lr} --state open --limit 200 --json number,labels`
 }
 
 /** MOD-200: a status body: absolute, under <root>/.delegation/status/, plain segments. */
