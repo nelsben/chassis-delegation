@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **`/delegation setup` and the `setup` tool print a Tree group of advice: the six type labels, the project option, `scopeAmends` with parent cards, and open issues with no `type:` label, each with its fix line (MOD-285).** Read-only `gh label list` and `gh issue list` reads (the two exact shapes are added to the host-command allowlist, landRepo only); gh absent, no GitHub origin or a failed read prints `tree checks skipped: <reason>`. `/delegation init` does not run them. Pure helpers in `hooks/lib/setup.ts`.
+
 ### Changed
 
 - **`tree_import` and `land_plan` refuse a child that does not rank below its parent: epic, feature, story, then task, bug or spike (MOD-284).** A feature under a story and a story under a story are errors naming the item (`items[1].children[0]: a feature cannot hang under a story (order: ...)`); nothing is filed on any error. Existing trees are untouched. Pure helper `orderError` in `hooks/lib/landtree.ts`.

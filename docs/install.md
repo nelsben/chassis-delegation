@@ -66,6 +66,13 @@ Advice (never blocks):
 - uncommitted changes in worktree mode;
 - the debrief spending an agent.
 
+Tree (advice, never blocks; read-only `gh label list` and `gh issue list` reads of the origin repo, run by `/delegation setup` and the `setup` tool, not by `/delegation init`). When `gh` is not on PATH, origin is not a GitHub remote or a read fails, setup prints `tree checks skipped: <reason>` and nothing else changes:
+
+- the six labels `type:feature`, `type:epic`, `type:story`, `type:task`, `type:bug`, `type:spike` exist; each missing one gets `gh label create type:<x> --repo <owner/repo>`;
+- the `project` option is set (or the repo file says `none`); else `/delegation config project <owner>/<number>`;
+- when a card has a `parent:` field, `scopeAmends` is `within-parent`; else `/delegation config scopeAmends within-parent`;
+- the count of open issues with no `type:` label, with `gh issue edit <n> --repo <owner/repo> --add-label type:task` for the first ten and `... and <k> more` after.
+
 Once required checks hold, setup:
 
 1. runs init (no sample card);

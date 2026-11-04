@@ -1,5 +1,5 @@
 import { expect, describe } from 'claude-code/testing'
-import { test } from './harness'
+import { test, world, sessionStart, ROOT, type RunAnswer } from './harness'
 import { DEFAULT_SPEND_BY_TIER } from '../hooks/lib/cost'
 import { allRequiredHold, proposedSpend, BRAIN_HANDOVER, configLines, detectGate, foundOf, handoverText, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from '../hooks/lib/setup'
 import { CONFIG_TEMPLATE } from '../hooks/lib/init'
@@ -197,5 +197,23 @@ describe('GH-116: spend ceilings that fit the host', () => {
     const lines = configLines(found)
     expect(lines).toContain('config: spendByTier = economy 5, standard 15, frontier 35 (the gate deploys or runs remote tests)')
     expect(configLines({ gate: 'npm test', spendByTier: proposedSpend('npm test') })).toContain('config: spendByTier = economy 3, standard 10, frontier 25 (the defaults)')
+  })
+})
+
+describe('MOD-285: the tree group when gh is absent', () => {
+  test('setup prints one skipped line and runs no gh', async ($, on) => {
+    const answer = (argv: string[]): RunAnswer | undefined => {
+      const rest = argv.slice(3).join(' ')
+      if (rest === 'rev-parse --is-inside-work-tree') return { exitCode: 0, stdout: 'true\n' }
+      if (rest === 'rev-parse --show-toplevel') return { exitCode: 0, stdout: `${ROOT}\n` }
+      if (rest === 'rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n' }
+      if (rest === 'rev-parse --verify --quiet HEAD') return { exitCode: 0, stdout: 'abc1234\n' }
+      return { exitCode: 1, stdout: '' }
+    }
+    const w = world(on, { run: answer, files: { [`${ROOT}/package.json`]: '{"scripts":{"test":"node --test"}}', '/usr/bin/git': '', '/usr/bin/node': '', '/usr/bin/npm': '' }, dirs: { [ROOT]: ['package.json'] } })
+    await $.session.start(sessionStart)
+    const out = await $.command.run({ command: 'delegation', args: 'setup', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    expect(out.text).toContain('· tree checks skipped: gh is not on PATH')
+    expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
   })
 })
