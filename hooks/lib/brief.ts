@@ -526,6 +526,59 @@ export function effectiveList(base: string, amends: readonly Amend[], key: 'scop
   return list.join(',')
 }
 
+// ---- MOD-293 (#389, #393): a scope the brain grants is written into the brief --------------------------
+
+/** MOD-293: whether a literal path is inside a scope list: named by an entry, or matched by an entry's glob. */
+export const pathInScope = (path: string, scope: readonly string[]): boolean => scope.some(e => e !== '' && (e === path || globMatches(path, e)))
+
+/**
+ * MOD-293: the paths of a hand-back block that asks only for `scope+=` paths the brief header's scope already holds
+ * (because the brain granted them): they need no approval and no refute. Undefined when the block carries any other
+ * operation, or any path outside the scope.
+ */
+export function grantedPaths(a: Amend, scope: readonly string[]): string[] | undefined {
+  if (a.ops.length === 0 || !a.ops.every(op => op.startsWith('scope+='))) return undefined
+  const paths = amendScopePaths(a)
+  return paths.length > 0 && paths.every(p => pathInScope(p, scope)) ? paths : undefined
+}
+
+export type GrantResult = { ok: true; text: string; lines: string[] } | { ok: false; error: string }
+
+/** MOD-293: the refusal for a `scope+=` path under a forbid entry the grant does not lift. */
+export const grantUnderForbidLine = (path: string, entry: string): string => `scope+=${path} is under forbid ${entry}; add forbid-=${entry} to lift it`
+
+/**
+ * MOD-293: the brain's grant (`scope+=a b/c.ts forbid-=d/**`, amend tokens) applied to a brief's text. The tokens are
+ * parsed as one amend block with `reason=brain grant`. A `scope+=` path under a forbid entry (the header's, the brief's
+ * amends applied, this grant's own `forbid-=` lifting) is refused naming the entry, and nothing is written. Else the block
+ * is appended on its own line and the header's `scope=`/`forbid=` are rewritten to the result.
+ */
+export function applyGrant(brief: string, amend: string): GrantResult {
+  const header = parseHeader(brief)
+  if (!header) return { ok: false, error: 'the brief has no [[brief ...]] header' }
+  const block = `[[amend v=1 ${amend.trim().replace(/\s+/g, ' ')} reason=brain grant]]`
+  const parsed = parseAmends(block)
+  const one = parsed.amends[0]
+  if (parsed.malformed !== undefined || !one) return { ok: false, error: `amend refused: ${parsed.malformed ?? 'not an amend'} (use scope+=<path> forbid-=<glob>)` }
+  const scopeKey = header.fields.scope !== undefined || header.fields.scope_globs === undefined ? 'scope' : 'scope_globs'
+  const forbidKey = header.fields.forbid !== undefined || header.fields.forbid_globs === undefined ? 'forbid' : 'forbid_globs'
+  const held = parseAmends(brief).amends
+  const scopeNow = effectiveList(header.fields[scopeKey] ?? '', held, 'scope')
+  const forbidNow = effectiveList(header.fields[forbidKey] ?? '', held, 'forbid')
+  const forbidAfter = effectiveList(forbidNow, [one], 'forbid')
+  const forbidList = forbidAfter.split(',').filter(Boolean)
+  for (const path of amendScopePaths(one)) {
+    const entry = forbidCovering(path, forbidList)
+    if (entry !== undefined) return { ok: false, error: grantUnderForbidLine(path, entry) }
+  }
+  const scopeAfter = effectiveList(scopeNow, [one], 'scope')
+  let text = brief
+  if (scopeAfter !== scopeNow) text = setHeaderField(text, scopeKey, listForHeader(scopeAfter.split(',').filter(Boolean))).text
+  if (forbidAfter !== forbidNow && (header.fields[forbidKey] !== undefined || forbidAfter !== '')) text = setHeaderField(text, forbidKey, listForHeader(forbidList)).text
+  const appended = appendAmends(text, [block])
+  return { ok: true, text: appended.text, lines: appended.added.length > 0 ? appended.added : [block] }
+}
+
 /**
  * The LAST `[[report …]]` block of a hand-back. It ends at the first `]]`
  * that closes a line (so a note holding `]]` mid-line stays whole), else at

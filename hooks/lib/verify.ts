@@ -161,7 +161,7 @@ export function advise(input: AdviseInput): Advice {
     const failedAll = (input.lines ?? []).map(parseClaimLine).filter((c): c is ClaimLine => c?.status === 'failed')
     const path = failedAll.length === 1 && failedAll[0]?.name === 'scope' ? outOfScopePath(failedAll[0]) : undefined
     if (path !== undefined && heldScopePaths(input.lines ?? []).includes(path)) {
-      return { kind: 'check', next: `approve the amend (append it to ${input.briefPath ?? 'the brief'}), then dispatch verify=${input.sha ?? '<sha>'}; or refuse it` }
+      return { kind: 'check', next: `approve the amend (append it to ${input.briefPath ?? 'the brief'}), then dispatch verify=${input.sha ?? '<sha>'}; or refuse it; grant it: dispatch task=${input.task} amend="scope+=${path}" then dispatch verify=${input.sha ?? '<sha>'}` }
     }
   }
   if (input.attempts >= input.budget) return { kind: 'exhausted', next: `stop — ${budgetDenyMessage(input.task, input.attempts)}` }

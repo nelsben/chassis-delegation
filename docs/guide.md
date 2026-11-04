@@ -139,6 +139,10 @@ A prose scope stops dispatch before the worktree:
 
 Dispatch again with `--scope <globs>`; it replaces the card's scope in the header.
 
+### Granting a scope
+
+To let a worker touch a path the card did not name, call `dispatch` with `amend="scope+=<path>"` (or `/dispatch <ID> --amend scope+=<path>`): the grant is written into the brief as one `[[amend ... reason=brain grant]]` line and the header's `scope=` and `forbid=` are rewritten, because the verifier reads the brief and nothing said in a message. A `scope+=` path under a forbid entry is refused naming it; add `forbid-=<entry>` in the same `amend=` to lift it. With `verify` the grant is applied first, and a grant alone spawns no worker.
+
 ### Budget
 
 A `budget` that is not `<n>-attempts` falls back to `defaultBudget`; `/dispatch` warns once:
