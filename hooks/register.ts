@@ -35,6 +35,7 @@ import {
   patchRecord,
   patchReview,
   priorRedHashes,
+  roundBase,
   acceptRow,
   ledgerHas,
   retireDue,
@@ -6277,7 +6278,9 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const probed = await run($, workTreeArgv(repo), { cwd: root, timeoutMs: 15000 })
   if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes)
   // GH-20: a red file must differ from every earlier attempt's of this task + subtask
-  const priorRed = priorRedHashes(await loadAttempts($, spawn), spawn.subtask, spawn.attempt, laneOf(spawn))
+  const prior = await loadAttempts($, spawn)
+  const priorRed = priorRedHashes(prior, spawn.subtask, spawn.attempt, laneOf(spawn))
+  const round = roundBase(prior, spawn.subtask, spawn.attempt, laneOf(spawn))
   const others = here ? (await inFlightHere($, root, taskLabel(spawn.task, spawn.subtask))).map(c => ({ card: c.label, files: c.files })) : []
   const outside = await outsideFor($, spawn.task, other?.path)
   // MOD-152 (#246): a worktree is locked while the verifier judges it, so a plain `worktree remove --force` refuses it
@@ -6299,6 +6302,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
         outDir: `${root}/.delegation/${spawn.task}`,
         attempt: spawn.attempt,
         priorRed,
+        ...(round ? { roundBase: round } : {}),
         ...(spawn.replay && spawn.base ? { base: spawn.base } : {}),
         ...(baseRef ? { baseRef } : {}),
         ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),

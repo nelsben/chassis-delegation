@@ -101,6 +101,8 @@ export type NativeInput = {
   outDir?: string
   /** MOD-149: the attempt number in the saved file's name (1 when absent). */
   attempt?: number
+  /** MOD-294: the sha of the newest earlier consistent attempt on this branch (see roundBase); the round's own delta is taken from it. */
+  roundBase?: string
 }
 
 /** The reason a cardless verify gives for the claims only a brief can check. */
@@ -361,6 +363,30 @@ export function filesClaim(claimed: readonly string[], actual: readonly string[]
   }
   const named = [...(omits.length ? [`omits ${omits.join(', ')}`] : []), ...(invents.length ? [`invents ${invents.join(', ')}`] : [])].join('; ')
   return `claim files: failed — files= does not match the actual delta (omits or invents a path): ${named}`
+}
+
+/**
+ * MOD-294 (#388): the files claim of a later round. With a prior consistent attempt (`round`: its sha and the delta since it)
+ * files= is held when it matches that round's own delta or the cumulative branch delta; the held line says which. When it
+ * fails, the line names the base it compared against (the round base, else the dispatch base) and every omitted and invented
+ * path, in full. With no `round` the line is filesClaim's, unchanged (filesBaseLine names the dispatch base beside it).
+ */
+export const filesBaseLine = (line: string, base: string | undefined, hasRound: boolean): string | undefined =>
+  line.startsWith('claim files: failed') && !hasRound && base ? `claim files: compared against dispatch base ${base}` : undefined
+
+export function filesClaimRound(
+  claimed: readonly string[],
+  branch: { delta: readonly string[]; renamedFrom?: readonly string[]; what?: string; base?: string },
+  round?: { base: string; delta: readonly string[]; renamedFrom?: readonly string[] },
+): string {
+  const what = branch.what ?? 'the sha delta'
+  const cumulative = filesClaim(claimed, branch.delta, what, branch.renamedFrom ?? [])
+  if (!round) return cumulative
+  const r7 = round.base.slice(0, 7)
+  const roundLine = filesClaim(claimed, round.delta, `the round delta since ${r7}`, round.renamedFrom ?? [])
+  if (roundLine.startsWith('claim files: held')) return roundLine
+  if (cumulative.startsWith('claim files: held')) return cumulative.replace(what, `the branch delta since ${branch.base || 'the dispatch base'}`)
+  return `${roundLine}; compared against round base ${r7}`
 }
 
 /**
@@ -878,8 +904,18 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   // 4. files= is the delta, exactly
   if (!delta) claim('files', 'unchecked', treeSha ? `no delta to compare against (${noDelta})` : 'no delta to compare against (sha/base missing)')
   else {
-    const line = filesClaim(csv(report.files).filter(f => f !== 'none'), delta.filter(p => !foreignGit.has(p)), treeSha ? 'the dirty-tree delta' : 'the sha delta', renamedFrom)
+    let round: { base: string; delta: string[]; renamedFrom: string[] } | undefined
+    if (input.roundBase && full && !treeSha) {
+      const rd = await out('diff', '--name-status', '-M', input.roundBase, full)
+      if (rd !== undefined) {
+        const d = nameStatusDelta(rd)
+        round = { base: input.roundBase, delta: d.paths.filter(p => !foreignGit.has(p)), renamedFrom: d.renamedFrom }
+      }
+    }
+    const line = filesClaimRound(csv(report.files).filter(f => f !== 'none'), { delta: delta.filter(p => !foreignGit.has(p)), renamedFrom, what: treeSha ? 'the dirty-tree delta' : 'the sha delta', ...(sinceBase ? { base: sinceBase } : {}) }, round)
     lines.push(line)
+    const baseLine = filesBaseLine(line, sinceBase, round !== undefined)
+    if (baseLine) lines.push(baseLine)
     if (line.startsWith('claim files: failed')) anyFailed = true
   }
 

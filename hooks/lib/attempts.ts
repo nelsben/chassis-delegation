@@ -210,6 +210,15 @@ export const judgedShas = (records: readonly AttemptRecord[], subtask: string, l
 export const priorRedHashes = (records: readonly AttemptRecord[], subtask: string, attempt: number, lane?: Lane): { attempt: number; hash: string; held?: boolean }[] =>
   attemptsFor(records, subtask, lane).flatMap(r => (r.attempt < attempt && r.redHash ? [{ attempt: r.attempt, hash: r.redHash, ...(r.redHeld ? { held: true } : {}) }] : []))
 
+/**
+ * MOD-294 (#388): the sha a later round's files= is judged against besides the dispatch base: the newest earlier attempt
+ * (same subtask and lane, attempt number below `attempt`) judged consistent or reviewed that names a sha. Undefined when none.
+ */
+export const roundBase = (records: readonly AttemptRecord[], subtask: string, attempt: number, lane?: Lane): string | undefined => {
+  const prior = records.filter(r => r.subtask === subtask && inLane(r, lane) && r.attempt < attempt && r.sha && (r.verdict === 'consistent' || r.verdict === 'reviewed'))
+  return prior.sort((a, b) => a.attempt - b.attempt).at(-1)?.sha
+}
+
 /** MOD-1: do two spellings of a sha (7-40 hex) name the same commit? One may be a prefix of the other. */
 const sameSha = (a: string, b: string): boolean => {
   const x = a.trim().toLowerCase()
