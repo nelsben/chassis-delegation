@@ -24,9 +24,15 @@ export function nudgeLine(kind: 'prompt' | 'parent', arg?: { number: number; ope
   return `lead: parent #${parent.number} has ${parent.open} open tasks; land the next or close it`
 }
 
-/** The parent and its still-open task count after `issue` merged; undefined when none is open or the read is missing. */
-export function parentNudge(parent: number, issue: number, siblings: readonly { number: number; state: string }[] | undefined): { number: number; open: number } | undefined {
+/** The first ancestor left open and its still-open count after `issue` merged (MOD-286: the direct parent, then `above` upward while each is closed by the finish); undefined when none is open or the read is missing. */
+export function parentNudge(parent: number, issue: number, siblings: readonly { number: number; state: string }[] | undefined, above: readonly { number: number; siblings: readonly { number: number; state: string }[] }[] = []): { number: number; open: number } | undefined {
   if (!siblings) return undefined
-  const open = siblings.filter(s => s.number !== issue && s.state.toUpperCase() !== 'CLOSED').length
-  return open > 0 ? { number: parent, open } : undefined
+  const chain = [{ number: parent, siblings }, ...above].slice(0, 4)
+  const done = new Set<number>([issue])
+  for (const a of chain) {
+    const open = a.siblings.filter(s => !done.has(s.number) && s.state.toUpperCase() !== 'CLOSED').length
+    if (open > 0) return { number: a.number, open }
+    done.add(a.number)
+  }
+  return undefined
 }

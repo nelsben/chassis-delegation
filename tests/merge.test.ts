@@ -492,7 +492,7 @@ describe('MOD-75: /delegation merge <id>', () => {
   // ---- MOD-195: finish closes the feature when its last task closes ---------------------------
   describe('MOD-195: the parent close line', () => {
     const ISSUE_CARD = CARD.replace('status: queued', 'status: queued\nissue: 52\nparent: 50')
-    const VIEW = ['gh', 'issue', 'view', '50', '--repo', 'acme/acme-app', '--json', 'number,title,state,labels,body,subIssues']
+    const VIEW = ['gh', 'issue', 'view', '50', '--repo', 'acme/acme-app', '--json', 'number,title,state,labels,body,subIssues,parent']
     const parentView = (first: string, view: Answers = () => undefined) =>
       landed(markMerged(ISSUE_CARD), argv => {
         const o = view(argv)
