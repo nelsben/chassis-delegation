@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **The verdict tool reads the branch before the ledger: a task whose head (or any attempt sha) is on origin/<default> reports `<task>: merged at <sha7>` with an accept row and no resume advice, and a hand-back with a report after a pause-cap charge is verified on that attempt instead of staying no-report (MOD-292, #392).**
+
 - **A rebase of a judged task's branch is not an attempt: when the head moved onto the same tree, the verdict tool says `rebased to <sha>` and no work-present attempt is recorded; new commits on another tree say `unverified work since <sha>` and charge nothing until a verify runs (MOD-291, #390).**
 
 ## 0.9.48 — 2026-11-04

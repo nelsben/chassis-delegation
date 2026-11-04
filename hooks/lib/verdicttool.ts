@@ -68,3 +68,22 @@ export const ROW_RACE_MS = 30_000
 
 /** True while a claimed attempt's row may still be about to be stored; an older or undated verdict was posted before the row was kept. */
 export const rowRaceOpen = (verdictAt: number | undefined, now: number): boolean => verdictAt !== undefined && now - verdictAt < ROW_RACE_MS
+
+// ---- MOD-292 (#392): the branch before the ledger ---------------------------------------------------------
+export type MergedVerdict = { kind: 'merged'; line: string; attempt: number; sha: string } | { kind: 'rows' }
+
+/**
+ * Decides the verdict tool's line from what git said (`ancestor`: the task's branch head, or an attempt sha, is on
+ * origin/<default branch>) and the task's attempt rows. Merged: `<task>: merged at <sha7>`, whatever the rows say; no
+ * next=resume, no agent, no spend. `sha`: the branch head when known, else the last row that names one.
+ */
+export function mergedVerdict(ancestor: boolean, rows: readonly { task: string; subtask: string; attempt: number; sha?: string }[], sha?: string): MergedVerdict {
+  const last = rows.at(-1)
+  if (!ancestor || !last) return { kind: 'rows' }
+  const named = sha ?? [...rows].reverse().find(r => r.sha !== undefined && r.sha !== '')?.sha
+  if (!named) return { kind: 'rows' }
+  return { kind: 'merged', line: `${last.subtask === 'main' ? last.task : `${last.task}/${last.subtask}`}: merged at ${named.slice(0, 7)}`, attempt: last.attempt, sha: named }
+}
+
+/** A hand-back with a report after a pause-cap charge is judged on the same attempt: the cap changes the count, not the outcome. */
+export const reopensAfterPauseCap = (pauseCharged: boolean | undefined, hasReport: boolean): boolean => pauseCharged === true && hasReport

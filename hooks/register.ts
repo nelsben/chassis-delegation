@@ -224,7 +224,7 @@ import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, do
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
-import { noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule, pollStep } from './lib/verdicttool'
+import { mergedVerdict, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
@@ -551,6 +551,8 @@ type SpawnRecord = {
   pauses?: number
   /** MOD-226: fingerprint of the hand-back judged a pause; a different hand-back reopens the same attempt. */
   pausedAs?: string
+  /** MOD-292: the attempt's row is a no-report charged by the pause cap; a hand-back with a report reopens it. */
+  pauseCharged?: boolean
   // MOD-89: no `prompt`: nothing read it back, and at about 1.4 KB a record it was most of the store (#157).
   // A record written before keeps it; the brief path, the key (the tool_use_id) and the description are what is read.
   description: string
@@ -6989,8 +6991,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit || blocked ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + (pauseCharge ? ` · ${pauseCharge}` : '') + downClause
   const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
-  const { malformed: _old, pausedAs: _pausedAs, ...latestClean } = latest
-  await storeSet($, K.spawn(spawn.key), { ...latestClean, verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line, ...(malformed && block !== undefined ? { malformed: block } : {}) })
+  const { malformed: _old, pausedAs: _pausedAs, pauseCharged: _pc, ...latestClean } = latest
+  await storeSet($, K.spawn(spawn.key), { ...latestClean, ...(pauseCharge ? { pauseCharged: true } : {}), verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line, ...(malformed && block !== undefined ? { malformed: block } : {}) })
   await setWorkers($, list => list.map(w => (w.task === spawn.task && w.subtask === spawn.subtask && w.attempt === spawn.attempt ? { ...w, verdict } : w)))
   await setLastVerdict($, { task: shownLabel, attempt: shownAttempt, verdict, next, at: t, text: full })
   // a cardless hand-back is posted, kept and ledgered like any other (GH-1 item 2)
@@ -7144,7 +7146,13 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<Verdi
   const label = taskLabel(task, subtask)
   // MOD-97: the id alone is the repo its dispatch remembered (else the session's); the attempt and the worker are that repo's
   const { repo } = await refOf($, task)
-  const latest = attemptsFor(await loadAttempts($, { task, repo }), subtask).at(-1)
+  const rowsNow = attemptsFor(await loadAttempts($, { task, repo }), subtask)
+  const latest = rowsNow.at(-1)
+  // MOD-292 (#392): the branch before the ledger: a head (or an attempt sha) on origin/<default> is merged, whatever the rows say
+  if (latest) {
+    const m = await mergedNow($, task, subtask, repo, rowsNow)
+    if (m) return { kind: 'judged', text: m }
+  }
   // MOD-94 (#157): an attempt the store has no record of: this process's memory of its start, else the ledger
   const mem = rememberedFor(task, subtask, repo)
   if (mem && (!latest || mem.attempt > latest.attempt)) return mem.verdictAttempt === mem.attempt && hasVerdictText(mem) ? postedOf($, mem, undefined) : { kind: 'wait' }
@@ -7168,6 +7176,39 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<Verdi
   if (move?.kind === 'rebased') return { kind: 'judged', text: rebasedText(judged.text, move.sha) }
   if (move?.kind === 'new-work') return { kind: 'judged', text: `${judged.text}\n${unverifiedWorkLine(latest.sha, move.sha, move.files)}` }
   return judged
+}
+
+/**
+ * MOD-292 (#392): the verdict tool's merged line, when the task's worktree head or any attempt sha is an ancestor of origin/<default>:
+ * the attempt is retired as merged and an accept row recorded (once per attempt). undefined: not merged, or git could not say.
+ */
+async function mergedNow($: Host, task: string, subtask: string, repo: string | undefined, rows: readonly AttemptRecord[]): Promise<string | undefined> {
+  try {
+    const root = repo !== undefined && repo !== '' ? repo : (await refOf($, task)).root
+    const want = defaultBranchOf((cfg.baseRef ?? '').trim())
+    const def = want !== '' && !isSha(want) ? want : 'main'
+    const wt = await mergeWorktree($, root, task)
+    const head = wt ? (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim() : ''
+    const candidates = [...(isSha(head) ? [head] : []), ...[...rows].reverse().map(r => r.sha).filter((s): s is string => s !== undefined && isSha(s))]
+    for (const sha of [...new Set(candidates)]) {
+      const anc = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, `origin/${def}`], { cwd: root, timeoutMs: 10000 })
+      if (!(anc.ok && anc.exitCode === 0)) continue
+      const d = mergedVerdict(true, rows, sha)
+      if (d.kind !== 'merged') return undefined
+      const last = rows.at(-1) as AttemptRecord
+      if (!last.retired) {
+        const t = await now($)
+        const ref: TaskRef = repo !== undefined && repo !== '' ? { task, repo } : task
+        await saveAttempts($, ref, patchRecord(await loadAttemptsRaw($, ref), subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }))
+        await appendLedger($, { ...acceptRow({ ...last, sha: d.sha }, 'merged', t), sessionId: await sessionIdOf($) })
+        await clearOwed($, taskLabel(task, subtask))
+      }
+      return d.line
+    }
+  } catch (err) {
+    debug($, `verdict: merged check skipped: ${String(err)}`)
+  }
+  return undefined
 }
 
 /** A judged attempt's row as the verdict tool returns it: the row posted, else the rendered verdict. */
@@ -7408,6 +7449,16 @@ async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: 
   if (spawn.malformed !== undefined) {
     if (block === undefined || block === spawn.malformed) return spawn
     const { malformed: _m, verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, verdictSummary: _vs, ...open } = spawn
+    const key = await attemptKey($, spawn)
+    posted.delete(key)
+    await storeSet($, K.posted(key), false)
+    await storeSet($, K.postedRow(key), '')
+    await storeSet($, K.spawn(spawn.key), { ...open, lastFailed: false })
+    return { ...open, lastFailed: false }
+  }
+  // MOD-292: a hand-back with a report after a pause-cap charge is judged on the same attempt (the cap changes the count, not the outcome)
+  if (reopensAfterPauseCap(spawn.pauseCharged, block !== undefined)) {
+    const { pauseCharged: _pc, verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, verdictSummary: _vs, ...open } = spawn
     const key = await attemptKey($, spawn)
     posted.delete(key)
     await storeSet($, K.posted(key), false)
