@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **`dispatch` takes `amend=` (`/dispatch <ID> --amend scope+=<path> forbid-=<glob>`): the grant is appended to the brief as one `[[amend ... reason=brain grant]]` line and the header's scope and forbid are rewritten, so the verifier sees it; a hand-back amend for a granted path says `amend granted: <path> already in scope`; a `scope+=` under a forbid is refused naming the entry; a scope refute ends `grant it: dispatch task=<ID> amend="scope+=<p>" then dispatch verify=<sha>` (MOD-293, #389, #393).**
+
 ### Fixed
 
 - **The verdict tool reads the branch before the ledger: a task whose head (or any attempt sha) is on origin/<default> reports `<task>: merged at <sha7>` with an accept row and no resume advice, and a hand-back with a report after a pause-cap charge is verified on that attempt instead of staying no-report (MOD-292, #392).**

@@ -518,7 +518,7 @@ export const TEMPLATE_FILES = ['brief.md', 'review.md', 'debrief.md'] as const
 export const templatePath = (pluginRoot: string, name: string): string => `${pluginRoot.replace(/\/+$/, '')}/hooks/templates/${name}`
 
 export type DispatchArgs =
-  | { id: string; dryRun: boolean; base: string; replay?: true; scope?: string[]; forbid?: string[]; here?: true; /** MOD-44: the absolute path of another local checkout this task is for, as written (the caller checks it). */ repo?: string; forceOverlap?: true; verify?: string; error?: undefined }
+  | { id: string; dryRun: boolean; base: string; replay?: true; scope?: string[]; forbid?: string[]; here?: true; /** MOD-44: the absolute path of another local checkout this task is for, as written (the caller checks it). */ repo?: string; forceOverlap?: true; verify?: string; /** MOD-293: amend tokens the brain grants, appended to the brief before the rest of the call. */ amend?: string; error?: undefined }
   | { error: string; id?: undefined }
 
 /** `a/**,b.ts,` → ['a/**', 'b.ts']; an empty list, a quote or `]]` (which would break the header) is refused. */
@@ -543,6 +543,7 @@ export function parseDispatchArgs(args: string): DispatchArgs {
   let here = false
   let forceOverlap = false
   let verify: string | undefined
+  let amend: string | undefined
   let repo: string | undefined
   let others = 0
   for (let i = 0; i < tokens.length; i += 1) {
@@ -551,6 +552,14 @@ export function parseDispatchArgs(args: string): DispatchArgs {
       const sha = t === '--verify' ? tokens[++i] ?? '' : t.slice('--verify='.length)
       if (!isSha(sha)) return { error: verifyShaRefusal(sha) }
       verify = sha
+      continue
+    }
+    if (t === '--amend' || t.startsWith('--amend=')) {
+      // MOD-293: the amend tokens (`scope+=a forbid-=b`) run to the next option
+      const words = t === '--amend' ? [] : [t.slice('--amend='.length)]
+      while (i + 1 < tokens.length && !(tokens[i + 1] as string).startsWith('--')) words.push(tokens[++i] as string)
+      if (words.join('').trim() === '') return { error: AMEND_NEEDS_TOKENS }
+      amend = words.join(' ')
       continue
     }
     if (t.startsWith('-')) others += 1
@@ -583,7 +592,7 @@ export function parseDispatchArgs(args: string): DispatchArgs {
   }
   if (id === undefined) return { error: USAGE }
   if (!isTaskId(id)) return { error: `refused task id ${id}` }
-  if (verify !== undefined) return others > 0 ? { error: VERIFY_ALONE } : { id, dryRun: false, base: 'origin/main', verify }
+  if (verify !== undefined) return others > 0 ? { error: VERIFY_ALONE } : { id, dryRun: false, base: 'origin/main', verify, ...(amend !== undefined ? { amend } : {}) }
   if (replay && !isSha(base)) return { error: REPLAY_NEEDS_BASE }
   if (replay && here) return { error: HERE_NO_REPLAY }
   if (repo !== undefined && replay) return { error: REPO_NO_REPLAY }
@@ -598,8 +607,12 @@ export function parseDispatchArgs(args: string): DispatchArgs {
     ...(here ? { here: true as const } : {}),
     ...(repo !== undefined ? { repo } : {}),
     ...(forceOverlap ? { forceOverlap: true as const } : {}),
+    ...(amend !== undefined ? { amend } : {}),
   }
 }
+
+/** MOD-293: the refusal for an empty amend. */
+export const AMEND_NEEDS_TOKENS = 'amend needs amend tokens, e.g. scope+=hooks/lib/x.ts forbid-=hooks/lib/**'
 
 /** Card files for a task: `<id>-*.md` exactly (BE-101-x.md, never BE-1010-x.md). */
 export const cardMatches = (names: readonly string[], id: string): string[] =>
@@ -703,7 +716,8 @@ export const DISPATCH_TOOL = {
       here: { type: 'boolean', description: "repo=here: no worktree and no fetch; the worker shares the session's own checkout" },
       repo: { type: 'string', description: "The absolute path of another local git checkout this task is for (the folder holding .git): the worktree is cut from that repo's origin/main beside it, and the verifier, the gate and the config are that repo's. Leave it out for a task of this repo; a card written with repo set to a path remembers it" },
       forceOverlap: { type: 'boolean', description: "repo=here: dispatch even when the card's scope overlaps an in-flight card's" },
-      verify: { type: 'string', description: "A 7-40 hex sha, the branch head: run the verifier on the work in the task's worktree with a synthetic report naming the delta; no spawn. Takes no other option" },
+      verify: { type: 'string', description: "A 7-40 hex sha, the branch head: run the verifier on the work in the task's worktree with a synthetic report naming the delta; no spawn. Takes no other option but amend" },
+      amend: { type: 'string', description: "Amend tokens to grant in the task's brief, e.g. 'scope+=hooks/lib/x.ts forbid-=hooks/lib/**': appended as one [[amend]] line (reason brain grant) and the header's scope/forbid rewritten, before the rest of the call. Alone it spawns nothing. A scope+= path under a forbid is refused unless the same line lifts it with forbid-=" },
     },
     required: ['task'],
     additionalProperties: false,
@@ -724,16 +738,18 @@ export function parseDispatchTool(input: Record<string, unknown>): DispatchArgs 
   for (const k of ['dryRun', 'replay', 'here', 'forceOverlap'] as const) {
     if (input[k] !== undefined && typeof input[k] !== 'boolean') return { error: `dispatch: ${k} must be a boolean` }
   }
-  for (const k of ['scope', 'forbid', 'base', 'verify', 'repo'] as const) {
+  for (const k of ['scope', 'forbid', 'base', 'verify', 'repo', 'amend'] as const) {
     if (input[k] !== undefined && typeof input[k] !== 'string') return { error: `dispatch: ${k} must be a string` }
   }
   const id = task.trim()
   if (!isTaskId(id)) return { error: `refused task id ${id}` }
+  if (input.amend !== undefined && (input.amend as string).trim() === '') return { error: AMEND_NEEDS_TOKENS }
+  const amendIn = input.amend !== undefined ? { amend: (input.amend as string).trim() } : {}
   if (input.verify !== undefined) {
     const sha = (input.verify as string).trim()
     if (!isSha(sha)) return { error: verifyShaRefusal(sha) }
     const others = (['dryRun', 'replay', 'here', 'forceOverlap', 'scope', 'forbid', 'base', 'repo'] as const).some(k => input[k] !== undefined && input[k] !== false)
-    return others ? { error: VERIFY_ALONE } : { id, dryRun: false, base: 'origin/main', verify: sha }
+    return others ? { error: VERIFY_ALONE } : { id, dryRun: false, base: 'origin/main', verify: sha, ...amendIn }
   }
   let base = 'origin/main'
   if (typeof input.base === 'string' && input.base !== '') {
@@ -770,8 +786,13 @@ export function parseDispatchTool(input: Record<string, unknown>): DispatchArgs 
     ...(here ? { here: true as const } : {}),
     ...(repo !== undefined ? { repo } : {}),
     ...(input.forceOverlap === true ? { forceOverlap: true as const } : {}),
+    ...amendIn,
   }
 }
+
+/** MOD-293: whether a dispatch call is a grant and nothing else (no spawn, no verify, no brief change): it prints the lines and stops. */
+export const amendAlone = (p: { dryRun?: boolean; base?: string; replay?: true; scope?: string[]; forbid?: string[]; here?: true; repo?: string; forceOverlap?: true; verify?: string; amend?: string }): boolean =>
+  p.amend !== undefined && p.verify === undefined && p.dryRun !== true && p.base === 'origin/main' && p.replay === undefined && p.scope === undefined && p.forbid === undefined && p.here === undefined && p.repo === undefined && p.forceOverlap === undefined
 
 /** MOD-141: the refusal when a worker on the task is live and the brief it reads would change. */
 export const liveBriefRefusal = (id: string, briefPath: string): string =>

@@ -54,6 +54,8 @@ import {
 import { briefDrift, briefNames, briefRewrittenLine, briefStaleRefusal, type BriefDrift } from './lib/crossbrief'
 import {
   amendNeedsApproval,
+  applyGrant,
+  grantedPaths,
   amendScopePaths,
   scopeAmendHeld,
   parentScopeOf,
@@ -146,6 +148,7 @@ import {
   currentBranchArgv,
   defaultBriefDir,
   DISPATCH_TOOL,
+  amendAlone,
   fetchArgv,
   headShaArgv,
   hereIgnore,
@@ -6458,7 +6461,15 @@ async function applyHandbackAmends($: Host, briefPath: string, briefText: string
   const lines = found.malformed.map(amendMalformedLine)
   if (found.amends.length === 0) return lines
   // `fresh`: the blocks the brief does not hold yet, in hand-back order.
-  const fresh = found.amends.filter(a => appendAmends(briefText, [a.block]).added.length > 0)
+  const hdr0 = parseHeader(briefText)
+  const grantedScope = effectiveList(hdr0?.fields.scope ?? hdr0?.fields.scope_globs ?? '', parseAmends(briefText).amends, 'scope').split(',').filter(Boolean)
+  // MOD-293: a block asking only for paths the brain already granted (they are in the header's scope) needs nothing
+  const alreadyGranted = found.amends.flatMap(a => {
+    const paths = appendAmends(briefText, [a.block]).added.length > 0 ? grantedPaths(a, grantedScope) : undefined
+    return paths ? [{ a, paths }] : []
+  })
+  lines.push(...alreadyGranted.flatMap(g => g.paths.map(p => `amend granted: ${p} already in scope`)))
+  const fresh = found.amends.filter(a => appendAmends(briefText, [a.block]).added.length > 0 && !alreadyGranted.some(g => g.a === a))
   if (fresh.length === 0) return lines
   if (!cfg.applyAmends) return [...lines, ...fresh.map(a => amendPendingLine(a, briefPath))]
   // the effective forbid: the brief as it stands, so a forbid-= it already holds lifts the guard
@@ -7851,7 +7862,30 @@ async function runDispatch($: Host, parsed: DispatchArgs): Promise<string> {
   return status.length > 0 ? `${out}\n${status.join('\n')}` : out
 }
 
+/**
+ * MOD-293 (#389, #393): the brain's grant, written into the task's brief (the one channel the verifier reads) before
+ * the rest of the call: the amend line appended, the header's scope/forbid rewritten. A grant alone spawns nothing.
+ */
 async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
+  if (parsed.error !== undefined || parsed.amend === undefined) return dispatchBody($, parsed)
+  await loadRepoConfig($)
+  const root = await $.session.root()
+  const briefPath = await existingBrief($, root, briefFileName(parsed.id))
+  if (!briefPath) return `/dispatch ${parsed.id}: no brief for ${parsed.id} under ${briefDirFor(root, cfg.briefDir)}; dispatch it first, then grant`
+  const briefText = (await readText($, briefPath)) ?? ''
+  const grant = applyGrant(briefText, parsed.amend)
+  if (!grant.ok) return `/dispatch ${parsed.id}: ${grant.error}`
+  try {
+    await $.fs.write(briefPath, grant.text)
+  } catch (err) {
+    return `/dispatch ${parsed.id}: the grant was not written to ${briefPath}: ${String(err)}`
+  }
+  const said = `granted in ${briefPath}:\n${grant.lines.join('\n')}`
+  if (amendAlone(parsed)) return said
+  return `${said}\n${await dispatchBody($, parsed)}`
+}
+
+async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   if (parsed.error !== undefined) return parsed.error
   if (parsed.verify !== undefined) return runVerifyDispatch($, parsed.id, parsed.verify)
   await loadRepoConfig($)
