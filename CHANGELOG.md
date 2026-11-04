@@ -1,18 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.9.48 — 2026-11-04
 
 ### Added
 
-- **The guide gains 'Adopting the issue tree in an existing repo' (the ordered steps and 'What closes what') and a 'When you say ... run ...' table near the top, the owner's words mapped to tools and commands (#335).**
-- **`/delegation tree reconcile <n> [--confirm]` and the `tree` tool with `reconcile: true` list the open sub-issues that merged cards already did, the sub-issues closed by hand with open children, and the ones that match nothing, with the `gh issue close` lines; `--confirm` runs the done-elsewhere closes only (MOD-288).**
-- **A card cut with no `issue:` is matched against the planned tasks the mod filed: the `card` tool and `/dispatch`'s dry run name the one to pass, and the `issueMatch` option (`suggest` by default, or `require`) can refuse the card (MOD-287, #334).**
 - **`/delegation setup` and the `setup` tool print a Tree group of advice: the six type labels, the project option, `scopeAmends` with parent cards, and open issues with no `type:` label, each with its fix line (MOD-285).** Read-only `gh label list` and `gh issue list` reads (the two exact shapes are added to the host-command allowlist, landRepo only); gh absent, no GitHub origin or a failed read prints `tree checks skipped: <reason>`. `/delegation init` does not run them. Pure helpers in `hooks/lib/setup.ts`.
-- **Merge finish closes every ancestor whose sub-issues are all closed, up to four levels above the task, with `all <k> sub-issues done`, and prints the first one left open (MOD-286).** The parent view adds `parent` to its `--json` list (the allowlist accepts both lists); the land nudge names the first ancestor left open; a failed ancestor read prints `# parent #<n>: read failed: <why>` and closes nothing above it.
+
+- **A card cut with no `issue:` is matched against the planned tasks the mod filed: the `card` tool and `/dispatch`'s dry run name the one to pass, and the `issueMatch` option (`suggest` by default, or `require`) can refuse the card (MOD-287, #334).**
+
+- **`/delegation tree reconcile <n> [--confirm]` and the `tree` tool with `reconcile: true` list the open sub-issues that merged cards already did, the sub-issues closed by hand with open children, and the ones that match nothing, with the `gh issue close` lines; `--confirm` runs the done-elsewhere closes only (MOD-288).**
+
+- **The guide gains 'Adopting the issue tree in an existing repo' (the ordered steps and 'What closes what') and a 'When you say ... run ...' table near the top, the owner's words mapped to tools and commands (#335).**
 
 ### Changed
 
 - **`tree_import` and `land_plan` refuse a child that does not rank below its parent: epic, feature, story, then task, bug or spike (MOD-284).** A feature under a story and a story under a story are errors naming the item (`items[1].children[0]: a feature cannot hang under a story (order: ...)`); nothing is filed on any error. Existing trees are untouched. Pure helper `orderError` in `hooks/lib/landtree.ts`.
+
+- **Merge finish closes every ancestor whose sub-issues are all closed, up to four levels above the task, with `all <k> sub-issues done`, and prints the first one left open (MOD-286).** The parent view adds `parent` to its `--json` list (the allowlist accepts both lists); the land nudge names the first ancestor left open; a failed ancestor read prints `# parent #<n>: read failed: <why>` and closes nothing above it.
 
 ## 0.9.47 — 2026-11-03
 

@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.47 to 0.9.48
+
+Run `/delegation setup` once in each repo that uses the issue tree, and act on its Tree lines. The `issueMatch` option defaults to `suggest` (set `off` to silence it, `require` to refuse a card with no `issue:` that does not match a planned task). Trees filed from now on must be in the order epic, feature, story, task (existing trees are untouched). Finish now closes ancestors too, so run `tree reconcile <n>` once on stale trees. Detail: [CHANGELOG 0.9.48](../CHANGELOG.md).
+
 ### From 0.9.46 to 0.9.47
 
 No action needed. A worker whose Bash fails for an ordinary reason (a permission error, a failed push) is judged and charged as before; only an attempt whose every Bash call the host refused as changed is shown as blocked by environment. Engine tests written for this repo import test from tests/harness.ts, which gives each a 20-second timeout. Detail: [CHANGELOG 0.9.47](../CHANGELOG.md).
