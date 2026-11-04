@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **The verdict tool never returns an empty result: a throw inside it comes back as `<task>: verdict failed: <error>; the band line holds the row, or call verdict again`, naming the verdict and next= when the row is on the ledger, and is logged to the debug log (MOD-297, #336).**
+
 - **A spawn row recorded under a suffixed task id (`<task> <agent>`) reads closed once a later accept, merge or consistent or reviewed row for the plain id is written (`superseded by <task> attempt <n>`), so merged tasks no longer show as running (MOD-296, #398).**
 
 - **A brief whose header names a report format other than `chassis.report.v1` is not refuted as malformed: its report's missing `sha=`, `branch=` and `red=` are not checked, and the verdict says `report format <value>: fields not checked by the mod` (MOD-295).**

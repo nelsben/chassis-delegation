@@ -87,3 +87,14 @@ export function mergedVerdict(ancestor: boolean, rows: readonly { task: string; 
 
 /** A hand-back with a report after a pause-cap charge is judged on the same attempt: the cap changes the count, not the outcome. */
 export const reopensAfterPauseCap = (pauseCharged: boolean | undefined, hasReport: boolean): boolean => pauseCharged === true && hasReport
+
+// ---- MOD-297 (#336): a throw inside the tool comes back as text --------------------------------------------
+/**
+ * The line the verdict tool returns when its handler throws: the error's first line, and the band row's verdict and
+ * next= when the row is already on the ledger. Never empty, so the brain's only read in the turn is not lost.
+ */
+export function verdictFailLine(task: string, error: string, row?: { verdict: string; next?: string }): string {
+  const first = error.split('\n')[0]?.trim() || 'unknown error'
+  const judged = row ? `; verdict ${row.verdict}${row.next !== undefined ? ` next=${row.next}` : ''}` : ''
+  return `${task}: verdict failed: ${first}${judged}; the band line holds the row, or call verdict again`
+}
