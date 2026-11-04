@@ -212,6 +212,7 @@ import { AUTO_NOTICE, LATCH_LINE, blockedByEnvironment, hostRefusalText, isAutoM
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
+import { doneComment, landedFor, parseReconcileArgs, reconcileOf, reconcileText, type MergedCard, type ReconSub } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
@@ -4725,6 +4726,117 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
     return 'tree: gh printed something that is not JSON'
   }
   return treeText(treeOf(json, cards.filter(c => c.status !== 'merged' && c.status !== 'parked'), done))
+}
+
+/**
+ * MOD-288: `/delegation tree reconcile <n> [--confirm]` and the tree tool with reconcile: true. Reads the parent and one view per
+ * open sub-issue with no in-flight card (at most treeImportBatch), matches them against the merged cards and prints three lists
+ * with the close lines. Without confirm it writes nothing and closes nothing; with confirm it runs the done-elsewhere closes only.
+ */
+async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>): Promise<string> {
+  if ('error' in a) return a.error
+  await loadRepoConfig($)
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
+  const ownerRepo = ownerRepoOf(origin ?? '')
+  landRepo = ownerRepo ?? ''
+  sessionRoot = root
+  if (!ownerRepo) return `tree reconcile: origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'})`
+  const view = async (n: number): Promise<{ json: Record<string, unknown> } | { why: string }> => {
+    const r = await run($, ['gh', 'issue', 'view', String(n), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
+    if (!r.ok) return { why: `gh did not run: ${r.why.trim().slice(0, 400)}` }
+    if (r.exitCode !== 0) return { why: `gh issue view failed: ${(r.stderr || r.stdout).trim().slice(0, 400) || '(nothing on stderr)'}` }
+    try {
+      return { json: (JSON.parse(r.stdout) ?? {}) as Record<string, unknown> }
+    } catch {
+      return { why: 'gh printed something that is not JSON' }
+    }
+  }
+  const parent = await view(a.issue)
+  if ('why' in parent) return `tree reconcile: ${parent.why}`
+  const cardDir = cardDirPath(root, cfg.cardDir)
+  const cardsById = new Map<string, { status?: string; issue?: number; scope: string[] }>()
+  try {
+    for (const { card: c } of await indexedCards($, cardDir)) {
+      const ref = issueRef(c.fields.issue, ownerRepo)
+      cardsById.set(c.id, { status: c.status, scope: c.scope, ...(ref !== undefined ? { issue: ref } : {}) })
+    }
+  } catch {
+    // no card folder: no cards
+  }
+  const rows = (await ledgerAt($, root)).rows
+  const inFlight = new Set<number>()
+  for (const c of cardsById.values()) if (c.issue !== undefined && c.status !== 'merged' && c.status !== 'parked') inFlight.add(c.issue)
+  // merged cards, newest first: a ledger merged row, its scope from the card file, else the files of a row of that task
+  const merged: MergedCard[] = []
+  const seen = new Set<string>()
+  for (const row of rows.filter(r => r.kind === 'merged' && typeof r.task === 'string').reverse()) {
+    const id = row.task as string
+    if (seen.has(id)) continue
+    seen.add(id)
+    const card = cardsById.get(id)
+    const files = rows.filter(r => r.task === id && Array.isArray(r.files)).flatMap(r => (r.files as unknown[]).filter((f): f is string => typeof f === 'string'))
+    const scope = card && card.scope.length > 0 ? card.scope : files
+    if (scope.length === 0) continue
+    merged.push({ id, scope, ...(typeof row.pr === 'number' ? { pr: row.pr } : {}), ...(card?.issue !== undefined ? { issue: card.issue } : {}) })
+  }
+  const subsOf = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : []).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { number?: unknown }).number === 'number')
+  const subs: ReconSub[] = []
+  let viewed = 0
+  for (const s of subsOf(parent.json.subIssues).sort((x, y) => (x.number as number) - (y.number as number))) {
+    const number = s.number as number
+    const state = typeof s.state === 'string' ? s.state.toUpperCase() : ''
+    const sub: ReconSub = { number, title: typeof s.title === 'string' ? s.title : '', state, subIssues: subsOf(s.subIssues).map(c => ({ number: c.number as number, state: typeof c.state === 'string' ? c.state : '' })) }
+    if (state !== 'CLOSED' && !inFlight.has(number)) {
+      if (viewed >= cfg.treeImportBatch) sub.read = false
+      else {
+        viewed++
+        const v = await view(number)
+        if ('why' in v) return `tree reconcile: #${number}: ${v.why}`
+        sub.body = typeof v.json.body === 'string' ? v.json.body : ''
+      }
+    }
+    subs.push(sub)
+  }
+  const result = reconcileOf({ subs, inFlight, merged })
+  const head = `reconcile #${a.issue} (${ownerRepo})`
+  if (!a.confirm) return [head, reconcileText(result, ownerRepo)].join('\n')
+  const lines: string[] = [head]
+  let landed: { name: string; text: string }[] = []
+  const folder = `${root}/.delegation/landed`
+  try {
+    for (const e of await $.fs.list(folder)) {
+      const text = await readText($, `${folder}/${e.name}`)
+      if (text !== undefined) landed.push({ name: e.name, text })
+    }
+  } catch {
+    landed = []
+  }
+  let ran = 0
+  for (const d of result.done) {
+    if (ran >= cfg.treeImportBatch) {
+      lines.push('stopped at treeImportBatch; run again to continue')
+      break
+    }
+    if (ran > 0) await pauseOffBudget($, 1000)
+    ran++
+    const c = await run($, ['gh', 'issue', 'close', String(d.number), '--repo', ownerRepo, '--comment', doneComment(d.card, d.pr)], { cwd: root, timeoutMs: 60000 })
+    if (!c.ok || c.exitCode !== 0) {
+      lines.push(`close #${d.number} failed: ${(c.ok ? c.stderr || c.stdout : c.why).trim().replace(/\s+/g, ' ').slice(0, 400) || '(nothing on stderr)'}`)
+      continue
+    }
+    lines.push(`closed #${d.number}`)
+    const name = landedFor(landed, d.number)
+    if (name !== undefined) {
+      try {
+        const file = `${folder}/${name}`
+        await $.fs.write(file, withClosedLine((await readText($, file)) ?? '', new Date(await now($)).toISOString()))
+      } catch (err) {
+        debug($, `tree reconcile: closed line not written to ${name}: ${String(err)}`)
+      }
+    }
+  }
+  return lines.join('\n')
 }
 
 /** MOD-193: files one landed body with gh issue create, writes `issue: #n url` back, and adds it to the configured project. Shared by land and land_plan. */
@@ -10310,6 +10422,7 @@ export const register: Register = (on, opts) => {
     if (arg === 'config' || arg.startsWith('config ')) return { text: await runConfig($, arg.slice('config'.length)) }
     if (arg === 'land' || arg.startsWith('land ')) return { text: await runLand($, arg.slice('land'.length)) }
     if (arg === 'tree import' || arg.startsWith('tree import ')) return { text: await treeImportWith($, parseTreeImportArgs(arg.slice('tree import'.length))) }
+    if (arg === 'tree reconcile' || arg.startsWith('tree reconcile ')) return { text: await reconcileWith($, parseReconcileArgs(arg.slice('tree reconcile'.length))) }
     if (arg === 'tree' || arg.startsWith('tree ')) return { text: await treeWith($, arg.slice('tree'.length).trim()) }
     if (arg === 'ration') return { text: await rationReportText($) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
@@ -10345,7 +10458,11 @@ export const register: Register = (on, opts) => {
   on('tool.call', { tool: 'mcp__chassis-delegation__land' as never }, async ($, e) => (landSeen($, 'land'), { result: await landWith($, parseLandTool(e as unknown as Record<string, unknown>)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__land_plan' as never }, async ($, e) => (landSeen($, 'land_plan'), { result: await planWith($, parsePlan(e)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__tree_import' as never }, async ($, e) => (landSeen($, 'land_plan'), { result: await treeImportWith($, parseTreeImportTool(e as unknown as Record<string, unknown>)) }))
-  on('tool.call', { tool: 'mcp__chassis-delegation__tree' as never }, async ($, e) => ({ result: await treeWith($, (e as unknown as Record<string, unknown>).issue) }))
+  on('tool.call', { tool: 'mcp__chassis-delegation__tree' as never }, async ($, e) => {
+    const input = e as unknown as Record<string, unknown>
+    if (input.reconcile === true) return { result: await reconcileWith($, parseReconcileArgs(`${String(input.issue ?? '')}${input.confirm === true ? ' --confirm' : ''}`)) }
+    return { result: await treeWith($, input.issue) }
+  })
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => (landSeen($, 'merge'), { result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))
 
   // ---- GH-112: the band above the prompt and the dashboard pane ------------------------
