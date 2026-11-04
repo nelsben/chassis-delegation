@@ -194,3 +194,26 @@ describe('MOD-213: planKey with a parent', () => {
     expect(planKey('Export rework', [], 7)).toMatch(/^export-rework-[0-9a-f]{8}$/)
   })
 })
+
+// MOD-287: the landed file's type and parent lines, written beside the issue line, and stripped again when a landing is compared.
+describe('MOD-287: the landed tail', () => {
+  test('type, then parent when one is given, then the issue line', async () => {
+    const { landedTail } = await import('../../hooks/lib/issuematch.ts')
+    expect(landedTail({ type: 'task', parent: 9, number: 12, url: 'https://github.com/acme/widgets/issues/12' })).toBe('type: task\nparent: #9\nissue: #12 https://github.com/acme/widgets/issues/12\n')
+    expect(landedTail({ type: 'bug', number: 3, url: 'https://github.com/acme/widgets/issues/3' })).toBe('type: bug\nissue: #3 https://github.com/acme/widgets/issues/3\n')
+  })
+  test('a parent of 0 (no feature number yet) is not written', async () => {
+    const { landedTail } = await import('../../hooks/lib/issuematch.ts')
+    expect(landedTail({ type: 'task', parent: 0, number: 4, url: 'u' })).toBe('type: task\nissue: #4 u\n')
+  })
+  test('withoutIssueLine takes the type and parent lines off with the issue line, so a resume compares the body alone', async () => {
+    const { withoutIssueLine, withClosedLine } = await lib()
+    const body = 'Some note.\n\n```scope\nsrc/a.ts\n```\n\nplan: abc-12345678\n'
+    const { landedTail } = await import('../../hooks/lib/issuematch.ts')
+    const filed = `${body}${landedTail({ type: 'task', parent: 9, number: 12, url: 'https://github.com/acme/widgets/issues/12' })}`
+    expect(withoutIssueLine(filed)).toBe(body)
+    expect(withoutIssueLine(withClosedLine(filed, '2026-11-01T10:00:00.000Z'))).toBe(body)
+    const old = `${body}issue: #5 https://github.com/acme/widgets/issues/5\n`
+    expect(withoutIssueLine(old)).toBe(body)
+  })
+})

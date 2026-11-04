@@ -48,6 +48,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['landAuto', 'Debriefs', 'Off: land shows the issue first and files on your yes; on: files at once', 'bool', 'user', false],
   ['treeImportBatch', 'Debriefs', 'Most issues one tree import creates in a run, 1 to 100; then run it again', 'count', 'user', 20],
   ['project', 'Debriefs', 'The GitHub board that issues filed by land are added to, as owner/number', 'text', 'repo', ''],
+  ['issueMatch', 'Checking the work', 'Name the planned task a card with no issue overlaps: off, suggest, or require the issue', 'choice', 'repo', 'suggest', ['off', 'suggest', 'require']],
   ['ignore', 'Checking the work', 'Files and folders left out when checking a worker that shares your checkout', 'list', 'repo', ''],
   ['briefDir', 'Where things go', 'The folder where worker instructions are saved', 'text', 'user', ''],
   ['briefTemplate', 'Where things go', 'A file to use as the layout for worker instructions', 'text', 'repo', ''],

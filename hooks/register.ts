@@ -215,6 +215,7 @@ import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
+import { landedTail, matchPlanned, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned } from './lib/issuematch'
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
 import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
@@ -602,6 +603,8 @@ const attemptKey = async ($: Host, s: SpawnRecord): Promise<string> => attemptKe
 
 type Config = {
   autoEscalate: boolean
+  /** MOD-287: off, suggest or require: how a card with no issue is matched against the planned tasks. */
+  issueMatch: IssueMatchMode
   applyAmends: boolean
   scopeAmends: ScopeAmends
   /** MOD-192: the GitHub Project land adds issues to, `<owner>/<number>` or ''. */
@@ -747,6 +750,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       applyAmends: o.applyAmends !== false,
       scopeAmends: eff.scopeAmends,
       project: eff.project,
+      issueMatch: eff.issueMatch,
       defaultBudget: budget,
       probeModels: o.probeModels === true,
       candidateIds: parseCandidateIds(str('candidateIds')),
@@ -4729,7 +4733,8 @@ async function fileOne($: Host, o: { root: string; ownerRepo: string; file: stri
   const issue = created.ok && created.exitCode === 0 ? issueUrlOf(created.stdout, o.ownerRepo) : undefined
   if (!issue) return { failed: (created.ok ? created.stderr || created.stdout : created.why).trim().slice(0, 400) }
   try {
-    await $.fs.write(o.file, `${o.body.replace(/\n*$/, '\n')}issue: #${issue.number} ${issue.url}\n`)
+    // MOD-287: the type and parent lines the matcher reads sit beside the issue line
+    await $.fs.write(o.file, `${o.body.replace(/\n*$/, '\n')}${landedTail({ type: o.type, ...(o.parent !== undefined ? { parent: o.parent } : {}), number: issue.number, url: issue.url })}`)
   } catch (err) {
     debug($, `land: issue number not written back to ${o.file}: ${String(err)}`)
   }
@@ -7658,6 +7663,9 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
       : `/dispatch ${id}: ${found.length} cards claim ${id} (${found.map(f => f.name).join(', ')}); fix the board first`
   }
   const { name, card } = found[0] as { name: string; card: Card }
+  // MOD-287: a card with no issue: require refuses it while a planned task overlaps its scope; a dry run says which to pass
+  const plannedHits = issueRef(card.fields.issue) === undefined ? await plannedFor($, root, card.scope, [...new Set([tasksDir, cardDirPath(root, cfg.cardDir)])]) : []
+  if (cfg.issueMatch === 'require' && plannedHits.length > 0) return `/dispatch ${id}: refused — ${refusalLine(plannedHits[0] as Planned)}`
   const refusal = checkStatus(card) ?? checkDomain(card, target ? target.domains : cfg.domains)
   if (refusal) return `/dispatch ${id}: ${refusal}${replay ? ` (read at ${base})` : ''}`
   // the repo the work is cut from and judged in: the target's, else the session's
@@ -8004,7 +8012,7 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   }
   const heldNames = resourcesOf(shownHeader)
   if (heldNames.length > 0) out.push(`   resources: ${heldNames.join(', ')} (held while the worker runs; another card naming one waits in the queue)`)
-  if (dryRun) return [...out, '', shown].join('\n')
+  if (dryRun) return [...out, ...plannedHits.map(p => plannedLine(p)), '', shown].join('\n')
   // MOD-13: the card's own effort: (it wins over effortByTier for this task's workers); cleared when the card has none
   await storeSet($, K.effort(id, await cardRepo($, target?.path)), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
   await storeSet($, K.tierReason(id, await cardRepo($, target?.path)), cleanReason(card.fields.tier_reason))
@@ -8455,6 +8463,55 @@ async function runSetup($: Host, viaTool = false, pathIn?: string): Promise<stri
  * summary and header, and `dispatch: true` dispatches each lane in order (the
  * lanes that hold one resource then run one at a time, the queue seeing to it).
  */
+/**
+ * MOD-287: the planned tasks a card with this scope is matched against: the landed files and plan files the mod filed, less any
+ * issue a card or a ledger row already names. Empty when issueMatch is off or the scope is empty.
+ */
+async function plannedFor($: Host, root: string, scope: readonly string[], cardDirs: readonly string[]): Promise<(Planned & { overlap: number })[]> {
+  if (cfg.issueMatch === 'off' || scope.length === 0) return []
+  const planned: Planned[] = []
+  const landedDir = `${root}/.delegation/landed`
+  try {
+    for (const e of await $.fs.list(landedDir)) {
+      if (!e.name.endsWith('.md')) continue
+      const text = await readText($, `${landedDir}/${e.name}`)
+      const p = text === undefined ? undefined : plannedFromLanded(e.name, text)
+      if (p) planned.push(p)
+    }
+  } catch {
+    // no landed folder: nothing filed yet
+  }
+  const plansDir = `${root}/.delegation/plans`
+  try {
+    for (const e of await $.fs.list(plansDir)) {
+      if (!e.name.endsWith('.json')) continue
+      try {
+        planned.push(...plannedFromPlan(JSON.parse((await readText($, `${plansDir}/${e.name}`)) ?? 'null')))
+      } catch {
+        // a plan file that is not JSON names no candidate
+      }
+    }
+  } catch {
+    // no plans folder
+  }
+  const named = new Set<number>()
+  for (const dir of cardDirs) {
+    try {
+      for (const { card } of await indexedCards($, dir)) {
+        const ref = issueRef(card.fields.issue)
+        if (ref !== undefined) named.add(ref)
+      }
+    } catch {
+      // an unlistable card folder names nothing
+    }
+  }
+  for (const r of (await ledgerAt($, root)).rows) {
+    const n = (r as { issue?: unknown }).issue
+    if (typeof n === 'number' && Number.isInteger(n) && n >= 1) named.add(n)
+  }
+  return matchPlanned(scope, planned, named)
+}
+
 async function runCard($: Host, input: Record<string, unknown>): Promise<string> {
   if (input.dispatch !== undefined && typeof input.dispatch !== 'boolean') return 'card: dispatch must be true or false'
   await loadRepoConfig($)
@@ -8519,6 +8576,14 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     ...(target ? { repoPath: target.path } : {}),
   })
   if ('error' in made) return `card refused: ${made.error}`
+  // MOD-287: a card with no issue is matched against the planned tasks; require refuses it before anything is written
+  const folders = [...new Set([dir, cardDirPath(root, cfg.cardDir)])]
+  const matchesOf: (Planned & { overlap: number })[][] = []
+  for (const c of made) matchesOf.push(input.issue === undefined ? await plannedFor($, root, c.scope, folders) : [])
+  if (cfg.issueMatch === 'require') {
+    const hit = matchesOf.find(m => m.length > 0)
+    if (hit !== undefined) return `card refused: ${refusalLine(hit[0] as Planned)}`
+  }
   // all or none: every lane's file is checked before the first is written
   for (const c of made) {
     const path = `${dir}/${c.file}`
@@ -8536,6 +8601,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     // MOD-44: the id alone finds a card for another repo
     if (target) await storeSet($, K.taskRepo(c.id, await cardRepo($)), target.path)
   }
+  for (const m of matchesOf) wrote.push(...m.map(p => plannedLine(p)))
   // MOD-22: dispatch reads the mode from the card (`repo:`); here is passed only when the card says repo: here
   const dispatchArgs = (c: NewCard, dryRun: boolean): DispatchArgs => ({ id: c.id, dryRun, base: 'origin/main', ...(c.repo === 'here' ? { here: true as const } : {}), ...(target ? { repo: target.path } : {}) })
   if (input.dispatch === true) {
