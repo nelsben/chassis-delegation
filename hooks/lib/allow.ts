@@ -37,7 +37,7 @@
 //   gh issue close <1-9 digits> --repo <landRepo> --comment <text not starting with ->
 //                                                            (MOD-200: dispatch, the verdict, merge finish and land --supersedes write status to
 //                                                             the card's issue; both also pass while /delegation merge runs; no gh issue edit)
-//   gh issue view <1-9 digits> --repo <landRepo> --json number,title,state,labels,body,subIssues
+//   gh issue view <1-9 digits> --repo <landRepo> --json number,title,state,labels,body,subIssues[,parent]   (MOD-286: parent for the finish walk)
 //                                                            (MOD-197: this one shape also passes while /delegation merge runs, ahead of
 //                                                             the remote refusal; every other gh is still refused then)
 //                                                            (MOD-194: the tree tool and /delegation tree; read-only, args in exactly that order)
@@ -265,8 +265,8 @@ function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
   }
   if (verb === 'view') {
     const lr = allow.landRepo ?? ''
-    const exact = lr !== '' && ISSUE_REPO.test(lr) && t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === lr && t[3] === '--json' && t[4] === 'number,title,state,labels,body,subIssues'
-    return exact ? ok : shape('view <number> --repo <landRepo> --json number,title,state,labels,body,subIssues')
+    const exact = lr !== '' && ISSUE_REPO.test(lr) && t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === lr && t[3] === '--json' && VIEW_FIELDS.has(t[4] as string)
+    return exact ? ok : shape('view <number> --repo <landRepo> --json number,title,state,labels,body,subIssues[,parent]')
   }
   if (verb === 'close') return statusCloseOk(t, allow) ? ok : shape('close <number> --repo <landRepo> --comment <text not starting with ->')
   if (verb === 'comment' && statusCommentOk(t, allow)) return ok
@@ -389,12 +389,15 @@ export type MergeCtx = { root: string; worktree: string; branch: string; baseRef
 /** The subject of the merged-card commit, the only commit message that passes. */
 export const mergedSubject = (id: string): string => `cards: ${id} merged`
 
+/** MOD-286: the --json lists the issue view may carry; the second adds `parent` so finish can walk up the tree. */
+const VIEW_FIELDS: ReadonlySet<string> = new Set(['number,title,state,labels,body,subIssues', 'number,title,state,labels,body,subIssues,parent'])
+
 /** MOD-197: the one gh the merge command runs, the MOD-194 read-only issue view of the parent (MOD-195), landRepo set. */
 const isMergeIssueView = (argv: readonly string[], allow: AllowConfig): boolean => {
   const lr = allow.landRepo ?? ''
   const [cmd, a, b, n, r, repo, j, fields, ...more] = argv
   if (cmd === 'gh' && a === 'issue' && (b === 'close' || b === 'comment')) return (b === 'close' ? statusCloseOk : statusCommentOk)(argv.slice(3), allow)
-  return cmd === 'gh' && a === 'issue' && b === 'view' && more.length === 0 && lr !== '' && ISSUE_REPO.test(lr) && /^\d{1,9}$/.test(n ?? '') && r === '--repo' && repo === lr && j === '--json' && fields === 'number,title,state,labels,body,subIssues'
+  return cmd === 'gh' && a === 'issue' && b === 'view' && more.length === 0 && lr !== '' && ISSUE_REPO.test(lr) && /^\d{1,9}$/.test(n ?? '') && r === '--repo' && repo === lr && j === '--json' && VIEW_FIELDS.has(fields ?? '')
 }
 
 /** An argv the merge command may never run: a push, gh, curl, sf or wget. */

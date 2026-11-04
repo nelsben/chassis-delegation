@@ -47,3 +47,54 @@ describe('MOD-189: finishLines with an issue', () => {
     expect(finishLines({ branch: 'b', issue: 12, parent: 7, ownerRepo: 'acme/widgets', pr: 34 }).at(-1)).toBe('# parent #7: gh issue view 7 --repo acme/widgets --json subIssuesSummary; close it by hand when every task is done')
   })
 })
+
+describe('MOD-286: finish walks up the tree', () => {
+  const sub = (n, state) => ({ number: n, state })
+  test('chain of three all closed yields three closes', async () => {
+    const { closesOf, finishLines } = await lib()
+    const chain = [
+      { number: 7, siblings: [sub(11, 'CLOSED'), sub(12, 'OPEN')] },
+      { number: 5, siblings: [sub(7, 'OPEN'), sub(8, 'CLOSED'), sub(9, 'CLOSED')] },
+      { number: 3, siblings: [sub(5, 'OPEN')] },
+    ]
+    const plan = closesOf({ issue: 12, ownerRepo: 'acme/widgets', pr: 34, chain })
+    expect(plan.task).toEqual({ issue: 12, comment: 'merged in #34' })
+    expect(plan.ancestors).toEqual([
+      { issue: 7, comment: 'all 2 tasks done' },
+      { issue: 5, comment: 'all 3 sub-issues done' },
+      { issue: 3, comment: 'all 1 sub-issues done' },
+    ])
+    const out = finishLines({ branch: 'b', issue: 12, ownerRepo: 'acme/widgets', pr: 34, chain })
+    expect(out.filter(l => l.startsWith('gh issue close')).length).toBe(4)
+    expect(out).toContain("gh issue close 3 --repo acme/widgets --comment 'all 1 sub-issues done'")
+  })
+  test('the grandparent has one open sub-issue: task and parent closed, its still-open line, nothing above', async () => {
+    const { closesOf, finishLines } = await lib()
+    const chain = [
+      { number: 7, siblings: [sub(12, 'OPEN')] },
+      { number: 5, siblings: [sub(7, 'OPEN'), sub(8, 'OPEN'), sub(9, 'CLOSED')] },
+    ]
+    const plan = closesOf({ issue: 12, ownerRepo: 'acme/widgets', pr: 34, chain })
+    expect(plan.ancestors).toEqual([{ issue: 7, comment: 'all 1 tasks done' }])
+    const out = finishLines({ branch: 'b', issue: 12, parent: 7, ownerRepo: 'acme/widgets', pr: 34, chain })
+    expect(out.at(-1)).toBe('# parent #5: 1 of 3 still open (#8)')
+    expect(out.some(l => l.startsWith('gh issue close 5 '))).toBe(false)
+  })
+  test('a failed read of an ancestor: one line, nothing above it closed', async () => {
+    const { finishLines } = await lib()
+    const out = finishLines({ branch: 'b', issue: 12, parent: 7, ownerRepo: 'acme/widgets', pr: 34, chain: [{ number: 7, siblings: [sub(12, 'OPEN')] }], readFailed: { number: 5, why: 'HTTP 502' } })
+    expect(out.at(-1)).toBe('# parent #5: read failed: HTTP 502')
+  })
+  test('a failed ancestor close keeps its line with the reason', async () => {
+    const { finishLines } = await lib()
+    const chain = [{ number: 7, siblings: [sub(12, 'OPEN')] }, { number: 5, siblings: [sub(7, 'OPEN')] }]
+    const out = finishLines({ branch: 'b', issue: 12, ownerRepo: 'acme/widgets', pr: 34, chain, closed: { task: { ok: true }, ancestors: [{ ok: true }, { ok: false, why: 'HTTP 403' }] } })
+    expect(out).toEqual(["gh issue close 5 --repo acme/widgets --comment 'all 1 sub-issues done' (close failed: HTTP 403)", 'git push origin --delete b'])
+  })
+  test('the nudge names the first ancestor left open', async () => {
+    const { parentNudge } = await import('../../hooks/lib/landnudge.ts')
+    const above = [{ number: 5, siblings: [sub(7, 'OPEN'), sub(8, 'OPEN')] }]
+    expect(parentNudge(7, 12, [sub(12, 'OPEN')], above)).toEqual({ number: 5, open: 1 })
+    expect(parentNudge(7, 12, [sub(11, 'OPEN'), sub(12, 'OPEN')], above)).toEqual({ number: 7, open: 1 })
+  })
+})

@@ -5,6 +5,7 @@
 ### Added
 
 - **`/delegation setup` and the `setup` tool print a Tree group of advice: the six type labels, the project option, `scopeAmends` with parent cards, and open issues with no `type:` label, each with its fix line (MOD-285).** Read-only `gh label list` and `gh issue list` reads (the two exact shapes are added to the host-command allowlist, landRepo only); gh absent, no GitHub origin or a failed read prints `tree checks skipped: <reason>`. `/delegation init` does not run them. Pure helpers in `hooks/lib/setup.ts`.
+- **Merge finish closes every ancestor whose sub-issues are all closed, up to four levels above the task, with `all <k> sub-issues done`, and prints the first one left open (MOD-286).** The parent view adds `parent` to its `--json` list (the allowlist accepts both lists); the land nudge names the first ancestor left open; a failed ancestor read prints `# parent #<n>: read failed: <why>` and closes nothing above it.
 
 ### Changed
 

@@ -479,33 +479,68 @@ export function siblingsOf(stdout: string): { number: number; state: string }[] 
 /** MOD-200: how a close the mod ran came out: done, or why it failed. */
 export type CloseResult = { ok: true } | { ok: false; why: string }
 
-/** MOD-200: the closes finish runs itself: the task, and the parent when every other sibling is CLOSED. Comment text only; no I/O. */
-export function closesOf(o: { issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string; siblings?: readonly { number: number; state: string }[] }): { task?: { issue: number; comment: string }; parent?: { issue: number; comment: string } } {
-  if (o.issue === undefined || !o.ownerRepo) return {}
+/** MOD-286: the parent's issue number in `gh issue view --json …,parent` output; undefined when there is none or it is unparsable. */
+export function parentNumberOf(stdout: string): number | undefined {
+  try {
+    const n = (JSON.parse(stdout) as { parent?: { number?: unknown } | null } | null)?.parent?.number
+    return typeof n === 'number' ? n : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** MOD-286: one ancestor of the task as read: its number and its sub-issues' states. */
+export type Ancestor = { number: number; siblings: readonly { number: number; state: string }[] }
+
+/** MOD-286: most levels above the task finish walks. */
+export const ANCESTOR_LEVELS = 4
+
+/** MOD-286: the ancestors from the direct parent up; each is closed when every sub-issue but the ones just closed below it is CLOSED; the first that is not stops the walk. Pure. */
+export function walkAncestors(task: number, chain: readonly Ancestor[]): { closes: { issue: number; comment: string }[]; stop?: { number: number; open: number[]; total: number } } {
+  const done = new Set<number>([task])
+  const closes: { issue: number; comment: string }[] = []
+  for (const [i, a] of chain.slice(0, ANCESTOR_LEVELS).entries()) {
+    const open = a.siblings.filter(x => !done.has(x.number) && x.state.toUpperCase() !== 'CLOSED').map(x => x.number).sort((p, q) => p - q)
+    if (open.length > 0) return { closes, stop: { number: a.number, open, total: a.siblings.length } }
+    closes.push({ issue: a.number, comment: `all ${a.siblings.length} ${i === 0 ? 'tasks' : 'sub-issues'} done` })
+    done.add(a.number)
+  }
+  return { closes }
+}
+
+type ChainIn = { parent?: number; siblings?: readonly { number: number; state: string }[]; chain?: readonly Ancestor[] }
+const chainOf = (o: ChainIn): readonly Ancestor[] | undefined => o.chain ?? (o.parent !== undefined && o.siblings !== undefined ? [{ number: o.parent, siblings: o.siblings }] : undefined)
+
+/** MOD-200: the closes finish runs itself: the task, then each ancestor in order while every sub-issue of it is CLOSED (MOD-286: up to four levels). Comment text only; no I/O. */
+export function closesOf(o: { issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string; siblings?: readonly { number: number; state: string }[]; chain?: readonly Ancestor[] }): { task?: { issue: number; comment: string }; ancestors: { issue: number; comment: string }[] } {
+  if (o.issue === undefined || !o.ownerRepo) return { ancestors: [] }
   const task = { issue: o.issue, comment: o.pr !== undefined ? `merged in #${o.pr}` : `merged at ${(o.sha ?? '').slice(0, 7)}` }
-  const open = (o.siblings ?? []).filter(x => x.number !== o.issue && x.state.toUpperCase() !== 'CLOSED')
-  const parent = o.parent !== undefined && o.siblings !== undefined && open.length === 0 ? { issue: o.parent, comment: `all ${o.siblings.length} tasks done` } : undefined
-  return { task, ...(parent ? { parent } : {}) }
+  const chain = chainOf(o)
+  return { task, ancestors: chain ? walkAncestors(o.issue, chain).closes : [] }
 }
 
 /** The lines of the remote block after a merge finish. MOD-200: a close in `closed` that succeeded is left out; one that failed keeps its line with `(close failed: <why>)`. */
-export function finishLines(o: { branch: string; version?: string; loadedClone?: string; issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string; /** MOD-195: the parent's sub-issues as read; absent = the hand-check comment. */ siblings?: readonly { number: number; state: string }[]; /** MOD-200: the closes the mod ran itself. */ closed?: { task?: CloseResult; parent?: CloseResult } }): string[] {
+export function finishLines(o: { branch: string; version?: string; loadedClone?: string; issue?: number; parent?: number; ownerRepo?: string; pr?: number; sha?: string; /** MOD-195: the parent's sub-issues as read; absent = the hand-check comment. */ siblings?: readonly { number: number; state: string }[]; /** MOD-286: the ancestors as read, direct parent first. */ chain?: readonly Ancestor[]; /** MOD-286: an ancestor above the direct parent whose read failed. */ readFailed?: { number: number; why: string }; /** MOD-200: the closes the mod ran itself (MOD-286: `ancestors` in order, direct parent first). */ closed?: { task?: CloseResult; parent?: CloseResult; ancestors?: readonly (CloseResult | undefined)[] } }): string[] {
   const shown = (r: CloseResult | undefined, line: string): string[] => (r?.ok === true ? [] : [r ? `${line} (close failed: ${r.why})` : line])
   const plan = closesOf(o)
   const close = plan.task ? shown(o.closed?.task, `gh issue close ${plan.task.issue} --repo ${o.ownerRepo} --comment ${shellWord(plan.task.comment)}`) : []
-  const open = (o.siblings ?? []).filter(x => x.number !== o.issue && x.state.toUpperCase() !== 'CLOSED').map(x => x.number).sort((a, b) => a - b)
+  const chain = chainOf(o)
+  const walk = o.issue !== undefined && chain ? walkAncestors(o.issue, chain) : undefined
   const parent =
     o.issue !== undefined && o.parent !== undefined && o.ownerRepo
-      ? o.siblings === undefined
+      ? chain === undefined
         ? [`# parent #${o.parent}: gh issue view ${o.parent} --repo ${o.ownerRepo} --json subIssuesSummary; close it by hand when every task is done`]
-        : open.length === 0
-          ? []
-          : [`# parent #${o.parent}: ${open.length} of ${o.siblings.length} tasks still open (${open.map(n => `#${n}`).join(', ')})`]
+        : walk?.stop
+          ? [`# parent #${walk.stop.number}: ${walk.stop.open.length} of ${walk.stop.total} ${walk.stop.number === o.parent ? 'tasks ' : ''}still open (${walk.stop.open.map(n => `#${n}`).join(', ')})`]
+          : o.readFailed
+            ? [`# parent #${o.readFailed.number}: read failed: ${o.readFailed.why}`]
+            : []
       : []
-  const parentClose = plan.parent ? shown(o.closed?.parent, `gh issue close ${plan.parent.issue} --repo ${o.ownerRepo} --comment ${shellWord(plan.parent.comment)}`) : []
+  const results = o.closed?.ancestors ?? (o.closed?.parent ? [o.closed.parent] : [])
+  const ancestorCloses = plan.ancestors.flatMap((a, i) => shown(results[i], `gh issue close ${a.issue} --repo ${o.ownerRepo} --comment ${shellWord(a.comment)}`))
   return [
     ...close,
-    ...parentClose,
+    ...ancestorCloses,
     `git push origin --delete ${o.branch}`,
     ...(o.version ? [`git tag -a v${o.version} -m v${o.version}`, `git push origin v${o.version}`, ...(o.loadedClone ? [`git -C ${o.loadedClone} pull --ff-only`] : [])] : []),
     ...parent,

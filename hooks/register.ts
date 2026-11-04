@@ -328,6 +328,9 @@ import {
   dirtyWorktreeLine,
   finishLines,
   closesOf,
+  parentNumberOf,
+  ANCESTOR_LEVELS,
+  type Ancestor,
   type CloseResult,
   siblingsOf,
   labelIsMerged,
@@ -3866,22 +3869,43 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const closeRepo = cardIssue !== undefined ? ownerRepoOf(okOut(await run($, ['git', '-C', root, 'remote', 'get-url', 'origin'], { cwd: root, timeoutMs: 15000 })) ?? '') : undefined
   // MOD-195: the parent's sub-issues, read with the MOD-194 shape (MOD-197: the merge allowlist passes that one view once landRepo is the origin's)
   let siblings: { number: number; state: string }[] | undefined
+  // MOD-286: the ancestors above the direct parent as read, and the read that failed
+  const above: Ancestor[] = []
+  let readFailed: { number: number; why: string } | undefined
   // MOD-200: the close and comment shapes are bound to this repo while the merge runs
   if (cardIssue !== undefined && closeRepo) landRepo = closeRepo
   if (cardIssue !== undefined && cardParent !== undefined && closeRepo) {
-    const v = await run($, ['gh', 'issue', 'view', String(cardParent), '--repo', closeRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
+    const viewOf = (n: number) => run($, ['gh', 'issue', 'view', String(n), '--repo', closeRepo, '--json', 'number,title,state,labels,body,subIssues,parent'], { cwd: root, timeoutMs: 60000 })
+    const v = await viewOf(cardParent)
     if (v.ok && v.exitCode === 0) siblings = siblingsOf(v.stdout)
+    // MOD-286: while every level read so far closes, read the next one up (at most four levels above the task)
+    let next = v.ok && v.exitCode === 0 ? parentNumberOf(v.stdout) : undefined
+    while (siblings && next !== undefined && above.length < ANCESTOR_LEVELS - 1 && closesOf({ issue: cardIssue, ownerRepo: closeRepo, parent: cardParent, siblings, chain: [{ number: cardParent, siblings }, ...above] }).ancestors.length === above.length + 1) {
+      const r = await viewOf(next)
+      if (!(r.ok && r.exitCode === 0)) {
+        readFailed = { number: next, why: ((r.ok ? r.stderr || r.stdout : r.why).trim().split('\n')[0] ?? '').slice(0, 200) || 'no output' }
+        break
+      }
+      const subs = siblingsOf(r.stdout)
+      if (!subs) {
+        readFailed = { number: next, why: 'no sub-issues in the view' }
+        break
+      }
+      above.push({ number: next, siblings: subs })
+      next = parentNumberOf(r.stdout)
+    }
   }
-  // MOD-201: a finish that leaves the parent with open tasks sets the lead; one that closes it sets none
+  // MOD-201: a finish that leaves an ancestor with open sub-issues sets the lead (MOD-286: the first one left open); one that closes them all sets none
   if (cfg.landNudge && cardIssue !== undefined && cardParent !== undefined) {
-    const left = parentNudge(cardParent, cardIssue, siblings)
+    const left = parentNudge(cardParent, cardIssue, siblings, above)
     parentLine = left ? nudgeLine('parent', left) : undefined
     redraw($)
   }
-  // MOD-200: the mod runs the task close itself, and the parent close when every other sibling is closed
-  const closed: { task?: CloseResult; parent?: CloseResult } = {}
+  // MOD-200: the mod runs the task close itself, then each ancestor close while every sub-issue of it is closed
+  const closed: { task?: CloseResult; ancestors: CloseResult[] } = { ancestors: [] }
   const closedLines: string[] = []
-  const plan = closesOf({ ...(cardIssue !== undefined ? { issue: cardIssue } : {}), ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(closeRepo ? { ownerRepo: closeRepo } : {}), sha, ...(pr ? { pr: Number(pr) } : {}), ...(siblings ? { siblings } : {}) })
+  const chain: Ancestor[] = siblings && cardParent !== undefined ? [{ number: cardParent, siblings }, ...above] : []
+  const plan = closesOf({ ...(cardIssue !== undefined ? { issue: cardIssue } : {}), ...(closeRepo ? { ownerRepo: closeRepo } : {}), sha, ...(pr ? { pr: Number(pr) } : {}), ...(chain.length > 0 ? { chain } : {}) })
   const closeOne = async (c: { issue: number; comment: string }): Promise<CloseResult> => {
     const r = await run($, ['gh', 'issue', 'close', String(c.issue), '--repo', closeRepo as string, '--comment', c.comment], { cwd: root, timeoutMs: 60000 })
     if (r.ok && r.exitCode === 0) {
@@ -3892,7 +3916,11 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   }
   if (plan.task && closeRepo) {
     closed.task = await closeOne(plan.task)
-    if (closed.task.ok && plan.parent) closed.parent = await closeOne(plan.parent)
+    // one failed close stops the walk: the lines above it stay for the brain
+    for (const a of plan.ancestors) {
+      if (!closed.task.ok || closed.ancestors.some(c => !c.ok)) break
+      closed.ancestors.push(await closeOne(a))
+    }
   }
   return [
     `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${ignored ? 'root card kept (git-ignored), ' : cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
@@ -3902,7 +3930,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
       branch: wt.branch,
       ...(version ? { version } : {}),
       ...(loadedClone ? { loadedClone } : {}),
-      ...(cardIssue !== undefined && closeRepo ? { issue: cardIssue, ownerRepo: closeRepo, sha, ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(siblings ? { siblings } : {}), ...(pr ? { pr: Number(pr) } : {}), closed } : {}),
+      ...(cardIssue !== undefined && closeRepo ? { issue: cardIssue, ownerRepo: closeRepo, sha, ...(cardParent !== undefined ? { parent: cardParent } : {}), ...(siblings ? { siblings } : {}), ...(chain.length > 0 ? { chain } : {}), ...(readFailed ? { readFailed } : {}), ...(pr ? { pr: Number(pr) } : {}), closed } : {}),
     })),
     `${id} merged at ${sha}`,
     ...(version ? [`release v${version}: run the block above, then reload the window`] : []),
