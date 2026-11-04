@@ -1,6 +1,7 @@
 // MOD-190: /delegation land. Pure: the arguments, the issue body, the open cards, the parent hint. No I/O, no gh.
 import { issueRef, slugOf } from './card'
 import { contained } from './scopetree'
+import { orderError } from './landtree'
 
 export const LAND_TYPES = ['feature', 'epic', 'story', 'task', 'bug', 'spike'] as const
 export type LandType = (typeof LAND_TYPES)[number]
@@ -299,6 +300,9 @@ export function parsePlan(input: unknown): Plan | { error: string } {
   for (const [i, raw] of rawTasks.entries()) {
     const t = planItem(raw, `task ${i + 1}`, ['story', 'task', 'bug', 'spike'], 'task')
     if (typeof t === 'string') return { error: t }
+    // MOD-284: a task ranks below the top item (story, task, bug or spike under epic or feature)
+    const order = orderError(feature.type, t.type)
+    if (order !== undefined) return { error: `land_plan: task "${t.title}": ${order}` }
     const stray = feature.paths.length === 0 ? undefined : t.paths.find(p => !contained(p, feature.paths))
     if (stray !== undefined) return { error: `land_plan: task "${t.title}" path ${stray} is outside the feature paths (${feature.paths.join(', ')})` }
     tasks.push(t)

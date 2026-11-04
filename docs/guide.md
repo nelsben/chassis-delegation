@@ -178,12 +178,14 @@ Work can be planned as GitHub issues at six levels, and only the last of them be
 
 | Level | What it is |
 | --- | --- |
-| `feature` | A thing a user can do that they could not before. |
 | `epic` | A body of work that spans several stories. |
-| `story` | One user-visible slice, small enough to finish in a short run of tasks. |
+| `feature` (optional) | A thing a user can do that they could not before. |
+| `story` (optional) | One user-visible slice, small enough to finish in a short run of tasks. |
 | `task` | The leaf: one change a worker can build and verify. Only a task becomes a card. |
 | `bug` | Something that is broken; it can be a leaf itself. |
 | `spike` | A question to answer, not a change to ship. |
+
+The order is epic, feature, story, then task, bug or spike: a child ranks below its parent. It is enforced when a tree is filed (`tree_import`, and `land_plan`), and never on a tree that already exists.
 
 An issue states what a worker may touch in two fenced blocks in its body, with the info strings `scope` and `forbid`, one repo-relative path or glob per line. When you make the task's card, pass the issue's number and its parent's: the card tool takes `issue`, `parent`, `parentScope` and `parentForbid`. Every scope glob of the card must sit inside the parent's scope, the parent's forbid is added to the card's forbid, and so is the scope of every open sibling card under the same parent; a card whose scope overlaps an open sibling is refused until that sibling merges. The exact rules are in [Parent scope](contracts.md).
 

@@ -8,7 +8,7 @@ const task = (title, paths = ['src/a.ts']) => ({ type: 'task', title, paths })
 describe('MOD-215: parseTreePlan', () => {
   test('a three-level file is normalised, with defaults and item paths', async () => {
     const { parseTreePlan } = await lib()
-    const r = parseTreePlan(file({ version: 1, parent: 9, items: [{ type: 'feature', title: ' Big  one ', children: [{ type: 'epic', title: 'E', paths: ['src/**'], children: [task('T')] }] }] }))
+    const r = parseTreePlan(file({ version: 1, parent: 9, items: [{ type: 'epic', title: ' Big  one ', children: [{ type: 'feature', title: 'E', paths: ['src/**'], children: [task('T')] }] }] }))
     expect('errors' in r).toBe(false)
     expect(r.plan.parent).toBe(9)
     const f = r.plan.items[0]
@@ -37,9 +37,9 @@ describe('MOD-215: parseTreePlan', () => {
   test('nesting stops at 4 levels', async () => {
     const { parseTreePlan } = await lib()
     const deep = { type: 'task', title: 'd5', paths: ['a'] }
-    const ok = parseTreePlan(file({ version: 1, items: [{ type: 'feature', title: 'l1', children: [{ type: 'epic', title: 'l2', children: [{ type: 'story', title: 'l3', children: [{ type: 'task', title: 'l4', paths: ['a'] }] }] }] }] }))
+    const ok = parseTreePlan(file({ version: 1, items: [{ type: 'epic', title: 'l1', children: [{ type: 'feature', title: 'l2', children: [{ type: 'story', title: 'l3', children: [{ type: 'task', title: 'l4', paths: ['a'] }] }] }] }] }))
     expect('errors' in ok).toBe(false)
-    const bad = parseTreePlan(file({ version: 1, items: [{ type: 'feature', title: 'l1', children: [{ type: 'epic', title: 'l2', children: [{ type: 'story', title: 'l3', children: [{ type: 'story', title: 'l4', children: [deep] }] }] }] }] }))
+    const bad = parseTreePlan(file({ version: 1, items: [{ type: 'epic', title: 'l1', children: [{ type: 'feature', title: 'l2', children: [{ type: 'story', title: 'l3', children: [{ type: 'task', title: 'l4', paths: ['a'], children: [deep] }] }] }] }] }))
     expect(bad.errors).toEqual(['items[0].children[0].children[0].children[0].children[0]: nested deeper than 4 levels'])
   })
   test('the sub-issue cap of 100 is checked per parent, and for the top items only under a parent issue', async () => {
@@ -66,13 +66,13 @@ describe('MOD-215: parseTreePlan', () => {
 describe('MOD-215: counts, lines and the folder rule', () => {
   test('counts per type, new, may reuse and filed closed', async () => {
     const { parseTreePlan, treeCounts } = await lib()
-    const r = parseTreePlan(file({ version: 1, items: [{ type: 'feature', title: 'F', issue: 5, children: [{ type: 'epic', title: 'E', close: 'shipped', children: [task('T1'), { ...task('T2'), issue: 8 }] }] }] }))
+    const r = parseTreePlan(file({ version: 1, items: [{ type: 'epic', title: 'F', issue: 5, children: [{ type: 'feature', title: 'E', close: 'shipped', children: [task('T1'), { ...task('T2'), issue: 8 }] }] }] }))
     expect(treeCounts(r.plan)).toEqual({ byType: { feature: 1, epic: 1, story: 0, task: 2 }, total: 4, fresh: 2, reuse: 2, closed: 1 })
   })
   test('the preview indents two spaces a level', async () => {
     const { parseTreePlan, treeLines } = await lib()
-    const r = parseTreePlan(file({ version: 1, parent: 4, items: [{ type: 'feature', title: 'F', issue: 5, children: [{ type: 'epic', title: 'E', close: 'shipped', children: [task('T1')] }] }] }))
-    expect(treeLines(r.plan)).toEqual(['feature: F [scope: none] may reuse #5 (checked on confirm)', '  epic: E [scope: none] (filed closed: shipped)', '    task: T1 [src/a.ts]'])
+    const r = parseTreePlan(file({ version: 1, parent: 4, items: [{ type: 'epic', title: 'F', issue: 5, children: [{ type: 'feature', title: 'E', close: 'shipped', children: [task('T1')] }] }] }))
+    expect(treeLines(r.plan)).toEqual(['epic: F [scope: none] may reuse #5 (checked on confirm)', '  feature: E [scope: none] (filed closed: shipped)', '    task: T1 [src/a.ts]'])
   })
   test('only a .json file under .delegation/plans/ is accepted', async () => {
     const { planFileOf } = await lib()
@@ -96,5 +96,30 @@ describe('MOD-215: counts, lines and the folder rule', () => {
     expect(parseTreeImportArgs('.delegation/plans/a.json --dry-run')).toEqual({ file: '.delegation/plans/a.json', confirm: false, dryRun: true })
     expect(parseTreeImportArgs('.delegation/plans/a.json --confirm')).toEqual({ file: '.delegation/plans/a.json', confirm: true, dryRun: false })
     expect('error' in parseTreeImportArgs('')).toBe(true)
+  })
+})
+
+describe('MOD-284: a child ranks below its parent (epic, feature, story, then task, bug or spike)', () => {
+  test('a feature under a story is refused', async () => {
+    const { parseTreePlan } = await lib()
+    const r = parseTreePlan(file({ version: 1, items: [{ type: 'epic', title: 'E', children: [{ type: 'story', title: 'S', children: [{ type: 'feature', title: 'F', children: [task('T')] }] }] }] }))
+    expect(r.errors).toEqual(['items[0].children[0].children[0]: a feature cannot hang under a story (order: epic, feature, story, then task, bug or spike)'])
+  })
+  test('a story under a story is refused', async () => {
+    const { parseTreePlan } = await lib()
+    const r = parseTreePlan(file({ version: 1, items: [{ type: 'feature', title: 'F', children: [{ type: 'story', title: 'S1', children: [{ type: 'story', title: 'S2', children: [task('T')] }] }] }] }))
+    expect(r.errors).toEqual(['items[0].children[0].children[0]: a story cannot hang under a story (order: epic, feature, story, then task, bug or spike)'])
+  })
+  test('an epic under a feature is refused, and each out-of-order child is its own error', async () => {
+    const { parseTreePlan } = await lib()
+    const r = parseTreePlan(file({ version: 1, items: [{ type: 'feature', title: 'F', children: [{ type: 'epic', title: 'E1' }, { type: 'epic', title: 'E2' }] }] }))
+    expect(r.errors).toEqual(['items[0].children[0]: an epic cannot hang under a feature (order: epic, feature, story, then task, bug or spike)', 'items[0].children[1]: an epic cannot hang under a feature (order: epic, feature, story, then task, bug or spike)'])
+  })
+  test('epic > feature > story > task, and epic > task, are accepted', async () => {
+    const { parseTreePlan } = await lib()
+    const full = parseTreePlan(file({ version: 1, items: [{ type: 'epic', title: 'E', children: [{ type: 'feature', title: 'F', children: [{ type: 'story', title: 'S', children: [task('T')] }] }, task('T2')] }] }))
+    expect('errors' in full).toBe(false)
+    const epicTask = parseTreePlan(file({ version: 1, items: [{ type: 'epic', title: 'E', children: [task('T')] }] }))
+    expect('errors' in epicTask).toBe(false)
   })
 })

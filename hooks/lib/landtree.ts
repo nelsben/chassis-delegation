@@ -26,6 +26,17 @@ export type TreeNode = {
 }
 export type TreePlan = { parent?: number; items: TreeNode[] }
 
+/** MOD-284: a child ranks below its parent: epic 0, feature 1, story 2, then task, bug and spike 3. */
+const TYPE_RANK = new Map<string, number>([['epic', 0], ['feature', 1], ['story', 2], ['task', 3], ['bug', 3], ['spike', 3]])
+
+/** MOD-284: the error for a child whose type does not rank below its parent's (equal rank included), or undefined when it is in order or a type is unknown. */
+export function orderError(parent: string, child: string): string | undefined {
+  const p = TYPE_RANK.get(parent)
+  const c = TYPE_RANK.get(child)
+  if (p === undefined || c === undefined || c > p) return undefined
+  return `${child === 'epic' ? 'an' : 'a'} ${child} cannot hang under a ${parent} (order: epic, feature, story, then task, bug or spike)`
+}
+
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const whole = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1
 
@@ -45,7 +56,7 @@ export function parseTreePlan(source: string): { plan: TreePlan } | { errors: st
     if (!whole(raw.parent)) errors.push('parent must be a whole number, 1 or more')
     else parent = raw.parent
   }
-  const walk = (list: unknown[], base: string, depth: number, parentPaths: readonly string[], idx: number[]): TreeNode[] => {
+  const walk = (list: unknown[], base: string, depth: number, parentPaths: readonly string[], idx: number[], parentType?: string): TreeNode[] => {
     const out: TreeNode[] = []
     for (const [i, it] of list.entries()) {
       const at = `${base}[${i}]`
@@ -61,6 +72,10 @@ export function parseTreePlan(source: string): { plan: TreePlan } | { errors: st
       const before = errors.length
       const type = it.type as TreeType
       if (typeof it.type !== 'string' || !TREE_TYPES.includes(type)) errors.push(`${at}: type must be one of ${TREE_TYPES.join(', ')}`)
+      if (parentType !== undefined && typeof it.type === 'string') {
+        const oe = orderError(parentType, it.type)
+        if (oe !== undefined) errors.push(`${at}: ${oe}`)
+      }
       const title = typeof it.title === 'string' ? it.title.replace(/\s+/g, ' ').trim() : ''
       if (title === '') errors.push(`${at}: needs a title`)
       let paths: string[] = []
@@ -93,7 +108,7 @@ export function parseTreePlan(source: string): { plan: TreePlan } | { errors: st
         if (!Array.isArray(it.children)) errors.push(`${at}: children must be a list`)
         else {
           if (it.children.length > SUB_ISSUE_CAP) errors.push(`${at}: ${it.children.length} children; GitHub allows ${SUB_ISSUE_CAP} sub-issues per parent`)
-          children = walk(it.children, `${at}.children`, depth + 1, paths.length > 0 ? paths : [], here)
+          children = walk(it.children, `${at}.children`, depth + 1, paths.length > 0 ? paths : [], here, typeof it.type === 'string' && TREE_TYPES.includes(type) ? type : undefined)
         }
       }
       if (errors.length === before) out.push({ type, title, paths, ...(note !== '' ? { note } : {}), ...(close !== '' ? { close } : {}), ...(issue !== undefined ? { issue } : {}), children, at, idx: here })

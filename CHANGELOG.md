@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`tree_import` and `land_plan` refuse a child that does not rank below its parent: epic, feature, story, then task, bug or spike (MOD-284).** A feature under a story and a story under a story are errors naming the item (`items[1].children[0]: a feature cannot hang under a story (order: ...)`); nothing is filed on any error. Existing trees are untouched. Pure helper `orderError` in `hooks/lib/landtree.ts`.
+
 ## 0.9.47 — 2026-11-03
 
 ### Fixed
