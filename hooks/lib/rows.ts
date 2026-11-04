@@ -40,3 +40,36 @@ export function runningSection(workers: readonly RunningWorker[], brain: string 
   if (workers.length === 0) return [`running: none · brain: ${b}`]
   return ['running:', ...workers.map(runningLine), `brain: ${b}`]
 }
+
+/** MOD-296 (#398): the plain id a suffixed task id (`<id> <suffix>`, a spawn recorded under its agent) names; undefined for a plain id. */
+export const plainTaskOf = (task: string): string | undefined => {
+  const at = task.indexOf(' ')
+  return at > 0 ? task.slice(0, at) : undefined
+}
+
+/** A ledger or attempt row as the supersession rule reads it (rows are oldest first). */
+export type SupersedableRow = { task: string; attempt: number; kind?: string; verdict?: string }
+
+/** The rows that close a task's suffixed rows: an accept, a merge, or a consistent or reviewed verdict. */
+export const closesTask = (r: SupersedableRow): boolean => r.kind === 'accept' || r.kind === 'merged' || r.verdict === 'consistent' || r.verdict === 'reviewed'
+
+/**
+ * MOD-296 (#398): the suffixed rows a later row for their plain id closes. A suffixed row whose plain id has a later
+ * accept, merged, consistent or reviewed row is read as closed, with the reason `superseded by <plain> attempt <n>`
+ * (n of the nearest such later row). Keyed by the row's index in `rows`; a plain row is never in the map.
+ */
+export function supersededRows(rows: readonly SupersedableRow[]): Map<number, string> {
+  const out = new Map<number, string>()
+  const closer = new Map<string, number>() // plain id -> attempt of the nearest later closing row, scanning back
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i] as SupersedableRow
+    const plain = plainTaskOf(r.task)
+    if (plain === undefined) {
+      if (closesTask(r)) closer.set(r.task, r.attempt)
+      continue
+    }
+    const n = closer.get(plain)
+    if (n !== undefined) out.set(i, `superseded by ${plain} attempt ${n}`)
+  }
+  return out
+}

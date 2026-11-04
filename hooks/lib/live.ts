@@ -8,6 +8,7 @@ import { taskLabel } from './attempts'
 import { base64, elapsed } from './dashboard'
 import { brainSummary, brainTileText, type AdHoc, type BrainRecord, type BrainSummary } from './brain'
 import { withRepoName, worktreePath } from './paths'
+import { supersededRows } from './rows'
 
 // ---- the spend series -------------------------------------------------------------
 
@@ -231,8 +232,13 @@ export function worktreeRows(input: WorktreeInput): WorktreeRow[] {
     if (!w.path.startsWith(prefix) || w.path.length === prefix.length) continue
     disk.set(w.path.slice(prefix.length).replace(/-replay$/, ''), w)
   }
+  // MOD-296 (#398): a record under a suffixed id is closed by a later accept, merge or verdict for its plain id
+  const sorted = [...input.records].sort((a, b) => a.at - b.at)
+  const sup = supersededRows(sorted.map(r => ({ task: r.task, attempt: r.attempt, verdict: r.verdict, ...(r.retired !== undefined ? { kind: 'accept' } : {}) })))
+  const reasonOf = new Map<AttemptRecord, string>()
+  sorted.forEach((r, i) => { const why = sup.get(i); if (why !== undefined) reasonOf.set(r, why) })
   const byLabel = new Map<string, AttemptRecord[]>()
-  for (const r of [...input.records].sort((a, b) => a.at - b.at)) {
+  for (const r of sorted) {
     const label = taskLabel(r.task, r.subtask)
     byLabel.set(label, [...(byLabel.get(label) ?? []), r])
   }
@@ -260,6 +266,9 @@ export function worktreeRows(input: WorktreeInput): WorktreeRow[] {
     } else if (q >= 0) {
       state = `queued #${q + 1}`
       kind = 'queued'
+    } else if (latest && reasonOf.has(latest)) {
+      state = reasonOf.get(latest) as string
+      kind = 'verdict'
     } else if (latest && latest.verdict !== 'pending') {
       state = latest.verdict
       kind = 'verdict'
