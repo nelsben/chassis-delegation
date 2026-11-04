@@ -225,6 +225,7 @@ import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLi
 import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
 import { noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictRule, pollStep } from './lib/verdicttool'
+import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
 import { BY_TASK_FAMILIES, migratedLine, migrationPlan, scopedId, trimRepo, type MigrationPlan } from './lib/taskkeys'
@@ -5805,6 +5806,37 @@ async function workerTree($: Host, s: LookFor, header: BriefHeader | undefined, 
 }
 
 /**
+ * MOD-291: the worker's worktree head against the judged attempt's sha. The same tree under another commit is a rebase
+ * (the brain's merge pipeline moved it, no work was done); a different tree is new work, with the paths between them.
+ * Read-only git (rev-parse, diff); undefined when git cannot say.
+ */
+async function headMoveIn($: Host, repo: string, judgedSha: string): Promise<HeadMove | undefined> {
+  const at = (ref: string): Promise<string | undefined> => run($, ['git', '-C', repo, 'rev-parse', '--verify', '--quiet', ref], { cwd: repo, timeoutMs: 15000 }).then(r => (okOut(r) ?? '').trim() || undefined)
+  const head = await at('HEAD')
+  if (head === undefined || head.length < 7) return undefined
+  const judgedTree = await at(`${judgedSha}^{tree}`)
+  const headTree = await at('HEAD^{tree}')
+  const trees = { sha: judgedSha, ...(judgedTree ? { tree: judgedTree } : {}) }
+  const first = headMove(trees, { sha: head, ...(headTree ? { tree: headTree } : {}) })
+  if (first.kind !== 'new-work') return first
+  const diff = okOut(await run($, ['git', '-C', repo, 'diff', '--no-renames', '--name-only', judgedSha, head], { cwd: repo, timeoutMs: 15000 }))
+  return headMove(trees, { sha: head, ...(headTree ? { tree: headTree } : {}) }, (diff ?? '').split('\n').map(l => l.trim()).filter(Boolean))
+}
+
+/** MOD-291: headMoveIn for a worker's own worktree (none for here, none, or a session root): the verdict tool's and the spawn look's read. */
+async function headMoveOf($: Host, s: LookFor, header: BriefHeader | undefined, sha: string): Promise<HeadMove | undefined> {
+  if (s.here || header?.repo === 'here' || header?.repo === 'none') return undefined
+  let root: string
+  try {
+    root = (await $.session.root()).replace(/\/+$/, '')
+  } catch {
+    return undefined
+  }
+  const tree = await workerTree($, s, header, root)
+  return tree ? headMoveIn($, tree.repo, sha) : undefined
+}
+
+/**
  * MOD-150: a failing verdict's worker whose commits are all on the base already (cherry-picked by patch, or merged) is not
  * resumed: the row's next says so. Read-only, through run(); anything it cannot read leaves the advice as it was.
  */
@@ -5846,6 +5878,15 @@ async function workInWorktree($: Host, s: LookFor, header: BriefHeader | undefin
   if (!seen.present) {
     debug($, `${label}: no work present in ${repo} (${seen.why})`)
     return undefined
+  }
+  // MOD-291: the last attempt judged consistent, its head moved onto the same tree: a rebase, not finished work (no work-present attempt)
+  const judgedLast = attemptsFor(records, s.subtask, lane).at(-1)
+  if (judgedLast?.verdict === 'consistent' && judgedLast.sha !== undefined) {
+    const moved = await headMoveIn($, repo, judgedLast.sha)
+    if (moved?.kind === 'rebased') {
+      debug($, `${label}: rebased to ${seen.sha.slice(0, 7)} (same tree as ${judgedLast.sha.slice(0, 7)}); not work`)
+      return undefined
+    }
   }
   debug($, `${label}: ${workPresentLine(seen)} (${seen.ahead} commit${seen.ahead === 1 ? '' : 's'} ahead)`)
   return { sha: seen.sha, branch: seen.branch, ahead: seen.ahead }
@@ -7119,7 +7160,14 @@ async function verdictNow($: Host, task: string, subtask: string): Promise<Verdi
   if (!spawn || spawn.attempt !== latest.attempt || spawn.task !== task || spawn.subtask !== subtask) return { kind: 'judged', text: `${PLUGIN}: ${label} attempt ${latest.attempt} ${latest.verdict}` }
   // the verdict is patched into the attempt record before its row is stored
   if (spawn.verdictAttempt !== spawn.attempt || !hasVerdictText(spawn)) return { kind: 'wait' }
-  return postedOf($, spawn, latest.verdictAt)
+  const judged = await postedOf($, spawn, latest.verdictAt)
+  // MOD-291: a consistent verdict whose head has moved: the same tree is a rebase (the row says so), else the new commits are unverified work
+  if (latest.verdict !== 'consistent' || latest.sha === undefined || judged.kind !== 'judged') return judged
+  const briefText = spawn.briefPath !== undefined ? await readText($, spawn.briefPath) : undefined
+  const move = await headMoveOf($, spawn, briefText !== undefined ? parseHeader(briefText) : undefined, latest.sha)
+  if (move?.kind === 'rebased') return { kind: 'judged', text: rebasedText(judged.text, move.sha) }
+  if (move?.kind === 'new-work') return { kind: 'judged', text: `${judged.text}\n${unverifiedWorkLine(latest.sha, move.sha, move.files)}` }
+  return judged
 }
 
 /** A judged attempt's row as the verdict tool returns it: the row posted, else the rendered verdict. */

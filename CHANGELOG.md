@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A rebase of a judged task's branch is not an attempt: when the head moved onto the same tree, the verdict tool says `rebased to <sha>` and no work-present attempt is recorded; new commits on another tree say `unverified work since <sha>` and charge nothing until a verify runs (MOD-291, #390).**
+
 ## 0.9.48 — 2026-11-04
 
 ### Added
