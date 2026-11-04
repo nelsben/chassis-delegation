@@ -197,6 +197,14 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(await say($, 'adaptive')).toContain('adaptive = off (yours)')
   })
 
+  test('issueMatch: suggest is the value in force; require is read back, and the value stays when another word is set', async ($, on) => {
+    world(on)
+    await $.session.start(sessionStart)
+    expect(await say($, 'issueMatch')).toContain('issueMatch = suggest (default)')
+    await set($, 'issueMatch', 'require')
+    expect(await say($, 'issueMatch')).toContain('issueMatch = require (yours)')
+  })
+
   test('maxWorkers: 3 lets a third briefed worker start at once (the built-in 2 queues it)', async ($, on) => {
     const w = world(on, { listAgents: true })
     await $.session.start(sessionStart)

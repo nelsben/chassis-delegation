@@ -599,7 +599,10 @@ describe('MOD-207: land resume keyed to the plan', () => {
     await planTool($, planA())
     const lines = (w.files.get(`${LANDED}/fix-header.md`) ?? '').trimEnd().split('\n')
     expect(lines[lines.length - 1]).toMatch(/^issue: #51 /)
-    expect(lines[lines.length - 2]).toMatch(/^plan: export-rework-[0-9a-f]{8}$/)
+    // MOD-287: the type and parent lines sit between the plan line and the issue line; the plan line still comes before the issue line
+    const at = lines.findIndex(l => /^plan: /.test(l))
+    expect(lines[at]).toMatch(/^plan: export-rework-[0-9a-f]{8}$/)
+    expect(lines.slice(at + 1, -1).every(l => /^(type|parent): /.test(l))).toBe(true)
   })
 
   test('land preview then confirm leaves exactly one landed file and files from it', { options: { landAuto: false } }, async ($, on) => {

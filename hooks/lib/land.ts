@@ -168,6 +168,9 @@ export function withoutIssueLine(text: string): string {
   const lines = text.replace(/\n*$/, '').split('\n')
   if (lines.length > 0 && /^closed: \S+$/.test(lines[lines.length - 1] as string)) lines.pop()
   if (lines.length > 0 && ISSUE_LINE.test(lines[lines.length - 1] as string)) lines.pop()
+  // MOD-287: the type and parent lines land writes before the issue line go too
+  if (lines.length > 0 && /^parent: #\d+$/.test(lines[lines.length - 1] as string)) lines.pop()
+  if (lines.length > 0 && /^type: \S+$/.test(lines[lines.length - 1] as string)) lines.pop()
   return `${lines.join('\n').replace(/\n*$/, '')}\n`
 }
 
