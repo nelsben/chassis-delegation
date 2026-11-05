@@ -264,7 +264,8 @@ describe('5B: /delegation init and the init tool', () => {
     // a second run changes nothing in the config and says what it would have set
     w.files.set(`${ROOT}/.chassis-delegation.json`, '{"gateMap":{"test":"make test"}}')
     const again = await $.tool.call({ tool: 'mcp__chassis-delegation__setup' } as never)
-    expect(resultText(again)).toContain('setup would have set "gateMap": {"test": "npm test"}, "baseRef": "main"')
+    expect(resultText(again)).toContain('setup would have set "baseRef": "main"')
+    expect(resultText(again)).not.toContain('"gateMap"')
     expect(w.files.get(`${ROOT}/.chassis-delegation.json`)).toBe('{"gateMap":{"test":"make test"}}')
   })
 

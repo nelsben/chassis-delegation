@@ -28,6 +28,8 @@ export type SetupProbe = {
   markers: readonly string[]
   /** The text of package.json, when it exists and was readable. */
   packageJson?: string
+  /** MOD-315: the repo's effective gateMap (its config, with /config overrides; refused gates are not in it). */
+  gateMap?: Readonly<Record<string, string>>
   /** tests/ holds a test_*.py. */
   pyTests: boolean
   /** The PATH_TOOLS found in a PATH directory. */
@@ -51,6 +53,14 @@ const base = (s: string): string => norm(s).slice(norm(s).lastIndexOf('/') + 1) 
 
 /** The package manager the lockfile names (npm without one). */
 export const packageManager = (p: SetupProbe): string => (has(p, 'pnpm-lock.yaml') ? 'pnpm' : has(p, 'yarn.lock') ? 'yarn' : 'npm')
+
+/** MOD-315: the first entry of the repo's gateMap, with how many more there are; undefined when it has none. */
+export function gateMapFirst(p: SetupProbe): { id: string; command: string; more: number } | undefined {
+  const entries = Object.entries(p.gateMap ?? {})
+  if (entries.length === 0) return undefined
+  const [id, command] = entries[0]
+  return { id, command, more: entries.length - 1 }
+}
 
 /** The test command the repo already has, or undefined. */
 export function detectGate(p: SetupProbe): Gate | undefined {
@@ -110,9 +120,11 @@ export function setupChecks(p: SetupProbe): SetupLine[] {
   req(p.hasCommit, p.hasCommit ? 'a first commit' : 'a first commit: none yet', 'git add -A && git commit -m "Initial commit"')
 
   const gate = detectGate(p)
+  // MOD-315: a gateMap in the config holds the gate check, with its first gate named
+  const mapped = gateMapFirst(p)
   req(
-    gate !== undefined,
-    gate ? `a gate: ${gate.command}` : 'a gate: no test command found',
+    gate !== undefined || mapped !== undefined,
+    mapped ? `a gate: ${mapped.id}: ${mapped.command}${mapped.more > 0 ? ` (+${mapped.more} more)` : ''}` : gate ? `a gate: ${gate.command}` : 'a gate: no test command found',
     `add a test command that passes on the empty project, then run /delegation setup again (${gateExample(p)})`,
   )
 
@@ -258,12 +270,13 @@ export function proposedSpend(gateCommands: string | readonly string[]): Record<
 }
 
 /** What setup found that the config should carry. */
-export type Found = { gate: string; baseRef?: string; cardDir?: string; spendByTier?: Readonly<Record<'economy' | 'standard' | 'frontier', number>> }
+export type Found = { gate?: string; baseRef?: string; cardDir?: string; spendByTier?: Readonly<Record<'economy' | 'standard' | 'frontier', number>> }
 
 export function foundOf(p: SetupProbe): Found {
   const gate = detectGate(p)
+  // MOD-315: a repo whose gateMap already holds the gate gets no gateMap written and no gateMap line
   return {
-    gate: gate?.command ?? '',
+    ...(gateMapFirst(p) === undefined ? { gate: gate?.command ?? '' } : {}),
     ...(isHereMode(p) ? { baseRef: hereBaseRef(p) } : {}),
     ...(has(p, '.claude-plugin/plugin.json') ? { cardDir: PLUGIN_CARD_DIR } : {}),
   }
@@ -272,7 +285,7 @@ export function foundOf(p: SetupProbe): Found {
 /** The config template with what setup found filled in. Key order is the template's; baseRef goes last. */
 export function scaffoldConfig(template: string, found: Found): string {
   const o = JSON.parse(template) as Record<string, unknown>
-  o.gateMap = { test: found.gate }
+  if (found.gate !== undefined) o.gateMap = { test: found.gate }
   if (found.cardDir) o.cardDir = found.cardDir
   if (found.baseRef) o.baseRef = found.baseRef
   if (found.spendByTier) o.spendByTier = found.spendByTier
@@ -281,15 +294,15 @@ export function scaffoldConfig(template: string, found: Found): string {
 
 /** What setup would have set, when the config already exists and is left alone. */
 export function wouldSet(found: Found): string {
-  const parts = [`"gateMap": {"test": "${found.gate}"}`, ...(found.baseRef ? [`"baseRef": "${found.baseRef}"`] : []), ...(found.cardDir ? [`"cardDir": "${found.cardDir}"`] : [])]
-  return `· ${REPO_CONFIG_FILE} exists and is left as it is; setup would have set ${parts.join(', ')}`
+  const parts = [...(found.gate !== undefined ? [`"gateMap": {"test": "${found.gate}"}`] : []), ...(found.baseRef ? [`"baseRef": "${found.baseRef}"`] : []), ...(found.cardDir ? [`"cardDir": "${found.cardDir}"`] : [])]
+  return parts.length === 0 ? `· ${REPO_CONFIG_FILE} exists and is left as it is` : `· ${REPO_CONFIG_FILE} exists and is left as it is; setup would have set ${parts.join(', ')}`
 }
 
 /** One line per key setup set in a fresh config. */
 export function configLines(found: Found): string[] {
   const s = found.spendByTier
   const spend = s ? [`config: spendByTier = economy ${s.economy}, standard ${s.standard}, frontier ${s.frontier} (${s.standard === DEFAULT_SPEND_BY_TIER.standard ? 'the defaults' : 'the gate deploys or runs remote tests'})`] : []
-  return [`config: gateMap.test = ${found.gate}`, ...(found.baseRef ? [`config: baseRef = ${found.baseRef}`] : []), ...(found.cardDir ? [`config: cardDir = ${found.cardDir}`] : []), ...spend]
+  return [...(found.gate !== undefined ? [`config: gateMap.test = ${found.gate}`] : []), ...(found.baseRef ? [`config: baseRef = ${found.baseRef}`] : []), ...(found.cardDir ? [`config: cardDir = ${found.cardDir}`] : []), ...spend]
 }
 
 /** A first task the person could say, by the detected stack. */
@@ -307,8 +320,8 @@ export function firstTaskExample(gate: Gate | undefined): string {
  * the card with the card tool. MOD-12: on go the brain dispatches and makes the
  * Agent call the dispatch returns; the mod shapes and verifies that worker.
  */
-export const handoverText = (gate: Gate | undefined): string =>
-  `Set up. Tell Claude your first task in a sentence, for example: "${firstTaskExample(gate)}". Claude writes the card, shows you the brief, and when you say go dispatches it and makes the Agent call that starts the worker; the mod shapes and verifies it.`
+export const handoverText = (gate: Gate | undefined, mapped?: string): string =>
+  `Set up. Tell Claude your first task in a sentence, for example: "${firstTaskExample(gate)}". Claude writes the card, shows you the brief, and when you say go dispatches it and makes the Agent call that starts the worker; the mod shapes and verifies it.${mapped !== undefined ? ` The gate is ${mapped}.` : ''}`
 
 /** The extra line the setup tool (the brain) gets. */
 export const BRAIN_HANDOVER = 'Ask the person for the first task, then call the card tool. On go, call dispatch and make the Agent call its result ends with (the spawn block, verbatim): that call starts the worker.'
