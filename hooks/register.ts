@@ -214,7 +214,7 @@ import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta,
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
-import { AUTO_NOTICE, LATCH_LINE, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
+import { AUTO_NOTICE, LATCH_LINE, allRefused, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
@@ -7089,7 +7089,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   if (!spawn.adhoc && !spawn.review && spawn.agentId) {
     const refused = hostRefusals.get(spawn.agentId)
     hostRefusals.delete(spawn.agentId)
-    if (refused && refused.first !== undefined && refused.n >= 1 && refused.n === refused.attempted && !rateLimit && !usableSha(report?.sha)) {
+    if (refused && refused.first !== undefined && allRefused(refused.n, refused.attempted) && !rateLimit && !usableSha(report?.sha)) {
       blocked = blockedByEnvironment(refused.first)
       verdict = 'unverified'
       lines = [`note: ${blocked}; ${refused.n} Bash call${refused.n === 1 ? '' : 's'} refused, so the worker could not run its commands and its claims were not judged`]

@@ -5,6 +5,7 @@
 ### Fixed
 
 - **A worker's Bash runs as typed when the session is in auto mode now, read off the classic hook events (`permission_mode` on `PostToolUse`, `PostToolUseFailure` and `UserPromptSubmit`) instead of the spawn row alone, and a host refusal that never comes back through the tool call chain (`PostToolUseFailure` with the "changed this call's input" error) latches the worker to run as typed and counts toward the `blocked by environment` verdict (MOD-321).**
+- **The `blocked by environment` verdict counts a host refusal the tool call chain never returned through: a refusal seen only by `PostToolUseFailure` bumps the refused count and not the attempted count, so the verdict now tests refused n at or above attempted (`allRefused`) instead of equality (MOD-322).**
 
 ## 0.9.51 — 2026-11-05
 
