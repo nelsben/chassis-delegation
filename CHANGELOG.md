@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **A test-only card declares `red_test` as `none (test-only)`: the verifier holds the red claim when the delta is only tests and docs, and refutes it naming the source paths otherwise; `card` documents the value (MOD-313).**
+
 ### Fixed
 
 - **`tree import` recognises a GitHub rate limit (primary or secondary), on a create or on reading a recorded issue, and stops with one line giving the count filed and when to run again, instead of a bare `gh said:`; the next run resumes from the plan file (MOD-314).**

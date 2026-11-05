@@ -484,6 +484,19 @@ export const briefWantsRed = (redTest: string | undefined): boolean => {
   return s !== '' && !/^none(?![\w./-])/i.test(s)
 }
 
+/** MOD-313: the red_test says `none (test-only)`: the change is only tests, so there is no red to show, and the delta is guarded instead. */
+const TEST_ONLY_RED = /^none \(test-only\)/i
+const TEST_PATH = /(^|\/)(test|tests|__tests__|spec)\/|\.(test|spec)\.[^/.]+$|_test\.[^/.]+$|\.node\.mjs$/
+const DOC_PATH = /^(CHANGELOG\.md|README\.md)$|^docs\//
+/** MOD-313: the red claim for `none (test-only)`: held when every delta path is a test or doc path, failed naming up to 5 others, unchecked when the delta is unknown; undefined for any other red_test. */
+export function testOnlyRed(redTest: string | undefined, delta: readonly string[] | undefined, noDelta = 'could not establish the branch delta (sha/base missing)'): { status: 'held' | 'failed' | 'unchecked'; detail: string } | undefined {
+  if (!TEST_ONLY_RED.test((redTest ?? '').trim())) return undefined
+  if (!delta) return { status: 'unchecked', detail: noDelta }
+  const other = delta.filter(p => !TEST_PATH.test(p) && !DOC_PATH.test(p))
+  if (other.length > 0) return { status: 'failed', detail: `red_test none (test-only) but the delta changes ${other.slice(0, 5).join(', ')}` }
+  return { status: 'held', detail: `red_test none (test-only): the delta is tests and docs only (${delta.length} paths)` }
+}
+
 /** red= names nothing: absent, empty or `none`. */
 const redUnnamed = (path: string | undefined): boolean => {
   const s = (path ?? '').trim()
@@ -1060,7 +1073,10 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   let red: NativeResult['red']
   if (cardless) claim('red', 'unchecked', NO_BRIEF_REASON)
   else if (otherFormat !== undefined && briefWantsRed(contract.redTest) && redUnnamed(report.red)) claim('red', 'unchecked', notCheckedLine(otherFormat))
-  else if (briefWantsRed(contract.redTest)) {
+  else if (testOnlyRed(contract.redTest, [])) {
+    const c = testOnlyRed(contract.redTest, delta && delta.filter(p => !isDelegationPath(p) && !foreignGit.has(p)), noDelta)
+    if (c) claim('red', c.status, c.detail)
+  } else if (briefWantsRed(contract.redTest)) {
     const named = (report.red ?? '').trim()
     let ev: RedEvidence = { exists: false }
     const target = redUnnamed(named) ? undefined : redTarget(named, repo, contract.scratch)
