@@ -5,6 +5,7 @@
 ### Added
 
 - **A test-only card declares `red_test` as `none (test-only)`: the verifier holds the red claim when the delta is only tests and docs, and refutes it naming the source paths otherwise; `card` documents the value (MOD-313).**
+- **Each spawn and verdict ledger row carries the brief's hash, and a brief append (a dispatch grant or a hand-back amend) writes an amend row, so a reader can tell which brief version an attempt was judged against (MOD-308, #395).**
 
 ### Fixed
 

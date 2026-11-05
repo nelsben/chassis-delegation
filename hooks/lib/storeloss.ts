@@ -21,6 +21,8 @@ export type SpawnRow = {
   agentId?: string
   toolUseId?: string
   briefPath?: string
+  /** MOD-308 (#395): the brief's hash at the spawn. */
+  briefHash?: string
   cwd?: string
   /** MOD-44: the other local repo the task is for. */
   repo?: string
@@ -58,6 +60,7 @@ export function spawnRow(s: SpawnFields, sessionId?: string): SpawnRow {
     ...(s.agentId ? { agentId: s.agentId } : {}),
     ...(s.toolUseId ? { toolUseId: s.toolUseId } : {}),
     ...(s.briefPath ? { briefPath: s.briefPath } : {}),
+    ...(s.briefHash ? { briefHash: s.briefHash } : {}),
     ...(s.cwd ? { cwd: s.cwd } : {}),
     ...(s.repo ? { repo: s.repo } : {}),
     ...(s.description ? { description: s.description } : {}),

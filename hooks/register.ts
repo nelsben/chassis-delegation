@@ -67,6 +67,7 @@ import {
   scopeForbidClashes,
   scopeForbidClashLine,
   appendAmends,
+  briefHash,
   budgetWarning,
   effectiveList,
   parseAmends,
@@ -6670,11 +6671,14 @@ async function applyHandbackAmends($: Host, briefPath: string, briefText: string
     ...byMode.map(a => amendHeldLine(a, mode, briefPath, sha ?? '<sha>')),
   ]
   if (apply.length === 0) return [...lines, ...heldLines]
+  const appended = appendAmends(briefText, apply.map(a => a.block)).text
   try {
-    await $.fs.write(briefPath, appendAmends(briefText, apply.map(a => a.block)).text)
+    await $.fs.write(briefPath, appended)
   } catch (err) {
     return [...lines, `note: amend not appended to ${briefPath}: ${String(err)}; checked against the brief as it was`, ...heldLines]
   }
+  // MOD-308 (#395): the brief version this attempt is judged against, written right after the append
+  await appendLedger($, { kind: 'amend', task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, briefHash: briefHash(appended), tokens: apply.flatMap(a => a.ops).join(' '), source: 'worker', at: await now($), sessionId: await sessionIdOf($) })
   return [...lines, ...apply.map(amendedLine), ...heldLines]
 }
 
@@ -7199,7 +7203,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${shownLabel}: ${shortNext(next)}${hint}` : undefined
     await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line: quiet, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}), ...(report?.sha ? { sha: report.sha } : {}), ...(spawn.key.includes('-rejudge-') ? { rejudge: true } : {}) })
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
-    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), next: shortNext(next), sessionId: await sessionIdOf($) })
+    const verdictBrief = spawn.briefPath !== undefined ? await readText($, spawn.briefPath) : undefined
+    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
   }
   return { full, line }
 }
@@ -8155,6 +8160,13 @@ async function dispatchOnce($: Host, parsed: DispatchArgs): Promise<string> {
   } catch (err) {
     return `/dispatch ${parsed.id}: the grant was not written to ${briefPath}: ${String(err)}`
   }
+  // MOD-308 (#395): the brief version the grant made, written right after the append
+  const granted = parseHeader(grant.text)
+  const grantTask = granted?.task ?? parsed.id
+  const grantSub = granted?.subtask ?? 'main'
+  const sameSub = (await loadAttempts($, { task: grantTask })).filter(r => r.subtask === grantSub && !r.replay)
+  const grantAttempt = sameSub.filter(r => r.verdict === 'pending').at(-1)?.attempt ?? sameSub.at(-1)?.attempt
+  await appendLedger($, { kind: 'amend', task: grantTask, subtask: grantSub, ...(grantAttempt !== undefined ? { attempt: grantAttempt } : {}), briefHash: briefHash(grant.text), tokens: parsed.amend.trim().replace(/\s+/g, ' '), source: 'brain', at: await now($), sessionId: await sessionIdOf($) })
   const said = `granted in ${briefPath}:\n${grant.lines.join('\n')}`
   if (amendAlone(parsed)) return said
   return `${said}\n${await dispatchBody($, parsed)}`
@@ -9848,6 +9860,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(res.agentId ? { agentId: res.agentId } : {}),
       toolUseId: e.tool_use_id,
       ...(briefPath ? { briefPath } : {}),
+      ...(p.briefText !== undefined ? { briefHash: briefHash(p.briefText) } : {}),
       purpose,
       ...laneFields(lane),
       ...(here ? { here } : {}),
@@ -9900,7 +9913,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     } else if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
     // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
-    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t, ...(cardCls?.name ? { class: cardCls.name } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)))
+    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)))
     // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
     if (s?.stopped) {
       debug($, `${label}: started; its views skipped (the hook was ${s.stopped === 'abort' ? 'abandoned' : 'near its budget'})`)

@@ -1,7 +1,7 @@
 // MOD-247: the ledger is held as parsed rows keyed on the (mtimeMs, size) of .delegation/ledger.jsonl.
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, sessionStart, spawnInput, ROOT, NOW } from './harness'
+import { world, sessionStart, spawnInput, turnInput, ROOT, NOW } from './harness'
 import * as attempts from '../hooks/lib/attempts'
 import * as storeloss from '../hooks/lib/storeloss'
 
@@ -66,5 +66,20 @@ describe('MOD-247: the pure readers take parsed rows', () => {
     expect(rows).toHaveLength(2)
     expect(ledgerHas(rows, { kind: 'accept', task: 'A-2', subtask: 'main', attempt: 1 })).toBe(true)
     expect(ledgerHas(rows, { kind: 'accept', task: 'A-3', subtask: 'main', attempt: 1 })).toBe(false)
+  })
+})
+
+// MOD-308 (#395): a plain spawn and verdict, with no amend between them, carry the same brief hash.
+describe('MOD-308: the spawn and verdict rows of an unchanged brief', () => {
+  test('the spawn row and the verdict row carry the same briefHash', async ($, on) => {
+    const BRIEF = `${ROOT}/.delegation/briefs/T-4.brief.md`
+    const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+    const w = world(on, { files: { [BRIEF]: `${HEADER}\n\nbody\n` }, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Done, no report.'))
+    const rows = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    expect(rows).toHaveLength(2)
+    expect(typeof rows[0]?.briefHash).toBe('string')
+    expect(rows[1]?.briefHash).toBe(rows[0]?.briefHash)
   })
 })
