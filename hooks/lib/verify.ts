@@ -346,8 +346,12 @@ export function gateNotRerun(lines: readonly string[]): string | undefined {
  * resolved `model` show when known; `next=` stays last because it runs to the
  * end of the line.
  */
-export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateNotRerun?: string; explore?: string }): string =>
-  `chassis-delegation: verdict=${v.verdict} task=${v.task} attempt=${v.attempt}/${v.budget}` +
+/** MOD-300: the verdict row's attempt text; a verify record names the counted attempts (`2 (verify, counted 1/2)`), so the number matches the budget check. */
+export const attemptFraction = (v: { attempt: number; budget: number; kind?: string; counted?: number }): string =>
+  v.kind === 'verify' && v.counted !== undefined ? `${v.attempt} (verify, counted ${v.counted}/${v.budget})` : `${v.attempt}/${v.budget}`
+
+export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; kind?: string; counted?: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateNotRerun?: string; explore?: string }): string =>
+  `chassis-delegation: verdict=${v.verdict} task=${v.task} attempt=${attemptFraction(v)}` +
   (v.usd !== undefined && Number.isFinite(v.usd) ? ` usd=${v.usdApprox ? '~' : ''}${v.usd.toFixed(2)}` : '') +
   (v.model ? ` model=${v.model}` : '') +
   (v.explore ? ` · ${v.explore}` : '') +

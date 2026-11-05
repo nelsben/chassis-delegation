@@ -6,6 +6,10 @@
 
 - **`/delegation tree reconcile all [--confirm]` (the `tree` tool with `reconcile: true, all: true`) runs reconcile over every open `type:epic` issue in ascending order: one report with a `## #<n> <title>` heading per epic, one block of every close line, one shared `treeImportBatch` read cap (`not read: <k> epics (...): run again`), and with `--confirm` the done-elsewhere closes across all epics (MOD-299).**
 
+### Fixed
+
+- **A by-hand verify of a worktree head (`dispatch verify=<sha>`) no longer spends an attempt of `budget=`: only spawns, resumes and reviews count, and the verdict row for a verify names the counted number (`attempt 2 (verify, counted 1/2)`) (MOD-300).**
+
 ## 0.9.49 — 2026-11-04
 
 ### Added
