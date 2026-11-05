@@ -119,6 +119,24 @@ describe('MOD-279: auto mode - a worker Bash runs as typed', () => {
     expect(seen.map(s => s.command)).toEqual(['pwd', PREFIX('T-2') + 'pwd'])
   })
 
+  // MOD-322: a host refusal seen only by classic.PostToolUseFailure (n bumps, attempted does not) still reads as blocked by environment.
+  test('MOD-322: a refusal seen only by classic.PostToolUseFailure, no call through the chain, sha=unknown gate=pass: blocked by environment, one refused call', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody' }, run: branchRun('agent/mod/T-1'), agentId: 'agent-1' })
+    const seen = bottom(on)
+    answerClassic(on)
+    await spawnBrief($, 'T-1', 'toolu_A0000001', 'default')
+    await classic($).classic.PostToolUseFailure!({ tool_name: 'Bash', tool_input: { command: 'git commit' }, tool_use_id: 't2', agent_id: 'agent-1', error: CHANGED })
+    await $.turn.complete(turnInput('agent-1', 'I could not run git.\n[[report v=1 task=T-1 subtask=main branch=agent/mod/T-1 pr=none sha=unknown gate=pass files=a/x.ts]]'))
+    expect(seen).toHaveLength(0)
+    const shown = [...w.appended.map(a => a.text), ...w.logs].join('\n')
+    expect(shown).toContain('blocked by environment')
+    expect(shown).toContain('1 Bash call refused')
+    const recs = (w.store.get(`delegation.tasks.T-1@${ROOT}`) ?? []) as { verdict: string; blocked?: string }[]
+    expect(recs).toHaveLength(1)
+    expect(recs[0]?.blocked).toContain('blocked by environment')
+    expect(recs[0]?.verdict).toBe('unverified')
+  })
+
   test('auto mode: the git guard, gh guard, engine-turn and write-log hooks pass the command through unchanged', { options: { ...GM } }, async ($, on) => {
     const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody' }, run: branchRun('agent/mod/T-1'), agentId: 'agent-1' })
     const seen = bottom(on)

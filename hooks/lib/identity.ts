@@ -82,3 +82,6 @@ export const usableSha = (sha: string | undefined): boolean => sha !== undefined
 
 /** `blocked by environment: Bash refused by the host (<first 80 chars of the refusal>)`. */
 export const blockedByEnvironment = (refusal: string): string => `blocked by environment: Bash refused by the host (${refusal.replace(/\s+/g, ' ').trim().slice(0, 80)})`
+
+// MOD-322: a refusal the tool.call chain never returned through bumps n and not attempted, so every counted refusal is n at or above attempted.
+export const allRefused = (n: number, attempted: number): boolean => n >= 1 && n >= attempted
