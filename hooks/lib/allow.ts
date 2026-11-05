@@ -270,7 +270,7 @@ function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
   }
   if (verb === 'close') return statusCloseOk(t, allow) ? ok : shape('close <number> --repo <landRepo> --comment <text not starting with ->')
   if (verb === 'comment' && statusCommentOk(t, allow)) return ok
-  if (verb === 'list' && setupIssueListOk(t, allow)) return ok
+  if (verb === 'list' && (setupIssueListOk(t, allow) || epicListOk(t, allow))) return ok
   if (!issueRepoSet) return refuse('gh issue is not on the list: no issueRepo is configured')
   if (verb === 'comment') {
     const exact = t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === repo && t[3] === '--body-file' && debriefBodyOk(t[4] as string, allow.root)
@@ -291,6 +291,11 @@ const setupLabelListOk = (t: readonly string[], allow: AllowConfig): boolean => 
 const setupIssueListOk = (t: readonly string[], allow: AllowConfig): boolean => {
   const lr = landRepoOf(allow)
   return lr !== '' && t.join(' ') === `--repo ${lr} --state open --limit 200 --json number,labels`
+}
+/** MOD-299: tree reconcile all's one read-only epic list, the landRepo only. */
+const epicListOk = (t: readonly string[], allow: AllowConfig): boolean => {
+  const lr = landRepoOf(allow)
+  return lr !== '' && t.join(' ') === `--repo ${lr} --state open --label type:epic --limit 100 --json number,title`
 }
 
 /** MOD-200: a status body: absolute, under <root>/.delegation/status/, plain segments. */

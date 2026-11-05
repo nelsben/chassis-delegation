@@ -579,3 +579,16 @@ describe('MOD-230: the load read', () => {
     no(['cat', '/proc/loadavg'])
   })
 })
+
+describe('MOD-299: the epic list for tree reconcile all', () => {
+  const A: AllowConfig = { ...ALLOW, landRepo: 'o/r' }
+  const base = ['gh', 'issue', 'list', '--repo', 'o/r', '--state', 'open', '--label', 'type:epic', '--limit', '100', '--json', 'number,title']
+  test('the exact shape on the landRepo is allowed; another label, limit, json set or repo is refused', () => {
+    ok(base, A)
+    no(base.map(w => (w === 'type:epic' ? 'type:bug' : w)), A)
+    no(base.map(w => (w === '100' ? '200' : w)), A)
+    no(base.map(w => (w === 'number,title' ? 'number,title,body' : w)), A)
+    no(base.map(w => (w === 'o/r' ? 'x/y' : w)), A)
+    no(base, ALLOW)
+  })
+})
