@@ -77,6 +77,48 @@ describe('MOD-279: auto mode - a worker Bash runs as typed', () => {
     expect(seen.map(s => s.command)).toEqual([PREFIX('T-1') + 'ls', 'ls'])
   })
 
+  // MOD-321: the live mode, read off the classic hook events.
+  const classic = ($: Dollar) => $ as unknown as { classic: Record<string, (f: Record<string, unknown>) => Promise<unknown>> }
+  const answerClassic = (on: Parameters<Parameters<typeof test>[2]>[1]) => {
+    for (const n of ['classic.PostToolUse', 'classic.PostToolUseFailure', 'classic.UserPromptSubmit']) (on as unknown as (n: string, h: unknown) => void)(n, async () => ({}))
+  }
+  const READ = { tool_name: 'Read', tool_input: {}, tool_response: '', tool_use_id: 't1' }
+
+  test('MOD-321: a default-mode worker runs as typed once a classic PostToolUse says the session is in auto mode', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody' }, run: branchRun('agent/mod/T-1'), agentId: 'agent-1' })
+    const seen = bottom(on)
+    answerClassic(on)
+    await spawnBrief($, 'T-1', 'toolu_A0000001', 'default')
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'pwd' })
+    await classic($).classic.PostToolUse!({ ...READ, permission_mode: 'auto' })
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'pwd' })
+    expect(seen.map(s => s.command)).toEqual([PREFIX('T-1') + 'pwd', 'pwd'])
+  })
+
+  test('MOD-321: a classic UserPromptSubmit back in default mode restores the prefix', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody' }, run: branchRun('agent/mod/T-1'), agentId: 'agent-1' })
+    const seen = bottom(on)
+    answerClassic(on)
+    await spawnBrief($, 'T-1', 'toolu_A0000001', 'default')
+    await classic($).classic.PostToolUse!({ ...READ, permission_mode: 'auto' })
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'pwd' })
+    await classic($).classic.UserPromptSubmit!({ prompt: 'x', permission_mode: 'default' })
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'pwd' })
+    expect(seen.map(s => s.command)).toEqual(['pwd', PREFIX('T-1') + 'pwd'])
+  })
+
+  test('MOD-321: a classic PostToolUseFailure with the host refusal latches that worker; a second worker is still prefixed', { options: { ...GM } }, async ($, on) => {
+    const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody', [briefOf('T-2')]: HEAD('T-2') + '\nbody' }, run: branchRun('agent/mod/T-1') })
+    const seen = bottom(on)
+    answerClassic(on)
+    await spawnBrief($, 'T-1', 'toolu_A0000001', 'default')
+    await spawnBrief($, 'T-2', 'toolu_A0000002', 'default')
+    await classic($).classic.PostToolUseFailure!({ tool_name: 'Bash', tool_input: { command: 'git commit' }, tool_use_id: 't2', agent_id: 'agent-1', error: `The server-side auto mode classifier gave no verdict for Bash: ${CHANGED}, so the review does not cover what would run.` })
+    await workerCall($, w, 'agent-1', { tool: 'Bash', command: 'pwd' })
+    await workerCall($, w, 'agent-2', { tool: 'Bash', command: 'pwd' })
+    expect(seen.map(s => s.command)).toEqual(['pwd', PREFIX('T-2') + 'pwd'])
+  })
+
   test('auto mode: the git guard, gh guard, engine-turn and write-log hooks pass the command through unchanged', { options: { ...GM } }, async ($, on) => {
     const w = world(on, { files: { [briefOf('T-1')]: HEAD('T-1') + '\nbody' }, run: branchRun('agent/mod/T-1'), agentId: 'agent-1' })
     const seen = bottom(on)

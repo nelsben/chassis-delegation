@@ -214,7 +214,7 @@ import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta,
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackMessages, workerSaid } from './lib/handback'
-import { AUTO_NOTICE, LATCH_LINE, blockedByEnvironment, hostRefusalText, isAutoMode, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
+import { AUTO_NOTICE, LATCH_LINE, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
@@ -6187,6 +6187,10 @@ const asTyped = new Set<string>()
 const hostRefusals = new Map<string, { n: number; attempted: number; first?: string }>()
 /** MOD-279: the host's refusal of the call in flight, per agent (set by the last hook before the engine's tool, read by the identity hook). */
 const lastRefusal = new Map<string, string>()
+/** MOD-321: the session's live permission mode, read off the classic hook events (the mode is the process's, so one value serves every worker). */
+let livePermissionMode: string | undefined
+/** MOD-321: workers whose spawn mode differed from the live auto mode, already noted in the debug log (bounded). */
+const liveAutoNoted = new Set<string>()
 
 /**
  * MOD-20: waits for this session's turn at the engine suite. Two engine gates at once blow the
@@ -10480,7 +10484,13 @@ export const register: Register = (on, opts) => {
     if (!worker || worker.adhoc || worker.review) return next(e)
     // MOD-279: in auto mode the host reviews each call and refuses one a hook changed, so the worker's Bash runs as typed;
     // so does a worker whose rewritten call the host refused (the latch below)
-    if (isAutoMode(worker.permissionMode) || asTyped.has(e.agentId)) return next(e)
+    if (isAutoMode(effectiveMode(livePermissionMode, worker.permissionMode)) || asTyped.has(e.agentId)) {
+      if (isAutoMode(livePermissionMode) && !isAutoMode(worker.permissionMode) && !liveAutoNoted.has(e.agentId)) {
+        addBounded(liveAutoNoted, e.agentId, MAP_CAPS.handbacks)
+        debug($, `${taskLabel(worker.task, worker.subtask)}: the session is in auto mode now (spawned in ${worker.permissionMode || 'unknown'}): Bash runs as typed`)
+      }
+      return next(e)
+    }
     const run = withIdentity(command, worker)
     if (run === command) return next(e)
     lastRefusal.delete(e.agentId)
@@ -10492,6 +10502,33 @@ export const register: Register = (on, opts) => {
       return out.deny !== undefined ? { ...out, deny: `${out.deny}\n${LATCH_LINE}` } : withTrailingLine(out, LATCH_LINE)
     }
     return out
+  })
+
+  // ---- MOD-321: the live permission mode, and a host refusal the tool.call chain never sees -------
+  const noteMode = (e: { permission_mode?: unknown }) => {
+    if (typeof e.permission_mode === 'string' && e.permission_mode !== '') livePermissionMode = e.permission_mode
+  }
+  on('classic.PostToolUse', async (_$, e, next) => {
+    noteMode(e as { permission_mode?: unknown })
+    return next(e)
+  })
+  on('classic.UserPromptSubmit', async (_$, e, next) => {
+    noteMode(e as { permission_mode?: unknown })
+    return next(e)
+  })
+  on('classic.PostToolUseFailure', async ($, e, next) => {
+    const f = e as unknown as { permission_mode?: unknown; tool_name?: unknown; agent_id?: unknown; error?: unknown }
+    noteMode(f)
+    if (f.tool_name !== 'Bash' || typeof f.agent_id !== 'string' || f.agent_id === '' || !isHostRefusalError(f.error)) return next(e)
+    const worker = await spawnByAgent($, f.agent_id)
+    if (!worker || worker.adhoc || worker.review) return next(e)
+    const text = f.error as string
+    const had = hostRefusals.get(f.agent_id)
+    lastRefusal.set(f.agent_id, text)
+    setBounded(hostRefusals, f.agent_id, { n: (had?.n ?? 0) + 1, attempted: had?.attempted ?? 0, first: had?.first ?? text }, MAP_CAPS.handbacks)
+    addBounded(asTyped, f.agent_id, MAP_CAPS.handbacks)
+    debug($, `${taskLabel(worker.task, worker.subtask)}: the host refused a rewritten Bash call (${text.slice(0, 120)}); this worker's Bash now runs as typed`)
+    return next(e)
   })
 
   // ---- MOD-235: a briefed worker's own engine-suite run takes the engine turn ----------
