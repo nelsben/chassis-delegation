@@ -59,12 +59,12 @@ export function reconcileOf(o: { subs: readonly ReconSub[]; inFlight: ReadonlySe
 export const doneComment = (card: string, pr?: number): string => `done in ${card}${pr !== undefined ? ` (#${pr})` : ''}`
 
 /** The rows and the counts line of one report. */
-function rowsOf(r: Reconciled): string[] {
+function rowsOf(r: Reconciled, epic?: number): string[] {
   const rows = [
     ...r.done.map(d => `#${d.number} ${d.title} — ${doneComment(d.card, d.pr)}`),
     ...r.closedOpen.map(c => `#${c.number} ${c.title} — closed, ${c.open.length} children open (${c.open.map(n => `#${n}`).join(', ')})`),
     ...r.noMatch.map(n => `#${n.number} ${n.title} — no match${n.overlap !== undefined ? ` (scope overlaps ${n.overlap})` : ''}`),
-    ...r.notRead.map(n => `#${n} — not read: run again`),
+    ...r.notRead.map(n => `#${n} — not read: ${epic !== undefined ? `run /delegation tree reconcile ${epic}` : 'run again'}`),
   ]
   const counts = `${r.done.length} done elsewhere · ${r.closedOpen.length} closed with open children · ${r.noMatch.length} no match`
   return [...rows, counts]
@@ -82,28 +82,27 @@ export function reconcileText(r: Reconciled, repo: string): string {
   return [...rowsOf(r), ...(lines.length > 0 ? ['', ...lines] : [])].join('\n')
 }
 
-/** MOD-299: the open type:epic issues from `gh issue list --json number,title`, ascending by number. */
+/** MOD-299: the open type:epic issues from `gh issue list --json number,title`, newest first (descending by number). */
 export function epicsOf(json: unknown): { number: number; title: string }[] {
   if (!Array.isArray(json)) return []
   return json
     .filter((e): e is { number: number; title?: unknown } => !!e && typeof e === 'object' && Number.isInteger((e as { number?: unknown }).number) && (e as { number: number }).number >= 1)
     .map(e => ({ number: e.number, title: typeof e.title === 'string' ? e.title : '' }))
-    .sort((a, b) => a.number - b.number)
+    .sort((a, b) => b.number - a.number)
 }
 
-/** MOD-299: one report for every epic: a heading and the existing lists per epic, then one block of every close line; `notRead` are the epics the shared cap kept unviewed. */
-export function reconcileAllText(parts: readonly { number: number; title: string; result: Reconciled }[], notRead: readonly number[], repo: string): string {
+/** MOD-299: one report for every epic: a heading and the existing lists per epic, then one block of every close line; a child past the per-epic cap names the single-epic command. */
+export function reconcileAllText(parts: readonly { number: number; title: string; result: Reconciled }[], repo: string): string {
   const out: string[] = []
   for (const p of parts) {
     out.push(`## #${p.number} ${p.title}`)
     const r = p.result
-    out.push(...(r.done.length + r.closedOpen.length + r.noMatch.length + r.notRead.length === 0 ? ['nothing to reconcile'] : rowsOf(r)))
+    out.push(...(r.done.length + r.closedOpen.length + r.noMatch.length + r.notRead.length === 0 ? ['nothing to reconcile'] : rowsOf(r, p.number)))
   }
   // the close block: every done-elsewhere line, then every commented not-planned line
   const closes = parts.flatMap(p => closeLinesOf(p.result, repo))
   closes.sort((a, b) => Number(a.startsWith('#')) - Number(b.startsWith('#')))
   if (closes.length > 0) out.push('', ...closes)
-  if (notRead.length > 0) out.push(`not read: ${notRead.length} epics (${notRead.map(n => `#${n}`).join(', ')}): run again`)
   return out.join('\n')
 }
 

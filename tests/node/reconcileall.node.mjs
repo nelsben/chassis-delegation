@@ -7,9 +7,9 @@ const partA = { number: 5, title: 'Export', result: { done: [{ number: 61, title
 const partB = { number: 9, title: 'Import', result: { done: [{ number: 71, title: 'Parse', card: 'MOD-3' }], closedOpen: [], noMatch: [{ number: 73, title: 'Stray' }], notRead: [74] } }
 
 describe('epicsOf', () => {
-  test('orders ascending and keeps number and title', async () => {
+  test('orders descending (newest first) and keeps number and title', async () => {
     const { epicsOf } = await lib()
-    expect(epicsOf([{ number: 9, title: 'b' }, { number: 2, title: 'a' }, { number: 'x' }, null])).toEqual([{ number: 2, title: 'a' }, { number: 9, title: 'b' }])
+    expect(epicsOf([{ number: 2, title: 'a' }, { number: 9, title: 'b' }, { number: 'x' }, null])).toEqual([{ number: 9, title: 'b' }, { number: 2, title: 'a' }])
   })
   test('not a list is empty', async () => {
     const { epicsOf } = await lib()
@@ -21,12 +21,12 @@ describe('epicsOf', () => {
 describe('reconcileAllText', () => {
   test('headings, lists unchanged, one close block with done first then not planned', async () => {
     const { reconcileAllText } = await lib()
-    const t = reconcileAllText([partA, partB], [], 'o/r')
+    const t = reconcileAllText([partA, partB], 'o/r')
     const lines = t.split('\n')
     expect(lines).toContain('## #5 Export')
     expect(lines).toContain('## #9 Import')
     expect(lines).toContain('#61 Fix header — done in MOD-9 (#41)')
-    expect(lines).toContain('#74 — not read: run again')
+    expect(lines).toContain('#74 — not read: run /delegation tree reconcile 9')
     const first = lines.indexOf("gh issue close 61 --repo o/r --comment 'done in MOD-9 (#41)'")
     const second = lines.indexOf("gh issue close 71 --repo o/r --comment 'done in MOD-3'")
     const third = lines.indexOf("# gh issue close 63 --repo o/r --comment 'not planned'")
@@ -36,13 +36,15 @@ describe('reconcileAllText', () => {
   })
   test('an empty epic prints nothing to reconcile and no close block', async () => {
     const { reconcileAllText } = await lib()
-    const t = reconcileAllText([{ number: 5, title: 'Export', result: empty }], [], 'o/r')
+    const t = reconcileAllText([{ number: 5, title: 'Export', result: empty }], 'o/r')
     expect(t).toBe('## #5 Export\nnothing to reconcile')
   })
-  test('the cap line names the epics not read', async () => {
+  test('a not-read child prints the per-epic row and no run-level not-read line', async () => {
     const { reconcileAllText } = await lib()
-    const t = reconcileAllText([partA], [7, 8], 'o/r')
-    expect(t.split('\n').pop()).toBe('not read: 2 epics (#7, #8): run again')
+    const t = reconcileAllText([partB], 'o/r')
+    expect(t).toContain('#74 — not read: run /delegation tree reconcile 9')
+    expect(t).not.toContain('epics (')
+    expect(t.split('\n').some(l => l.startsWith('not read:'))).toBe(false)
   })
 })
 

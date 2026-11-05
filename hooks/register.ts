@@ -4748,7 +4748,8 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
  * MOD-288: `/delegation tree reconcile <n>|all [--confirm]` and the tree tool with reconcile: true. Reads the parent and one view per
  * open sub-issue with no in-flight card (at most treeImportBatch), matches them against the merged cards and prints three lists
  * with the close lines. Without confirm it writes nothing and closes nothing; with confirm it runs the done-elsewhere closes only.
- * MOD-299: `all` walks every open type:epic issue in ascending order with one shared read cap and one report.
+ * MOD-299: `all` walks every open type:epic issue with one report. MOD-304: newest first, the read cap counts per epic (a child past it
+ * is `not read` and names its epic), views after the first are paced 250 ms, and with no epic the label list says whether setup is owed.
  */
 async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>): Promise<string> {
   if ('error' in a) return a.error
@@ -4759,7 +4760,9 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
   landRepo = ownerRepo ?? ''
   sessionRoot = root
   if (!ownerRepo) return `tree reconcile: origin is not a GitHub remote (${(origin ?? '').trim() || 'no url'})`
+  let viewsRun = 0
   const view = async (n: number): Promise<{ json: Record<string, unknown> } | { why: string }> => {
+    if ('all' in a && viewsRun++ > 0) await pauseOffBudget($, 250)
     const r = await run($, ['gh', 'issue', 'view', String(n), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
     if (!r.ok) return { why: `gh did not run: ${r.why.trim().slice(0, 400)}` }
     if (r.exitCode !== 0) return { why: `gh issue view failed: ${(r.stderr || r.stdout).trim().slice(0, 400) || '(nothing on stderr)'}` }
@@ -4778,6 +4781,11 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
       epics = epicsOf(JSON.parse(list.stdout))
     } catch {
       return 'tree reconcile all: gh printed something that is not JSON'
+    }
+    if (epics.length === 0) {
+      const labelsRun = await run($, ['gh', 'label', 'list', '--repo', ownerRepo, '--json', 'name', '--limit', '100'], { cwd: root, timeoutMs: 60000 })
+      const labels = labelsRun.ok && labelsRun.exitCode === 0 ? labelNames(labelsRun.stdout) : undefined
+      if (labels && !labels.includes('type:epic')) return `tree reconcile all: no type:epic label on ${ownerRepo}: run /delegation setup to create the tree labels`
     }
     if (epics.length === 0) return `tree reconcile all: no open type:epic issue on ${ownerRepo}; name one: /delegation tree reconcile <n>`
   }
@@ -4809,14 +4817,9 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
     merged.push({ id, scope, ...(typeof row.pr === 'number' ? { pr: row.pr } : {}), ...(card?.issue !== undefined ? { issue: card.issue } : {}), ...(card?.parent !== undefined ? { parent: card.parent } : {}) })
   }
   const subsOf = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : []).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { number?: unknown }).number === 'number')
-  let viewed = 0
   const parts: { number: number; title: string; result: Reconciled }[] = []
-  const skipped: number[] = []
   for (const epic of epics) {
-    if ('all' in a && viewed >= cfg.treeImportBatch) {
-      skipped.push(epic.number)
-      continue
-    }
+    let viewed = 0
     const parent = await view(epic.number)
     if ('why' in parent) return `tree reconcile: ${parent.why}`
     const subs: ReconSub[] = []
@@ -4838,7 +4841,7 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
     parts.push({ number: epic.number, title: epic.title, result: reconcileOf({ subs, inFlight, merged }) })
   }
   const head = 'all' in a ? `reconcile all (${ownerRepo})` : `reconcile #${epics[0]!.number} (${ownerRepo})`
-  if (!a.confirm) return 'all' in a ? [head, reconcileAllText(parts, skipped, ownerRepo)].join('\n') : [head, reconcileText(parts[0]!.result, ownerRepo)].join('\n')
+  if (!a.confirm) return 'all' in a ? [head, reconcileAllText(parts, ownerRepo)].join('\n') : [head, reconcileText(parts[0]!.result, ownerRepo)].join('\n')
   const lines: string[] = [head]
   let landed: { name: string; text: string }[] = []
   const folder = `${root}/.delegation/landed`
@@ -4880,7 +4883,6 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
       }
     }
   }
-  if (skipped.length > 0) lines.push(`not read: ${skipped.length} epics (${skipped.map(n => `#${n}`).join(', ')}): run again`)
   return lines.join('\n')
 }
 
