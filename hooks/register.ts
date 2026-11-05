@@ -4782,11 +4782,12 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
     if (epics.length === 0) return `tree reconcile all: no open type:epic issue on ${ownerRepo}; name one: /delegation tree reconcile <n>`
   }
   const cardDir = cardDirPath(root, cfg.cardDir)
-  const cardsById = new Map<string, { status?: string; issue?: number; scope: string[] }>()
+  const cardsById = new Map<string, { status?: string; issue?: number; parent?: number; scope: string[] }>()
   try {
     for (const { card: c } of await indexedCards($, cardDir)) {
       const ref = issueRef(c.fields.issue, ownerRepo)
-      cardsById.set(c.id, { status: c.status, scope: c.scope, ...(ref !== undefined ? { issue: ref } : {}) })
+      const parentRef = issueRef(c.fields.parent, ownerRepo)
+      cardsById.set(c.id, { status: c.status, scope: c.scope, ...(ref !== undefined ? { issue: ref } : {}), ...(parentRef !== undefined ? { parent: parentRef } : {}) })
     }
   } catch {
     // no card folder: no cards
@@ -4805,7 +4806,7 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
     const files = rows.filter(r => r.task === id && Array.isArray(r.files)).flatMap(r => (r.files as unknown[]).filter((f): f is string => typeof f === 'string'))
     const scope = card && card.scope.length > 0 ? card.scope : files
     if (scope.length === 0) continue
-    merged.push({ id, scope, ...(typeof row.pr === 'number' ? { pr: row.pr } : {}), ...(card?.issue !== undefined ? { issue: card.issue } : {}) })
+    merged.push({ id, scope, ...(typeof row.pr === 'number' ? { pr: row.pr } : {}), ...(card?.issue !== undefined ? { issue: card.issue } : {}), ...(card?.parent !== undefined ? { parent: card.parent } : {}) })
   }
   const subsOf = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : []).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { number?: unknown }).number === 'number')
   let viewed = 0

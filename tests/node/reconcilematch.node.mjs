@@ -1,0 +1,37 @@
+// MOD-303: a story is done elsewhere only in a card that names it (issue: or parent:), never on a scope overlap.
+import { test, expect, describe } from './kit.mjs'
+
+const lib = () => import('../../hooks/lib/reconcile.ts')
+const sub = { number: 353, title: 'Feed story', state: 'OPEN', body: '```scope\nsrc/app/feed.js\n```', subIssues: [{ number: 400, state: 'CLOSED' }] }
+
+describe('MOD-303: doneIn names, never overlaps', () => {
+  test('a scope overlap alone is no match and shows the overlapping card', async () => {
+    const { reconcileOf, reconcileText } = await lib()
+    const r = reconcileOf({ subs: [sub], inFlight: new Set(), merged: [{ id: 'X-1', issue: 713, scope: ['src/app/**'] }] })
+    expect(r.done).toEqual([])
+    expect(r.noMatch).toEqual([{ number: 353, title: 'Feed story', overlap: 'X-1' }])
+    const text = reconcileText(r, 'o/r')
+    expect(text.includes('#353 Feed story — no match (scope overlaps X-1)')).toBe(true)
+    expect(text.includes("# gh issue close 353 --repo o/r --comment 'not planned'")).toBe(true)
+  })
+  test('a card that names the issue marks it done', async () => {
+    const { reconcileOf } = await lib()
+    const r = reconcileOf({ subs: [sub], inFlight: new Set(), merged: [{ id: 'X-2', issue: 353, scope: ['x'] }] })
+    expect(r.done).toEqual([{ number: 353, title: 'Feed story', card: 'X-2' }])
+  })
+  test('a card whose parent is the story marks it done only when its sub-issues are all closed', async () => {
+    const { reconcileOf } = await lib()
+    const merged = [{ id: 'X-3', parent: 353, scope: ['x'] }]
+    expect(reconcileOf({ subs: [sub], inFlight: new Set(), merged }).done.map(d => d.card)).toEqual(['X-3'])
+    const open = { ...sub, subIssues: [{ number: 400, state: 'CLOSED' }, { number: 401, state: 'OPEN' }] }
+    const r = reconcileOf({ subs: [open], inFlight: new Set(), merged })
+    expect(r.done).toEqual([])
+    expect(r.noMatch.length).toBe(1)
+    expect(reconcileOf({ subs: [{ ...sub, subIssues: undefined }], inFlight: new Set(), merged }).done.length).toBe(1)
+  })
+  test('an in-flight card for the story keeps it out of every list', async () => {
+    const { reconcileOf } = await lib()
+    const r = reconcileOf({ subs: [sub], inFlight: new Set([353]), merged: [{ id: 'X-2', issue: 353, scope: ['x'] }, { id: 'X-1', scope: ['src/app/**'] }] })
+    expect([r.done, r.noMatch, r.closedOpen, r.notRead]).toEqual([[], [], [], []])
+  })
+})

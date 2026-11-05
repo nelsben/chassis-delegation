@@ -6,23 +6,29 @@ import { fencedBlock } from './tree'
 export const RECONCILE_USAGE = '/delegation tree reconcile <n>|all [--confirm]'
 
 /** A merged card: its id, the PR it landed in, the issue it named, and the paths it touched (its scope, else the report's files). */
-export type MergedCard = { id: string; pr?: number; issue?: number; scope: readonly string[] }
+export type MergedCard = { id: string; pr?: number; issue?: number; parent?: number; scope: readonly string[] }
 /** One sub-issue as the parent view (and, for an open one, its own view) gives it; `read: false` marks an open one not viewed this run. */
 export type ReconSub = { number: number; title: string; state: string; body?: string; subIssues?: readonly { number: number; state: string }[]; read?: boolean }
 export type Reconciled = {
   done: { number: number; title: string; card: string; pr?: number }[]
   closedOpen: { number: number; title: string; open: number[] }[]
-  noMatch: { number: number; title: string }[]
+  noMatch: { number: number; title: string; overlap?: string }[]
   notRead: number[]
 }
 
-/** The merged card an open sub-issue is done in: the card that names it, else the first whose scope overlaps the sub-issue's scope block. */
+/** MOD-303: the merged card an open sub-issue is done in: the card whose issue is the sub-issue, else a card whose parent is it while every child is CLOSED. Never a scope overlap. */
 function doneIn(sub: ReconSub, merged: readonly MergedCard[]): MergedCard | undefined {
   const named = merged.find(m => m.issue === sub.number)
   if (named) return named
+  if ((sub.subIssues ?? []).some(c => c.state.toUpperCase() !== 'CLOSED')) return undefined
+  return merged.find(m => m.parent === sub.number)
+}
+
+/** MOD-303: the first merged card (in merged order) whose scope overlaps the sub-issue's scope block, shown on the no-match row. */
+function overlapOf(sub: ReconSub, merged: readonly MergedCard[]): string | undefined {
   const scope = fencedBlock(sub.body ?? '', 'scope')
   if (scope.length === 0) return undefined
-  return merged.find(m => scopeOverlap(scope, m.scope) !== undefined)
+  return merged.find(m => scopeOverlap(scope, m.scope) !== undefined)?.id
 }
 
 /** `merged` newest first. An open sub-issue with an in-flight card is in no list. */
@@ -41,7 +47,10 @@ export function reconcileOf(o: { subs: readonly ReconSub[]; inFlight: ReadonlySe
     }
     const m = doneIn(s, o.merged)
     if (m) out.done.push({ number: s.number, title: s.title, card: m.id, ...(m.pr !== undefined ? { pr: m.pr } : {}) })
-    else out.noMatch.push({ number: s.number, title: s.title })
+    else {
+      const overlap = overlapOf(s, o.merged)
+      out.noMatch.push({ number: s.number, title: s.title, ...(overlap !== undefined ? { overlap } : {}) })
+    }
   }
   return out
 }
@@ -54,7 +63,7 @@ function rowsOf(r: Reconciled): string[] {
   const rows = [
     ...r.done.map(d => `#${d.number} ${d.title} — ${doneComment(d.card, d.pr)}`),
     ...r.closedOpen.map(c => `#${c.number} ${c.title} — closed, ${c.open.length} children open (${c.open.map(n => `#${n}`).join(', ')})`),
-    ...r.noMatch.map(n => `#${n.number} ${n.title} — no match`),
+    ...r.noMatch.map(n => `#${n.number} ${n.title} — no match${n.overlap !== undefined ? ` (scope overlaps ${n.overlap})` : ''}`),
     ...r.notRead.map(n => `#${n} — not read: run again`),
   ]
   const counts = `${r.done.length} done elsewhere · ${r.closedOpen.length} closed with open children · ${r.noMatch.length} no match`

@@ -3,7 +3,7 @@ import { test, expect, describe } from './kit.mjs'
 
 const lib = () => import('../../hooks/lib/reconcile.ts')
 const merged = [
-  { id: 'MOD-9', pr: 41, scope: ['hooks/lib/export.ts', 'tests/export.test.ts'] },
+  { id: 'MOD-9', pr: 41, issue: 61, scope: ['hooks/lib/export.ts', 'tests/export.test.ts'] },
   { id: 'MOD-3', pr: 12, scope: ['docs/**'] },
 ]
 const subs = [
@@ -15,7 +15,7 @@ const subs = [
 ]
 
 describe('MOD-288: reconcileOf', () => {
-  test('an open sub-issue overlapping a merged card is listed as done elsewhere', async () => {
+  test('an open sub-issue named by a merged card is listed as done elsewhere', async () => {
     const { reconcileOf } = await lib()
     const r = reconcileOf({ subs, inFlight: new Set([64]), merged })
     expect(r.done).toEqual([{ number: 61, title: 'Fix export header', card: 'MOD-9', pr: 41 }])
@@ -25,7 +25,7 @@ describe('MOD-288: reconcileOf', () => {
     const r = reconcileOf({ subs, inFlight: new Set([64]), merged })
     expect(r.closedOpen).toEqual([{ number: 62, title: 'Closed story', open: [70, 72] }])
   })
-  test('an open sub-issue with no overlap and no card is no match', async () => {
+  test('an open sub-issue with no card is no match; a scope overlap alone is shown, not done', async () => {
     const { reconcileOf } = await lib()
     const r = reconcileOf({ subs, inFlight: new Set([64]), merged })
     expect(r.noMatch).toEqual([{ number: 63, title: 'Nothing like it' }])
