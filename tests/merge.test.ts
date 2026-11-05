@@ -570,6 +570,33 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(w.runs.slice(from).map(r => r.argv.join(' '))).toContain(`git -C ${ROOT} worktree remove ${WT}`)
   })
 
+  test('MOD-319: finishSkip [bin/] lets finish run without discard when only an ignored bin/app is left', async ($, on) => {
+    const repoFile = JSON.stringify({ gateMap: GATES, domains: ['mod'], cardDir: 'docs/cards', finishSkip: ['bin/'] })
+    const w = world(on, { files: { ...files(), [`${ROOT}/.chassis-delegation.json`]: repoFile }, dirs, store, run: withStatus('!! bin/app\n') })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    expect(out).not.toContain('holds')
+    expect(out).not.toContain('discarded')
+    expect(w.runs.slice(from).map(r => r.argv.join(' '))).toContain(`git -C ${ROOT} worktree remove ${WT}`)
+  })
+
+  test('MOD-319: mergeStyle squash: a commit with the head tree and another sha is the landing, named as a squash', async ($, on) => {
+    const SQUASH = '8888888888888888888888888888888888888888'
+    const repoFile = JSON.stringify({ gateMap: GATES, domains: ['mod'], cardDir: 'docs/cards', mergeStyle: 'squash' })
+    const run = landed(markMerged(CARD), argv => {
+      if (is(argv, 'git', '-C', ROOT, 'log', '--format=%H%x09%T%x09%s', '-n', '200', 'origin/main')) return { exitCode: 0, stdout: `${SQUASH}\t${TREE}\t${ID}: the thing works (#12)\n1234567123456712345671234567123456712345\tbbbb\tolder\n` }
+      if (is(argv, 'git', '-C', ROOT, 'show', `${SQUASH}:docs/cards/${CARD_NAME}`)) return { exitCode: 0, stdout: markMerged(CARD) }
+      return undefined
+    })
+    const w = world(on, { files: { ...files(), [`${ROOT}/.chassis-delegation.json`]: repoFile }, dirs, store, run })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    expect(out.split('\n')[0]).toContain('(squash of the worktree head)')
+    const rows = (w.files.get(LEDGER) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    expect(rows.at(-1)).toMatchObject({ kind: 'merged', task: ID, sha: SQUASH })
+  })
+
   test('MOD-142: a status read that fails is a note and finish goes on', async ($, on) => {
     const w = world(on, { files: files(), dirs, store, run: withStatus('', 128) })
     await $.session.start(sessionStart)

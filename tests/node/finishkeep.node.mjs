@@ -25,6 +25,14 @@ describe('MOD-142: finishLeftovers', () => {
     ].join('\n'))
     expect(out).toEqual(['keep/dist.js', 'notes.txt'])
   })
+  test('MOD-319: extra entries skip a folder, a file name, a suffix; an empty list changes nothing', async () => {
+    const { finishLeftovers } = await lib()
+    const porcelain = ['!! bin/app', '!! pkg/bin/x', '!! out.log', '!! deep/out.log', '!! a/b.tmp', '?? keep.txt'].join('\n')
+    expect(finishLeftovers(porcelain, undefined, ['bin/'])).toEqual(['out.log', 'deep/out.log', 'a/b.tmp', 'keep.txt'])
+    expect(finishLeftovers(porcelain, undefined, ['out.log'])).toEqual(['bin/app', 'pkg/bin/x', 'a/b.tmp', 'keep.txt'])
+    expect(finishLeftovers(porcelain, undefined, ['.tmp'])).toEqual(['bin/app', 'pkg/bin/x', 'out.log', 'deep/out.log', 'keep.txt'])
+    expect(finishLeftovers(porcelain, undefined, [])).toEqual(finishLeftovers(porcelain))
+  })
   test('quoted paths lose their quotes', async () => {
     const { finishLeftovers } = await lib()
     expect(finishLeftovers('?? "a b.txt"\n')).toEqual(['a b.txt'])

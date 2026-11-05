@@ -145,6 +145,26 @@ describe('MOD-7: issueRepo', () => {
   })
 })
 
+describe('MOD-319: mergeStyle and finishSkip', () => {
+  test('mergeStyle: rebase, merge or squash is kept; anything else is one error line and reads as rebase', () => {
+    expect(parseRepoConfig('{"mergeStyle":"squash"}').config.mergeStyle).toBe('squash')
+    const bad = parseRepoConfig('{"mergeStyle":"fast-forward"}')
+    expect(bad.config.mergeStyle).toBeUndefined()
+    expect(bad.errors).toEqual(['mergeStyle: needs rebase, merge or squash (ignored)'])
+    expect(mergeConfig(bad.config, {}).mergeStyle).toBe('rebase')
+    expect(mergeConfig(parseRepoConfig('{"mergeStyle":"merge"}').config, {}).mergeStyle).toBe('merge')
+  })
+  test('finishSkip: a list or comma string is kept; a bad entry is named and dropped', () => {
+    const ok = parseRepoConfig('{"finishSkip":["bin/","out.log"]}')
+    expect(ok.config.finishSkip).toEqual(['bin/', 'out.log'])
+    expect(mergeConfig(ok.config, {}).finishSkip).toEqual(['bin/', 'out.log'])
+    const bad = parseRepoConfig('{"finishSkip":["bin/","has space"]}')
+    expect(bad.config.finishSkip).toEqual(['bin/'])
+    expect(bad.errors.join('\n')).toContain('finishSkip')
+    expect(mergeConfig({}, {}).finishSkip).toEqual([])
+  })
+})
+
 describe("MOD-18: issueRepo defaults to the mod's own tracker", () => {
   const manifest = (over: Record<string, unknown>) => JSON.stringify({ name: 'chassis-delegation', version: '0.7.0', ...over })
   test('the manifest names it by repository (a string or {url}) or homepage, github.com only', () => {

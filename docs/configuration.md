@@ -71,6 +71,8 @@ Shows the options in force and where each value came from; works in VS Code.
 | `baseRef` | repo | `""` (`origin/main`, `main`, `origin/master`, `master`) | where the delta starts when a brief names no `base=`. |
 | `ignore` | repo | `[".delegation/**"]` | globs dropped from a `repo=here` delta. `[]` ignores nothing. |
 | `issueRepo` | repo | the manifest's `repository` | `owner/name` where findings are filed. `""` in the repo file turns posting off. |
+| `mergeStyle` | repo | `rebase` | `rebase`, `merge` or `squash`: the flag on the `gh pr merge` line the merge block prints. With `squash`, `merge --finish` also accepts a commit on origin with the worktree head's tree as the landing (`(squash of the worktree head)`). Any other value is named in the config errors and `rebase` is used. |
+| `finishSkip` | repo | `[]` | extra paths `merge --finish` never stops on, added to its built-in list (`node_modules/`, `dist/`, `build/` …): a trailing slash skips that folder at any depth, a name skips that file at any depth, a leading-dot entry other than `.DS_Store` skips by suffix. A list, or a comma string; a bad entry is named and dropped. |
 | `delegateOnly` | repo | `warn` | `off`, `warn`, `deny`: stops an opus or fable brain editing source. See [The brain's spend](spend.md#the-brains-spend). |
 | `review` | repo | `on-frontier` | `off`, `on`, `on-frontier` (frontier and premium cards only): a read-only reviewer checks each hand-back. See [Review](review-and-merge.md#review). |
 | `reviewTier` | repo | `""` (one below the worker, not below economy) | `economy`, `standard`, `frontier`, `premium`: the reviewer's tier. |

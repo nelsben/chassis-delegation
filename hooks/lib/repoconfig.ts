@@ -114,6 +114,10 @@ export type RepoConfig = {
   delegateOnly?: DelegateOnly
   /** MOD-7: owner/name of the repo /delegation debrief post files issues in. MOD-18: unset = the mod's own repository (the manifest's); "" = posting is off. */
   issueRepo?: string
+  /** MOD-319: the flag the merge block's `gh pr merge` line carries (rebase | merge | squash); default rebase. */
+  mergeStyle?: MergeStyle
+  /** MOD-319: extra paths `merge --finish` never stops on, matched like FINISH_SKIP. */
+  finishSkip?: string[]
   /** MOD-21: a read-only reviewer after a consistent verdict (off | on | on-frontier); default on-frontier. */
   review?: ReviewMode
   /** MOD-21: the tier the reviewer runs at; unset = one below the worker's. */
@@ -134,7 +138,11 @@ export type RepoConfig = {
   project?: string
 }
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch'] as const
+/** MOD-319: the `gh pr merge` flags the merge block can print. */
+export const MERGE_STYLES = ['rebase', 'merge', 'squash'] as const
+export type MergeStyle = (typeof MERGE_STYLES)[number]
+
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -163,6 +171,8 @@ export type Effective = {
   effortNudge: EffortNudge
   delegateOnly: DelegateOnly
   issueRepo: string
+  mergeStyle: MergeStyle
+  finishSkip: string[]
   review: ReviewMode
   /** '' = one tier below the worker's. */
   reviewTier: Tier | ''
@@ -296,10 +306,10 @@ function domainsOf(v: unknown, errors: string[], where: string): string[] | unde
 }
 
 /** GH-16: `ignore` as a list of globs (an array, or a comma string from /config); a bad entry is named and dropped. */
-function ignoreOf(v: unknown, errors: string[], where: string): string[] | undefined {
+function ignoreOf(v: unknown, errors: string[], where: string, key = 'ignore'): string[] | undefined {
   const list = Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : undefined
   if (!list) {
-    errors.push(`ignore${where}: needs a list of globs (ignored)`)
+    errors.push(`${key}${where}: needs a list of globs (ignored)`)
     return undefined
   }
   const out: string[] = []
@@ -308,7 +318,7 @@ function ignoreOf(v: unknown, errors: string[], where: string): string[] | undef
     if (g === '') continue
     if (g !== undefined && IGNORE_GLOB.test(g) && !g.includes(']]')) {
       if (!out.includes(g)) out.push(g)
-    } else errors.push(`ignore${where}: ${JSON.stringify(g ?? item)} is not a glob (no spaces, quotes or ]]) (ignored)`)
+    } else errors.push(`${key}${where}: ${JSON.stringify(g ?? item)} is not a glob (no spaces, quotes or ]]) (ignored)`)
   }
   return out
 }
@@ -496,6 +506,15 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
           else errors.push(`issueRepo${where}: ${JSON.stringify(v)} is not owner/name (ignored)`)
         } else if (strict) config.issueRepo = '' // MOD-18: the repo file's own "" turns posting off; in /config an empty string is "unset"
         break
+      case 'mergeStyle':
+        if (typeof v === 'string' && (MERGE_STYLES as readonly string[]).includes(v.trim())) config.mergeStyle = v.trim() as MergeStyle
+        else errors.push(`mergeStyle${where}: needs rebase, merge or squash (ignored)`)
+        break
+      case 'finishSkip': {
+        const list = ignoreOf(v, errors, where, 'finishSkip')
+        if (list && (strict || list.length > 0)) config.finishSkip = list
+        break
+      }
       case 'domains': {
         const d = domainsOf(v, errors, where)
         if (d) config.domains = d
@@ -598,6 +617,8 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     effortNudge,
     delegateOnly: pick('delegateOnly', 'warn'),
     issueRepo: pick('issueRepo', ''),
+    mergeStyle: pick('mergeStyle', 'rebase'),
+    finishSkip: [...pick('finishSkip', [])],
     review: pick('review', 'on-frontier'),
     reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
     reviewEffort: pick('reviewEffort', DEFAULT_REVIEW_EFFORT),

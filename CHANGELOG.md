@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Two repo-file keys: `mergeStyle` (`rebase`, `merge` or `squash`) picks the flag on the `gh pr merge` line the merge block prints, and with `squash` `merge --finish` takes a commit with the head's tree as the landing (`(squash of the worktree head)`); `finishSkip` adds per-repo paths finish never stops on (MOD-319).**
 - **The verdict row notes live processes whose command line names the worker's worktree at hand-back (a read of `ps -axo pid=,command=`, filtered on the path; a note, not a claim, and the verdict is unchanged), so a worker's leftover test runs are visible (MOD-317).**
 - **`merge` resolves a rebase conflict where both sides only added lines to the same file (a diff3 block with an empty base section) by keeping the upstream lines then the branch's, stages the file and continues the rebase; the output says `rebase: kept both sides in <files> (both only added lines)` and the PR body gains a `## Rebase` section, while a block that changed a line, or added the same line on both sides, still aborts with `; <file>: <why>` after the conflict line (MOD-312).**
 - **A test-only card declares `red_test` as `none (test-only)`: the verifier holds the red claim when the delta is only tests and docs, and refutes it naming the source paths otherwise; `card` documents the value (MOD-313).**
