@@ -98,7 +98,7 @@ describe('MOD-64: the verdict tool', () => {
   })
 
   test('still verifying at the timeout: the line says call it again', { options: { ...GM } }, async ($, on) => {
-    const w = setup(on)
+    const w = setup(on, 0, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     const waiting = call($, { task: 'T-4', waitSeconds: 10 })
     for (let i = 0; i < 3; i++) await w.clock.advance(5000)
@@ -121,7 +121,7 @@ describe('MOD-64: the verdict tool', () => {
   })
 
   test('MOD-246: a 600 s verdict wait spawns few sleep processes (adaptive step)', { options: { ...GM } }, async ($, on) => {
-    const w = setup(on)
+    const w = setup(on, 0, { listAgents: true })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     const waiting = call($, { task: 'T-4' })
     for (let i = 0; i < 130; i++) await w.clock.advance(5000)
@@ -146,11 +146,11 @@ describe('MOD-64: the verdict tool', () => {
     expect(seenAt).toBeLessThanOrEqual(15_000)
   })
 
-  test('MOD-72: a sleep that cannot start answers still-verifying at once', { options: { ...GM } }, async ($, on) => {
-    const w = setup(on)
+  test('MOD-72: a sleep that cannot start answers still-verifying at once; MOD-301: it names the seconds waited and why', { options: { ...GM } }, async ($, on) => {
+    const w = setup(on, 0, { listAgents: true })
     sleepFails = true
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
-    expect(resultText(await call($, { task: 'T-4' }))).toBe('T-4: still verifying after 600s; call verdict again')
+    expect(resultText(await call($, { task: 'T-4' }))).toBe('T-4: still verifying after 0s; call verdict again (wait unavailable: sleep did not run)')
     expect(w.runs.filter(r => r.argv[0] === 'sleep')).toHaveLength(1)
   })
 

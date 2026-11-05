@@ -157,6 +157,12 @@ export const supersededBy = (records: readonly AttemptRecord[], subtask: string,
   return later.length === 0 ? undefined : Math.max(...later.map(r => r.attempt))
 }
 
+/**
+ * MOD-301: of two spawn records that may stand for one worker (the one a hand-back's tool_use_id names, the one the agent
+ * pointer names), the one with the higher attempt: after a resume that is the resumed one. Equal attempts keep `a`.
+ */
+export const newerSpawn = <T extends { attempt: number }>(a: T | undefined, b: T | undefined): T | undefined => (a === undefined ? b : b !== undefined && b.attempt > a.attempt ? b : a)
+
 export const nextAttempt = (records: readonly AttemptRecord[], subtask: string, lane?: Lane): number =>
   attemptsFor(records, subtask, lane).reduce((n, r) => Math.max(n, r.attempt), 0) + 1
 

@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **A worker resumed after a by-hand verify is judged on its hand-back: every lookup of its spawn record returns the resumed one (the higher attempt wins, a resume keeps the agent pointer on the record it wrote), a hand-back reaches the pending resume attempt whichever record matched it, and the verdict tool answers `<label>: attempt <n> pending, no verifier running; dispatch verify=<sha>` instead of `still verifying` when nothing is verifying; the still-verifying line names the seconds actually waited (`(wait unavailable: sleep did not run)` when the sleep could not run) (MOD-301).**
 - **A by-hand verify of a worktree head (`dispatch verify=<sha>`) no longer spends an attempt of `budget=`: only spawns, resumes and reviews count, and the verdict row for a verify names the counted number (`attempt 2 (verify, counted 1/2)`) (MOD-300).**
 
 ## 0.9.49 — 2026-11-04

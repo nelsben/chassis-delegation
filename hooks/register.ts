@@ -31,6 +31,7 @@ import {
   judgedShas,
   laneFields,
   lineageResumes,
+  newerSpawn,
   nextAttempt,
   patchRecord,
   patchReview,
@@ -228,7 +229,7 @@ import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, do
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
-import { mergedVerdict, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
+import { mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
@@ -7309,10 +7310,36 @@ async function pauseOffBudget($: Host, ms: number): Promise<boolean> {
   return r.ok && r.exitCode === 0
 }
 
-/** MOD-229: the still-verifying reply, with where the gate is when one runs or waits: `· verifying (gate test running 3 min)`. */
-async function stillVerifyingNow($: Host, label: string, seconds: number): Promise<string> {
+/**
+ * MOD-229: the still-verifying reply, with where the gate is when one runs or waits: `· verifying (gate test running 3 min)`.
+ * MOD-301: `seconds` is what was waited; `reason` ends the line when the wait could not run.
+ */
+async function stillVerifyingNow($: Host, label: string, seconds: number, reason?: string): Promise<string> {
   const p = gateProgress.get(label)
-  return p ? `${stillVerifying(label, seconds)} · ${gateProgressText(p, await now($))}` : stillVerifying(label, seconds)
+  return stillVerifying(label, seconds, reason, p ? gateProgressText(p, await now($)) : undefined)
+}
+
+/**
+ * MOD-301: the task's latest attempt when it is pending and nothing is working on it: no verify in flight in this process
+ * (the lock a hand-back's verifier holds), no gate waiting or running for the label, and its agent not running per
+ * `$.agent.list`. Undefined when the attempt is judged, absent, or something works on it.
+ */
+async function pendingWithoutVerifier($: Host, task: string, subtask: string, label: string): Promise<{ attempt: number; sha: string } | undefined> {
+  const { repo, root } = await refOf($, task)
+  const latest = attemptsFor(await loadAttempts($, { task, repo }), subtask).at(-1)
+  if (!latest || latest.verdict !== 'pending') return undefined
+  for (const v of verifying.values()) if (v.task === task && v.subtask === subtask) return undefined
+  if (gateProgress.has(label)) return undefined
+  if (latest.agentId && (await agentList($)).some(a => a.id === latest.agentId && a.status === 'running')) return undefined
+  let sha = ''
+  try {
+    const wt = await mergeWorktree($, repo !== undefined && repo !== '' ? repo : root, task)
+    const head = wt ? (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim() : ''
+    if (isSha(head)) sha = head
+  } catch (err) {
+    debug($, `verdict: worktree head not read: ${String(err)}`)
+  }
+  return { attempt: latest.attempt, sha }
 }
 
 async function runVerdict($: Host, input: Record<string, unknown>): Promise<string> {
@@ -7321,6 +7348,7 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
   const label = taskLabel(parsed.task, parsed.subtask)
   const limit = parsed.waitSeconds * 1000
   let waited = 0
+  let idleSeen = false
   for (;;) {
     const found = await verdictNow($, parsed.task, parsed.subtask)
     if (found.kind === 'none') return noSuchAttempt(label)
@@ -7328,9 +7356,18 @@ async function runVerdict($: Host, input: Record<string, unknown>): Promise<stri
       const lines = [...drainStatus(parsed.task), ...(await commentVerdict($, parsed.task, parsed.subtask, found.text)), ...(await reviewSeenLine($, parsed.task, found.text))]
       return lines.length > 0 ? `${found.text}\n${lines.join('\n')}` : found.text
     }
-    if (waited >= limit) return stillVerifyingNow($, label, parsed.waitSeconds)
+    // MOD-301: an attempt pending with no verifier running is said so, never waited on. Seen twice, a second apart: a hand-back's verify starts a moment after its worker ends.
+    const idle = await pendingWithoutVerifier($, parsed.task, parsed.subtask, label)
+    if (idle && idleSeen) return noVerifierRunning(label, idle.attempt, idle.sha)
+    idleSeen = idle !== undefined
+    if (idle) {
+      await pauseOffBudget($, 1000)
+      waited += 1000
+      continue
+    }
+    if (waited >= limit) return stillVerifyingNow($, label, Math.floor(waited / 1000))
     const step = Math.min(pollStep(waited), limit - waited)
-    if (!(await pauseOffBudget($, step))) return stillVerifyingNow($, label, parsed.waitSeconds)
+    if (!(await pauseOffBudget($, step))) return stillVerifyingNow($, label, Math.floor(waited / 1000), SLEEP_UNAVAILABLE)
     waited += step
   }
 }
@@ -7520,6 +7557,9 @@ async function claimPost($: Host, spawn: SpawnRecord): Promise<boolean> {
 async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: string): Promise<SpawnRecord> {
   if (spawn.adhoc || spawn.review || spawn.verdictAttempt !== spawn.attempt) return spawn
   const block = extractReport(text)
+  // MOD-301: the ladder's last record is a pending resume of this worker: the hand-back is that attempt's, whichever record it was matched by
+  const open = await pendingResumeOf($, spawn, agentId)
+  if (open) return open
   // MOD-211: a different report line after a malformed one reopens the same attempt (no new attempt, nothing charged)
   if (spawn.malformed !== undefined) {
     if (block === undefined || block === spawn.malformed) return spawn
@@ -7558,6 +7598,25 @@ async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: 
   return isResumeAfterJudged(records, spawn.subtask, sha, laneOf(spawn)) ? recordResume($, spawn, records, agentId) : spawn
 }
 
+/**
+ * MOD-301: the spawn record of the attempt a hand-back is for, when the ladder's last record is a pending resume of `agentId`
+ * numbered above `spawn` (the hand-back was matched by an older record of the worker, one a resume did not land on). The agent's
+ * own record when it stands for that attempt, else `spawn` carried to that attempt with the verdict of the earlier one dropped.
+ * Undefined: no such resume, `spawn` stands.
+ */
+async function pendingResumeOf($: Host, spawn: SpawnRecord, agentId: string): Promise<SpawnRecord | undefined> {
+  const records = await loadAttempts($, spawn)
+  const last = attemptsFor(records, spawn.subtask, laneOf(spawn)).at(-1)
+  if (!last || last.kind !== 'resume' || last.verdict !== 'pending' || last.agentId !== agentId || last.attempt <= spawn.attempt) return undefined
+  const theirs = await storedSpawnByAgent($, agentId)
+  if (theirs && !theirs.adhoc && !theirs.review && theirs.attempt === last.attempt && theirs.task === spawn.task && theirs.subtask === spawn.subtask) return theirs
+  const { verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, verdictSummary: _vs, malformed: _m, pausedAs: _p, pauseCharged: _pc, pauses: _ps, ...open } = spawn
+  const next: SpawnRecord = { ...open, attempt: last.attempt, lineage: last.lineage, lastFailed: false }
+  await storeSet($, K.spawn(spawn.key), next)
+  await storeSet($, K.agent(agentId), spawn.key)
+  return next
+}
+
 /** Records the next attempt of a task as a resume of `spawn`'s worker (kind resume, same lineage) and opens it for a verdict. */
 async function recordResume($: Host, spawn: SpawnRecord, records: readonly AttemptRecord[], agentId: string): Promise<SpawnRecord> {
   const lane = laneOf(spawn)
@@ -7591,6 +7650,8 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   const { pauses: _pauses, ...fresh } = spawn
   const next: SpawnRecord = { ...fresh, attempt, lastFailed: false, ...(usdAtStart !== undefined ? { usdAtStart } : {}) }
   await storeSet($, K.spawn(spawn.key), next)
+  // MOD-301: the agent's pointer stays on the record the resume was written to, so every lookup of the worker finds the resumed attempt
+  await storeSet($, K.agent(agentId), spawn.key)
   await setWorkers($, list => [...list, { task: spawn.task, subtask: spawn.subtask, attempt, kind: 'resume', tier: spawn.tier, alias: spawn.alias, agentId, verdict: 'pending', at: t }])
   if (!spawn.adhoc && !spawn.review) await postStarted($, { label: taskLabel(spawn.task, spawn.subtask), task: spawn.task, repo: spawn.repo, alias: spawn.alias, tier: spawn.tier, attempt, budget: spawn.budget, kind: 'resumed', ...(origin?.exploreFrom ? { explore: { effort: origin.effort as Effort, label: exploreLabel(origin.exploreFrom, origin.alias, origin.effort) } } : {}) })
   return next
@@ -7678,9 +7739,11 @@ function rememberedFor(task: string, subtask: string, repo?: string): SpawnRecor
  */
 async function handbackSpawn($: Host, agentId: string | undefined, toolUseId?: string): Promise<SpawnRecord | undefined> {
   const byCall = toolUseId ? await storeGet<SpawnRecord>($, K.spawn(toolUseId)) : undefined
-  const byAgent = byCall === undefined || isCardless(byCall) ? await storedSpawnByAgent($, agentId) : undefined
+  // MOD-301: a briefed record the call names is read beside the agent's too: after a resume the agent's is the newer
+  const byAgent = byCall === undefined || isCardless(byCall) || (!byCall.adhoc && !byCall.review) ? await storedSpawnByAgent($, agentId) : undefined
   // MOD-97 (#155): an ad hoc call that resumed a briefed worker hands back as that worker, judged against its brief
-  if (byCall && byAgent && !byAgent.adhoc && !byAgent.review) return byAgent
+  // MOD-301: between two briefed records the higher attempt is the worker's current one (a resume lands on the agent's record, a by-hand verify's synthetic record included)
+  if (byCall && byAgent && !byAgent.adhoc && !byAgent.review) return isCardless(byCall) ? byAgent : newerSpawn(byCall, byAgent)
   const stored = byCall ?? byAgent
   if (stored) return stored
   const mem = agentId ? remembered.get(agentId) : undefined
