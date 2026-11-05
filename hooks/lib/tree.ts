@@ -73,9 +73,10 @@ export const TREE_TOOL = {
     properties: {
       issue: { type: 'integer', minimum: 1, description: 'The issue number, a whole number 1 or more.' },
       reconcile: { type: 'boolean', description: 'true: propose closes for sub-issues that merged cards already did (read-only unless confirm).' },
+      all: { type: 'boolean', description: 'With reconcile: true instead of issue: runs the reconcile over every open type:epic issue of the repo, one report, one read cap.' },
       confirm: { type: 'boolean', description: 'With reconcile: true, only after the person says yes in their own words: runs the done-elsewhere closes.' },
     },
-    required: ['issue'],
+    anyOf: [{ required: ['issue'] }, { required: ['all'] }],
     additionalProperties: false,
   },
 } as const
