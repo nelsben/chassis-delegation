@@ -394,7 +394,7 @@ A repo=here worker reports `branch=<current>` and `sha=HEAD`, or the sha it comm
 The claims change: `branch` holds when it is the current branch (another is unchecked); `sha` holds for `HEAD`, `none`
 or a sha that resolves; the gate runs on the tree as it stands, the clean-tree rule off. The delta is every path
 `git status --porcelain=v1 --untracked-files=all -z` names (with a real sha, `merge-base(<base>, sha)..sha`), less
-`ignore=` and `ignore+=`, less other in-flight cards' `files=` read at verify time; one line names each subtraction.
+`ignore=` and `ignore+=`, less other in-flight cards' `files=` read at verify time, then less the paths inside another in-flight card's `scope=` that the worker did not write and that are not in the worker's own `scope=`; one line names each subtraction (a scope-claimed group reads `(scope)`, MOD-310).
 
 The verifier tells a path the worker wrote (its write log) from one a sibling or the brain changed, and lists the latter without judging them; still commit or stash an accepted repo=here card's files before the next hand-back,
 or add them to `ignore`. For a nested child repo, start the session in the child; the mod reads only

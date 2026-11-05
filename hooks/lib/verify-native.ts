@@ -86,8 +86,8 @@ export type NativeInput = {
   here?: boolean
   /** GH-16, repo=here: the config's ignore globs, subtracted with the brief's ignore=. */
   ignore?: readonly string[]
-  /** GH-16, repo=here: the files= other in-flight cards claimed, subtracted from the delta. */
-  others?: readonly { card: string; files: readonly string[] }[]
+  /** GH-16, repo=here: the files= other in-flight cards claimed, subtracted from the delta; MOD-310: and their scope=, for the paths they have not reported yet. */
+  others?: readonly { card: string; files: readonly string[]; scope?: readonly string[] }[]
   gateTimeoutMs?: number
   /** The red hashes of this task + subtask's earlier attempts (AttemptRecord.redHash). */
   priorRed?: readonly RedPrior[]
@@ -431,7 +431,7 @@ export function porcelainPaths(stdout: string): string[] {
   return out
 }
 
-export type Subtracted = { kept: string[]; ignored: string[]; byCard: { card: string; paths: string[] }[] }
+export type Subtracted = { kept: string[]; ignored: string[]; byCard: { card: string; paths: string[]; /** MOD-310: a path in the group was claimed by the card's scope, not its files. */ scope?: true }[] }
 
 /** A path a card's files= names: the path itself, or a folder entry (`dir/`) above it. */
 const claims = (files: readonly string[], path: string): boolean => files.some(f => f === path || (f.endsWith('/') && path.startsWith(f)))
@@ -439,8 +439,16 @@ const claims = (files: readonly string[], path: string): boolean => files.some(f
 /**
  * GH-16: a repo=here delta less the ignore globs, then less the files other
  * in-flight cards claimed (a path goes to the first card that names it).
+ * MOD-310: then a path in the worker's own scope or its write log is kept;
+ * then a path inside a sibling's scope= goes to that sibling (scope-claimed).
+ * `own` is the worker's own scope= and write log (repo-relative paths).
  */
-export function subtractDelta(delta: readonly string[], ignore: readonly string[], others: readonly { card: string; files: readonly string[] }[]): Subtracted {
+export function subtractDelta(
+  delta: readonly string[],
+  ignore: readonly string[],
+  others: readonly { card: string; files: readonly string[]; scope?: readonly string[] }[],
+  own: { scope?: readonly string[]; writes?: readonly string[] } = {},
+): Subtracted {
   const out: Subtracted = { kept: [], ignored: [], byCard: others.map(o => ({ card: o.card, paths: [] })) }
   for (const path of delta) {
     if (pathMatchesAny(path, ignore)) {
@@ -448,8 +456,21 @@ export function subtractDelta(delta: readonly string[], ignore: readonly string[
       continue
     }
     const at = others.findIndex(o => claims(o.files, path))
-    if (at >= 0) out.byCard[at]?.paths.push(path)
-    else out.kept.push(path)
+    if (at >= 0) {
+      out.byCard[at]?.paths.push(path)
+      continue
+    }
+    const mine = (own.scope !== undefined && pathMatchesAny(path, own.scope)) || (own.writes ?? []).some(w => path === w || path.startsWith(`${w.replace(/\/+$/, '')}/`))
+    if (mine) {
+      out.kept.push(path)
+      continue
+    }
+    const scoped = others.findIndex(o => o.scope !== undefined && pathMatchesAny(path, o.scope))
+    const group = scoped >= 0 ? out.byCard[scoped] : undefined
+    if (group) {
+      group.paths.push(path)
+      group.scope = true
+    } else out.kept.push(path)
   }
   return out
 }
@@ -463,7 +484,7 @@ export function ignoredLine(s: Subtracted): string {
     paths.length === 0 ? '' : ` (${paths.slice(0, IGNORED_SHOWN).join(', ')}${paths.length > IGNORED_SHOWN ? `, +${paths.length - IGNORED_SHOWN} more` : ''})`
   const parts = [
     `${plural(s.ignored.length, 'path')} by ignore=${named(s.ignored)}`,
-    ...s.byCard.filter(c => c.paths.length > 0).map(c => `${plural(c.paths.length, 'path')} belonging to ${c.card}${named(c.paths)}`),
+    ...s.byCard.filter(c => c.paths.length > 0).map(c => `${plural(c.paths.length, 'path')} belonging to ${c.card}${c.scope ? ' (scope)' : ''}${named(c.paths)}`),
   ]
   return `ignored: ${parts.join(', ')}`
 }
@@ -858,7 +879,10 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   // and the files other in-flight cards claimed come off the delta, each disclosed
   if (here && delta) {
     const ignore = [...new Set([...contract.ignore, ...(input.ignore ?? [])])]
-    const sub = subtractDelta(delta, ignore, input.others ?? [])
+    // MOD-310: the worker's own scope= (repo-relative entries) and its write log (absolute in the input, made repo-relative here)
+    const root = repo.replace(/\/+$/, '') + '/'
+    const ownWrites = (input.writes ?? []).filter(w => w.startsWith(root)).map(w => w.slice(root.length))
+    const sub = subtractDelta(delta, ignore, input.others ?? [], { scope: contract.scope.filter(e => !isAbsolute(e)), writes: ownWrites })
     delta = sub.kept
     lines.push(ignoredLine(sub))
   }

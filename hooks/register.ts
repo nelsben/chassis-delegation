@@ -6364,7 +6364,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const prior = await loadAttempts($, spawn)
   const priorRed = priorRedHashes(prior, spawn.subtask, spawn.attempt, laneOf(spawn))
   const round = roundBase(prior, spawn.subtask, spawn.attempt, laneOf(spawn))
-  const others = here ? (await inFlightHere($, root, taskLabel(spawn.task, spawn.subtask))).map(c => ({ card: c.label, files: c.files })) : []
+  const others = here ? (await inFlightHere($, root, taskLabel(spawn.task, spawn.subtask))).map(c => ({ card: c.label, files: c.files, scope: c.scope })) : []
   const outside = await outsideFor($, spawn.task, other?.path)
   // MOD-152 (#246): a worktree is locked while the verifier judges it, so a plain `worktree remove --force` refuses it
   const taskRepo = (other?.path ?? root).replace(/\/+$/, '')

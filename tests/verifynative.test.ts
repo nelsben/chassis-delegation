@@ -528,6 +528,25 @@ describe('GH-16: repo=here, the shared checkout (no worktree)', () => {
     expect((await verifyNative(hereInput({ report: hereReport({ sha: 'none' }) }), io(hereTable()))).verdict).toBe('consistent')
   })
 
+  test('MOD-310: a sibling scope= subtracts the path it has not reported yet, disclosed with (scope) on its group', async () => {
+    // the worker's own scope is src/ only: docs/new.md is in no scope of its own, and GH-19's scope claims it before it reports it
+    const briefText = `${HERE_HEADER.replace('scope=src/**,docs/', 'scope=src/**')}\n\nbody\n`
+    const r = await verifyNative(hereInput({ briefText, report: hereReport({ files: 'src/a.ts,src/new.ts' }), others: [{ card: 'GH-19', files: ['src/b.ts'], scope: ['docs/**'] }] }), io(hereTable()))
+    expect(r.verdict).toBe('consistent')
+    expect(r.lines).toContain('ignored: 2 paths by ignore= (.delegation/briefs/GH-16.brief.md, notes/scratch.md), 2 paths belonging to GH-19 (scope) (src/b.ts, docs/new.md)')
+    expect(r.lines).toContain('claim files: held — files= matches the dirty-tree delta exactly')
+  })
+
+  test('MOD-310: a path in the worker write log inside a sibling scope is kept and judged, not subtracted', async () => {
+    // the worker's own scope is docs/ only; src/a.ts and src/new.ts sit in the sibling's scope and are not its files
+    const briefText = `${HERE_HEADER.replace('scope=src/**,docs/', 'scope=docs/')}\n\nbody\n`
+    const t = io(hereTable())
+    const r = await verifyNative(hereInput({ briefText, others: [{ card: 'GH-19', files: [], scope: ['src/**'] }], writes: [`${ROOTDIR}/src/b.ts`] }), t)
+    expect(r.verdict).toBe('refuted')
+    expect(r.lines).toContain('ignored: 2 paths by ignore= (.delegation/briefs/GH-16.brief.md, notes/scratch.md), 2 paths belonging to GH-19 (scope) (src/a.ts, src/new.ts)')
+    expect(r.lines).toContain('claim scope: failed — out-of-scope path: src/b.ts')
+  })
+
   test('git status failing leaves scope and files unchecked', async () => {
     const r = await verifyNative(hereInput(), io(hereTable({ [hgit('status', '--porcelain=v1', '--untracked-files=all', '-z')]: exit(128, '', 'not a git repository') })))
     expect(r.verdict).toBe('unverified')
