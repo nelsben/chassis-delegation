@@ -1296,6 +1296,39 @@ describe('MOD-24: a repo=here card that shares a resource is queued, not refused
   })
 })
 
+describe('MOD-310: a sibling in-flight scope= does not fail a repo=here resume', () => {
+  const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const onMain = (argv: string[]): RunAnswer | undefined => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined)
+
+  test('GH-19 is in flight with scope src/** and has reported no files: its unreported src/b.ts is subtracted and named (scope), and the worker files= holds', { options: { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+    const briefPath = `${SCRATCH}/briefs/BE-102.brief.md`
+    const siblingPath = `${ROOT}/.delegation/briefs/GH-19.brief.md`
+    const PORCELAIN = [' M app/billing/RateA.ts', ' M src/b.ts', ''].join('\0')
+    const run = (argv: string[]): RunAnswer | undefined => {
+      if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+      if (argv[3] === 'status') return { exitCode: 0, stdout: PORCELAIN }
+      return onMain(argv)
+    }
+    const w = world(on, {
+      files: {
+        [briefPath]: '[[brief v=1 task=BE-102 subtask=main purpose=build tier=standard model=sonnet scope=app/billing/** forbid= gate=prettier repo=here budget=3-attempts report=chassis.report.v1]]\nbody',
+        [siblingPath]: '[[brief v=1 task=GH-19 subtask=main tier=standard scope=src/** forbid= gate=node repo=here]]\nbody',
+      },
+      run,
+      agentId: 'agent-310',
+      store: { 'delegation.tasks.GH-19': [{ task: 'GH-19', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'pending', at: 1, briefPath: siblingPath, here: ROOT }] },
+    })
+    ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async () => ({ result: 'ok' }))
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${briefPath}.` }))
+    await $.turn.complete(turnInput('agent-310', '[[report v=1 task=BE-102 subtask=main branch=main pr=none sha=HEAD gate=pass files=app/billing/RateA.ts]]'))
+    const row = delivered(w)
+    expect(row).toContain('ignored: 0 paths by ignore=, 1 path belonging to GH-19 (scope) (src/b.ts)')
+    expect(row).toContain('claim scope: held')
+    expect(row).toContain('claim files: held — files= matches the dirty-tree delta exactly')
+  })
+})
+
 describe('MOD-28: the mod reads its templates once, at load, and says when the folder is newer than the code', () => {
   type Tester = Parameters<TestBody>[0]
   const OPTIONS = { briefDir: `${SCRATCH}/briefs` }
