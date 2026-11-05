@@ -25,7 +25,7 @@ const planJson = (over: Record<string, unknown> = {}) => ({
   ],
   ...over,
 })
-const sim = (opts: { failCreateAt?: number } = {}) => {
+const sim = (opts: { failCreateAt?: number; failText?: string } = {}) => {
   let n = 49
   let made = 0
   const issues = new Map<number, { title: string; state: string; parent?: number }>()
@@ -45,7 +45,7 @@ const sim = (opts: { failCreateAt?: number } = {}) => {
     }
     if (argv[2] !== 'create') return { exitCode: 0, stdout: '' }
     made++
-    if (made === opts.failCreateAt) return { exitCode: 1, stdout: '', stderr: 'boom' }
+    if (made === opts.failCreateAt) return { exitCode: 1, stdout: '', stderr: opts.failText ?? 'boom' }
     n++
     const p = argv.indexOf('--parent')
     issues.set(n, { title: argv[argv.indexOf('--title') + 1] as string, state: 'OPEN', ...(p >= 0 ? { parent: Number(argv[p + 1]) } : {}) })
@@ -116,6 +116,21 @@ describe('MOD-215: tree import', () => {
     expect(creates(w)[0]).toContain('51')
     expect(out).toContain('already filed #50')
     expect(out).toContain('already filed #51')
+  })
+
+  test('MOD-314: a rate limit on the third create stops with the retry line and a re-run resumes', async ($, on) => {
+    const g = sim({ failCreateAt: 3, failText: 'GraphQL: was submitted too quickly (createIssue)' })
+    const w = setup(on, g.run)
+    await $.session.start(sessionStart)
+    const first = text(await importTool($, { file: rel, confirm: true }))
+    expect(first.split('\n').pop()).toBe('filed 2 of 4; GitHub rate limit hit on "Gamma"; retry in a few minutes: run again then')
+    expect(first).not.toContain('gh said:')
+    expect(first).toContain('filed #50')
+    expect(first).toContain('filed #51')
+    w.runs.length = 0
+    const out = text(await importTool($, { file: rel, confirm: true }))
+    expect(creates(w).map((a: string[]) => a[a.indexOf('--title') + 1])).toEqual(['Gamma', 'Delta'])
+    expect(out).toContain('already filed #50')
   })
 
   test('the batch option stops the run and says how to continue', { options: { treeImportBatch: 2 } }, async ($, on) => {

@@ -218,7 +218,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan,
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { doneComment, epicsOf, landedFor, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
-import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
+import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
 import { landedTail, matchPlanned, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned } from './lib/issuematch'
@@ -4912,6 +4912,18 @@ async function viewIssue($: Host, root: string, ownerRepo: string, n: number): P
   }
 }
 
+/** MOD-314: the tree-import read of a recorded issue; carries gh's text when it cannot be read so a rate limit is recognised. */
+async function viewIssueForTree($: Host, root: string, ownerRepo: string, n: number): Promise<{ state: string } | { failed: string }> {
+  const r = await run($, ['gh', 'issue', 'view', String(n), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 60000 })
+  if (!r.ok || r.exitCode !== 0) return { failed: (r.ok ? r.stderr || r.stdout : r.why).trim().slice(0, 400) }
+  try {
+    const json = JSON.parse(r.stdout) as { state?: unknown } | null
+    return { state: typeof json?.state === 'string' ? json.state.toUpperCase() : '' }
+  } catch {
+    return { failed: 'unreadable output' }
+  }
+}
+
 /** MOD-204: true when `gh issue view` reads the issue and says it is OPEN; unreadable or closed is false. */
 async function issueIsOpen($: Host, root: string, ownerRepo: string, n: number): Promise<boolean> {
   return (await viewIssue($, root, ownerRepo, n))?.state === 'OPEN'
@@ -5167,9 +5179,12 @@ async function treeImportWith($: Host, a: ReturnType<typeof parseTreeImportArgs>
     let isReused = false
     let file = ''
     if (n.issue !== undefined) {
-      const view = await viewIssue($, root, ownerRepo, n.issue)
-      if (!view) {
-        stop = `tree import: could not read #${n.issue} (${n.at}); remove its "issue" from the file if it is gone`
+      const view = await viewIssueForTree($, root, ownerRepo, n.issue)
+      if ('failed' in view) {
+        const rl = rateLimited(view.failed)
+        stop = rl
+          ? `tree import: GitHub rate limit hit reading #${n.issue}; ${rl.kind === 'primary' ? 'resets within the hour' : 'retry in a few minutes'}: run again then`
+          : `tree import: could not read #${n.issue} (${n.at}); remove its "issue" from the file if it is gone`
         return undefined
       }
       // an OPEN issue, or a CLOSED one (with or without close: MOD-221), is already filed
@@ -5199,6 +5214,11 @@ async function treeImportWith($: Host, a: ReturnType<typeof parseTreeImportArgs>
       }
       const r = await fileOne($, { root, ownerRepo, file, body, title: n.title, type: n.type, ...(parentNum > 0 ? { parent: parentNum } : {}) })
       if ('failed' in r) {
+        const rl = rateLimited(r.failed)
+        if (rl) {
+          stop = `filed ${created} of ${totalNew}; GitHub rate limit hit on "${n.title}"; ${rl.kind === 'primary' ? 'resets within the hour' : 'retry in a few minutes'}: run again then`
+          return undefined
+        }
         lines.push(`not filed: ${n.title}`, `gh said: ${r.failed === '' ? '(nothing on stderr)' : r.failed}`)
         stop = 'failed'
         return undefined
