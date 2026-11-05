@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.51 to 0.9.52
+
+No action needed. A worker's Bash now runs as typed whenever the session is in auto mode at the time of the call, not only when it was in auto mode at spawn. A host refusal the hooks never saw still latches the worker, and an uncommitted hand-back then reads `blocked by environment`. Detail: [CHANGELOG 0.9.52](../CHANGELOG.md).
+
 ### From 0.9.50 to 0.9.51
 
 No action needed. The merge union-resolves an add-only rebase conflict (both sides only added lines to one file), and `merge` keeps both sides and continues the rebase. Two repo-file keys are new: `mergeStyle` (`rebase`, `merge` or `squash`) picks the flag on the `gh pr merge` line, and `finishSkip` adds per-repo paths `merge --finish` never stops on. `merge --finish` works on a worktree that is already gone, and the dispatch base never counts as landed. A red gate on a hand-back that claimed `gate=pass` is run once more before the verdict says red. The verdict row notes live processes on the worker's worktree, and each ledger row carries the brief hash. Detail: [CHANGELOG 0.9.51](../CHANGELOG.md).
