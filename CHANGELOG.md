@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **`merge --finish` works when the task's worktree is already gone (a PR landed by hand, the branch deleted): it takes the sha from the merge prepare, the last attempt or the newest consistent verdict, and when that sha or its rebased twin is on origin it records the merge and removes the root card instead of answering `no worktree …; nothing to merge`; a sha not yet on origin gets a named not-yet line and nothing is recorded (MOD-309, #415).**
+
 - **The verdict tool, the retire check and `merge --finish` never count the dispatch base as landed: an unbuilt worktree whose head is still the base is no longer answered `merged at <sha>`, no accept row is written for it, and a `merged` marker already set on the base is cleared at the next hand-back, which is then verified; the attempt record gains `baseSha` and `mergedSha` (MOD-316).**
 
 - **A red gate on a hand-back that claimed `gate=pass` is run once more on its own before the verdict says red: green on the second run holds with `gate=pass confirmed on re-run`, red is refuted as before with a `note:`, and the first run's output is kept beside the second's as `verify-gate-<attempt>-first.txt` (MOD-307, #394).**
