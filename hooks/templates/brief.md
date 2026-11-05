@@ -40,14 +40,14 @@ You were started by the brain's own Agent call: the mod recorded this attempt, s
 - Scratch: {{scratch}} (make the folder). Helper files, test inputs, intermediate output and logs go there, never in the repo and never in the output folder.
 {{/scratch}}
 {{#worktree}}
-- Gate: {{gate}} green in the worktree, all committed, before you report: the verifier re-runs it at your sha. If the gate fails with timeouts (ETIMEDOUT, a test timing out), run it once more on its own before handing back gate=fail, and say in the report that it was re-run.{{gateNote}}
+- Gate: {{gate}} green in the worktree, all committed, before you report: the verifier re-runs it at your sha. Run it in the foreground (not run_in_background); keep its output outside the repo (under the scratch folder when the brief names one). If the gate fails with timeouts (ETIMEDOUT, a test timing out), run it once more on its own before handing back gate=fail, and say in the report that it was re-run.{{gateNote}}
 - Commit and HOLD: never push, open a PR, merge, or commit on main or master.
 {{/worktree}}
 {{#none}}
-- Gate: {{gate}} runs after your hand-back (a gate command may name {outdir}, the output folder); get it green before you report. If the gate fails with timeouts (ETIMEDOUT, a test timing out), run it once more on its own before handing back gate=fail, and say in the report that it was re-run.{{gateNote}}
+- Gate: {{gate}} runs after your hand-back (a gate command may name {outdir}, the output folder); get it green before you report. Run it in the foreground (not run_in_background); keep its output outside the repo (under the scratch folder when the brief names one). If the gate fails with timeouts (ETIMEDOUT, a test timing out), run it once more on its own before handing back gate=fail, and say in the report that it was re-run.{{gateNote}}
 {{/none}}
 {{#here}}
-- Gate: {{gate}} green in this checkout before you report. The verifier re-runs it here on the tree as it stands (uncommitted changes included) and checks files= against `git status`, less the brief's ignore= and the files other in-flight cards claimed. If the gate fails with timeouts (ETIMEDOUT, a test timing out), run it once more on its own before handing back gate=fail, and say in the report that it was re-run.{{gateNote}}
+- Gate: {{gate}} green in this checkout before you report. The verifier re-runs it here on the tree as it stands (uncommitted changes included) and checks files= against `git status`, less the brief's ignore= and the files other in-flight cards claimed. Run it in the foreground (not run_in_background); keep its output outside the repo (under the scratch folder when the brief names one). If the gate fails with timeouts (ETIMEDOUT, a test timing out), run it once more on its own before handing back gate=fail, and say in the report that it was re-run.{{gateNote}}
 - Do not commit unless the card says so; never push, never open a PR, never merge.
 {{/here}}
 {{#spend}}

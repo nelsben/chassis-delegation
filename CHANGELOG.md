@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **The brief tells the worker to run its gate in the foreground, in all three repo modes, because a background gate run costs a second pause (MOD-306, #396).**
 - **`tree reconcile all` walks the epics newest first and counts the `treeImportBatch` read cap per epic, so one run reaches every epic (a child past the cap reads `not read: run /delegation tree reconcile <epic>`), paces its views, and on a repo with no `type:epic` label points at `/delegation setup` (MOD-304).**
 - **`tree reconcile` marks a story done elsewhere only in a merged card that names it (`issue:`, or `parent:` when every child of the story is closed), never on a scope overlap; a story whose scope block overlaps a merged card shows `no match (scope overlaps <card>)` and keeps its commented not-planned close line (MOD-303).**
 
