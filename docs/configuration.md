@@ -117,7 +117,7 @@ Shows the options in force and where each value came from; works in VS Code.
 ### The debrief from your review note
 
 With `debriefMode` `notes` (the default), a clean stop runs no agent. Once a round of verdicts has closed (the verdicts since the last
-prompt row or ingest) the mod adds one row: `a round of tasks closed (N verdicts): write the review note, then /delegation debrief ingest <note.md>`,
+prompt row or ingest) the mod adds one row: `a round of tasks closed (N verdicts): write the review note with a "## For the mod owner" heading, one bullet per finding, then /delegation debrief ingest <note.md>`,
 under the same idle and cooldown rules as before. `autoDebrief` `false` silences it. `debriefMode` `transcript` keeps the background agent that mines the session.
 
 In the note, put a heading `For the mod owner` (any level) and one top-level bullet per finding:
@@ -135,7 +135,7 @@ A bullet starting `P1`, `P2` or `P3` sets the severity (else `P3`); the title is
 
 `/delegation debrief ingest <note.md>` (a path under the session root, or absolute) scrubs the findings as a debrief's are, writes
 `<root>/.delegation/debriefs/YYYY-MM-DD-note-<name>.findings.json` and prints the lines. Nothing is posted: `/delegation debrief post` lists them, and
-`/delegation debrief post all|1,3` posts them ([Posting the findings](#posting-the-findings)). A note without the section prints `debrief ingest: <name> has no "For the mod owner" section; nothing written`.
+`/delegation debrief post all|1,3` posts them ([Posting the findings](#posting-the-findings)). A note without the heading prints ``debrief ingest: <name> has no "For the mod owner" heading (read <path>); add `## For the mod owner` with one bullet per finding, then run it again`` (and a `nearest heading` line when one mentions the mod); a heading with no bullets prints `debrief ingest: <name> has a "For the mod owner" heading with no bullets; one bullet per finding`. Nothing is written in either case.
 
 ### The debrief now
 

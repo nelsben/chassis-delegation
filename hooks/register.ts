@@ -133,7 +133,7 @@ import {
   type FrictionEvent,
 } from './lib/cleanstop'
 import { resolveFindings, notFoundLine, expandHome } from './lib/debriefdir'
-import { noteFindings, noteFindingsName, notesPromptRow } from './lib/notes'
+import { ingestRefusal, noteFindings, noteFindingsName, notesPromptRow } from './lib/notes'
 import { checkDebrief, windowOf, userMessagesOf, userMessagesFromJsonl, transcriptPath, type DebriefWindow, type UserMessage } from './lib/debriefcheck'
 import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedRowsFrom, prsFrom, renderState, SECTION_ID, splitOwed, type RecentVerdict, type StateSnapshot } from './lib/compaction'
 import {
@@ -4174,7 +4174,7 @@ async function runDebriefIngest($: Host, argText: string): Promise<string> {
   const text = await readText($, path)
   if (text === undefined) return `debrief ingest: could not read ${path}; nothing written`
   const raw = noteFindings(text, `review note ${base}`)
-  if (raw.length === 0) return `debrief ingest: ${base} has no "For the mod owner" section; nothing written`
+  if (raw.length === 0) return ingestRefusal(text, base, path) ?? `debrief ingest: ${base} has a "For the mod owner" heading with no bullets; one bullet per finding`
   const rules = await redactRules($)
   const scrubbed = scrubbedFindings(JSON.stringify({ mod_findings: raw }), rules) ?? []
   const findings = dropLocalQuotes(scrubbed, await localBriefTexts($, rules))
@@ -10719,7 +10719,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|dashboard|ration|land <type> <title>|tree <n>|tree import <file>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|debrief ingest <note.md>|dashboard|ration|land <type> <title>|tree <n>|tree import <file>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => (landSeen($, 'card'), { result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => (landSeen($, 'verdict'), { result: await runVerdictSafe($, e as unknown as Record<string, unknown>) }))

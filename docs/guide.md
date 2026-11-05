@@ -308,7 +308,7 @@ Nothing else in the mod closes an issue.
 | `/delegation init [path]` | you | the bare scaffold |
 | `/delegation update` | you | fast-forwards the mod to origin/main and migrates config (see [Upgrading](upgrading.md#upgrading)) |
 | `/delegation debrief` | you | runs the debrief on demand (see [The debrief now](configuration.md#the-debrief-now)) |
-| `/delegation debrief ingest <note.md>` | you | turns the `For the mod owner` bullets of your review note into findings that `debrief post` lists (see [The debrief from your review note](configuration.md#the-debrief-from-your-review-note)) |
+| `/delegation debrief ingest <note.md>` | you | turns the bullets under the `## For the mod owner` heading of your review note (one bullet per finding) into findings that `debrief post` lists (see [The debrief from your review note](configuration.md#the-debrief-from-your-review-note)) |
 | `/delegation config [all \| <group> \| <field> [<value> \| default] \| repo <field> <value>]` | you | shows or sets options (see [/delegation config](configuration.md#delegation-config)) |
 | `/delegation dashboard` | you | opens the pane (see [Dashboard](#dashboard)) |
 | `/delegation merge <ID> [--review <text> \| --review-file <abs path>]` | you, or the brain after a consistent/accept verdict | rebases, commits the card as merged, runs the gates, writes `.delegation/<ID>/pr.md`, prints the push and PR block (see [Merging a card](review-and-merge.md#merging-a-card)) |

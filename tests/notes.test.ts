@@ -44,7 +44,7 @@ describe('MOD-137: /delegation debrief ingest', () => {
     const w = world(on, { files: { [`${ROOT}/plain.md`]: '# Notes\n- nothing for you\n' } })
     await $.session.start(sessionStart)
     const out = String((await $.command.run(delegation('debrief ingest plain.md'))).text)
-    expect(out).toBe('debrief ingest: plain.md has no "For the mod owner" section; nothing written')
+    expect(out).toBe(`debrief ingest: plain.md has no "For the mod owner" heading (read ${ROOT}/plain.md); add \`## For the mod owner\` with one bullet per finding, then run it again`)
     expect([...w.files.keys()].some(k => k.endsWith('.findings.json'))).toBe(false)
   })
 })
@@ -59,7 +59,7 @@ describe('MOD-137: debriefMode notes at a clean stop', () => {
     await $.turn.complete(mainTurn())
     await w.clock.advance(20 * MIN)
     expect(w.spawns).toHaveLength(0)
-    const row = 'a round of tasks closed (2 verdicts): write the review note, then /delegation debrief ingest <note.md>'
+    const row = 'a round of tasks closed (2 verdicts): write the review note with a "## For the mod owner" heading, one bullet per finding, then /delegation debrief ingest <note.md>'
     expect(shown(w).split(row).length - 1).toBe(1)
     await $.turn.complete(mainTurn())
     await w.clock.advance(20 * MIN)

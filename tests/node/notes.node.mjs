@@ -75,3 +75,30 @@ describe('MOD-137: noteFindings', () => {
     expect(noteFindings('## For the mod owner\n\n## Next\n- a', 's')).toEqual([])
   })
 })
+
+describe('MOD-311: ingestRefusal and the prompt row', () => {
+  test('no heading names the heading and the path', async () => {
+    const { ingestRefusal } = await N()
+    expect(ingestRefusal('# T\n- a', 'n.md', '/r/n.md')).toBe(
+      'debrief ingest: n.md has no "For the mod owner" heading (read /r/n.md); add `## For the mod owner` with one bullet per finding, then run it again')
+  })
+  test('a near heading is offered as a second line', async () => {
+    const { ingestRefusal } = await N()
+    const out = ingestRefusal('# T\n### Notes for the Mod\n- a', 'n.md', '/r/n.md')
+    expect(out.split('\n')[1]).toBe('nearest heading: "Notes for the Mod"; rename it to "For the mod owner" to ingest it')
+    expect(ingestRefusal('```\n## mod stuff\n```', 'n.md', '/r/n.md').includes('nearest')).toBe(false)
+  })
+  test('a heading with no bullets', async () => {
+    const { ingestRefusal } = await N()
+    expect(ingestRefusal('## For the mod owner\nprose only', 'n.md', '/r/n.md')).toBe('debrief ingest: n.md has a "For the mod owner" heading with no bullets; one bullet per finding')
+  })
+  test('a heading with bullets is fine', async () => {
+    const { ingestRefusal } = await N()
+    expect(ingestRefusal('## For the mod owner\n- a', 'n.md', '/r/n.md')).toBe(undefined)
+  })
+  test('the prompt row says the heading', async () => {
+    const { notesPromptRow, OWNER_HEADING } = await N()
+    expect(OWNER_HEADING).toBe('For the mod owner')
+    expect(notesPromptRow(1)).toBe('a round of tasks closed (1 verdict): write the review note with a "## For the mod owner" heading, one bullet per finding, then /delegation debrief ingest <note.md>')
+  })
+})
