@@ -7,7 +7,7 @@ const CARDS = `${ROOT}/docs/cards`
 const REPO_FILE = `${ROOT}/.chassis-delegation.json`
 const LEDGER = `${ROOT}/.delegation/ledger.jsonl`
 const gitCfg = (url: string) => ({ [`${ROOT}/.git/config`]: `[remote "origin"]\n\turl = ${url}\n` })
-const card = (id: string, status: string, scope: string) => ['---', `id: ${id}`, `title: Card ${id}`, 'domain: mod', 'tier: standard', `status: ${status}`, `scope: [${scope}]`, 'gate: node', '---', '## Done when', '', '- It works.', ''].join('\n')
+const card = (id: string, status: string, scope: string, issue?: number) => ['---', `id: ${id}`, ...(issue !== undefined ? [`issue: ${issue}`] : []), `title: Card ${id}`, 'domain: mod', 'tier: standard', `status: ${status}`, `scope: [${scope}]`, 'gate: node', '---', '## Done when', '', '- It works.', ''].join('\n')
 const PARENT = JSON.stringify({
   number: 50,
   title: 'Export rework',
@@ -34,7 +34,7 @@ const setup = (on: any) =>
   world(on, {
     files: {
       [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards' }),
-      [`${CARDS}/MOD-9-a.md`]: card('MOD-9', 'merged', 'hooks/x.ts'),
+      [`${CARDS}/MOD-9-a.md`]: card('MOD-9', 'merged', 'hooks/x.ts', 51),
       [LEDGER]: `${JSON.stringify({ kind: 'merged', task: 'MOD-9', sha: 'abc1234', pr: 41, at: 1 })}\n`,
       ...gitCfg('https://github.com/o/r.git'),
     },

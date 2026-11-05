@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`tree reconcile` marks a story done elsewhere only in a merged card that names it (`issue:`, or `parent:` when every child of the story is closed), never on a scope overlap; a story whose scope block overlaps a merged card shows `no match (scope overlaps <card>)` and keeps its commented not-planned close line (MOD-303).**
+
 ## 0.9.50 — 2026-11-05
 
 ### Added
