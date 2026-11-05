@@ -83,10 +83,59 @@ export function cutText(command: string): string {
   return out
 }
 
-/** A command that waits on something: an until or while loop, or a sleep. Heredoc bodies and quoted text are not looked at. */
+/** MOD-318: a loop bounded by a numeric test: -lt, -le, -gt or -ge (not -eq or -ne), or a `((` … `))` not preceded by `$` that compares. */
+const boundedText = (text: string): boolean => {
+  if (/(?<![\w-])-(?:lt|le|gt|ge)(?![\w-])/.test(text)) return true
+  for (const m of text.matchAll(/(?<!\$)\(\(([^)]*)\)\)/g)) if (/<|>|==|!=/.test(m[1] ?? '')) return true
+  return false
+}
+
+/**
+ * MOD-318: the loops of a cut command and the sleeps and while/until words in it. A loop's body runs from its `do`
+ * to its `done`; a `for` loop is always bounded, a while or until one when its text is `boundedText`.
+ */
+const loopsOf = (c: string): { loops: { kind: string; bounded: boolean; body?: number; end: number }[]; sleeps: number[]; words: { kind: string; at: number }[] } => {
+  const loops: { kind: string; bounded: boolean; body?: number; end: number; start: number }[] = []
+  const open: { kind: string; start: number; body?: number }[] = []
+  const sleeps: number[] = []
+  const words: { kind: string; at: number }[] = []
+  for (const m of c.matchAll(/(?<![^\s;&|()])(for|while|until|do|done|sleep)(?![^\s;&|()])/g)) {
+    const at = m.index ?? 0
+    const w = m[1] ?? ''
+    if (w === 'for' || w === 'while' || w === 'until') {
+      open.push({ kind: w, start: at })
+      if (w !== 'for') words.push({ kind: w, at })
+    } else if (w === 'do') {
+      for (let i = open.length - 1; i >= 0; i--) {
+        const o = open[i]
+        if (o && o.body === undefined) { o.body = at + 2; break }
+      }
+    } else if (w === 'done') {
+      for (let i = open.length - 1; i >= 0; i--) {
+        const o = open[i]
+        if (o && o.body !== undefined) {
+          open.splice(i, 1)
+          loops.push({ kind: o.kind, start: o.start, body: o.body, end: at, bounded: o.kind === 'for' || boundedText(c.slice(o.start, at)) })
+          break
+        }
+      }
+    } else if (/^sleep\s+\d/.test(c.slice(at))) sleeps.push(at)
+  }
+  for (const o of open) loops.push({ kind: o.kind, start: o.start, body: o.body, end: c.length, bounded: o.kind === 'for' || boundedText(c.slice(o.start)) })
+  return { loops, sleeps, words }
+}
+
+/**
+ * A command that waits on something: an until or while loop, or a sleep, that no bounded loop encloses (MOD-318: a
+ * `for` retry loop, or a while/until bounded by -lt, -le, -gt, -ge or a comparing `((`, is not a poll). Heredoc bodies and quoted text are not looked at.
+ */
 export const isPoll = (command: string): boolean => {
   const c = cutText(command)
-  return /(^|[\s;&|(])until\s/.test(c) || /(^|[\s;&|(])while\s[^]*\bsleep\b/.test(c) || /(^|[\s;&|(])sleep\s+\d/.test(c)
+  const { loops, sleeps, words } = loopsOf(c)
+  const inBounded = (at: number): boolean => loops.some(l => l.bounded && l.body !== undefined && at >= l.body && at <= l.end)
+  // a while or until is covered by a bounded loop around it, or is itself bounded
+  const loopWord = (at: number, kind: string): boolean => loops.some(l => l.kind === kind && l.start === at && l.bounded) || inBounded(at)
+  return sleeps.some(at => !inBounded(at)) || words.some(w => !loopWord(w.at, w.kind))
 }
 
 const firstWord = (command: string): string => {
