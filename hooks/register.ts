@@ -240,7 +240,7 @@ import { closesTask, handedBackRow, plainTaskOf, postsRows, runningSection, star
 import { cardsHandedBack, nudgeDown, nudgeText, nudgeUp, type EffortNudge } from './lib/nudge'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
 import { liveInWorktree, liveProcessLine } from './lib/liveproc'
-import { DEFAULT_CARD_DIR, fillMergeCheck, ignoreWithCards, isGitRef, mergeCheckRefusal, mergeChecksFor, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
+import { DEFAULT_CARD_DIR, fillMergeCheck, ignoreWithCards, isGitRef, mergeCheckRefusal, mergeChecksFor, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type MergeStyle, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
 import {
   matchReview,
@@ -367,6 +367,7 @@ import {
   issueRef,
   issueNote,
   pushLines,
+  squashIn,
   readsMerged,
   remoteBlock,
   shellWord,
@@ -701,6 +702,10 @@ type Config = {
   issueRepo: string
   /** MOD-18: issueRepo is the mod's own repository, from the manifest (the repo file left it unset). */
   issueRepoOwn: boolean
+  /** MOD-319: the `gh pr merge` flag the merge block prints. */
+  mergeStyle: MergeStyle
+  /** MOD-319: extra paths `merge --finish` never stops on. */
+  finishSkip: string[]
   /** MOD-15: a verdict row is followed by a `$.prompt.submit`, a turn of the brain's own. MOD-64: off unless the option is true. */
   wakeOnVerdict: boolean
   /** MOD-201: the two one-line leads in the band, for the brain; off records and draws neither. */
@@ -820,6 +825,8 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       delegateOnly: eff.delegateOnly,
       issueRepo: issues.repo,
       issueRepoOwn: issues.own,
+      mergeStyle: eff.mergeStyle,
+      finishSkip: eff.finishSkip,
       wakeOnVerdict: o.wakeOnVerdict === true,
       landNudge: o.landNudge !== false,
       landAuto: o.landAuto === true || o.landAuto === 'on',
@@ -3857,7 +3864,7 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   const verdictLine = `${id} attempt ${row.attempt ?? '?'}: consistent${row.sha ? ` at ${row.sha}` : ''} · next=accept`
   await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary), ...(rebaseLine ? { rebase: rebaseLine } : {}), ...(issueRef(card.fields.issue, prRepo) !== undefined ? { issue: issueRef(card.fields.issue, prRepo) as number } : {}) }))
   const title = card.title || `${id} merged`
-  const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id })
+  const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id, mergeStyle: cfg.mergeStyle })
   return [
     ...amends.map(amendMergeLine),
     ...(rebaseLine ? [rebaseLine] : []),
@@ -3888,6 +3895,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   if (!isSha(head)) return `${id}: could not read the worktree's head in ${wt.path}`
   // the head itself on origin/<default>, or its rebased twin (same tree, same subject)
   let sha: string | undefined
+  let squashed = false
   // MOD-316: a head equal to the dispatch base is an unbuilt worktree, not a landing (unless a merge-prepare saw this very head)
   const finishBase = attemptsFor(await loadAttempts($, { task: id }), 'main').findLast(r => r.baseSha !== undefined)?.baseSha
   const preparedHead = (await storeGet<MergePrep>($, K.mergePrep(id, await cardRepo($))))?.head === head
@@ -3897,7 +3905,13 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
     const mine = (okOut(await run($, ['git', '-C', wt.path, 'log', '-1', '--format=%T%x09%s', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
     const [tree = '', ...subject] = mine.split('\t')
     const theirs = okOut(await run($, ['git', '-C', root, 'log', '--format=%H%x09%T%x09%s', '-n', '200', `origin/${def}`], { cwd: root, timeoutMs: 15000 })) ?? ''
-    if (tree !== '') sha = twinIn(theirs.split('\n').filter(l => l.split('\t')[0] !== head).join('\n'), tree, subject.join('\t'))
+    const others = theirs.split('\n').filter(l => l.split('\t')[0] !== head).join('\n')
+    if (tree !== '') sha = twinIn(others, tree, subject.join('\t'))
+    // MOD-319: with mergeStyle squash, a commit with the head's tree and another sha is the landing
+    if (!sha && cfg.mergeStyle === 'squash') {
+      sha = squashIn(others, head, tree)
+      if (sha) squashed = true
+    }
   }
   if (!sha) return ignored ? notLandedIgnoredLine(id, wt.branch, head, def) : `${id}: ${wt.branch} is not in origin/${def} yet`
   const short = sha.slice(0, 10)
@@ -3906,7 +3920,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   let leftovers: string[] = []
   const wtState = await run($, ['git', '-C', wt.path, 'status', '--porcelain', '--ignored', '--untracked-files=all'], { cwd: wt.path, timeoutMs: 30000 })
   if (!wtState.ok || wtState.exitCode !== 0) notes.push(`note: could not list untracked or ignored files in ${wt.path}: ${whyOf(wtState)}`)
-  else leftovers = finishLeftovers(wtState.stdout)
+  else leftovers = finishLeftovers(wtState.stdout, undefined, cfg.finishSkip)
   if (leftovers.length > 0 && !discard) return finishStopLines(id, wt.path, leftovers).join('\n')
   // the root card goes only when the merged card on origin says the same (status aside; a Review section may be extra); a git-ignored card is the only copy and stays (MOD-86)
   if (cardRel && !ignored) {
@@ -3933,7 +3947,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   const removedOk = removed.ok && removed.exitCode === 0
   if (!removedOk) {
     // MOD-142: git removes ignored files but not untracked ones; stop here so a second finish completes the job (branch kept, no merged row)
-    const untracked = wtState.ok && wtState.exitCode === 0 ? finishLeftovers(wtState.stdout, '??').length : 0
+    const untracked = wtState.ok && wtState.exitCode === 0 ? finishLeftovers(wtState.stdout, '??', cfg.finishSkip).length : 0
     if (untracked > 0) return [...notes, `${id}: on origin/${def} at ${short}; root card and pull done, but the worktree and branch are kept`, `note: the worktree ${wt.path} was not removed: it still holds ${untracked} untracked files (git removes ignored files but not untracked ones); delete them, then run /delegation merge ${id} --finish again`].join('\n')
     notes.push(`note: the worktree ${wt.path} was not removed: ${whyOf(removed)}`)
   } else if (leftovers.length > 0) notes.push(`note: discarded ${leftovers.length} untracked or ignored files from ${wt.path}`)
@@ -3941,7 +3955,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   if (!dropped.ok || dropped.exitCode !== 0) notes.push(`note: the branch ${wt.branch} was not deleted: ${whyOf(dropped)}`)
   return finishRecord($, {
     root, id, def, sha, branch: wt.branch, version, notes, cardIssue, cardParent,
-    header: `${id}: on origin/${def} at ${short}${sha === head ? '' : ' (the rebased twin of the worktree head)'}; ${ignored ? 'root card kept (git-ignored), ' : cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
+    header: `${id}: on origin/${def} at ${short}${sha === head ? '' : squashed ? ' (squash of the worktree head)' : ' (the rebased twin of the worktree head)'}; ${ignored ? 'root card kept (git-ignored), ' : cardRel ? 'root card removed, ' : ''}main pulled, worktree and branch removed`,
   })
 }
 

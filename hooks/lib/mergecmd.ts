@@ -210,11 +210,11 @@ export function statusPaths(porcelain: string, trackedOnly = false): string[] {
 /** Paths finish never counts as evidence: a folder entry (trailing slash) skips everything under it at any depth; a name skips that file at any depth; `.pyc` skips by suffix. */
 export const FINISH_SKIP: readonly string[] = ['.delegation/', 'node_modules/', '.venv/', 'venv/', '__pycache__/', '.pytest_cache/', '.mypy_cache/', '.ruff_cache/', 'dist/', 'build/', 'coverage/', '.next/', '.turbo/', 'target/', '.cache/', '.DS_Store', '.pyc']
 
-const skipped = (path: string): boolean => {
+const skipped = (path: string, extra: readonly string[] = []): boolean => {
   const parts = path.split('/').filter(Boolean)
   const last = parts[parts.length - 1] ?? ''
   const isDir = path.endsWith('/')
-  return FINISH_SKIP.some(e => {
+  return [...FINISH_SKIP, ...extra].some(e => {
     if (e.endsWith('/')) {
       const name = e.slice(0, -1)
       return parts.slice(0, isDir ? parts.length : parts.length - 1).includes(name)
@@ -223,15 +223,15 @@ const skipped = (path: string): boolean => {
   })
 }
 
-/** The `??` and `!!` paths of `git status --porcelain --ignored --untracked-files=all`, minus FINISH_SKIP. */
-export function finishLeftovers(porcelain: string, only?: '??' | '!!'): string[] {
+/** The `??` and `!!` paths of `git status --porcelain --ignored --untracked-files=all`, minus FINISH_SKIP and `extra` (MOD-319: the repo's finishSkip). */
+export function finishLeftovers(porcelain: string, only?: '??' | '!!', extra: readonly string[] = []): string[] {
   const out: string[] = []
   for (const l of porcelain.split('\n')) {
     if (!(l.startsWith('?? ') || l.startsWith('!! '))) continue
     if (only && !l.startsWith(`${only} `)) continue
     let p = l.slice(3).trim()
     if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1)
-    if (p !== '' && !skipped(p)) out.push(p)
+    if (p !== '' && !skipped(p, extra)) out.push(p)
   }
   return out
 }
@@ -498,11 +498,11 @@ export const shellWord = (s: string): string => (/^[A-Za-z0-9_./:@%+=,-]+$/.test
 /** The fenced block of lines for the brain to run verbatim, as the dispatch tool prints its spawn block. */
 export const remoteBlock = (lead: string, lines: readonly string[]): string => [lead, '```sh', ...lines, '```'].join('\n')
 
-export function pushLines(o: { worktree: string; branch: string; ownerRepo: string; defaultBranch: string; title: string; prFile: string; id: string }): string[] {
+export function pushLines(o: { worktree: string; branch: string; ownerRepo: string; defaultBranch: string; title: string; prFile: string; id: string; mergeStyle?: 'rebase' | 'merge' | 'squash' }): string[] {
   return [
     `git -C ${o.worktree} push -u origin ${o.branch}`,
     `gh pr create --repo ${o.ownerRepo} --base ${o.defaultBranch} --head ${o.branch} --title ${shellWord(o.title)} --body-file ${o.prFile}`,
-    `gh pr merge --repo ${o.ownerRepo} ${o.branch} --rebase`,
+    `gh pr merge --repo ${o.ownerRepo} ${o.branch} --${o.mergeStyle ?? 'rebase'}`,
     `/delegation merge ${o.id} --finish`,
   ]
 }
@@ -609,6 +609,16 @@ export function twinIn(log: string, tree: string, subject: string): string | und
   for (const line of log.split('\n')) {
     const [sha, t, ...s] = line.split('\t')
     if (sha && t === tree && s.join('\t') === subject) return sha
+  }
+  return undefined
+}
+
+/** MOD-319: a squash landing: a commit on the default branch (not the head) whose tree is the head's tree. `log` is `%H\t%T\t%s` lines. */
+export function squashIn(log: string, head: string, tree: string): string | undefined {
+  if (tree === '') return undefined
+  for (const line of log.split('\n')) {
+    const [sha, t] = line.split('\t')
+    if (sha && sha !== head && t === tree) return sha
   }
   return undefined
 }
