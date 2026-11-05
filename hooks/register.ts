@@ -6874,6 +6874,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   // what the row, the recent list and the ledger name: a cardless attempt goes under its report's task=
   let shownLabel = spawn.adhoc ? spawn.task : label
   let shownAttempt = spawn.attempt
+  let countedAtJudge = 0
   if (spawn.adhoc && cardless) {
     // GH-1 item 2: recorded under the report's task= (else adhoc-<key>); no ladder, no budget
     const task = reportTaskOf(report?.task) ?? spawn.task
@@ -6948,6 +6949,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     )
     await saveAttempts($, spawn, records)
     judged = attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.attempt)
+    countedAtJudge = budgetCount(records, spawn.subtask, lane)
     advice = advise({
       verdict,
       reportGate: report?.gate,
@@ -7033,7 +7035,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const workLine = work ? workPresentLine(work) : undefined
   // MOD-124: the exceptions the brief allowed ride on the row
   const allow = spawn.adhoc ? [] : await allowIdsOf($, spawn)
-  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, usd, usdApprox, model, next, allow, gateNotRerun: gateNotRerun(lines), ...(judged?.explore && judged.exploreFrom ? { explore: exploreLabel(judged.exploreFrom, judged.alias, judged.effort) } : {}) }) + downClause, workLine ? [workLine, ...lines] : lines)
+  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, ...(judged?.kind === 'verify' ? { kind: 'verify', counted: countedAtJudge } : {}), usd, usdApprox, model, next, allow, gateNotRerun: gateNotRerun(lines), ...(judged?.explore && judged.exploreFrom ? { explore: exploreLabel(judged.exploreFrom, judged.alias, judged.effort) } : {}) }) + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
   const tail = from ? fallbackTail(from) : undefined

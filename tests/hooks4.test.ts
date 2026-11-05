@@ -435,7 +435,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     })
     await $.session.start(sessionStart)
     const out = String((await $.command.run(commandInput('T-4 --verify 1234abcd'))).text)
-    expect(out).toContain('verdict=consistent task=T-4 attempt=1/2')
+    expect(out).toContain('verdict=consistent task=T-4 attempt=1 (verify, counted 0/2)')
     expect(out).toContain('next=review')
     const call = spawnCallOf(out) as SpawnCall
     expect(call.model).toBe('haiku')
@@ -1927,7 +1927,7 @@ describe('MOD-44: the brain delegates into another local repo (repo set to an ab
     const before = w.runs.length
     const out = String((await $.command.run(commandInput(`T-1 --verify ${HEAD}`))).text)
     expect(out).toContain(`/dispatch T-1 --verify ${HEAD}: no spawn — the verifier ran on worktree ${WT} at ${HEAD.slice(0, 7)} (base origin/main)`)
-    expect(out).toContain('chassis-delegation: verdict=consistent task=T-1 attempt=1/2')
+    expect(out).toContain('chassis-delegation: verdict=consistent task=T-1 attempt=1 (verify, counted 0/2)')
     const after = w.runs.slice(before).map(r => r.argv)
     expect(after.filter(a => a[0] === 'git').filter(a => a[2] === ROOT)).toEqual([])
     expect(w.runs.slice(before).find(r => r.argv[0] === 'npm')?.cwd).toBe(WT)
