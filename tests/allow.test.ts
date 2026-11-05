@@ -17,6 +17,12 @@ describe('allowlist accepts', () => {
     ok(['npx', 'eslint', '--max-warnings', '0', '/r/.delegation/FE-1/files.txt'])
     ok(['npm', 'run', 'typecheck'])
   })
+  test('MOD-317: the hand-back live-process read is exactly ps -axo pid=,command=', () => {
+    ok(['ps', '-axo', 'pid=,command='])
+    no(['ps', '-axo', 'pid=,command=', '|', 'grep', 'x'])
+    no(['ps', 'aux'])
+    no(['pkill', 'node'])
+  })
   test('read-only git and gh', () => {
     ok(['git', '-C', R, 'diff', '--no-renames', '--name-only', 'abc', 'def'])
     ok(['git', '-C', R, 'diff', '--name-status', '-M', 'abc', 'def'])
