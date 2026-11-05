@@ -226,7 +226,7 @@ import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type Cla
 import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
-import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
+import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
 import { mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
@@ -8739,8 +8739,16 @@ async function gatherSetup($: Host, root: string): Promise<SetupProbe> {
     shadows,
     childRepos,
     ...(gitignore !== undefined ? { gitignore } : {}),
+    gateMap: await setupGateMap($, root),
     autoDebrief: cfg.autoDebrief,
   }
+}
+
+/** MOD-315: the gateMap the gate check reads: the repo's config read the way loadTarget reads it (parseRepoConfig, then mergeConfig). */
+async function setupGateMap($: Host, root: string): Promise<Record<string, string>> {
+  const text = await readText($, `${root}/${REPO_CONFIG_FILE}`)
+  const parsed = text === undefined ? { config: {} as RepoConfig } : parseRepoConfig(text)
+  return { ...mergeConfig(parsed.config, {}).gateMap }
 }
 
 /** MOD-285: the reads for setup's tree group: read-only gh calls, run the way the tree tool runs gh issue view. Any failure is one skipped line. */
@@ -8791,7 +8799,7 @@ async function runSetup($: Host, viaTool = false, pathIn?: string): Promise<stri
     if (text === undefined) unreadable.add(path)
     existing[path] = text ?? ''
   }
-  const found = { ...foundOf(facts), spendByTier: proposedSpend(foundOf(facts).gate) }
+  const found = { ...foundOf(facts), spendByTier: proposedSpend(foundOf(facts).gate ?? Object.values(facts.gateMap ?? {})) }
   const plan = initPlan(root, existing, { sample: false }).map(s => {
     if (unreadable.has(s.path)) return { ...s, action: 'skip' as const }
     if (s.path === configPath && s.action === 'write') return { ...s, text: scaffoldConfig(s.text, found) }
@@ -8820,7 +8828,7 @@ async function runSetup($: Host, viaTool = false, pathIn?: string): Promise<stri
     ...(hadConfig ? [wouldSet(found)] : []),
     ...(await cardsLocalNote($, root, existing)),
     '',
-    handoverText(detectGate(facts)),
+    handoverText(detectGate(facts), gateMapFirst(facts)?.command),
     ...(viaTool ? [BRAIN_HANDOVER] : []),
     ...(target.other ? [`Next: call the card tool with repo set to ${root}, so the first card goes into that repo.`] : []),
   ].join('\n')

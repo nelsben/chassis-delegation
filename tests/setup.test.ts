@@ -217,3 +217,33 @@ describe('MOD-285: the tree group when gh is absent', () => {
     expect(w.runs.some(r => r.argv[0] === 'gh')).toBe(false)
   })
 })
+
+describe('MOD-315: phase 2 with a gateMap and no package.json', () => {
+  const delegation = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as never
+  const RUN = 'node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs'
+  const GATE_MAP = JSON.stringify({ gateMap: { validate: RUN, node: 'node --test', test: 'node tests/node/run.mjs' } })
+  test('MOD-315: setup holds the gate check on the gateMap and writes no gateMap line; the handover names its first command', async ($, on) => {
+    const answer = (argv: string[]): RunAnswer | undefined => {
+      const rest = argv.slice(3).join(' ')
+      if (rest === 'rev-parse --is-inside-work-tree') return { exitCode: 0, stdout: 'true\n' }
+      if (rest === 'rev-parse --show-toplevel') return { exitCode: 0, stdout: `${ROOT}\n` }
+      if (rest === 'rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'main\n' }
+      if (rest === 'rev-parse --verify --quiet HEAD') return { exitCode: 0, stdout: 'abc1234\n' }
+      if (rest === 'rev-parse --verify --quiet origin/main') return { exitCode: 0, stdout: 'abc1234\n' }
+      return { exitCode: 0, stdout: '' }
+    }
+    const w = world(on, {
+      run: answer,
+      files: { [`${ROOT}/.chassis-delegation.json`]: GATE_MAP, '/usr/bin/git': '', '/usr/bin/node': '', '/usr/bin/npm': '' },
+      dirs: { [ROOT]: ['.chassis-delegation.json'] },
+    })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(delegation('setup'))).text)
+    expect(out).toContain(`chassis-delegation setup in ${ROOT}: 6 of 6 required checks hold`)
+    expect(out).toContain(`✓ a gate: validate: ${RUN} (+2 more)`)
+    expect(out).not.toContain('config: gateMap.test')
+    expect(out).not.toContain('"gateMap": {"test"')
+    expect(out).toContain(`The gate is ${RUN}.`)
+    expect(w.files.get(`${ROOT}/.chassis-delegation.json`)).toBe(GATE_MAP)
+  })
+})
