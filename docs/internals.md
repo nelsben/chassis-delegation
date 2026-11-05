@@ -84,14 +84,14 @@ Only the engine has tiering, the queue, `maxWorkers`, the respawn ladder, spend 
 - A reviewer's line has `kind: review`, `verdict: reviewed` and `review: {confirmed, refuted, unverifiable}`.
 - An older line says `verified` and is never rewritten (see [How a report is verified](contracts.md#how-a-report-is-verified)).
 - A repeat of task, subtask, attempt, sha and verdict is not appended.
-- An accept line, `{kind: accept, task, subtask, attempt, sha, at, how, sessionId}`, has `how: merged` (the sha is on the default branch, or the guard saw `gh pr merge` or `git merge agent/<domain>/<id>`) or `how: accepted` (`/delegation accept <id>`).
+- An accept line, `{kind: accept, task, subtask, attempt, sha, at, how, sessionId}`, has `how: merged` (the sha is on the default branch, or the guard saw `gh pr merge` or `git merge agent/<domain>/<id>`) or `how: accepted` (`/delegation accept <id>`). MOD-316: a `merged` accept row is written only for a sha that differs from the dispatch base (`baseSha`), never for a worktree head equal to the base, which is an unbuilt worktree.
 - A spawn line, `{event: spawn, task, subtask, attempt, lineage, budget, tier, alias, purpose, at, agentId, toolUseId, briefPath, cwd, repo, sessionId}`, is written once per briefed spawn, not with `ledgerFile` off. It has `event`, not `kind`, and no `verdict`, so readers of judged lines skip it.
 
 **The store** is `~/.claude/plugins/store/chassis-delegation_<id>.json`:
 
 | Key | Holds |
 | --- | --- |
-| `delegation.tasks.<ID>@<repo>` | every attempt, with `here` and `files` for repo=here, `adhoc: true` for a cardless one, `requestedAlias: fable` when opus spawned, `sha` and `metrics` (the report's `metrics=`) once judged, a reviewer's `review` counts; a `work-present` attempt is kind `verify` |
+| `delegation.tasks.<ID>@<repo>` | every attempt, with `here` and `files` for repo=here, `adhoc: true` for a cardless one, `requestedAlias: fable` when opus spawned, `sha` and `metrics` (the report's `metrics=`) once judged, a reviewer's `review` counts; a `work-present` attempt is kind `verify`; MOD-316: `baseSha` (the full sha of `origin/<default>` the worktree was cut from, read at dispatch; a head equal to it is never landed work) and `mergedSha` (the sha the `merged` retire marker was set on; a marker whose sha is the base is cleared at the next hand-back) |
 | `delegation.recent.<session>` | the verdict lines |
 | `delegation.handoff.<brief>` | the folder `/dispatch` prepared for the Agent call |
 | `delegation.outside.<ID>@<repo>` | a pointer (`{ at, briefPath, file, files }`) to the listing of a research card's absolute roots, the "before" of the outside delta; the listing itself is the JSON file under the session's `.delegation/outside/` folder, so several cards in flight never fill the store (a record from an older version may still carry the roots inline, and is read as before) |

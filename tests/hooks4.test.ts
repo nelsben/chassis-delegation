@@ -1886,6 +1886,7 @@ describe('MOD-44: the brain delegates into another local repo (repo set to an ab
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', OTHER, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', OTHER, 'worktree', 'add', '-q', '-b', BRANCH, WT, 'origin/main'],
+      ['git', '-C', OTHER, 'rev-parse', 'origin/main'],
     ])
     expect(w.runs.every(r => r.cwd === undefined || r.cwd === OTHER || r.cwd === ROOT)).toBe(true)
     const header = (w.files.get(BRIEF) ?? '').split('\n')[0] ?? ''
@@ -1950,6 +1951,7 @@ describe('MOD-44: the brain delegates into another local repo (repo set to an ab
     expect(argvs(w).filter(a => a[0] === 'git').map(a => a.slice(0, 5))).toEqual([
       ['git', '-C', OTHER, 'fetch', '-q'],
       ['git', '-C', OTHER, 'worktree', 'add'],
+      ['git', '-C', OTHER, 'rev-parse', 'origin/main'],
     ])
     // a dispatch that names another folder looks for the card on that folder's board, and says where
     expect(resultText(await $.tool.call({ tool: DISPATCH, task: 'T-1', repo: '/third', dryRun: true } as never))).toContain(`no card folder at ${ROOT}/.delegation/cards/third`)

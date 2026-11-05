@@ -588,6 +588,7 @@ describe('/dispatch', () => {
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/dispatcher/BE-101', `${ROOT}-BE-101`, 'origin/main'],
+      ['git', '-C', ROOT, 'rev-parse', 'origin/main'],
     ])
     expect(spawnCallOf(String(out.text))?.subagent_type).toBe('general-purpose')
     expect(out.text).toContain('4. spawn prepared: general-purpose on opus')

@@ -229,7 +229,7 @@ import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, do
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
-import { mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
+import { landedSha, mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
@@ -429,6 +429,8 @@ const K = {
   /** MOD-242: the probe's failure counts, id to {n, idsHash}. */
   modelsFailed: 'delegation.models.failed',
   replay: (briefPath: string) => `delegation.replay.${briefPath}`,
+  /** MOD-316: the sha of the base a brief's worktree was cut from, read at dispatch; the spawn hook puts it on the attempt record. */
+  baseSha: (briefPath: string) => `delegation.baseSha.${briefPath}`,
   /** A worker's own spend this attempt, from its turn usage (GH-106). */
   cost: (agentId: string) => `delegation.cost.${agentId}`,
   /** MOD-217: the paths a worker's own tool calls wrote (absolute, capped), read at its verdict to charge scope only for what it wrote. */
@@ -3311,16 +3313,19 @@ const splitLabel = (label: string): { task: string; subtask: string } => {
  * current branch (MOD-101, #158: work lands on a long-lived branch by cherry-pick, so its sha never reaches origin/main),
  * does its card read merged or landed (on origin/main, else in the working tree). undefined: could not say.
  */
-async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string, cardOnly = false): Promise<{ ancestor?: boolean; picked?: boolean; card?: string }> {
+async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string, cardOnly = false, baseSha?: string): Promise<{ ancestor?: boolean; picked?: boolean; card?: string }> {
   const sessionHome = await $.session.root()
   // MOD-44: a task for another local repo is looked for in that repo's origin/main; its card is not read (it sits under a folder the allowlist does not name)
   const other = repo !== undefined && repo.replace(/\/+$/, '') !== sessionHome.replace(/\/+$/, '')
   const root = other ? (repo as string).replace(/\/+$/, '') : sessionHome
   const out: { ancestor?: boolean; picked?: boolean; card?: string } = {}
   if (!cardOnly && sha !== undefined && isSha(sha)) {
-    const r = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, 'origin/main'], { cwd: root, timeoutMs: 10000 })
-    if (r.ok && r.exitCode === 0) return { ancestor: true }
-    if (r.ok && r.exitCode === 1) out.ancestor = false
+    // MOD-316: the dispatch base is an ancestor of origin/main trivially: it is no landing, so the ancestry read is skipped for it
+    if (landedSha(sha, baseSha)) {
+      const r = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, 'origin/main'], { cwd: root, timeoutMs: 10000 })
+      if (r.ok && r.exitCode === 0) return { ancestor: true }
+      if (r.ok && r.exitCode === 1) out.ancestor = false
+    }
     // MOD-101: git cherry's answer, spelled as a log the allowlist knows: `=` marks a commit of the sha's side with a patch-equal commit on HEAD, `>` one without.
     // Landed means at least one `=` and no `>`; an empty list proves nothing (and, for a consistent verdict only, as the ancestry check is)
     // the session's own branch only: a task for another local repo is looked for in that repo's origin/main alone (MOD-97)
@@ -3376,7 +3381,7 @@ async function retireCheck($: Host, label: string, t: number, force = false, car
       return { retired: true, checked: true }
     }
     if (!force && !retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
-    const patch = retirePatch(await retireProbe($, task, last.sha, last.root, cardOnly), t)
+    const patch = retirePatch(await retireProbe($, task, last.sha, last.root, cardOnly, last.baseSha), t)
     // a card-only check (a non-consistent verdict) records nothing unless the card reads merged: it must not hold off the sha check of the 15-minute retire sweep
     if (cardOnly && patch.retired === undefined) return { retired: false, checked: last.retireCheckedAt !== undefined }
     await saveAttempts($, ref, patchRecord(await loadAttemptsRaw($, ref), subtask, last.attempt, patch))
@@ -3832,13 +3837,16 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
   if (!isSha(head)) return `${id}: could not read the worktree's head in ${wt.path}`
   // the head itself on origin/<default>, or its rebased twin (same tree, same subject)
   let sha: string | undefined
+  // MOD-316: a head equal to the dispatch base is an unbuilt worktree, not a landing (unless a merge-prepare saw this very head)
+  const finishBase = attemptsFor(await loadAttempts($, { task: id }), 'main').findLast(r => r.baseSha !== undefined)?.baseSha
+  const preparedHead = (await storeGet<MergePrep>($, K.mergePrep(id, await cardRepo($))))?.head === head
   const anc = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', head, `origin/${def}`], { cwd: root, timeoutMs: 15000 })
-  if (anc.ok && anc.exitCode === 0) sha = head
+  if (anc.ok && anc.exitCode === 0 && (preparedHead || landedSha(head, finishBase))) sha = head
   else {
     const mine = (okOut(await run($, ['git', '-C', wt.path, 'log', '-1', '--format=%T%x09%s', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
     const [tree = '', ...subject] = mine.split('\t')
     const theirs = okOut(await run($, ['git', '-C', root, 'log', '--format=%H%x09%T%x09%s', '-n', '200', `origin/${def}`], { cwd: root, timeoutMs: 15000 })) ?? ''
-    if (tree !== '') sha = twinIn(theirs, tree, subject.join('\t'))
+    if (tree !== '') sha = twinIn(theirs.split('\n').filter(l => l.split('\t')[0] !== head).join('\n'), tree, subject.join('\t'))
   }
   if (!sha) return ignored ? notLandedIgnoredLine(id, wt.branch, head, def) : `${id}: ${wt.branch} is not in origin/${def} yet`
   const short = sha.slice(0, 10)
@@ -3890,7 +3898,7 @@ async function mergeFinish($: Host, o: { root: string; id: string; def: string; 
     // MOD-97: the merge is of the session repo's worktree, so of that repo's attempt
     const records = await loadAttempts($, { task: id })
     const last = attemptsFor(records, 'main').at(-1)
-    if (last) await saveAttempts($, { task: id }, patchRecord(await loadAttemptsRaw($, { task: id }), 'main', last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t, mergedSha: sha } as Partial<AttemptRecord>))
+    if (last) await saveAttempts($, { task: id }, patchRecord(await loadAttemptsRaw($, { task: id }), 'main', last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t, mergedSha: sha }))
   } catch (err) {
     debug($, `${id}: merge not recorded on the task: ${String(err)}`)
   }
@@ -6761,6 +6769,15 @@ async function closedReason($: Host, spawn: SpawnRecord, report: ReturnType<type
     const lane = laneOf(spawn)
     const prior = attemptsFor(await loadAttempts($, spawn), spawn.subtask, lane).filter(r => r.attempt < spawn.attempt && r.kind !== 'review' && r.verdict !== 'pending')
     const last = prior.at(-1)
+    // MOD-316: a `merged` marker set on the dispatch base (an unbuilt worktree's head) is no merge: cleared, and the hand-back is judged
+    if (last?.retired === 'merged' && last.baseSha !== undefined) {
+      const s = last.mergedSha ?? last.sha
+      if (s !== undefined && s !== '' && !landedSha(s, last.baseSha)) {
+        await saveAttempts($, spawn, patchRecord(await loadAttemptsRaw($, spawn), spawn.subtask, last.attempt, { retired: undefined, retireTriedAt: undefined, retireCheckedAt: undefined, mergedSha: undefined }, lane))
+        debug($, `${taskLabel(spawn.task, spawn.subtask)}: retire marker cleared: ${s.slice(0, 7)} is the dispatch base, not the task's commit`)
+        return undefined
+      }
+    }
     if (last?.retired) return 'merged'
     if (last) {
       const probe = await retireProbe($, spawn.task, undefined, last.root, true)
@@ -7293,7 +7310,9 @@ async function mergedNow($: Host, task: string, subtask: string, repo: string | 
     const def = want !== '' && !isSha(want) ? want : 'main'
     const wt = await mergeWorktree($, root, task)
     const head = wt ? (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim() : ''
-    const candidates = [...(isSha(head) ? [head] : []), ...[...rows].reverse().map(r => r.sha).filter((s): s is string => s !== undefined && isSha(s))]
+    // MOD-316: the dispatch base is an ancestor of origin/<default> trivially; a sha equal to it is no landing (an unbuilt worktree's head)
+    const baseSha = [...rows].reverse().find(r => r.baseSha !== undefined)?.baseSha
+    const candidates = [...(isSha(head) ? [head] : []), ...[...rows].reverse().map(r => r.sha).filter((s): s is string => s !== undefined && isSha(s))].filter(c => landedSha(c, baseSha))
     for (const sha of [...new Set(candidates)]) {
       const anc = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, `origin/${def}`], { cwd: root, timeoutMs: 10000 })
       if (!(anc.ok && anc.exitCode === 0)) continue
@@ -7303,7 +7322,7 @@ async function mergedNow($: Host, task: string, subtask: string, repo: string | 
       if (!last.retired) {
         const t = await now($)
         const ref: TaskRef = repo !== undefined && repo !== '' ? { task, repo } : task
-        await saveAttempts($, ref, patchRecord(await loadAttemptsRaw($, ref), subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t }))
+        await saveAttempts($, ref, patchRecord(await loadAttemptsRaw($, ref), subtask, last.attempt, { retired: 'merged', retireTriedAt: t, retireCheckedAt: t, mergedSha: d.sha }))
         await appendLedger($, { ...acceptRow({ ...last, sha: d.sha }, 'merged', t), sessionId: await sessionIdOf($) })
         await clearOwed($, taskLabel(task, subtask))
       }
@@ -7674,6 +7693,8 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
   const attempt = nextAttempt(records, spawn.subtask, lane)
   // MOD-279: a resume of an attempt that explored keeps the alias and effort it explored at (its record, and so its started row and its steps)
   const origin = attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.lineage && r.explore && r.effort !== undefined)
+  // MOD-316: a resume carries the base its spawn was cut from
+  const lineageBase = attemptsFor(records, spawn.subtask, lane).find(r => r.attempt === spawn.lineage)?.baseSha
   hostRefusals.delete(agentId)
   const rec: HereRecord = {
     ...(await ownerFields($, spawn.repo)),
@@ -7692,6 +7713,7 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
     purpose: spawn.purpose,
     ...laneFields(lane),
     ...(spawn.here ? { here: spawn.here } : {}),
+    ...(lineageBase ? { baseSha: lineageBase } : {}),
     ...(origin ? { effort: origin.effort as Effort, effortSource: 'explore' as const } : {}),
     ...(spawn.permissionMode ? { permissionMode: spawn.permissionMode } : {}),
   }
@@ -8480,6 +8502,23 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
         await $.store.delete(K.taskRepo(id, await cardRepo($)))
       } catch (err) {
         debug($, `store.delete taskRepo ${id} failed: ${String(err)}`)
+      }
+    }
+  }
+
+  // MOD-316: the base this worktree was cut from, for the spawn hook to put on the attempt record: a head equal to it is never landed work
+  if (!here && !none) {
+    let baseSha = isSha(base) ? base : undefined
+    if (baseSha === undefined) {
+      const read = (okOut(await run($, ['git', '-C', repoRoot, 'rev-parse', base], { cwd: repoRoot, timeoutMs: 15000 })) ?? '').trim()
+      if (isSha(read)) baseSha = read
+    }
+    if (baseSha !== undefined) await storeSet($, K.baseSha(briefPath), baseSha)
+    else {
+      try {
+        await $.store.delete(K.baseSha(briefPath))
+      } catch (err) {
+        debug($, `store.delete baseSha ${briefPath} failed: ${String(err)}`)
       }
     }
   }
@@ -9715,6 +9754,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       }
     }
 
+    const baseShaOf = !adhoc && briefPath ? await storeGet<string>($, K.baseSha(briefPath)) : undefined
     const classifierTier = !adhoc && attempt === 1 ? (await storeGet<{ classifier?: Tier }>($, K.classifier(task, await cardRepo($, other?.path ?? p.repo))))?.classifier : undefined
     const rec: HereRecord = {
       ...(await ownerFields($, other?.path)),
@@ -9735,6 +9775,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       purpose,
       ...laneFields(lane),
       ...(here ? { here } : {}),
+      ...(typeof baseShaOf === 'string' && isSha(baseShaOf) ? { baseSha: baseShaOf } : {}),
       ...(fableAsked ? { requestedAlias: 'fable' as const } : {}),
       ...(classifierTier ? { classifierTier } : {}),
       ...(e.permissionMode ? { permissionMode: e.permissionMode } : {}),

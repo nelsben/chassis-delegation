@@ -60,6 +60,7 @@ describe('2A: the dispatch tool', () => {
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101', `${ROOT}-BE-101`, 'origin/main'],
+      ['git', '-C', ROOT, 'rev-parse', 'origin/main'], // MOD-316: the base sha the attempt record carries
     ])
     expect(w.spawns).toHaveLength(0) // MOD-12: the mod spawns no worker
     expect(text).toContain('4. spawn prepared: backend on opus · tier=frontier (brief) · attempt 1/3')

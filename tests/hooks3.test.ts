@@ -1424,6 +1424,7 @@ describe('MOD-12 (#22): the brain spawns, the mod shapes', () => {
     expect(argvs(w).filter(a => a[0] === 'git')).toEqual([
       ['git', '-C', ROOT, 'fetch', '-q', 'origin', 'main'],
       ['git', '-C', ROOT, 'worktree', 'add', '-q', '-b', 'agent/backend/BE-101', `${ROOT}-BE-101`, 'origin/main'],
+      ['git', '-C', ROOT, 'rev-parse', 'origin/main'],
     ])
     expect(w.files.has(BRIEF)).toBe(true)
     // nothing spawned: the harness saw no $.agent.spawn, from the mod or anyone

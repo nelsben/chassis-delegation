@@ -39,3 +39,25 @@ describe('MOD-292: a hand-back after a pause-cap charge is judged', () => {
     expect(reopensAfterPauseCap(undefined, true)).toBe(false)
   })
 })
+
+describe('MOD-316: the dispatch base never counts as landed', () => {
+  const base = 'abcdef0123456789abcdef0123456789abcdef01'
+  test('equal full shas: not landed', async () => {
+    const { landedSha } = await lib()
+    expect(landedSha(base, base)).toBe(false)
+  })
+  test('a short sha that is a prefix of the full base: not landed (either direction)', async () => {
+    const { landedSha } = await lib()
+    expect(landedSha('abcdef0', base)).toBe(false)
+    expect(landedSha(base, 'abcdef0')).toBe(false)
+  })
+  test('different shas: landed', async () => {
+    const { landedSha } = await lib()
+    expect(landedSha('1234567890abcdef', base)).toBe(true)
+  })
+  test('no baseSha recorded: the old rule stands', async () => {
+    const { landedSha } = await lib()
+    expect(landedSha(base, undefined)).toBe(true)
+    expect(landedSha(base, '')).toBe(true)
+  })
+})
