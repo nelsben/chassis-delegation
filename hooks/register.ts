@@ -227,7 +227,7 @@ import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
 import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
-import { artefactsCheck, bashReadOnly, chargeDelta, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
+import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
 import { mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
@@ -433,6 +433,8 @@ const K = {
   cost: (agentId: string) => `delegation.cost.${agentId}`,
   /** MOD-217: the paths a worker's own tool calls wrote (absolute, capped), read at its verdict to charge scope only for what it wrote. */
   writes: (agentId: string) => `delegation.writes.${agentId}`,
+  /** MOD-305: paths that changed under a watched outside root during a worker's command that never named that root; listed in the verdict, never charged to the worker. */
+  foreign: (agentId: string) => `delegation.foreign.${agentId}`,
   /** MOD-261: paths that changed while this worker and a sibling both ran a command in one checkout; owner unknown, listed in the verdict. */
   both: (agentId: string) => `delegation.both.${agentId}`,
   /** MOD-13: the card's own `effort:`, written at /dispatch; it wins over effortByTier. */
@@ -1963,8 +1965,11 @@ const WRITE_LOG_CAP = 2000
  * MOD-217: a recorded worker's Edit, Write, MultiEdit and NotebookEdit file_path, and the paths bashWrites finds in
  * a Bash command, resolved against the worker's cwd, are added to its write log (capped). A reviewer, an ad hoc
  * agent and an unrecorded agent log nothing. Never throws: a call that cannot be logged is debug.
+ * MOD-305: an `extra` path (the delta snapshot's) under an outside root `scope.roots` lists goes in the write log only
+ * when the command names that root; otherwise it goes under K.foreign, never K.writes. Paths under `scope.here`
+ * (the checkout's own dirty paths) are charged as before.
  */
-async function noteWrites($: Host, e: { tool: unknown; agentId?: string }, extra: readonly string[] = []): Promise<void> {
+async function noteWrites($: Host, e: { tool: unknown; agentId?: string }, extra: readonly string[] = [], scope: { here?: string; roots: readonly string[] } = { roots: [] }): Promise<void> {
   const tool = String(e.tool)
   if (!e.agentId || !(WRITE_TOOLS.includes(tool) || tool === 'Bash')) return
   try {
@@ -1973,12 +1978,28 @@ async function noteWrites($: Host, e: { tool: unknown; agentId?: string }, extra
     const input = e as unknown as Record<string, unknown>
     const cwd = await bashCwd($, e.agentId)
     const home = (await $.env.get('HOME')) || undefined
-    const raw = tool === 'Bash' ? bashWrites(typeof input.command === 'string' ? input.command : '', cwd, home).paths : toolPath(input)
-    const paths = [...raw, ...extra].flatMap(p => {
+    const command = typeof input.command === 'string' ? input.command : ''
+    const raw = tool === 'Bash' ? bashWrites(command, cwd, home).paths : toolPath(input)
+    const norm = (p: string): string[] => {
       const abs = isAbsolute(p) ? p : `${cwd.replace(/\/+$/, '')}/${p}`
       const n = normalizePath(abs)
       return n === undefined ? [] : [n]
-    })
+    }
+    const hereDir = scope.here?.replace(/\/+$/, '')
+    const foreign: string[] = []
+    const charged: string[] = []
+    for (const p of extra.flatMap(norm)) {
+      const root = hereDir !== undefined && (p === hereDir || p.startsWith(`${hereDir}/`)) ? undefined : scope.roots.find(r => p === r.replace(/\/+$/, '') || p.startsWith(`${r.replace(/\/+$/, '')}/`))
+      if (root !== undefined && !commandNamesRoot(command, cwd, root, home)) foreign.push(p)
+      else charged.push(p)
+    }
+    if (foreign.length > 0) {
+      const fkey = K.foreign(e.agentId)
+      const fhad = (await storeGet<string[]>($, fkey)) ?? []
+      const flog = [...new Set([...fhad, ...foreign])].slice(0, WRITE_LOG_CAP)
+      if (flog.length > fhad.length) await storeSet($, fkey, flog)
+    }
+    const paths = [...raw.flatMap(norm), ...charged]
     if (paths.length === 0) return
     for (const path of paths) noteWriteEvent(e.agentId, path)
     const key = K.writes(e.agentId)
@@ -6329,14 +6350,16 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const allowed = (argv: readonly string[]) => checkArgv(argv, allowCfg()).ok
   // MOD-217: the paths this worker wrote, so scope is charged only for them
   const writes = spawn.agentId ? await storeGet<string[]>($, K.writes(spawn.agentId)) : undefined
+  // MOD-305: the paths that changed under a watched root during a command that never named it
+  const foreignLog = spawn.agentId ? await storeGet<string[]>($, K.foreign(spawn.agentId)) : undefined
   // MOD-261: paths changed while this worker and a sibling both ran a command are listed, charged to neither
   amendLines.push(...(await bothLines($, spawn.agentId)))
-  if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes)
+  if (header?.repo === 'none') return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes, foreignLog)
   // GH-16: repo=here verifies the session's own checkout, shared with the brain and other workers
   const here = header?.repo === 'here'
   const repo = here ? root : await workerRepo($, spawn, header?.repo, root)
   const probed = await run($, workTreeArgv(repo), { cwd: root, timeoutMs: 15000 })
-  if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes)
+  if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes, foreignLog)
   // GH-20: a red file must differ from every earlier attempt's of this task + subtask
   const prior = await loadAttempts($, spawn)
   const priorRed = priorRedHashes(prior, spawn.subtask, spawn.attempt, laneOf(spawn))
@@ -6368,6 +6391,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
         ...(here ? { here: true, ignore: ignoreWithCards(cfg.ignore, cfg.cardDir), others } : {}),
         ...(outside ? { outside } : {}),
         ...(writes ? { writes } : {}),
+        ...(foreignLog ? { foreign: foreignLog } : {}),
       },
       {
         exec: (argv, init) => run($, [...argv], init),
@@ -6400,7 +6424,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
  * first scope root and lie in scope; the gate (map id, or a bare allowlisted
  * command such as `claude plugin validate <folder>`) must exit 0.
  */
-async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string, task?: string, repo?: string, writes?: readonly string[]): Promise<VerifyResult> {
+async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeof parseReport>, filesPath: string, amendLines: string[], root: string, task?: string, repo?: string, writes?: readonly string[], foreignLog?: readonly string[]): Promise<VerifyResult> {
   const contract = briefContract(briefText)
   if (!contract.ok) return { verdict: 'refused', lines: [...amendLines, contract.line], noRepo: true }
   // GH-103: a prose scope= gives no root to check files under; the work stands, unverified
@@ -6417,7 +6441,7 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const watched = outsideRoots(absScope, absForbid)
   const baseline = await outsideFor($, task, repo, watched)
   // MOD-185: the mod's .delegation/ and the cards folder in the session checkout are written during a run, never by the worker
-  const outside = await outsideCheck(absScope, absForbid, baseline && writes ? { ...baseline, writes } : baseline, [`${root.replace(/\/+$/, '')}/.delegation`, cardDirPath(root, cfg.cardDir)])
+  const outside = await outsideCheck(absScope, absForbid, baseline && (writes || foreignLog) ? { ...baseline, ...(writes ? { writes } : {}), ...(foreignLog ? { foreign: foreignLog } : {}) } : baseline, [`${root.replace(/\/+$/, '')}/.delegation`, cardDirPath(root, cfg.cardDir)])
   const artefacts = await artefactsCheck(reportArtefacts(report.artefacts), contract.outdir ?? scopeRoot, path => statArtefact($, path))
   const metrics = reportMetrics(report.metrics)
   // MOD-163: a card with no worktree has one sensible {worktree}: the checkout the worker ran in (the task's other repo per MOD-44)
@@ -6455,7 +6479,10 @@ async function verifyNoRepo($: Host, briefText: string, report: ReturnType<typeo
   const ranIds = (contract.gate ?? '').split(',').map(g => g.trim()).filter(g => g && !gates.notRerun.some(n => n.id === g))
   const ranNote = gates.runs.length > 0 && ranIds.length > 0 ? [`gate ${ranIds.join(', ')} ran in the checkout (repo=none)`] : []
   // MOD-217: changed paths the worker did not write are listed, never judged
-  const foreignLine = outside?.foreign && outside.foreign.length > 0 ? [`changed during the run, not by this worker: ${outside.foreign.join(', ')}`] : []
+  const foreignLine = [
+    ...(outside?.foreign && outside.foreign.length > 0 ? [`changed during the run, not by this worker: ${outside.foreign.join(', ')}`] : []),
+    ...(outside?.foreignRun && outside.foreignRun.length > 0 ? [`changed during the run, not by this worker's commands: ${outside.foreignRun.join(', ')}`] : []),
+  ]
   const note = watched.length > 0 && baseline === undefined ? [`note: outside delta not checked: no listing of ${watched.join(', ')} was taken at dispatch`] : []
   return { verdict: v.verdict, lines: [...amendLines, ...contract.lines, ...waits, ...v.lines, ...foreignLine, ...ranNote, ...note], noRepo: true, ...(Object.keys(metrics).length > 0 ? { metrics } : {}) }
 }
@@ -10163,7 +10190,7 @@ export const register: Register = (on, opts) => {
     const snap = await snapBeforeBash($, e)
     const out = await next(e)
     // MOD-217: what a recorded worker writes is logged against its spawn
-    if (e.agentId && out.deny === undefined) await noteWrites($, e, snap ? await chargedDelta($, snap, await bashDelta($, snap)) : [])
+    if (e.agentId && out.deny === undefined) await noteWrites($, e, snap ? await chargedDelta($, snap, await bashDelta($, snap)) : [], snap ? { ...(snap.here ? { here: snap.here.dir } : {}), roots: [...snap.roots.keys()] } : undefined)
     else if (snap?.win) snap.win.end = ++deltaSeq
     // MOD-119: a Bash call's output tells a command that repeats from one that makes progress
     if (!e.agentId && String(e.tool) === 'Bash' && out.deny === undefined && typeof e.command === 'string') {

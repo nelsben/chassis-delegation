@@ -97,6 +97,8 @@ export type NativeInput = {
   outside?: OutsideInput
   /** MOD-217: the paths the worker's tool calls wrote (its write log); a repo=here git delta and the outside delta charge scope only for these. Absent or empty: every changed path is the worker's. */
   writes?: readonly string[]
+  /** MOD-305: the paths that changed under a watched outside root during a command that never named it; listed apart, never charged. */
+  foreign?: readonly string[]
   /** MOD-149: the folder a red gate's full output is saved in (`verify-gate-<attempt>.txt`); absent, nothing is saved. */
   outDir?: string
   /** MOD-149: the attempt number in the saved file's name (1 when absent). */
@@ -884,7 +886,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   const repoForbid = contract.forbid.filter(e => !isAbsolute(e))
   const watched = outsideRoots(absScope, absForbid)
   const outsideChecked = !cardless && !contract.scopeProse && !contract.amendBad && watched.length + (input.outside?.before.length ?? 0) > 0
-  const outside = outsideChecked ? await outsideCheck(absScope, absForbid, input.outside ? { ...input.outside, ...(input.writes ? { writes: input.writes } : {}) } : undefined) : undefined
+  const outside = outsideChecked ? await outsideCheck(absScope, absForbid, input.outside ? { ...input.outside, ...(input.writes ? { writes: input.writes } : {}), ...(input.foreign ? { foreign: input.foreign } : {}) } : undefined) : undefined
   // MOD-217: changed paths the worker did not write; listed on one line, never judged
   const foreign: string[] = [...foreignGit, ...(outside?.foreign ?? [])]
   if (cardless) claim('scope', 'unchecked', NO_BRIEF_REASON)
@@ -915,6 +917,7 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
     else if (outside?.status === 'unchecked') claim('scope', 'unchecked', outside.detail)
     else claim('scope', 'held', outside ? `${git.detail}; ${outside.detail}` : git.detail)
     if (foreign.length > 0) lines.push(`changed during the run, not by this worker: ${foreign.join(', ')}`)
+    if (outside?.foreignRun && outside.foreignRun.length > 0) lines.push(`changed during the run, not by this worker's commands: ${outside.foreignRun.join(', ')}`)
     if (outsideChecked && outside === undefined && watched.length > 0) notes.push(`note: outside delta not checked: no listing of ${watched.join(', ')} was taken at dispatch`)
   }
 

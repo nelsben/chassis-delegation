@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **A file changed under a watched outside root while a worker ran a Bash command that never named that root is no longer added to the worker's write log: it is kept under `delegation.foreign.<agentId>` and listed in the verdict as `changed during the run, not by this worker's commands: <paths>`, so a forbid refute names only paths the worker wrote; a command that names the root keeps the full charge (MOD-305, #415).**
 - **`tree import` recognises a GitHub rate limit (primary or secondary), on a create or on reading a recorded issue, and stops with one line giving the count filed and when to run again, instead of a bare `gh said:`; the next run resumes from the plan file (MOD-314).**
 - **`/delegation debrief ingest` names the heading it needs when a note lacks it (`## For the mod owner`), offers a near heading that mentions the mod, and says when the heading has no bullets; the notes prompt row now names the heading up front (MOD-311, #391).**
 - **`/delegation setup` holds the gate check on the repo's `gateMap` when it has no `package.json` test script: the check reads `a gate: <first id>: <command> (+<n> more)` instead of `no test command found`, and phase 2 writes no `gateMap` line for it (MOD-315).**
