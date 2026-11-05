@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **A red gate on a hand-back that claimed `gate=pass` is run once more on its own before the verdict says red: green on the second run holds with `gate=pass confirmed on re-run`, red is refuted as before with a `note:`, and the first run's output is kept beside the second's as `verify-gate-<attempt>-first.txt` (MOD-307, #394).**
+
 - **A repo=here delta also subtracts the paths inside another in-flight card's `scope=`, not only the files it has reported: a sibling's unreported edit no longer fails a resume on scope; the ignored line names such a group with `(scope)`, and a path in the worker's own scope or write log is kept (MOD-310, #399 delta half).**
 - **A file changed under a watched outside root while a worker ran a Bash command that never named that root is no longer added to the worker's write log: it is kept under `delegation.foreign.<agentId>` and listed in the verdict as `changed during the run, not by this worker's commands: <paths>`, so a forbid refute names only paths the worker wrote; a command that names the root keeps the full charge (MOD-305, #415).**
 - **`tree import` recognises a GitHub rate limit (primary or secondary), on a create or on reading a recorded issue, and stops with one line giving the count filed and when to run again, instead of a bare `gh said:`; the next run resumes from the plan file (MOD-314).**

@@ -169,7 +169,8 @@ describe('MOD-20: a gate that ran beside another worker does not false-refute', 
     expect(engineRuns(w)).toHaveLength(2)
   })
 
-  test('an assertion failure is not re-run', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+  // MOD-307 (#394): a red first run of a gate=pass claim is run once more on its own, assertion or not; red again refutes with the note
+  test('an assertion failure is re-run once, and red again refutes with the note', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
     const base = nativeRun()
     const w = world(on, {
       files: { [BRIEF]: HEADER + '\nbody' },
@@ -179,7 +180,8 @@ describe('MOD-20: a gate that ran beside another worker does not false-refute', 
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT))
     expect(delivered(w)).toContain('verdict=refuted')
-    expect(engineRuns(w)).toHaveLength(1)
+    expect(delivered(w)).toContain('note: the gate was re-run once on its own and was red again')
+    expect(engineRuns(w)).toHaveLength(2)
   })
 
   test('the engine gate holds the lock while it runs and clears it after; no other holder, no wait line', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {

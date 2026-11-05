@@ -708,6 +708,18 @@ export function timeoutRerun(output: string, delta: readonly string[] | undefine
   return { rerun: true, timeouts: failures.length }
 }
 
+/** MOD-149 / MOD-307: a run's whole output, stdout then stderr. */
+function fullText(r: { stdout: string; stderr: string }): string {
+  return `${r.stdout}${r.stdout && r.stderr && !r.stdout.endsWith('\n') ? '\n' : ''}${r.stderr}`
+}
+
+/** MOD-307 (#394): the detail a red first run is named by, the first failing test gateFailures() reads, else the last non-blank line, cut to 120 chars. */
+function firstFailureOf(text: string): string {
+  const named = gateFailures(text).failures[0]?.name
+  const last = text.split('\n').map(l => l.trim()).filter(l => l !== '').at(-1)
+  return (named ?? last ?? 'no output').slice(0, 120)
+}
+
 /** The last lines a gate printed (stdout then stderr), for under a failed gate claim. */
 function outputTail(stdout: string, stderr: string): string[] {
   const all = `${stdout}\n${stderr}`.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '')
@@ -1004,28 +1016,40 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       let timedOut = false
       // MOD-20: timeouts in tests the delta never touched, seen on a first run that was then run again
       let reranTimeouts = 0
+      // MOD-307 (#394): a red first run of a gate=pass claim is run once more on its own; the second run is judged
+      const claimsPass = (report.gate ?? '').trim() === 'pass'
+      let redRerun: 'own' | 'timeouts' | undefined
+      let redTimeouts = 0
+      let redFirst = ''
+      let ownFirst: string | undefined
+      let anyRerun = false
       // MOD-236: the runs of each gate id, and how many of them exited 0
       const runsOf: Record<string, number> = {}
       const passedOf: Record<string, number> = {}
       const idOf = (run: GateRun): string => gateIdOf(emptyGate.gate, input.gateMap, run.label)
       for (const run of gates.runs) runsOf[idOf(run)] = (runsOf[idOf(run)] ?? 0) + 1
-      const runGate = async (run: GateRun): Promise<{ r: ExecOut; timeouts: number }> => {
+      const runGate = async (run: GateRun): Promise<{ r: ExecOut; rerun?: 'own' | 'timeouts'; timeouts: number; first: string; firstFailure: string }> => {
         // an engine gate waits for another worker's engine gate to finish; the turn is held across a rerun
         const turn = io.turn && isEngineGate(run.argv) ? await io.turn(run.argv).catch(() => undefined) : undefined
         if (turn?.line) lines.push(turn.line)
         try {
           const go = () => (io.gate ? io.gate(run.argv, { cwd: repo, id: gateIdOf(emptyGate.gate, input.gateMap, run.label) }) : io.exec(run.argv, { cwd: repo, timeoutMs: input.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS }))
           const first = await go()
-          if (!first.ok || first.exitCode === 0 || first.exitCode === 126 || first.exitCode === 127) return { r: first, timeouts: 0 }
+          if (!first.ok || first.exitCode === 0 || first.exitCode === 126 || first.exitCode === 127) return { r: first, timeouts: 0, first: '', firstFailure: '' }
+          const firstOut = fullText(first)
           const again = timeoutRerun(`${first.stdout}\n${first.stderr}`, delta, repo)
-          return again.rerun ? { r: await go(), timeouts: again.timeouts } : { r: first, timeouts: 0 }
+          if (again.rerun) return { r: await go(), rerun: 'timeouts', timeouts: again.timeouts, first: firstOut, firstFailure: '' }
+          // MOD-307 (#394): a red first run of a gate=pass claim is run once more, unless the tree moved under it (repo=here is never re-run)
+          if (claimsPass && !here && firstLine(await out('rev-parse', 'HEAD')) === full) return { r: await go(), rerun: 'own', timeouts: 0, first: firstOut, firstFailure: firstFailureOf(firstOut) }
+          return { r: first, timeouts: 0, first: '', firstFailure: '' }
         } finally {
           await turn?.release().catch(() => undefined)
         }
       }
       for (const run of gates.runs) {
-        const { r, timeouts } = await runGate(run)
+        const { r, rerun, timeouts, first, firstFailure } = await runGate(run)
         reranTimeouts += timeouts
+        if (rerun !== undefined) anyRerun = true
         if (!r.ok) {
           stopped = `gate ${run.label} did not run: ${r.why}`
           timedOut = /timed? ?out|ETIMEDOUT/i.test(r.why)
@@ -1039,9 +1063,13 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
           code = r.exitCode
           tail = outputTail(r.stdout, r.stderr)
           // MOD-248: the whole output is kept only when it is to be written (outDir set); the tail is what the verdict needs
-          if (input.outDir) fullOut = `${r.stdout}${r.stdout && r.stderr && !r.stdout.endsWith('\n') ? '\n' : ''}${r.stderr}`
+          if (input.outDir) fullOut = fullText(r)
+          redRerun = rerun
+          redTimeouts = timeouts
+          redFirst = first
           break
         }
+        if (rerun === 'own') ownFirst = firstFailure
         passedOf[idOf(run)] = (passedOf[idOf(run)] ?? 0) + 1
       }
       // MOD-149: a red run in a worktree that is gone or moved by the end of it is not judged
@@ -1063,8 +1091,11 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       // MOD-149: the whole output of a red run, saved where the lead can read it
       let outputAt = ''
       if (!stopped && !changed && code !== 0 && input.outDir) {
-        const file = `${input.outDir.replace(/\/+$/, '')}/verify-gate-${input.attempt ?? 1}.txt`
+        const dir = input.outDir.replace(/\/+$/, '')
+        const file = `${dir}/verify-gate-${input.attempt ?? 1}.txt`
         try {
+          // MOD-307: a red run that was run again keeps its first run's output beside the second run's
+          if (redRerun !== undefined) await io.write(`${dir}/verify-gate-${input.attempt ?? 1}-first.txt`, redFirst)
           await io.write(file, fullOut)
           outputAt = file
         } catch {
@@ -1074,11 +1105,12 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
       const said = (report.gate ?? '').trim()
       const at = here ? `in the shared checkout ${repo}` : `at ${sha}`
       const hereNote = here ? '; repo=here: the dirty tree is allowed, the clean-tree rule does not apply' : ''
-      const green = reranTimeouts > 0 ? `gate green on rerun (first run: ${plural(reranTimeouts, 'timeout')} in untouched tests)` : 'gate green'
+      const green = ownFirst === undefined && reranTimeouts > 0 ? `gate green on rerun (first run: ${plural(reranTimeouts, 'timeout')} in untouched tests)` : 'gate green'
+      const confirmed = ownFirst !== undefined ? `gate=pass confirmed on re-run (first run red: ${ownFirst})` : 'gate=pass confirmed'
       if (stopped) claim('gate', 'unchecked', stopped)
       else if (changed) claim('gate', 'unchecked', `the worktree changed while the gate ran (${changed}); the gate was not judged`)
       else if (said === 'pass') {
-        if (code === 0) claim('gate', 'held', `${green} ${at} (gate=pass confirmed${hereNote})`)
+        if (code === 0) claim('gate', 'held', `${green} ${at} (${confirmed}${hereNote})`)
         else {
           claim('gate', 'failed', `gate=pass claimed but the gate is RED ${at} (exit ${code}${outputAt ? `; output ${outputAt}` : ''}${hereNote})`)
           lines.push(...tail)
@@ -1087,11 +1119,12 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         if (code !== 0) claim('gate', 'held', `gate=fail confirmed (gate red ${at}${hereNote}) — an honest terminal state`)
         else claim('gate', 'unchecked', 'gate=fail claimed but the gate is green — not a refutation, recorded')
       } else claim('gate', 'unchecked', `report gate='${said}' is not pass|fail`)
-      if (code !== 0 && reranTimeouts > 0) lines.push(`note: the gate was re-run once after ${plural(reranTimeouts, 'timeout')} in untouched tests, and was red again`)
+      if (code !== 0 && redRerun === 'timeouts') lines.push(`note: the gate was re-run once after ${plural(redTimeouts, 'timeout')} in untouched tests, and was red again`)
+      else if (code !== 0 && redRerun === 'own') lines.push('note: the gate was re-run once on its own and was red again')
       // MOD-230 (#323): a red or timed-out gate on a loaded machine says so; the verdict is not changed, only the words
       if (io.load && !changed && ((!stopped && code !== 0) || timedOut)) {
         const words = await io.load().catch(() => undefined)
-        if (words) lines.push(words)
+        if (words) lines.push(anyRerun ? `re-run: ${words}` : words)
       }
     }
   }
