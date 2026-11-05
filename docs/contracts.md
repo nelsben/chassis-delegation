@@ -298,6 +298,8 @@ before you accept. A report declaring `gate=fail` is never accepted: its row rea
 `next=` resumes the worker. A stored record or ledger line may say `verified`, which reads as `consistent`: in a script
 parsing rows, `verdict=` or `.delegation/ledger.jsonl`, accept both words.
 
+The verdict may carry `note: <n> live process(es) name the worktree: …` when the process table still names the worktree at hand-back (MOD-317): it is a note, not a claim, and the verdict itself is unchanged.
+
 **Gate reruns.** A red first run of a `gate=pass` claim in a worktree run whose tree is still at the sha runs once more on its own (MOD-307, #394), and the second run is judged: green holds with `gate=pass confirmed on re-run (first run red: <first failure>)`, red is refuted with a `note:` and the first run's output is saved beside it as `verify-gate-<attempt>-first.txt`. The MOD-20 timeout rerun still comes first (a red whose every failure is the engine's `timed out after N ms`, none in a test file the delta changed, is judged on its rerun; output not readable as a list of failing tests is never rerun on timeouts), and a `gate=fail` claim, a repo=here run, or a first run that exited 126 or 127 or did not complete is never run again. Engine
 gates (`claude plugin test`) take turns within a session through the store lock `delegation.engineGate`, which expires
 after the 9-minute gate timeout.

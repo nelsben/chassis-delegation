@@ -239,6 +239,7 @@ import { fallbackLog, fallbackTail, fieldsOfRow, latestSpawnRow, ledgerJudgedLin
 import { closesTask, handedBackRow, plainTaskOf, postsRows, runningSection, startedRow, type RunningWorker, type StartKind } from './lib/rows'
 import { cardsHandedBack, nudgeDown, nudgeText, nudgeUp, type EffortNudge } from './lib/nudge'
 import { deliveryFor, parseVerbosity, quietLine, reviewLine, shortNext, type Rendered, type Verbosity } from './lib/quiet'
+import { liveInWorktree, liveProcessLine } from './lib/liveproc'
 import { DEFAULT_CARD_DIR, fillMergeCheck, ignoreWithCards, isGitRef, mergeCheckRefusal, mergeChecksFor, mergeConfig, parseRepoConfig, REPO_CONFIG_FILE, resolveIssueRepo, type Effective, type RepoConfig, type ReviewMode } from './lib/repoconfig'
 import { isRepoPath, normRepoPath, NOT_A_CHECKOUT, repoFolderName, repoPathCheck, sessionCardsFor, withRepoName } from './lib/paths'
 import {
@@ -5974,7 +5975,7 @@ async function probe($: Host) {
 }
 
 // ---- verify + verdict (5A: native) ---------------------------------------------------
-type VerifyResult = { verdict: Verdict; lines: string[]; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true; metrics?: Record<string, string>; gateTree?: Record<string, string> }
+type VerifyResult = { verdict: Verdict; lines: string[]; live?: string; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true; metrics?: Record<string, string>; gateTree?: Record<string, string> }
 
 /** sha-256 of `bytes`, hex, by the environment's crypto.subtle; undefined when it cannot be taken. */
 async function sha256Hex(bytes: Uint8Array): Promise<string | undefined> {
@@ -6461,6 +6462,21 @@ async function engineLanesNote($: Host, id: string, ownBrief: string, ownGateMap
   }
 }
 
+/** MOD-317: the live processes that name the worktree at hand-back, as the verdict's note; a failed or refused read is one debug line and no note. */
+async function liveNote($: Host, root: string, worktree: string): Promise<string | undefined> {
+  try {
+    const out = okOut(await run($, ['ps', '-axo', 'pid=,command='], { cwd: root, timeoutMs: 10000 }))
+    if (out === undefined) {
+      debug($, `live processes: no ps read for ${worktree}`)
+      return undefined
+    }
+    return liveProcessLine(liveInWorktree(out, worktree))
+  } catch (err) {
+    debug($, `live processes: ps read failed for ${worktree}: ${String(err)}`)
+    return undefined
+  }
+}
+
 async function runVerify($: Host, spawn: SpawnRecord, block: string, text: string): Promise<VerifyResult> {
   await loadRepoConfig($)
   const root = await $.session.root()
@@ -6494,6 +6510,8 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   const repo = here ? root : await workerRepo($, spawn, header?.repo, root)
   const probed = await run($, workTreeArgv(repo), { cwd: root, timeoutMs: 15000 })
   if (!probed.ok || isNotWorkTree(probed)) return verifyNoRepo($, briefText, report, filesPath, amendLines, root, spawn.task, other?.path, writes, foreignLog)
+  // MOD-317: a live process that names the worker's worktree at hand-back is noted, not judged (not for repo=here, an ad hoc or a review spawn)
+  const liveAtHandback = here || spawn.adhoc || spawn.review ? undefined : await liveNote($, root, repo)
   // GH-20: a red file must differ from every earlier attempt's of this task + subtask
   const prior = await loadAttempts($, spawn)
   const priorRed = priorRedHashes(prior, spawn.subtask, spawn.attempt, laneOf(spawn))
@@ -6549,7 +6567,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   } finally {
     if (locked) await unlockWorktree($, taskRepo, lockPath)
   }
-  return { verdict: r.verdict, lines: [...amendLines, ...r.lines], ...(r.metrics ? { metrics: r.metrics } : {}), ...(r.gateTree ? { gateTree: r.gateTree } : {}), ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
+  return { verdict: r.verdict, lines: [...amendLines, ...r.lines, ...(liveAtHandback ? [liveAtHandback] : [])], ...(liveAtHandback ? { live: liveAtHandback } : {}), ...(r.metrics ? { metrics: r.metrics } : {}), ...(r.gateTree ? { gateTree: r.gateTree } : {}), ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
 }
 
 /**
@@ -6989,6 +7007,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   if (rateLimit) rateHeld = { at: await now($), ...(rateLimit.resetsAt ? { resetsAt: rateLimit.resetsAt } : {}) }
   let verdict: Verdict
   let lines: string[] = []
+  let liveNoteLine: string | undefined
   let noRepo = false
   let metrics: Record<string, string> | undefined
   let gateTree: Record<string, string> | undefined
@@ -7039,6 +7058,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     const v = await runVerify($, spawn, block, text)
     verdict = v.verdict
     lines = v.lines
+    liveNoteLine = v.live
     noRepo = v.noRepo === true
     metrics = v.metrics
     gateTree = v.gateTree
@@ -7239,7 +7259,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   if (from) debug($, fallbackLog(shownLabel, shownAttempt, from))
   const full = withTailIf(spawnText ? `${verdictRows}\n${spawnText}` : verdictRows, tail)
   const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit || blocked ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + (pauseCharge ? ` · ${pauseCharge}` : '') + downClause
-  const line = withTailIf([quiet, ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
+  const line = withTailIf([quiet, ...(liveNoteLine ? [liveNoteLine] : []), ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   const { malformed: _old, pausedAs: _pausedAs, pauseCharged: _pc, ...latestClean } = latest
   await storeSet($, K.spawn(spawn.key), { ...latestClean, ...(pauseCharge ? { pauseCharged: true } : {}), verdictAttempt: spawn.attempt, lastFailed: spawn.lastFailed, verdictBlock: full, verdictLine: line, ...(malformed && block !== undefined ? { malformed: block } : {}) })

@@ -7,6 +7,7 @@
 //   git [-C <dir>] worktree list [--porcelain|-v|--verbose|-z]
 //   git [-C <dir>] fetch [-q] origin main                    (exact)
 //   git -C <plugin root> merge --ff-only origin/main        (exact; <plugin root> is the loaded folder only; /delegation update)
+//   ps -axo pid=,command=                                    (MOD-317: the hand-back's live-process read, exactly this argv)
 //   git -C <dir> check-ignore -q -- <one path>               (MOD-86: is the card git-ignored; exit 0 = ignored)
 //   git -C <dir> ls-files --error-unmatch -- <one path>       (MOD-124: is the briefLocal file tracked; exit 0 = tracked)
 //   git -C <root> worktree add -q -b agent/<domain>/<id>[-replay] <worktree> <origin/main|7-40 hex sha>
@@ -102,6 +103,8 @@ export function checkArgv(argv: readonly string[], allow: AllowConfig = {}): Che
   // MOD-230 (#323): the load read, exactly these two argvs and no other arguments (Linux reads /proc/loadavg with $.fs.read)
   if (cmd === 'sysctl') return rest.length === 3 && rest.join(' ') === '-n vm.loadavg hw.ncpu' ? ok : refuse('sysctl passes only as `sysctl -n vm.loadavg hw.ncpu`')
   if (cmd === 'nproc') return rest.length === 0 ? ok : refuse('nproc takes no arguments')
+  // MOD-317: the hand-back's live-process read, exactly this argv
+  if (cmd === 'ps') return rest.length === 2 && rest[0] === '-axo' && rest[1] === 'pid=,command=' ? ok : refuse('ps passes only as `ps -axo pid=,command=`')
   if (matchesAnyTemplate(argv, allow.gateTemplates ?? [])) return ok
   return refuse(`${cmd} is not on the list (not git, gh, claude plugin, nor a gate-map command word for word)`)
 }
