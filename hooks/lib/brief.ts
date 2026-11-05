@@ -8,6 +8,7 @@
 
 import { globMatches } from './verify-native'
 import { contained } from './scopetree'
+import { sha256Text } from './land'
 
 export const BRIEF_FIELDS = [
   'v', 'task', 'subtask', 'purpose', 'tier', 'model', 'scope', 'forbid', 'parent_scope', 'scope_globs', 'forbid_globs',
@@ -644,3 +645,8 @@ export function foreignReportFormat(briefText: string): string | undefined {
 
 /** MOD-295: the verdict line for a report in a foreign format. */
 export const notCheckedLine = (format: string): string => `report format ${format}: fields not checked by the mod`
+
+// ---- MOD-308 (#395): the brief's hash on the ledger rows ----------------------------------------------
+
+/** MOD-308: the first 12 hex characters of the sha-256 of a brief's text: the brief version a ledger row was written against. */
+export const briefHash = (text: string): string => sha256Text(text).slice(0, 12)
