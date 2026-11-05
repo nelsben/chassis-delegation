@@ -50,7 +50,17 @@ export function parseVerdictTool(input: Record<string, unknown>): VerdictInput {
   return { task: task.trim(), subtask, waitSeconds: Math.min(MAX_WAIT_SECONDS, Math.max(0, wait)) }
 }
 
-export const stillVerifying = (label: string, seconds: number): string => `${label}: still verifying after ${seconds}s; call verdict again`
+/**
+ * The still-verifying line. MOD-301: `seconds` is the time actually waited, not the time asked for; `progress` is where the gate is
+ * (MOD-229); `reason` ends the line in parentheses when the wait could not run (`wait unavailable: sleep did not run`).
+ */
+export const stillVerifying = (label: string, seconds: number, reason?: string, progress?: string): string =>
+  `${label}: still verifying after ${seconds}s; call verdict again${progress ? ` · ${progress}` : ''}${reason ? ` (${reason})` : ''}`
+/** MOD-301: why a wait ended at once: the `sleep` process could not run. */
+export const SLEEP_UNAVAILABLE = 'wait unavailable: sleep did not run'
+/** MOD-301: the line for an attempt that is pending with nothing verifying it; `sha` is the worktree head, else `none`. */
+export const noVerifierRunning = (label: string, attempt: number, sha?: string): string =>
+  `${label}: attempt ${attempt} pending, no verifier running; dispatch verify=${sha !== undefined && sha !== '' ? sha : 'none'}`
 export const noSuchAttempt = (label: string): string => `${label}: no attempt recorded for this task in this session's records; check the task id`
 
 /** What the brain is told, with wakes off, under a dispatch's spawn block. */
