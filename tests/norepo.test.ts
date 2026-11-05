@@ -504,3 +504,84 @@ describe('MOD-261: chargeDelta (pure)', () => {
     expect(chargeDelta({ ...base, events: [], windows: [w({ start: 2, end: 9 })] }).mine.length).toBe(2)
   })
 })
+
+// MOD-305 (#415): a change under a watched root that the worker's command never named is listed, not charged
+describe('MOD-305: a command that names no watched root is not charged for a change under it (repo=none)', () => {
+  const NAME = 'OPS-9-extract-the-hair-model.md'
+  const CARD = ['---', 'id: OPS-9', 'title: Extract the hair model', 'domain: ops', 'tier: standard', 'status: queued', 'repo: none', 'scope: [/out/hair/**]', 'forbid: [/other/**]', 'red_test: none', 'gate: check', 'budget: 2-attempts', '---', '## Why', '', 'The model is exported outside the repo.', ''].join('\n')
+  const OPTS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'full' as const, gateMap: '{"check":"checker {outdir}"}' }
+  const REPORT = `[[report v=1 task=OPS-9 subtask=main branch=none pr=none sha=none gate=pass red=none files=none]]`
+  const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
+  const passed = () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }) as never
+  const run = (argv: string[]): RunAnswer | undefined => (argv[0] === 'checker' ? { exitCode: 0, stdout: 'checked\n' } : undefined)
+  // `during` runs inside the worker's Bash call, as a script would, so the write lands in the command's snapshot window
+  const setup = (on: Parameters<typeof world>[0], during: () => void) => {
+    on('tool.call', { tool: 'Bash' }, () => {
+      during()
+      return passed()
+    })
+    return world(on, {
+      files: { [`${ROOT}/agents/tasks/${NAME}`]: CARD, '/out/hair/old.txt': 'x', '/other/keep.txt': 'k' },
+      dirs: { [`${ROOT}/agents/tasks`]: [NAME] },
+      trees: ['/out/hair', '/other'],
+      run,
+      agentId: 'agent-r',
+      store: { 'delegation.agentTypes': ['general-purpose', 'ops'] },
+    })
+  }
+  const bash = ($: any, command: string) => $.tool.call({ tool: 'Bash', command, agentId: 'agent-r' } as never)
+  const start = async ($: any) => {
+    await $.session.start(sessionStart)
+    await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+  }
+
+  test('a command that names no path under /other: not refuted; the file is listed on the new line and kept out of the write log', { options: OPTS }, async ($, on) => {
+    let w: ReturnType<typeof setup> | undefined
+    w = setup(on, () => void w?.files.set('/other/settings.json', 'live checkout settings'))
+    await start($)
+    await bash($, 'ssh host sampler.ps1')
+    await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT}`))
+    const row = delivered(w)
+    expect(row).toContain('verdict=consistent (no repo) task=OPS-9')
+    expect(row).not.toContain('touches forbid path')
+    expect(row).toContain("changed during the run, not by this worker's commands: /other/settings.json")
+    expect(w.store.get('delegation.foreign.agent-r')).toEqual(['/other/settings.json'])
+    expect(w.store.get('delegation.writes.agent-r')).toBeUndefined()
+  })
+
+  test('touch /other/settings.json is refuted on scope as before', { options: OPTS }, async ($, on) => {
+    let w: ReturnType<typeof setup> | undefined
+    w = setup(on, () => void w?.files.set('/other/settings.json', 'x'))
+    await start($)
+    await bash($, 'touch /other/settings.json')
+    await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT}`))
+    const row = delivered(w)
+    expect(row).toContain('verdict=refuted (no repo) task=OPS-9')
+    expect(row).toContain('claim scope: failed — touches forbid path: /other/settings.json (outside delta)')
+  })
+
+  test('a command that names the root keeps MOD-256\'s charge for its script\'s output', { options: OPTS }, async ($, on) => {
+    let w: ReturnType<typeof setup> | undefined
+    w = setup(on, () => void w?.files.set('/other/settings.json', 'x'))
+    await start($)
+    await bash($, 'node /other/gen.mjs')
+    await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT}`))
+    const row = delivered(w)
+    expect(row).toContain('verdict=refuted (no repo) task=OPS-9')
+    expect(row).toContain('claim scope: failed — touches forbid path: /other/settings.json (outside delta)')
+    expect(w.store.get('delegation.foreign.agent-r')).toBeUndefined()
+  })
+})
+
+describe('MOD-305: the foreign list in the outside claim', () => {
+  test('an empty writes log plus a foreign list still judges a path not in the foreign list', () => {
+    const before: RootListing[] = [{ root: '/o', entries: [] }]
+    const after: RootListing[] = [{ root: '/o', entries: [{ path: 'settings.json', size: 1, mtimeMs: 1 }, { path: 'bad.txt', size: 1, mtimeMs: 1 }] }]
+    const c = outsideClaim({ before, after, scope: [], forbid: ['/o/**'], writes: [], foreign: ['/o/settings.json'] })
+    expect(c?.status).toBe('failed')
+    expect(c?.detail).toContain('touches forbid path: /o/bad.txt')
+    const held = outsideClaim({ before, after: [{ root: '/o', entries: [{ path: 'settings.json', size: 1, mtimeMs: 1 }] }], scope: [], forbid: ['/o/**'], writes: [], foreign: ['/o/settings.json'] })
+    expect(held?.status).toBe('held')
+    expect(held?.foreignRun).toEqual(['/o/settings.json'])
+  })
+})

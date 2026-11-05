@@ -70,6 +70,8 @@ const NAME = `${P}agentName.`
 const COST = `${P}cost.`
 /** MOD-217: a worker's write log, keyed by its agent id like its cost. */
 const WRITES = `${P}writes.`
+/** MOD-305: paths that changed under a watched root during a command that never named it, keyed like the write log. */
+const FOREIGN = `${P}foreign.`
 const RATION = `${P}ration.`
 /** MOD-233: session-level families keyed by the session id; aged out after RATION_RETAIN_MS by their newest timestamp. brain, postAsk and freshSession are not among them. */
 const SESSION = ['recent', 'debrief', 'merged', 'notes', 'friction'].map(f => `${P}${f}.`)
@@ -144,6 +146,7 @@ function metas(entries: readonly StoreEntry[]): Meta[] {
     else if (key.startsWith(NAME)) m = spawnMeta(typeof value === 'string' ? str(AGENT + value) : undefined)
     else if (key.startsWith(COST)) m = spawnMeta(str(AGENT + key.slice(COST.length)))
     else if (key.startsWith(WRITES)) m = spawnMeta(str(AGENT + key.slice(WRITES.length)))
+    else if (key.startsWith(FOREIGN)) m = spawnMeta(str(AGENT + key.slice(FOREIGN.length)))
     else if (BY_ATTEMPT.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_TASK.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_BRIEF.some(p => key.startsWith(p))) m = withTask(taskOfBrief(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))

@@ -136,21 +136,63 @@ const under = (path: string, root: string): boolean => path === root || path.sta
 /** MOD-217: a path in the mod's own `.delegation/` folder (under the repo root or any worktree): never part of a scope, forbid or outside delta. */
 export const isDelegationPath = (path: string): boolean => /(^|\/)\.delegation(\/|$)/.test(path)
 
+/** A path folded to its absolute form against `cwd`: `.`, `..` and `//` resolved. */
+function foldPath(path: string, cwd: string): string {
+  const out: string[] = []
+  for (const part of (path.startsWith('/') ? path : `${cwd}/${path}`).split('/')) {
+    if (part === '..') out.pop()
+    else if (part !== '' && part !== '.') out.push(part)
+  }
+  return `/${out.join('/')}`
+}
+
+/**
+ * MOD-305: whether a Bash command could have written under `root`: its cwd is under the root, or a
+ * whitespace-separated word of it (quotes stripped, a leading `~` expanded with `home`) is the root or a path under
+ * it, absolute or resolved against cwd. A `~` word with no home never matches. A script that writes into a root its
+ * command never names is not caught; a watched root is usually a live checkout someone else works in.
+ */
+export function commandNamesRoot(command: string, cwd: string, root: string, home?: string): boolean {
+  const r = foldPath(root, '/')
+  const dir = foldPath(cwd, '/')
+  if (under(dir, r)) return true
+  for (const raw of command.split(/\s+/)) {
+    let w = raw.replace(/["']/g, '')
+    if (w === '') continue
+    if (w === '~' || w.startsWith('~/')) {
+      if (home === undefined || home === '') continue
+      w = home.replace(/\/+$/, '') + w.slice(1)
+    }
+    if (under(foldPath(w, dir), r)) return true
+  }
+  return false
+}
+
 /**
  * MOD-217: which of the changed (absolute) paths a worker wrote. A path is the worker's when it is in `log`
  * (the paths its tool calls wrote), is a folder one of them lies under, or lies under a folder one of them
  * wrote. An empty log attributes every path to the worker: a worker whose writes were all through scripts the
  * lexer cannot see must not slip through unseen.
+ * MOD-305: `foreignLog` holds the paths that changed under a watched root during a command that never named that
+ * root; one of those not in `log` is foreign (also listed in `snap`) even when the log is empty.
  */
-export function attributeWrites(paths: readonly string[], log: readonly string[] | undefined): { mine: string[]; foreign: string[] } {
-  if (log === undefined || log.length === 0) return { mine: [...paths], foreign: [] }
+export function attributeWrites(paths: readonly string[], log: readonly string[] | undefined, foreignLog?: readonly string[]): { mine: string[]; foreign: string[]; snap?: string[] } {
+  const hasLog = log !== undefined && log.length > 0
+  if (!hasLog && (foreignLog === undefined || foreignLog.length === 0)) return { mine: [...paths], foreign: [] }
+  const related = (list: readonly string[], q: string): boolean => list.some(w => w === q || under(w, q) || under(q, w))
   const mine: string[] = []
   const foreign: string[] = []
+  const snap: string[] = []
   for (const p of paths) {
     const q = p.replace(/\/+$/, '') || '/'
-    ;(log.some(w => w === q || under(w, q) || under(q, w)) ? mine : foreign).push(p)
+    if (hasLog && related(log, q)) mine.push(p)
+    else if (foreignLog !== undefined && related(foreignLog, q)) {
+      foreign.push(p)
+      snap.push(p)
+    } else if (hasLog) foreign.push(p)
+    else mine.push(p)
   }
-  return { mine, foreign }
+  return { mine, foreign, ...(snap.length > 0 ? { snap } : {}) }
 }
 
 const READ_ONLY_CMDS = new Set(['ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg', 'pwd', 'echo', 'printf', 'which', 'type', 'stat', 'file', 'diff', 'cmp', 'sort', 'uniq', 'cut', 'tr', 'jq', 'basename', 'dirname', 'realpath', 'readlink', 'date', 'true', 'false', 'test', '[', 'cd', 'du', 'df', 'tree', 'less', 'more', 'sleep', 'whoami', 'id', 'uname', 'hostname'])
@@ -278,7 +320,7 @@ const anyMatch = (path: string, globs: readonly string[], dir = false): boolean 
  * A root that was not listed at one end leaves the claim unchecked unless a
  * failure was found elsewhere. Undefined when no root was listed at all.
  */
-export function outsideClaim(input: { before: readonly RootListing[]; after: readonly RootListing[]; scope: readonly string[]; forbid: readonly string[]; /** MOD-185: absolute folder prefixes whose changes are the mod's and the lead's own writes; ignored for scope and forbid alike. */ ignore?: readonly string[]; /** MOD-217: the paths the worker's own tool calls wrote; a changed path outside it is listed in `foreign`, never judged. Empty or absent: every path is the worker's. */ writes?: readonly string[] }): (ClaimResult & { foreign?: string[] }) | undefined {
+export function outsideClaim(input: { before: readonly RootListing[]; after: readonly RootListing[]; scope: readonly string[]; forbid: readonly string[]; /** MOD-185: absolute folder prefixes whose changes are the mod's and the lead's own writes; ignored for scope and forbid alike. */ ignore?: readonly string[]; /** MOD-217: the paths the worker's own tool calls wrote; a changed path outside it is listed in `foreign`, never judged. Empty or absent: every path is the worker's. */ writes?: readonly string[]; /** MOD-305: the paths that changed under a watched root while a command that never named it ran; listed in `foreignRun`, never judged, even with an empty `writes`. */ foreign?: readonly string[] }): (ClaimResult & { foreign?: string[]; foreignRun?: string[] }) | undefined {
   const roots = [...new Set([...input.before.map(l => l.root), ...input.after.map(l => l.root)])]
   if (roots.length === 0) return undefined
   const changed: string[] = []
@@ -319,7 +361,9 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
   const kept = all.filter(p => !ignoreRoots.some(i => under(p, i)))
   const ignored = all.length - kept.length
   // MOD-217: the mod's own .delegation/ is never judged; a path the worker did not write is listed, not judged
-  const { mine: paths, foreign } = attributeWrites(kept.filter(p => !isDelegationPath(p)), input.writes)
+  const { mine: paths, foreign: notMine, snap } = attributeWrites(kept.filter(p => !isDelegationPath(p)), input.writes, input.foreign)
+  const snapSet = new Set(snap ?? [])
+  const foreign = notMine.filter(p => !snapSet.has(p))
   const rel = (i: string): string => {
     const r = roots.find(o => under(i, o) && o !== i)
     return r === undefined ? i : i.slice(r === '/' ? 1 : r.length + 1)
@@ -330,7 +374,7 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
     return anyMatch(p, input.forbid, dir) ? [{ p, why: 'touches forbid path' }] : anyMatch(p, input.scope, dir) ? [] : [{ p, why: 'out-of-scope path' }]
   })
   const first = bad[0]
-  const extra = foreign.length > 0 ? { foreign } : {}
+  const extra = { ...(foreign.length > 0 ? { foreign } : {}), ...(snap && snap.length > 0 ? { foreignRun: snap } : {}) }
   if (first) return { status: 'failed', detail: `${first.why}: ${first.p} (outside delta${bad.length > 1 ? `, +${bad.length - 1} more` : ''})`, ...extra }
   if (unchecked !== undefined) return { status: 'unchecked', detail: unchecked + ignoredNote, ...extra }
   const where = roots.join(', ')
@@ -339,7 +383,7 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
 }
 
 /** What the verifier needs to compare the outside: the listings taken at dispatch, and a way to list a root now. */
-export type OutsideInput = { before: readonly RootListing[]; list: (root: string, since?: number) => Promise<RootListing>; /** MOD-217: the paths the worker's tool calls wrote (its write log). */ writes?: readonly string[] }
+export type OutsideInput = { before: readonly RootListing[]; list: (root: string, since?: number) => Promise<RootListing>; /** MOD-217: the paths the worker's tool calls wrote (its write log). */ writes?: readonly string[]; /** MOD-305: the paths that changed under a watched root during a command that never named it. */ foreign?: readonly string[] }
 
 /** MOD-186: the folder (under the session root) that holds a repo=none card's listing files. */
 export const outsideDirOf = (root: string): string => `${root.replace(/\/+$/, '')}/.delegation/outside`
@@ -358,7 +402,7 @@ export function isOutsideFile(root: string, path: string): boolean {
  * the outside delta. Undefined when nothing was recorded at dispatch (a brief that never went through
  * /dispatch): the outside is then no part of the scope claim.
  */
-export async function outsideCheck(scope: readonly string[], forbid: readonly string[], outside: OutsideInput | undefined, ignore?: readonly string[]): Promise<(ClaimResult & { foreign?: string[] }) | undefined> {
+export async function outsideCheck(scope: readonly string[], forbid: readonly string[], outside: OutsideInput | undefined, ignore?: readonly string[]): Promise<(ClaimResult & { foreign?: string[]; foreignRun?: string[] }) | undefined> {
   if (outside === undefined) return undefined
   // a root an amendment added inside a folder listed at dispatch is covered by that listing
   const roots = outermost([...outside.before.map(l => l.root), ...outsideRoots(scope, forbid)])
@@ -371,7 +415,7 @@ export async function outsideCheck(scope: readonly string[], forbid: readonly st
       after.push({ root, error: String(err) })
     }
   }
-  return outsideClaim({ before: outside.before, after, scope, forbid, ...(ignore ? { ignore } : {}), ...(outside.writes ? { writes: outside.writes } : {}) })
+  return outsideClaim({ before: outside.before, after, scope, forbid, ...(ignore ? { ignore } : {}), ...(outside.writes ? { writes: outside.writes } : {}), ...(outside.foreign ? { foreign: outside.foreign } : {}) })
 }
 
 /** The report's `artefacts=` list: comma-separated paths, `none` and blanks dropped. */
