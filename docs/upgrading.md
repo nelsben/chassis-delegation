@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.49 to 0.9.50
+
+No action needed. `/delegation tree reconcile all [--confirm]` runs reconcile over every open `type:epic` issue in one report, so stale trees need one command instead of one per epic. A by-hand `dispatch verify=<sha>` no longer spends an attempt of `budget=`, and a worker resumed after one is judged on its hand-back. The verdict tool says `attempt <n> pending, no verifier running; dispatch verify=<sha>` when nothing is verifying. Detail: [CHANGELOG 0.9.50](../CHANGELOG.md).
+
 ### From 0.9.48 to 0.9.49
 
 No action needed. A rebased head no longer opens an attempt: a rebase onto the same tree is reported as `rebased to <sha>`, and new commits on another tree charge nothing until a verify runs. A merged task reports merged with its accept row, even when its head is on origin/main. Dispatch takes `amend=` for brain grants, so `/dispatch <ID> --amend scope+=<path> forbid-=<glob>` appends the grant to the brief for the verifier to see. Detail: [CHANGELOG 0.9.49](../CHANGELOG.md).
