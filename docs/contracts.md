@@ -32,7 +32,7 @@ Optional fields go after `gate=` and before `spend=`, in this order: `repo=`, `b
 | `parent_scope` | globs | the parent issue's scope, written after `forbid=` from a card's `parentScope:` | none | read by `scopeAmends within-parent` to decide which `scope+=` amends apply |
 | `scope_globs` | globs | replaces a prose `scope=` | none | checked in its place |
 | `forbid_globs` | globs | replaces a prose `forbid=` | none | checked in its place |
-| `red_test` | a command, `none`, empty | the test that fails before the fix | none | set: the red claim is checked; dispatch warns when a path in it is outside scope or inside forbid |
+| `red_test` | a command, `none`, empty | the test that fails before the fix | none | set: the red claim is checked; dispatch warns when a path in it is outside scope or inside forbid `none (test-only)` is for a card whose change is only new tests of behaviour that already holds: no red is asked, and the verifier refuses a delta that changes anything outside the test folders (and CHANGELOG.md, README.md, docs/). |
 | `gate` | gate ids | what must pass | required unless `repo=none` | each id runs from `gateMap` in the worker's tree |
 | `spend` | dollars | per-attempt ceiling | the card's `spend:`, else `spendByTier`; `0` writes none | rendered as the Rules' spend line ([Spend](spend.md)) |
 | `budget` | `<n>-attempts` | attempts for the task | `defaultBudget` | counts spawns, resumes and verify attempts, then denies the next spawn; another form falls back to the default with a warning |
@@ -133,7 +133,7 @@ message (a background worker's from its transcript):
 | `pr` | `none`, a number, a URL | a PR opened | `none` | the pr claim |
 | `sha` | a sha, `HEAD`, `none` | the commit handed back | required | the sha claim; the gate runs at it |
 | `gate` | `pass`, `fail` | the worker's gate result | required | `pass` needs a green gate; `fail` is an honest stop, never accepted |
-| `red` | a tree-relative path, an absolute path under the brief's `scratch=`, `none` | the red test's failing output | none | the red claim, when `red_test` is set; any other absolute path is refused, the line naming `scratch=` as the allowed place (#199) |
+| `red` | a tree-relative path, an absolute path under the brief's `scratch=`, `none` | the red test's failing output | none | the red claim, when `red_test` is set; any other absolute path is refused, the line naming `scratch=` as the allowed place (#199) With `red_test` `none (test-only)` there is no red= to read: the claim is **held** when every delta path is a test path (a folder named test, tests, __tests__ or spec, or a name ending .test.<ext>, .spec.<ext>, _test.<ext> or .node.mjs) or a doc path (CHANGELOG.md, README.md, docs/), **refuted** naming up to 5 other paths, **unverified** when the delta is unknown. |
 | `files` | paths, `none` | every path changed since the base | required | must equal the delta |
 | `artefacts` | paths, relative to `outdir=` or absolute | files delivered outside the repo | none | each must exist, not empty |
 | `metrics` | `"k=v,k=v"` | numbers or words worth keeping | none | recorded, shown as `metrics: k=v, k=v`, never judged |

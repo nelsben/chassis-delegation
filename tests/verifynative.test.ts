@@ -78,6 +78,13 @@ const input = (over: Partial<Parameters<typeof verifyNative>[0]> = {}) => ({
   ...over,
 })
 
+describe('MOD-313: red_test none (test-only) through verifyNative', () => {
+  test('a source path in the delta refutes the red claim and names the path', async () => {
+    const r = await verifyNative(input({ report: report({ red: '' }), briefText: BRIEF.replace('red_test="npm test"', 'red_test="none (test-only)"') }), io(happy()))
+    expect(r.lines).toContain('claim red: failed — red_test none (test-only) but the delta changes src/a.ts')
+  })
+})
+
 describe('5A: matching paths the way the chassis verifier matched them', () => {
   test('* crosses folders, a trailing / means everything under it, ** is *', () => {
     expect(pathMatchesAny('src/a/b.ts', ['src/*'])).toBe(true)

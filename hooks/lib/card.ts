@@ -80,7 +80,7 @@ export const CARD_TOOL = {
       scope: { type: 'array', items: { type: 'string' }, description: 'Globs or paths the worker may change, e.g. ["src/feature/**", "tests/test_feature.py"]; an absolute path or glob (a leading ~ is the home folder) names a folder outside the repo, and the first one is the output folder. Not prose. In a repo path * crosses folders (artifacts/*.html also matches artifacts/kit/index.html), and no repo glob stays in one folder, so list the files. Required unless lanes carry their own; given with lanes, it is refused' },
       forbid: { type: 'array', items: { type: 'string' }, description: 'Globs the worker must not touch (default none); absolute paths and globs too. In a repo path * crosses folders (artifacts/*.html also matches artifacts/kit/index.html), and no repo glob stays in one folder, so list the files' },
       repo: { type: 'string', description: "worktree (default): the worker gets its own worktree; here: it works in this checkout; none: no repo at all. For research or extraction with outputs outside the repo use none or here, with scope = the output folder. An absolute path (the folder holding .git of another local repo, ~ allowed) delegates into that repo: the card goes in its card folder (or, with no .chassis-delegation.json there, under this session's .delegation/cards/<its folder name>/), the worktree is cut from its origin/main beside it, and the gate map, domains and spend are its own (with no config, its detected test command; gate may then be a one-off command such as \"npm run build\")" },
-      redTest: { type: 'string', description: 'The command or test that fails now and passes after, or "none" for docs-only work' },
+      redTest: { type: 'string', description: 'The command or test that fails now and passes after, or "none" for docs-only work, or "none (test-only)" for a change that is only tests' },
       tier: { type: 'string', description: 'economy, standard (default), frontier or premium' },
       tierReason: { type: 'string', description: 'Why this tier, one line (colons and newlines become spaces, cut to 120 characters); written to the card as tier_reason' },
       effort: { type: 'string', description: 'low, medium or high; absent keeps the tier default (economy low, standard medium, frontier high). Raise it one level for an ambiguous or cross-cutting card, or after an attempt refuted for reasoning; lower it one level for mechanical work (releases, renames, docs). Any departure is an experiment, at most one level, and needs a tierReason or effortReason' },
@@ -232,7 +232,7 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   const repo: CardRepo | string = ctx.repoPath ?? (repoIn as CardRepo | undefined) ?? (ctx.here ? 'here' : 'worktree')
 
   const redTest = text(input.redTest)
-  if (redTest === '') return { error: 'redTest is required: the command or test that fails now and passes after, or "none" for docs-only work' }
+  if (redTest === '') return { error: 'redTest is required: the command or test that fails now and passes after, or "none" for docs-only work, or "none (test-only)" for a change that is only tests' }
 
   const tierIn = input.tier === undefined ? 'standard' : text(input.tier)
   const tier = tierOf(tierIn)

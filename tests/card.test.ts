@@ -140,6 +140,7 @@ describe('GH-111: cardFromFields', () => {
   })
 
   test('MOD-22: the tool takes repo, and its description says when to use it', () => {
+    expect((CARD_TOOL.inputSchema.properties.redTest as { description: string }).description).toContain('none (test-only)')
     expect(CARD_TOOL.inputSchema.properties.repo.type).toBe('string')
     expect(CARD_TOOL.inputSchema.required).not.toContain('repo')
     expect(CARD_TOOL.description).toContain('research or extraction with outputs outside the repo: repo none or here, scope = the output folder')
