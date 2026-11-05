@@ -232,3 +232,10 @@ export const TREE_IMPORT_TOOL = {
     additionalProperties: false,
   },
 } as const
+
+/** MOD-314: reads gh's error text for a GitHub rate limit; secondary is checked first because its 403 text also says "rate". */
+export function rateLimited(text: string): { kind: 'primary' | 'secondary' } | undefined {
+  if (/secondary rate limit/i.test(text) || /submitted too quickly/i.test(text)) return { kind: 'secondary' }
+  if (/API rate limit (already )?exceeded/i.test(text) || (/\b(403|429)\b/.test(text) && /rate/i.test(text))) return { kind: 'primary' }
+  return undefined
+}

@@ -123,3 +123,23 @@ describe('MOD-284: a child ranks below its parent (epic, feature, story, then ta
     expect('errors' in epicTask).toBe(false)
   })
 })
+
+describe('MOD-314: rateLimited reads gh error text', () => {
+  test('primary limit strings', async () => {
+    const { rateLimited } = await lib()
+    expect(rateLimited('GraphQL: API rate limit exceeded for user ID 1234.')).toEqual({ kind: 'primary' })
+    expect(rateLimited('API rate limit already exceeded for user ID 1234')).toEqual({ kind: 'primary' })
+    expect(rateLimited('HTTP 429: slow down, rate limited')).toEqual({ kind: 'primary' })
+  })
+  test('secondary limit strings', async () => {
+    const { rateLimited } = await lib()
+    expect(rateLimited('GraphQL: was submitted too quickly (createIssue)')).toEqual({ kind: 'secondary' })
+    expect(rateLimited('HTTP 403: You have exceeded a secondary rate limit')).toEqual({ kind: 'secondary' })
+  })
+  test('anything else is undefined', async () => {
+    const { rateLimited } = await lib()
+    expect(rateLimited('boom')).toBe(undefined)
+    expect(rateLimited('')).toBe(undefined)
+    expect(rateLimited('HTTP 403: forbidden')).toBe(undefined)
+  })
+})
