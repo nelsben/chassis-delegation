@@ -214,3 +214,10 @@ describe('MOD-225 (#305): a poll is looked for outside heredoc bodies and quoted
     expect(r.row).toBeUndefined()
   })
 })
+
+describe('MOD-318: a bounded retry loop is not a poll row', () => {
+  test('the bounded for retry loop around git push, at a large context, produces no polling row', () => {
+    const r = driveStep(emptyWatch(), { command: 'for i in 1 2 3; do git push && break; sleep 5; done', context: 300_000, threshold: DRIVE_THRESHOLD_TOKENS, model: 'claude-opus-5-5', enabled: true })
+    expect(r.row).toBeUndefined()
+  })
+})

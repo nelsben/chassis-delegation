@@ -445,3 +445,14 @@ describe('MOD-188: issue, parent, parentScope, parentForbid', () => {
     expect(b).toEqual({ error: "scope src/other/** is outside parent #7's scope (src/export/**)" })
   })
 })
+
+describe('MOD-318: a done-when path the sentence says is forbidden is not a write and not a collision', () => {
+  test('a path the sentence says is forbidden leaves the quiet line', () => {
+    expect(forbidCollisions([], ['docs/findings.md'], ['`docs/findings.md` is forbidden'])).toEqual([])
+  })
+  test('a path the sentence says is written keeps its own line', () => {
+    expect(forbidCollisions([], ['docs/findings.md'], ['writes `docs/findings.md`'])).toEqual([
+      'warning: forbid docs/findings.md matches docs/findings.md named in done-when',
+    ])
+  })
+})

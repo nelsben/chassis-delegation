@@ -526,8 +526,12 @@ export function doneStatementCount(lines: readonly string[]): number {
 /** MOD-98: the verbs that make a done-when statement a write: written, changed, created, added, updated (and their kin). */
 const WRITE_VERB = /\b(?:writ(?:e|es|ten|ing)|wrote|chang(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|add(?:s|ed|ing)?|updat(?:e|es|ed|ing)|edit(?:s|ed|ing)?|modif(?:y|ies|ied|ying))\b/i
 
-/** MOD-98: whether a done-when statement naming `path` says it is written: a write verb within a few words of the path. */
-function isWritten(path: string, statements: readonly string[]): boolean {
+/** MOD-318: the words that say a path is not written (a forbid, a read-only or untouched path); the negation wins over a write verb in the same window. */
+const NEGATION = /\b(?:forbidden|forbid|untouched|unchanged|not touched|not changed|not written|never written|never changed|stays|left alone|read-only|only read)\b/i
+
+/** MOD-98: whether a done-when statement naming `path` says it is written: a write verb within a few words of the path. MOD-318: 'negated' when a mention says it is not written (and none says it is), 'other' otherwise. */
+function mentionOf(path: string, statements: readonly string[]): 'write' | 'negated' | 'other' {
+  let negated = false
   // the words next to the path, up to the clause end or the next path
   const near = (words: string[]): string[] => {
     const stop = words.findIndex(w => w.includes('/'))
@@ -537,10 +541,12 @@ function isWritten(path: string, statements: readonly string[]): boolean {
     for (let at = st.indexOf(path); at >= 0; at = st.indexOf(path, at + path.length)) {
       const after = near((st.slice(at + path.length).split(/;|\.(?:\s|$)/)[0] ?? '').split(/\s+/).filter(Boolean).slice(0, 5)).join(' ')
       const before = near((st.slice(0, at).split(/;|\.\s/).pop() ?? '').split(/\s+/).filter(Boolean).slice(-4).reverse()).reverse().join(' ')
-      if (WRITE_VERB.test(`${before} ${after}`)) return true
+      const win = `${before} ${after}`
+      if (NEGATION.test(win)) { negated = true; continue }
+      if (WRITE_VERB.test(win)) return 'write'
     }
   }
-  return false
+  return negated ? 'negated' : 'other'
 }
 
 /**
@@ -552,7 +558,7 @@ function isWritten(path: string, statements: readonly string[]): boolean {
 export function forbidCollisions(scope: readonly string[], forbid: readonly string[], doneWhen: readonly string[]): string[] {
   const out: string[] = []
   const paths = [...new Set(doneWhen.flatMap(donePaths))]
-  const written = new Set(paths.filter(p => isWritten(p, doneWhen)))
+  const mention = new Map(paths.map(p => [p, mentionOf(p, doneWhen)] as const))
   const own: string[] = []
   const quiet: string[] = []
   for (const f of forbid) {
@@ -566,10 +572,10 @@ export function forbidCollisions(scope: readonly string[], forbid: readonly stri
       if (scope.some(s => s !== '' && namedBy(p, s))) continue
       if (!collides(p, f)) continue
       // MOD-98: a path the done-when says is written keeps its own line; the others share one
-      if (written.has(p)) {
+      if (mention.get(p) === 'write') {
         const line = `warning: forbid ${f} matches ${p} named in done-when`
         if (!own.includes(line)) own.push(line)
-      } else {
+      } else if (mention.get(p) === 'other') {
         const entry = `${p} (${f})`
         if (!quiet.includes(entry)) quiet.push(entry)
       }
