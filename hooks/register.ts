@@ -216,7 +216,7 @@ import { AUTO_NOTICE, LATCH_LINE, blockedByEnvironment, hostRefusalText, isAutoM
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { doneComment, landedFor, parseReconcileArgs, reconcileOf, reconcileText, type MergedCard, type ReconSub } from './lib/reconcile'
+import { doneComment, epicsOf, landedFor, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
@@ -4744,9 +4744,10 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
 }
 
 /**
- * MOD-288: `/delegation tree reconcile <n> [--confirm]` and the tree tool with reconcile: true. Reads the parent and one view per
+ * MOD-288: `/delegation tree reconcile <n>|all [--confirm]` and the tree tool with reconcile: true. Reads the parent and one view per
  * open sub-issue with no in-flight card (at most treeImportBatch), matches them against the merged cards and prints three lists
  * with the close lines. Without confirm it writes nothing and closes nothing; with confirm it runs the done-elsewhere closes only.
+ * MOD-299: `all` walks every open type:epic issue in ascending order with one shared read cap and one report.
  */
 async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>): Promise<string> {
   if ('error' in a) return a.error
@@ -4767,8 +4768,18 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
       return { why: 'gh printed something that is not JSON' }
     }
   }
-  const parent = await view(a.issue)
-  if ('why' in parent) return `tree reconcile: ${parent.why}`
+  let epics: { number: number; title: string }[] = [{ number: 'issue' in a ? a.issue : 0, title: '' }]
+  if ('all' in a) {
+    const list = await run($, ['gh', 'issue', 'list', '--repo', ownerRepo, '--state', 'open', '--label', 'type:epic', '--limit', '100', '--json', 'number,title'], { cwd: root, timeoutMs: 60000 })
+    if (!list.ok) return `tree reconcile all: gh did not run: ${list.why.trim().slice(0, 400)}`
+    if (list.exitCode !== 0) return `tree reconcile all: gh issue list failed: ${(list.stderr || list.stdout).trim().slice(0, 400) || '(nothing on stderr)'}`
+    try {
+      epics = epicsOf(JSON.parse(list.stdout))
+    } catch {
+      return 'tree reconcile all: gh printed something that is not JSON'
+    }
+    if (epics.length === 0) return `tree reconcile all: no open type:epic issue on ${ownerRepo}; name one: /delegation tree reconcile <n>`
+  }
   const cardDir = cardDirPath(root, cfg.cardDir)
   const cardsById = new Map<string, { status?: string; issue?: number; scope: string[] }>()
   try {
@@ -4796,26 +4807,36 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
     merged.push({ id, scope, ...(typeof row.pr === 'number' ? { pr: row.pr } : {}), ...(card?.issue !== undefined ? { issue: card.issue } : {}) })
   }
   const subsOf = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : []).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { number?: unknown }).number === 'number')
-  const subs: ReconSub[] = []
   let viewed = 0
-  for (const s of subsOf(parent.json.subIssues).sort((x, y) => (x.number as number) - (y.number as number))) {
-    const number = s.number as number
-    const state = typeof s.state === 'string' ? s.state.toUpperCase() : ''
-    const sub: ReconSub = { number, title: typeof s.title === 'string' ? s.title : '', state, subIssues: subsOf(s.subIssues).map(c => ({ number: c.number as number, state: typeof c.state === 'string' ? c.state : '' })) }
-    if (state !== 'CLOSED' && !inFlight.has(number)) {
-      if (viewed >= cfg.treeImportBatch) sub.read = false
-      else {
-        viewed++
-        const v = await view(number)
-        if ('why' in v) return `tree reconcile: #${number}: ${v.why}`
-        sub.body = typeof v.json.body === 'string' ? v.json.body : ''
-      }
+  const parts: { number: number; title: string; result: Reconciled }[] = []
+  const skipped: number[] = []
+  for (const epic of epics) {
+    if ('all' in a && viewed >= cfg.treeImportBatch) {
+      skipped.push(epic.number)
+      continue
     }
-    subs.push(sub)
+    const parent = await view(epic.number)
+    if ('why' in parent) return `tree reconcile: ${parent.why}`
+    const subs: ReconSub[] = []
+    for (const s of subsOf(parent.json.subIssues).sort((x, y) => (x.number as number) - (y.number as number))) {
+      const number = s.number as number
+      const state = typeof s.state === 'string' ? s.state.toUpperCase() : ''
+      const sub: ReconSub = { number, title: typeof s.title === 'string' ? s.title : '', state, subIssues: subsOf(s.subIssues).map(c => ({ number: c.number as number, state: typeof c.state === 'string' ? c.state : '' })) }
+      if (state !== 'CLOSED' && !inFlight.has(number)) {
+        if (viewed >= cfg.treeImportBatch) sub.read = false
+        else {
+          viewed++
+          const v = await view(number)
+          if ('why' in v) return `tree reconcile: #${number}: ${v.why}`
+          sub.body = typeof v.json.body === 'string' ? v.json.body : ''
+        }
+      }
+      subs.push(sub)
+    }
+    parts.push({ number: epic.number, title: epic.title, result: reconcileOf({ subs, inFlight, merged }) })
   }
-  const result = reconcileOf({ subs, inFlight, merged })
-  const head = `reconcile #${a.issue} (${ownerRepo})`
-  if (!a.confirm) return [head, reconcileText(result, ownerRepo)].join('\n')
+  const head = 'all' in a ? `reconcile all (${ownerRepo})` : `reconcile #${epics[0]!.number} (${ownerRepo})`
+  if (!a.confirm) return 'all' in a ? [head, reconcileAllText(parts, skipped, ownerRepo)].join('\n') : [head, reconcileText(parts[0]!.result, ownerRepo)].join('\n')
   const lines: string[] = [head]
   let landed: { name: string; text: string }[] = []
   const folder = `${root}/.delegation/landed`
@@ -4828,29 +4849,36 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
     landed = []
   }
   let ran = 0
-  for (const d of result.done) {
-    if (ran >= cfg.treeImportBatch) {
-      lines.push('stopped at treeImportBatch; run again to continue')
-      break
-    }
-    if (ran > 0) await pauseOffBudget($, 1000)
-    ran++
-    const c = await run($, ['gh', 'issue', 'close', String(d.number), '--repo', ownerRepo, '--comment', doneComment(d.card, d.pr)], { cwd: root, timeoutMs: 60000 })
-    if (!c.ok || c.exitCode !== 0) {
-      lines.push(`close #${d.number} failed: ${(c.ok ? c.stderr || c.stdout : c.why).trim().replace(/\s+/g, ' ').slice(0, 400) || '(nothing on stderr)'}`)
-      continue
-    }
-    lines.push(`closed #${d.number}`)
-    const name = landedFor(landed, d.number)
-    if (name !== undefined) {
-      try {
-        const file = `${folder}/${name}`
-        await $.fs.write(file, withClosedLine((await readText($, file)) ?? '', new Date(await now($)).toISOString()))
-      } catch (err) {
-        debug($, `tree reconcile: closed line not written to ${name}: ${String(err)}`)
+  let stopped = false
+  for (const part of parts) {
+    if ('all' in a) lines.push(`## #${part.number} ${part.title}`)
+    if ('all' in a && part.result.done.length === 0 && !stopped) lines.push('nothing to reconcile')
+    for (const d of part.result.done) {
+      if (ran >= cfg.treeImportBatch) {
+        if (!stopped) lines.push('stopped at treeImportBatch; run again to continue')
+        stopped = true
+        break
+      }
+      if (ran > 0) await pauseOffBudget($, 1000)
+      ran++
+      const c = await run($, ['gh', 'issue', 'close', String(d.number), '--repo', ownerRepo, '--comment', doneComment(d.card, d.pr)], { cwd: root, timeoutMs: 60000 })
+      if (!c.ok || c.exitCode !== 0) {
+        lines.push(`close #${d.number} failed: ${(c.ok ? c.stderr || c.stdout : c.why).trim().replace(/\s+/g, ' ').slice(0, 400) || '(nothing on stderr)'}`)
+        continue
+      }
+      lines.push(`closed #${d.number}`)
+      const name = landedFor(landed, d.number)
+      if (name !== undefined) {
+        try {
+          const file = `${folder}/${name}`
+          await $.fs.write(file, withClosedLine((await readText($, file)) ?? '', new Date(await now($)).toISOString()))
+        } catch (err) {
+          debug($, `tree reconcile: closed line not written to ${name}: ${String(err)}`)
+        }
       }
     }
   }
+  if (skipped.length > 0) lines.push(`not read: ${skipped.length} epics (${skipped.map(n => `#${n}`).join(', ')}): run again`)
   return lines.join('\n')
 }
 
@@ -10627,7 +10655,7 @@ export const register: Register = (on, opts) => {
   on('tool.call', { tool: 'mcp__chassis-delegation__tree_import' as never }, async ($, e) => (landSeen($, 'land_plan'), { result: await treeImportWith($, parseTreeImportTool(e as unknown as Record<string, unknown>)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__tree' as never }, async ($, e) => {
     const input = e as unknown as Record<string, unknown>
-    if (input.reconcile === true) return { result: await reconcileWith($, parseReconcileArgs(`${String(input.issue ?? '')}${input.confirm === true ? ' --confirm' : ''}`)) }
+    if (input.reconcile === true) return { result: await reconcileWith($, parseReconcileArgs(`${input.all === true ? 'all' : String(input.issue ?? '')}${input.confirm === true ? ' --confirm' : ''}`)) }
     return { result: await treeWith($, input.issue) }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => (landSeen($, 'merge'), { result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))

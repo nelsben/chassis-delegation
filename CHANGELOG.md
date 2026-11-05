@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`/delegation tree reconcile all [--confirm]` (the `tree` tool with `reconcile: true, all: true`) runs reconcile over every open `type:epic` issue in ascending order: one report with a `## #<n> <title>` heading per epic, one block of every close line, one shared `treeImportBatch` read cap (`not read: <k> epics (...): run again`), and with `--confirm` the done-elsewhere closes across all epics (MOD-299).**
+
 ## 0.9.49 — 2026-11-04
 
 ### Added
