@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A worker's Bash runs as typed when the session is in auto mode now, read off the classic hook events (`permission_mode` on `PostToolUse`, `PostToolUseFailure` and `UserPromptSubmit`) instead of the spawn row alone, and a host refusal that never comes back through the tool call chain (`PostToolUseFailure` with the "changed this call's input" error) latches the worker to run as typed and counts toward the `blocked by environment` verdict (MOD-321).**
+
 ## 0.9.51 — 2026-11-05
 
 ### Added

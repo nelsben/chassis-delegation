@@ -51,6 +51,9 @@ export const withIdentity = (command: string, rec: IdentityRecord): string =>
 /** The permission mode (the parent's, which a subagent inherits) in which the host reviews each call. */
 export const isAutoMode = (permissionMode: string | undefined): boolean => permissionMode === 'auto'
 
+/** MOD-321: the mode a call runs in: the live one (read off the classic hook events) when it is a non-empty string, else the spawn row's. */
+export const effectiveMode = (live: string | undefined, spawn: string | undefined): string | undefined => (typeof live === 'string' && live !== '' ? live : spawn)
+
 /** The end of the spawn notice of a worker started in auto mode. */
 export const AUTO_NOTICE = ' · auto mode: Bash runs as typed (no CHASSIS_SESSION_ID)'
 
@@ -59,6 +62,9 @@ export const LATCH_LINE = "(chassis-delegation: auto mode cannot review a rewrit
 
 /** Does the text say a hook changed the call's input after the host reviewed it? */
 export const saysInputChanged = (text: unknown): boolean => typeof text === 'string' && /changed this call's input/.test(text)
+
+/** MOD-321: does a classic failure event's `error` say the host refused the call as changed after review? */
+export const isHostRefusalError = (error: unknown): boolean => typeof error === 'string' && saysInputChanged(error)
 
 /** The words of a tool result: core's `text`, else a string `result`. */
 export const resultWords = (out: { text?: unknown; result?: unknown }): string | undefined => (typeof out.text === 'string' ? out.text : typeof out.result === 'string' ? out.result : undefined)
