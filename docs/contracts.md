@@ -309,7 +309,7 @@ The changed paths go to `<root>/.delegation/<ID>/files.txt` before the gate runs
 `outdir=` is "gate not re-run". The brief's gate line shows each gate id's command with `{worktree}` as the worktree
 path, `{outdir}` as the card's output folder and `{files}` as `<scratch>/files.txt`, and says to write that file with
 `git diff --name-only <base>` (one path a line) before running the gate, so the worker can run the command it is judged
-by (#199). A `repo=here` or `repo=none` brief fills the same placeholders by the same rules.
+by (#199). A `repo=here` or `repo=none` brief fills the same placeholders by the same rules. The brief asks for a foreground gate run because a background gate run costs a second pause (#396).
 
 **repo=none** checks only that every `files=` path exists in scope and outside forbid, that the gate (a map id or an
 allowlisted command) exits 0, and, with an output folder, the outside delta and `artefacts=`. The row says `(no repo)`.

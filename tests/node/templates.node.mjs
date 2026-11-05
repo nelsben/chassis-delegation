@@ -270,3 +270,19 @@ describe('MOD-245: the brief drops the red-test lines when red_test is none, and
     expect((await mk('none')).includes('Output folder')).toBe(false)
   })
 })
+
+describe('MOD-306: the gate line tells the worker to run the gate in the foreground, in all three modes', () => {
+  const want = 'Run it in the foreground (not run_in_background)'
+  test('the worktree gate line says so', async () => {
+    const { renderSections } = await import('../../hooks/lib/dispatch.ts')
+    expect(renderSections(read('hooks/templates/brief.md'), 'worktree').includes(want)).toBe(true)
+  })
+  test('the none gate line says so', async () => {
+    const { renderSections } = await import('../../hooks/lib/dispatch.ts')
+    expect(renderSections(read('hooks/templates/brief.md'), 'none').includes(want)).toBe(true)
+  })
+  test('the here gate line says so', async () => {
+    const { renderSections } = await import('../../hooks/lib/dispatch.ts')
+    expect(renderSections(read('hooks/templates/brief.md'), 'here').includes(want)).toBe(true)
+  })
+})
