@@ -341,6 +341,48 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(ran.some(a => / (clean|pull|worktree remove|branch -D) /.test(` ${a} `))).toBe(false)
   })
 
+  // ---- MOD-309 (#415): the worktree is already gone ------------------------------------------
+  const GONE = 'c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff'
+  const goneStore = { [`delegation.tasks.${ID}`]: [{ ...RECORD, sha: GONE }] }
+  const gone = (inOrigin: boolean): Answers =>
+    happy(argv => {
+      if (is(argv, 'git', '-C', ROOT, 'worktree', 'list', '--porcelain')) return { exitCode: 0, stdout: `worktree ${ROOT}\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n` }
+      if (is(argv, 'git', '-C', ROOT, 'log', '-1', '--format=%T%x09%s', GONE)) return { exitCode: 0, stdout: `${TREE}\tcards: ${ID} merged\n` }
+      if (is(argv, 'git', '-C', ROOT, 'merge-base', '--is-ancestor', GONE, 'origin/main')) return { exitCode: inOrigin ? 0 : 1, stdout: '' }
+      if (is(argv, 'git', '-C', ROOT, 'log', '--format=%H%x09%T%x09%s', '-n', '200', 'origin/main')) return { exitCode: 0, stdout: '1234567123456712345671234567123456712345\tbbbb\tolder\n' }
+      if (is(argv, 'git', '-C', ROOT, 'show', `${GONE}:docs/cards/${CARD_NAME}`)) return { exitCode: 0, stdout: markMerged(CARD) }
+      if (is(argv, 'git', '-C', ROOT, 'rev-parse', '--verify', '--quiet', `refs/heads/${BRANCH}`)) return { exitCode: 1, stdout: '' }
+      return undefined
+    })
+
+  test('MOD-309: --finish with the worktree gone and the sha an ancestor of origin/main records the merge and removes the root card', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store: goneStore, run: gone(true) })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    expect(out.split('\n')[0]).toBe(`${ID}: on origin/main at ${GONE.slice(0, 10)} (worktree already gone); card recorded`)
+    const ran = w.runs.slice(from).map(r => r.argv.join(' '))
+    expect(ran).toContain(`git -C ${ROOT} clean -q -f -- docs/cards/${CARD_NAME}`)
+    expect(ran.some(a => / (worktree remove|branch -D) /.test(` ${a} `))).toBe(false)
+    expect(blockOf(out)).toEqual([`git push origin --delete ${BRANCH}`])
+    expect(out.split('\n').at(-1)).toBe(`${ID} merged at ${GONE}`)
+    const recs = w.store.get(`delegation.tasks.${ID}@${ROOT}`) as Record<string, unknown>[]
+    expect(recs[0]).toMatchObject({ retired: 'merged', mergedSha: GONE })
+    const rows = (w.files.get(LEDGER) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    expect(rows.at(-1)).toMatchObject({ kind: 'merged', task: ID, sha: GONE })
+  })
+
+  test('MOD-309: --finish with the worktree gone and the sha not in origin/main returns the not-yet line and records nothing', async ($, on) => {
+    const w = world(on, { files: files(), dirs, store: goneStore, run: gone(false) })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(`${ID} --finish`))).text)
+    expect(out).toBe(`${ID}: no worktree on ${BRANCH} and ${GONE} is not in origin/main yet; nothing to merge`)
+    const ran = w.runs.slice(from).map(r => r.argv.join(' '))
+    expect(ran.some(a => / (clean|pull|worktree remove|branch -D) /.test(` ${a} `))).toBe(false)
+    expect((w.files.get(LEDGER) ?? '').includes('"merged"')).toBe(false)
+  })
+
   test('--finish happy path, no version bump: root card removed, pull, worktree and branch removed, record and ledger, the delete block; /delegation lists it under merged:', async ($, on) => {
     const w = world(on, { files: files(), dirs, store, run: landed() })
     await $.session.start(sessionStart)
