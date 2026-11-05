@@ -204,23 +204,24 @@ describe('MOD-20: verifyNative re-runs a gate red on timeouts in untouched tests
     expect(r.lines).toContain('  | Received: 1')
     expect(w.gate).toHaveLength(2)
   })
-  test('an assertion failure is not run again', async () => {
+  // MOD-307 (#394): an assertion failure is run again too; a red first run of a gate=pass claim is no longer refuted at once
+  test('an assertion failure is run again, and green on the second run holds', async () => {
     const w = world([red(ASSERTION), ok()])
     const r = await verifyNative(input(), w.io)
-    expect(r.verdict).toBe('refuted')
-    expect(claim(r.lines, 'gate')).toBe('claim gate: failed — gate=pass claimed but the gate is RED at a1b2c3d (exit 1)')
-    expect(r.lines.some(l => l.startsWith('note: the gate was re-run'))).toBe(false)
-    expect(w.gate).toHaveLength(1)
+    expect(r.verdict).toBe('consistent')
+    expect(claim(r.lines, 'gate')).toBe('claim gate: held — gate green at a1b2c3d (gate=pass confirmed on re-run (first run red: bashWrites > redirects))')
+    expect(w.gate).toHaveLength(2)
   })
-  test('a timeout in a test file the delta changed is not run again', async () => {
+  // MOD-307 (#394): the same for a timeout in a test file the delta changed, which the MOD-20 rerun never covered
+  test('a timeout in a test file the delta changed is run again, and green on the second run holds', async () => {
     const delta = 'A\tsrc/a.ts\nA\tdocs/x.md\nA\ttests/dashboard.test.ts\n'
     const w = world([red(TWO_TIMEOUTS), ok()], { delta })
     const r = await verifyNative(
       input({ briefText: `${HEADER.replace('scope=src/**,docs/', 'scope=src/**,docs/,tests/**')}\n`, report: parseReport('[[report v=1 task=T-1 subtask=main branch=agent/ops/T-1 pr=none sha=a1b2c3d gate=pass files=src/a.ts,docs/x.md,tests/dashboard.test.ts]]') }),
       w.io,
     )
-    expect(claim(r.lines, 'gate')).toBe('claim gate: failed — gate=pass claimed but the gate is RED at a1b2c3d (exit 1)')
-    expect(w.gate).toHaveLength(1)
+    expect(claim(r.lines, 'gate')).toMatch('claim gate: held — gate green at a1b2c3d (gate=pass confirmed on re-run (first run red: ')
+    expect(w.gate).toHaveLength(2)
   })
   test('a green first run is run once', async () => {
     const w = world([ok()])
@@ -300,7 +301,8 @@ describe('MOD-149: a red gate saves its full output and says when the tree chang
     const written = new Map<string, string>()
     const w = world([red(RED_OUT)], { written })
     await verifyNative(input({ outDir: OUT, attempt: 3 }), w.io)
-    expect([...written.keys()].filter(k => k.includes('verify-gate-'))).toEqual([`${OUT}/verify-gate-3.txt`])
+    // MOD-307: a red run that was run again keeps the first run's output beside the second's
+    expect([...written.keys()].filter(k => k.includes('verify-gate-'))).toEqual([`${OUT}/verify-gate-3-first.txt`, `${OUT}/verify-gate-3.txt`])
   })
   test('no outDir, or a failed write: the claim reads as before and no file is written', async () => {
     const written = new Map<string, string>()

@@ -188,7 +188,8 @@ describe('MOD-229 with MOD-230: the load words on a spawned gate', () => {
       briefText: brief, gateMap: { test: 'npm test' }, allowed: () => true, filesPath: '/f.txt',
     } satisfies NativeInput
     const r = await verifyNative(input, io)
-    expect(gated).toEqual(['npm test'])
+    // MOD-307: a red first run of a gate=pass claim is run once more on its own
+    expect(gated).toEqual(gate.ok && gate.exitCode === 1 ? ['npm test', 'npm test'] : ['npm test'])
     return r
   }
   test('a red spawned gate on a loaded machine: the words are added, the verdict as without them', async () => {
