@@ -224,6 +224,61 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(w.runs.some(r => r.argv.includes('fetch') || r.argv.includes('rebase'))).toBe(false)
   })
 
+  // MOD-312: two branches each appended a bullet to the same file; the rebase stops with a diff3 block whose base section is empty
+  const CONFLICTED = (base: string[]) => ['# Changelog', '', '<<<<<<< HEAD', '- upstream bullet', ...base, '=======', '- branch bullet', '>>>>>>> MOD-1', ''].join('\n')
+  test('MOD-312: a rebase stop where both sides only added lines keeps both, continues, and says so', async ($, on) => {
+    const w = world(on, {
+      files: { ...files(), [`${WT}/CHANGELOG.md`]: CONFLICTED(['||||||| base']) },
+      dirs,
+      store,
+      run: happy(argv => {
+        if (is(argv, 'git', '-C', WT, 'rebase', 'origin/main')) return { exitCode: 1, stdout: '', stderr: 'CONFLICT (content): Merge conflict in CHANGELOG.md' }
+        if (is(argv, 'git', '-C', WT, 'status', '--porcelain') && w.runs.some(r => r.argv.includes('rebase')) && !w.runs.some(r => r.argv.includes('--continue'))) return { exitCode: 0, stdout: 'UU CHANGELOG.md\n' }
+        return undefined
+      }),
+    })
+    await $.session.start(sessionStart)
+    const from = w.runs.length
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    const ran = w.runs.slice(from)
+    const cmds = ran.map(r => r.argv.join(' '))
+    expect(cmds.indexOf(`git -C ${WT} add -- CHANGELOG.md`)).toBeGreaterThan(cmds.indexOf(`git -C ${WT} rebase origin/main`))
+    expect(cmds.indexOf(`git -C ${WT} rebase --continue`)).toBeGreaterThan(cmds.indexOf(`git -C ${WT} add -- CHANGELOG.md`))
+    expect(cmds).not.toContain(`git -C ${WT} rebase --abort`)
+    const env = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'merge.conflictStyle', GIT_CONFIG_VALUE_0: 'diff3', GIT_EDITOR: 'true' }
+    expect(ran.find(r => r.argv.join(' ') === `git -C ${WT} rebase origin/main`)?.env).toEqual(env)
+    expect(ran.find(r => r.argv.join(' ') === `git -C ${WT} rebase --continue`)?.env).toEqual(env)
+    expect(w.files.get(`${WT}/CHANGELOG.md`)).toBe(['# Changelog', '', '- upstream bullet', '- branch bullet', ''].join('\n'))
+    const lines = out.split('\n')
+    const at = lines.findIndex(l => l.startsWith(`${ID}: rebased onto origin/main`))
+    expect(at).toBeGreaterThan(0)
+    expect(lines[at - 1]).toBe('rebase: kept both sides in CHANGELOG.md (both only added lines)')
+    const pr = w.files.get(`${ROOT}/.delegation/${ID}/pr.md`) ?? ''
+    expect(pr).toContain('## Rebase\n\nrebase: kept both sides in CHANGELOG.md (both only added lines)\n')
+    expect(pr.indexOf('## Rebase')).toBeGreaterThan(pr.indexOf('## Gates'))
+  })
+
+  test('MOD-312: a line changed on both sides is aborted as before, with the file and the reason after the conflict line', async ($, on) => {
+    const w = world(on, {
+      files: { ...files(), [`${WT}/CHANGELOG.md`]: CONFLICTED(['||||||| base', '- old bullet']) },
+      dirs,
+      store,
+      run: happy(argv => {
+        if (is(argv, 'git', '-C', WT, 'rebase', 'origin/main')) return { exitCode: 1, stdout: '', stderr: 'CONFLICT' }
+        if (is(argv, 'git', '-C', WT, 'status', '--porcelain') && w.runs.some(r => r.argv.includes('rebase'))) return { exitCode: 0, stdout: 'UU CHANGELOG.md\n' }
+        if (is(argv, 'git', '-C', WT, 'diff', '--name-only', '--diff-filter=U')) return { exitCode: 0, stdout: 'CHANGELOG.md\n' }
+        return undefined
+      }),
+    })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    expect(out).toBe(`${ID}: rebase onto origin/main conflicts in CHANGELOG.md; resolve by hand; CHANGELOG.md: a line changed on both sides`)
+    const cmds = w.runs.map(r => r.argv.join(' '))
+    expect(cmds).toContain(`git -C ${WT} rebase --abort`)
+    expect(cmds).not.toContain(`git -C ${WT} rebase --continue`)
+    expect(w.files.get(`${WT}/CHANGELOG.md`)).toBe(CONFLICTED(['||||||| base', '- old bullet']))
+  })
+
   test('a rebase conflict aborts the rebase and names the files; nothing is committed', async ($, on) => {
     const w = world(on, {
       files: files(),

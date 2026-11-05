@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`merge` resolves a rebase conflict where both sides only added lines to the same file (a diff3 block with an empty base section) by keeping the upstream lines then the branch's, stages the file and continues the rebase; the output says `rebase: kept both sides in <files> (both only added lines)` and the PR body gains a `## Rebase` section, while a block that changed a line, or added the same line on both sides, still aborts with `; <file>: <why>` after the conflict line (MOD-312).**
 - **A test-only card declares `red_test` as `none (test-only)`: the verifier holds the red claim when the delta is only tests and docs, and refutes it naming the source paths otherwise; `card` documents the value (MOD-313).**
 - **Each spawn and verdict ledger row carries the brief's hash, and a brief append (a dispatch grant or a hand-back amend) writes an amend row, so a reader can tell which brief version an attempt was judged against (MOD-308, #395).**
 

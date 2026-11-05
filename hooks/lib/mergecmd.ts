@@ -274,6 +274,55 @@ export const mainDirtyLine = (id: string, root: string, paths: readonly string[]
 export const noWorktreeLine = (id: string): string => `${id}: no worktree on agent/<domain>/${id}; nothing to merge`
 export const conflictLine = (id: string, baseRef: string, files: readonly string[]): string => `${id}: rebase onto ${baseRef} conflicts in ${files.length > 0 ? files.join(', ') : '(git named no file)'}; resolve by hand`
 
+/**
+ * MOD-312: a conflicted file in diff3 (or zdiff3) style, with every block that only added lines on both sides
+ * resolved by keeping both: the ours lines (a rebase's upstream) then the theirs lines (the branch's). A block resolves
+ * only when its base section is empty and both sides are non-empty; any other block, and a file with no block, is
+ * refused with the reason, and nothing is returned half-resolved.
+ */
+export function unionResolve(text: string): { text: string } | { why: string } {
+  const lines = text.split('\n')
+  const out: string[] = []
+  const at = (l: string, mark: string): boolean => {
+    const t = l.endsWith('\r') ? l.slice(0, -1) : l
+    return t === mark || t.startsWith(`${mark} `)
+  }
+  let blocks = 0
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] as string
+    if (!at(line, '<<<<<<<')) {
+      out.push(line)
+      continue
+    }
+    blocks++
+    const ours: string[] = []
+    const base: string[] = []
+    const theirs: string[] = []
+    let part: 'ours' | 'base' | 'theirs' = 'ours'
+    let hasBase = false
+    let closed = false
+    for (i++; i < lines.length; i++) {
+      const l = lines[i] as string
+      if (part === 'ours' && at(l, '|||||||')) {
+        part = 'base'
+        hasBase = true
+      } else if (part !== 'theirs' && at(l, '=======')) part = 'theirs'
+      else if (part === 'theirs' && at(l, '>>>>>>>')) {
+        closed = true
+        break
+      } else (part === 'ours' ? ours : part === 'base' ? base : theirs).push(l)
+    }
+    if (!closed) return { why: 'the conflict block is not closed' }
+    if (!hasBase) return { why: 'no base section (conflictStyle is not diff3)' }
+    if (base.length > 0) return { why: 'a line changed on both sides' }
+    if (ours.length === 0 || theirs.length === 0) return { why: 'one side is empty' }
+    const mine = new Set(ours.filter(l => l.trim() !== ''))
+    if (theirs.some(l => l.trim() !== '' && mine.has(l))) return { why: 'the same line was added on both sides' }
+    out.push(...ours, ...theirs)
+  }
+  return blocks === 0 ? { why: 'no conflict block in the file' } : { text: out.join('\n') }
+}
+
 /** The default branch the base names: `origin/main` → `main`. */
 export const defaultBranchOf = (baseRef: string): string => {
   const b = baseRef.trim() || 'origin/main'
@@ -411,7 +460,7 @@ export function doneChecklist(body: string): string[] {
 }
 
 /** pr.md: the Done-when checklist, the verdict line, the gate results, the trailing generated line. No absolute path survives. */
-export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[]; amends?: readonly string[]; issue?: number }): string {
+export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[]; amends?: readonly string[]; issue?: number; rebase?: string }): string {
   const done = doneChecklist(o.body)
   const text = [
     '## Done when',
@@ -427,6 +476,7 @@ export function prBody(o: { body: string; verdictLine: string; gates: readonly G
     '',
     ...(o.gates.length > 0 ? o.gates.map(g => `- ${g.id} (\`${g.label}\`): ${g.ok ? 'pass' : 'fail'}`) : ['- (the card names no gate)']),
     '',
+    ...(o.rebase ? ['## Rebase', '', o.rebase, ''] : []),
     ...(o.issue !== undefined ? [`Refs #${o.issue}`, ''] : []),
     GENERATED,
     '',
