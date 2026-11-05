@@ -333,6 +333,7 @@ import {
   coAuthorTrailer,
   commitArgv,
   conflictLine,
+  unionResolve,
   defaultBranchOf,
   dirtyWorktreeLine,
   finishLines,
@@ -3701,13 +3702,60 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   // the rebase onto the base, in the worktree, by argv
   const fetched = await run($, ['git', '-C', wt.path, 'fetch', 'origin'], { cwd: wt.path, timeoutMs: 120000 })
   if (!fetched.ok || fetched.exitCode !== 0) return `${id}: git fetch origin failed in the worktree: ${whyOf(fetched)}`
-  const rebased = await run($, ['git', '-C', wt.path, 'rebase', baseRef], { cwd: wt.path, timeoutMs: 120000 })
+  // MOD-312: diff3 style so a conflict block carries its base section; GIT_EDITOR=true so a continue never opens an editor (env, never a -c argument: the allowlist refuses global git options)
+  const rebaseEnv = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'merge.conflictStyle', GIT_CONFIG_VALUE_0: 'diff3', GIT_EDITOR: 'true' }
+  let rebased = await run($, ['git', '-C', wt.path, 'rebase', baseRef], { cwd: wt.path, env: rebaseEnv, timeoutMs: 120000 })
   if (!rebased.ok) return `${id}: git rebase ${baseRef} did not run: ${rebased.why}`
+  const unioned: string[] = []
+  const refusedFiles: string[] = []
+  // MOD-312: a stop where every UU file only had lines added on both sides keeps both and continues; a second stop repeats the step once, then aborts
+  for (let round = 0; round < 2 && rebased.ok && rebased.exitCode !== 0; round++) {
+    const porcelain = okOut(await run($, ['git', '-C', wt.path, 'status', '--porcelain'], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
+    const uu = porcelain.split('\n').filter(l => l.startsWith('UU ')).map(l => l.slice(3).trim())
+    if (uu.length === 0) break
+    const fixed: { file: string; text: string }[] = []
+    refusedFiles.length = 0
+    for (const file of uu) {
+      if (file.startsWith('"') || file.startsWith('-') || file.split('/').includes('..')) {
+        refusedFiles.push(`${file}: the path cannot be unioned`)
+        continue
+      }
+      const text = await readText($, `${wt.path}/${file}`)
+      const res = text === undefined ? { why: 'the file could not be read' } : unionResolve(text)
+      if ('why' in res) refusedFiles.push(`${file}: ${res.why}`)
+      else fixed.push({ file, text: res.text })
+    }
+    if (refusedFiles.length > 0) break
+    const addedAll = [...unioned]
+    mergeCtx = mergeCtx ? { ...mergeCtx, unioned: [...new Set([...addedAll, ...fixed.map(f => f.file)])] } : mergeCtx
+    let staged = true
+    for (const f of fixed) {
+      try {
+        await $.fs.write(`${wt.path}/${f.file}`, f.text)
+      } catch {
+        staged = false
+        break
+      }
+      const added = await run($, ['git', '-C', wt.path, 'add', '--', f.file], { cwd: wt.path, timeoutMs: 15000 })
+      if (!added.ok || added.exitCode !== 0) {
+        staged = false
+        break
+      }
+      if (!unioned.includes(f.file)) unioned.push(f.file)
+    }
+    if (!staged) break
+    rebased = await run($, ['git', '-C', wt.path, 'rebase', '--continue'], { cwd: wt.path, env: rebaseEnv, timeoutMs: 120000 })
+  }
+  if (!rebased.ok) {
+    await run($, ['git', '-C', wt.path, 'rebase', '--abort'], { cwd: wt.path, timeoutMs: 60000 })
+    return `${id}: git rebase --continue did not run: ${rebased.why}`
+  }
   if (rebased.exitCode !== 0) {
     const unmerged = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', '--diff-filter=U'], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
     await run($, ['git', '-C', wt.path, 'rebase', '--abort'], { cwd: wt.path, timeoutMs: 60000 })
-    return conflictLine(id, baseRef, unmerged.split('\n').map(l => l.trim()).filter(Boolean))
+    return conflictLine(id, baseRef, unmerged.split('\n').map(l => l.trim()).filter(Boolean)) + refusedFiles.map(r => `; ${r}`).join('')
   }
+  const rebaseLine = unioned.length > 0 ? `rebase: kept both sides in ${unioned.join(', ')} (both only added lines)` : undefined
   // the merged card, committed once; a git-ignored card is marked merged in the root checkout and committed nowhere (MOD-86)
   let committed = false
   if (ignored) {
@@ -3806,11 +3854,12 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   }
   const prRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '') || undefined
   const verdictLine = `${id} attempt ${row.attempt ?? '?'}: consistent${row.sha ? ` at ${row.sha}` : ''} · next=accept`
-  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary), ...(issueRef(card.fields.issue, prRepo) !== undefined ? { issue: issueRef(card.fields.issue, prRepo) as number } : {}) }))
+  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary), ...(rebaseLine ? { rebase: rebaseLine } : {}), ...(issueRef(card.fields.issue, prRepo) !== undefined ? { issue: issueRef(card.fields.issue, prRepo) as number } : {}) }))
   const title = card.title || `${id} merged`
   const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id })
   return [
     ...amends.map(amendMergeLine),
+    ...(rebaseLine ? [rebaseLine] : []),
     `${id}: rebased onto ${baseRef}; ${ignored ? cardKeptLocalClause(`${root}/${cardRel}`) : committed ? `card committed as merged (${cardRel})` : 'the worktree already carries the merged card; nothing committed again'}; gates green at ${short}${results.length > 0 ? ` (${results.map(r => r.id).join(', ')})` : ' (the card names no gate)'}${passed.map(c => `; merge check passed (${c})`).join('')}`,
     ...reusedLines,
     `pr body: ${prFile} · gate output: ${outDir}/merge-gates.txt${version ? ` · releases v${version}` : ''}`,

@@ -437,11 +437,13 @@ describe('MOD-75: the merge shapes, on only while /delegation merge runs', () =>
   const WT = `${R}-MOD-1`
   const BRANCH = 'agent/mod/MOD-1'
   const CARD = 'docs/cards/MOD-1-a-thing.md'
-  const MERGE: AllowConfig = { ...ALLOW, cardDir: 'docs/cards', root: R, merge: { root: R, worktree: WT, branch: BRANCH, baseRef: 'origin/main', cardRel: CARD, id: 'MOD-1' } }
+  const MERGE: AllowConfig = { ...ALLOW, cardDir: 'docs/cards', root: R, merge: { root: R, worktree: WT, branch: BRANCH, baseRef: 'origin/main', cardRel: CARD, id: 'MOD-1', unioned: ['CHANGELOG.md'] } }
   const SHAPES = [
     ['git', '-C', WT, 'fetch', 'origin'],
     ['git', '-C', WT, 'rebase', 'origin/main'],
     ['git', '-C', WT, 'rebase', '--abort'],
+    ['git', '-C', WT, 'rebase', '--continue'],
+    ['git', '-C', WT, 'add', '--', 'CHANGELOG.md'],
     ['git', '-C', WT, 'add', '--', CARD],
     ['git', '-C', WT, 'commit', '-q', '-m', 'cards: MOD-1 merged'],
     ['git', '-C', WT, 'commit', '-q', '-m', 'cards: MOD-1 merged', '-m', 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'],
@@ -479,8 +481,20 @@ describe('MOD-75: the merge shapes, on only while /delegation merge runs', () =>
       ['git', '-C', WT, 'reset', '--hard', 'origin/main'],
       ['git', '-C', R, 'worktree', 'remove', '--force', WT],
       ['git', '-C', WT, 'rebase', 'origin/other'],
+      ['git', '-C', WT, 'add', '--', 'README.md'],
+      ['git', '-C', WT, 'add', '--', 'CHANGELOG.md', 'README.md'],
+      ['git', '-C', `${R}-MOD-2`, 'rebase', '--continue'],
+      ['git', '-C', R, 'rebase', '--continue'],
+      ['git', '-C', WT, 'rebase', '--continue', '--skip'],
     ])
       no(argv, MERGE)
+  })
+  test('MOD-312: add -- <file> passes only for a file mergePrepare unioned; rebase --continue passes only inside the merge context', () => {
+    const bare: AllowConfig = { ...MERGE, merge: { ...(MERGE.merge as NonNullable<AllowConfig['merge']>), unioned: undefined } }
+    no(['git', '-C', WT, 'add', '--', 'CHANGELOG.md'], bare)
+    ok(['git', '-C', WT, 'rebase', '--continue'], bare)
+    no(['git', '-C', WT, 'rebase', '--continue'])
+    no(['git', '-C', WT, 'rebase', '--continue'], { ...MERGE, merge: undefined })
   })
   test('the remote refusal comes first while merging: gh pr list, fine outside a merge, is refused inside one', () => {
     ok(['gh', 'pr', 'list'])

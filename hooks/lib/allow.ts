@@ -389,7 +389,7 @@ export function checkGateEntry(cmd: string): Check {
 // ---- MOD-75: the merge command's local git writes -----------------------------------------
 
 /** The one task `/delegation merge` works on: the session root, its worktree and branch, the base ref, the card's repo-relative path. */
-export type MergeCtx = { root: string; worktree: string; branch: string; baseRef: string; cardRel?: string; id: string }
+export type MergeCtx = { root: string; worktree: string; branch: string; baseRef: string; cardRel?: string; id: string; /** MOD-312: the files mergePrepare has just unioned after a both-added rebase conflict; `add -- <file>` passes for these only. */ unioned?: readonly string[] }
 
 /** The subject of the merged-card commit, the only commit message that passes. */
 export const mergedSubject = (id: string): string => `cards: ${id} merged`
@@ -417,6 +417,7 @@ export const isRemoteArgv = (argv: readonly string[]): boolean => {
  * The git writes `/delegation merge` runs, exactly, and only with `allow.merge` set:
  *   git -C <worktree> fetch origin            git -C <root> fetch origin
  *   git -C <worktree> rebase <baseRef>        git -C <worktree> rebase --abort
+ *   git -C <worktree> rebase --continue       git -C <worktree> add -- <file>   (MOD-312: only after a both-added conflict was unioned; <file> is one of those)
  *   git -C <worktree> add -- <card>           git -C <worktree> commit -q -m 'cards: <ID> merged' [-m <Co-Authored-By trailer>]
  *   git -C <root> remote get-url origin       git -C <root> clean -q -f -- <card>
  *   git -C <root> pull --ff-only              git -C <root> worktree remove <worktree>
@@ -431,7 +432,8 @@ function isMergeShape(argv: readonly string[], c: MergeCtx): boolean {
   const tail = argv.slice(3).join('\u0000')
   const is = (...words: string[]) => tail === words.join('\u0000')
   if (dir === wt) {
-    if (is('fetch', 'origin') || is('rebase', c.baseRef) || is('rebase', '--abort')) return true
+    if (is('fetch', 'origin') || is('rebase', c.baseRef) || is('rebase', '--abort') || is('rebase', '--continue')) return true
+    if (c.unioned?.some(f => is('add', '--', f))) return true
     if (c.cardRel && is('add', '--', c.cardRel)) return true
     const [sub, q, m1, subj, m2, trailer, ...more] = argv.slice(3)
     if (sub === 'commit' && q === '-q' && m1 === '-m' && subj === mergedSubject(c.id) && more.length === 0) {
