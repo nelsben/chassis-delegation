@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.50 to 0.9.51
+
+No action needed. The merge union-resolves an add-only rebase conflict (both sides only added lines to one file), and `merge` keeps both sides and continues the rebase. Two repo-file keys are new: `mergeStyle` (`rebase`, `merge` or `squash`) picks the flag on the `gh pr merge` line, and `finishSkip` adds per-repo paths `merge --finish` never stops on. `merge --finish` works on a worktree that is already gone, and the dispatch base never counts as landed. A red gate on a hand-back that claimed `gate=pass` is run once more before the verdict says red. The verdict row notes live processes on the worker's worktree, and each ledger row carries the brief hash. Detail: [CHANGELOG 0.9.51](../CHANGELOG.md).
+
 ### From 0.9.49 to 0.9.50
 
 No action needed. `/delegation tree reconcile all [--confirm]` runs reconcile over every open `type:epic` issue in one report, so stale trees need one command instead of one per epic. A by-hand `dispatch verify=<sha>` no longer spends an attempt of `budget=`, and a worker resumed after one is judged on its hand-back. The verdict tool says `attempt <n> pending, no verifier running; dispatch verify=<sha>` when nothing is verifying. Detail: [CHANGELOG 0.9.50](../CHANGELOG.md).
