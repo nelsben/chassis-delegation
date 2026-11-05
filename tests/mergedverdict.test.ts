@@ -60,3 +60,39 @@ describe('MOD-292: the verdict tool reads the branch before the ledger', () => {
     expect(verdicts.map(r => r.verdict)).toEqual(['no-report', 'consistent'])
   })
 })
+
+// MOD-316: the dispatch base is never landed work. An unbuilt worktree's head equals the base, and the base is an ancestor of origin/main.
+describe('MOD-316: the dispatch base never reads merged', () => {
+  const ledgerOf = (w: { files: Map<string, string> }) =>
+    (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+  const recs = (w: { store: Map<string, unknown> }) => (w.store.get(`delegation.tasks.T-4@${ROOT}`) ?? []) as Record<string, unknown>[]
+
+  test('a dispatched task with no commits and a pending attempt: the verdict tool does not answer merged', { options: OPTS }, async ($, on) => {
+    merged.on = true
+    const w = world(on as never, { files: { [BRIEF]: HEADER + '\nbody' }, dirs: { [WT]: [] }, run: repo, agentId: 'agent-4', store: { [`delegation.baseSha.${BRIEF}`]: HEAD } })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    expect(recs(w)[0]?.baseSha).toBe(HEAD)
+    const out = resultText(await $.tool.call({ tool: 'mcp__chassis-delegation__verdict', task: 'T-4', waitSeconds: 0 } as never))
+    expect(out).not.toContain('merged at')
+    expect(ledgerOf(w).filter(r => r.kind === 'accept')).toHaveLength(0)
+    expect(recs(w)[0]?.retired).toBeUndefined()
+    merged.on = false
+  })
+
+  test('an attempt retired as merged on its own base: the next hand-back is verified and the marker is cleared', { options: OPTS }, async ($, on) => {
+    merged.on = true
+    const first = { task: 'T-4', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', verdict: 'no-report', at: 1, sha: HEAD, baseSha: HEAD, mergedSha: HEAD, retired: 'merged', retireTriedAt: 1, retireCheckedAt: 1 }
+    const w = world(on as never, { files: { [BRIEF]: HEADER + '\nbody' }, dirs: { [WT]: [] }, run: repo, agentId: 'agent-4', store: { 'delegation.tasks.T-4': [first] } })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT, undefined, 'turn-final'))
+    const seen = [...w.appended.map(a => a.text), ...ledgerOf(w).map(r => JSON.stringify(r))].join('\n')
+    expect(seen).not.toContain('hand-back after the task closed (merged)')
+    expect(ledgerOf(w).some(r => r.attempt === 2 && typeof r.verdict === 'string')).toBe(true)
+    expect(recs(w)[0]?.retired).toBeUndefined()
+    expect(recs(w)[0]?.mergedSha).toBeUndefined()
+    merged.on = false
+  })
+})
+

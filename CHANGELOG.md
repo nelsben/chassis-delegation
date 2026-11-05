@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- **The verdict tool, the retire check and `merge --finish` never count the dispatch base as landed: an unbuilt worktree whose head is still the base is no longer answered `merged at <sha>`, no accept row is written for it, and a `merged` marker already set on the base is cleared at the next hand-back, which is then verified; the attempt record gains `baseSha` and `mergedSha` (MOD-316).**
+
 - **A red gate on a hand-back that claimed `gate=pass` is run once more on its own before the verdict says red: green on the second run holds with `gate=pass confirmed on re-run`, red is refuted as before with a `note:`, and the first run's output is kept beside the second's as `verify-gate-<attempt>-first.txt` (MOD-307, #394).**
 
 - **A repo=here delta also subtracts the paths inside another in-flight card's `scope=`, not only the files it has reported: a sibling's unreported edit no longer fails a resume on scope; the ignored line names such a group with `(scope)`, and a path in the worker's own scope or write log is kept (MOD-310, #399 delta half).**

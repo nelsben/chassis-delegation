@@ -118,6 +118,10 @@ export type AttemptRecord = {
   /** A `/dispatch --replay` run of an already-merged card, from `base`. */
   replay?: true
   base?: string
+  /** MOD-316: the full sha of origin/<default> the worktree was cut from at dispatch; a head equal to it is an unbuilt worktree, never landed work. */
+  baseSha?: string
+  /** MOD-316: the sha the `merged` retire marker was set on (the merge finish, or the verdict tool's merged check). */
+  mergedSha?: string
   /** MOD-4: why this task's owed row is gone: its work reached the default branch (`merged`), or the brain closed it by hand (`accepted`). */
   retired?: 'merged' | 'accepted'
   /** MOD-4: `/delegation accept <id> [note]` — accepted by hand, with the note. */

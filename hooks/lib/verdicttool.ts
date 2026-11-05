@@ -108,3 +108,15 @@ export function verdictFailLine(task: string, error: string, row?: { verdict: st
   const judged = row ? `; verdict ${row.verdict}${row.next !== undefined ? ` next=${row.next}` : ''}` : ''
   return `${task}: verdict failed: ${first}${judged}; the band line holds the row, or call verdict again`
 }
+
+/**
+ * MOD-316: does `sha` count as landed work? Never when it is the dispatch base (`baseSha`): a head equal to the base is an
+ * unbuilt worktree, and it is trivially an ancestor of origin/<default>. A short sha is compared as a prefix. No base
+ * recorded: the old rule stands (true).
+ */
+export function landedSha(sha: string, baseSha: string | undefined): boolean {
+  if (baseSha === undefined || baseSha === '' || sha === '') return true
+  const a = sha.toLowerCase()
+  const b = baseSha.toLowerCase()
+  return !(a.startsWith(b) || b.startsWith(a))
+}
