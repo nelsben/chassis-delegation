@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **`/delegation debrief ingest` names the heading it needs when a note lacks it (`## For the mod owner`), offers a near heading that mentions the mod, and says when the heading has no bullets; the notes prompt row now names the heading up front (MOD-311, #391).**
 - **`/delegation setup` holds the gate check on the repo's `gateMap` when it has no `package.json` test script: the check reads `a gate: <first id>: <command> (+<n> more)` instead of `no test command found`, and phase 2 writes no `gateMap` line for it (MOD-315).**
 - **The brief tells the worker to run its gate in the foreground, in all three repo modes, because a background gate run costs a second pause (MOD-306, #396).**
 - **`tree reconcile all` walks the epics newest first and counts the `treeImportBatch` read cap per epic, so one run reaches every epic (a child past the cap reads `not read: run /delegation tree reconcile <epic>`), paces its views, and on a repo with no `type:epic` label points at `/delegation setup` (MOD-304).**

@@ -593,7 +593,7 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     await $.turn.complete(mainTurn())
     await w.clock.advance(20 * MIN)
     expect(w.spawns).toHaveLength(0)
-    expect([...w.appended.map(a => a.text), ...w.logs].join('\n')).toContain('write the review note, then /delegation debrief ingest <note.md>')
+    expect([...w.appended.map(a => a.text), ...w.logs].join('\n')).toContain('write the review note with a "## For the mod owner" heading, one bullet per finding, then /delegation debrief ingest <note.md>')
     await set($, 'debriefMode', 'transcript')
     await $.turn.complete(mainTurn())
     await w.clock.advance(20 * MIN)

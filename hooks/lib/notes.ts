@@ -10,7 +10,11 @@ export const NOTE_DEFAULT_SURFACE = 'debrief'
 
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/
 
-/** The lines under the first heading (any level) that matches /for the mod owner/i, up to the next heading of the same or a higher level. */
+/** MOD-311: the heading the lead's review note must carry; the prompt row and the refusal both name it. */
+export const OWNER_HEADING = 'For the mod owner'
+const OWNER_RE = new RegExp(OWNER_HEADING.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+
+/** The lines under the first heading (any level) that matches OWNER_HEADING (case-insensitive), up to the next heading of the same or a higher level. */
 export function ownerSection(markdown: string): string[] {
   const lines = markdown.split(/\r?\n/)
   let level = 0
@@ -20,7 +24,7 @@ export function ownerSection(markdown: string): string[] {
     if (/^\s*(```|~~~)/.test(line)) fence = !fence
     const h = fence ? null : HEADING.exec(line)
     if (level === 0) {
-      if (h && /for the mod owner/i.test(h[2] ?? '')) level = (h[1] ?? '').length
+      if (h && OWNER_RE.test(h[2] ?? '')) level = (h[1] ?? '').length
       continue
     }
     if (h && (h[1] ?? '').length <= level) break
@@ -88,11 +92,35 @@ export function noteFindings(markdown: string, source: string): (ModFinding & { 
 
 /** The one row a clean stop appends in notes mode, once per round. */
 export const notesPromptRow = (verdicts: number): string =>
-  `a round of tasks closed (${verdicts} ${verdicts === 1 ? 'verdict' : 'verdicts'}): write the review note, then /delegation debrief ingest <note.md>`
+  `a round of tasks closed (${verdicts} ${verdicts === 1 ? 'verdict' : 'verdicts'}): write the review note with a "## ${OWNER_HEADING}" heading, one bullet per finding, then /delegation debrief ingest <note.md>`
 
 /** The file name of an ingested note's findings: `<YYYY-MM-DD>-note-<stem>.findings.json`. */
 export const noteFindingsName = (date: string, notePath: string): string => {
   const base = notePath.slice(notePath.lastIndexOf('/') + 1)
   const stem = base.replace(/\.md$/i, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'note'
   return `${date}-note-${stem}.findings.json`
+}
+
+/** The text of every heading (any level) outside fenced code. */
+function headingTexts(markdown: string): string[] {
+  const out: string[] = []
+  let fence = false
+  for (const line of markdown.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) fence = !fence
+    const h = fence ? null : HEADING.exec(line)
+    if (h) out.push(h[2] ?? '')
+  }
+  return out
+}
+
+/** MOD-311: why a note yields no findings, or undefined when it has the heading with at least one top-level bullet. */
+export function ingestRefusal(markdown: string, name: string, path: string): string | undefined {
+  const heads = headingTexts(markdown)
+  if (!heads.some(t => OWNER_RE.test(t))) {
+    const first = `debrief ingest: ${name} has no "${OWNER_HEADING}" heading (read ${path}); add \`## ${OWNER_HEADING}\` with one bullet per finding, then run it again`
+    const near = heads.find(t => /\bmod\b/i.test(t))
+    return near === undefined ? first : `${first}\nnearest heading: "${near}"; rename it to "${OWNER_HEADING}" to ingest it`
+  }
+  if (bullets(ownerSection(markdown)).length === 0) return `debrief ingest: ${name} has a "${OWNER_HEADING}" heading with no bullets; one bullet per finding`
+  return undefined
 }
