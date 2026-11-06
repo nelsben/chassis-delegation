@@ -120,3 +120,13 @@ export function landedSha(sha: string, baseSha: string | undefined): boolean {
   const b = baseSha.toLowerCase()
   return !(a.startsWith(b) || b.startsWith(a))
 }
+
+/**
+ * MOD-324: did a commit (committer time in seconds) predate the attempt's spawn (ms)? Such a commit can never be that
+ * attempt's work. Committer time has second resolution, so a commit in the spawn's own second is not judged older (false):
+ * it may have come after the spawn. A non-finite input is false.
+ */
+export function predatesSpawn(commitSecs: number, atMs: number): boolean {
+  if (!Number.isFinite(commitSecs) || !Number.isFinite(atMs)) return false
+  return (commitSecs + 1) * 1000 <= atMs
+}
