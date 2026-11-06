@@ -45,6 +45,25 @@ export type PairStat = {
 
 const USD_KINDS = ['spawn', 'resume', 'review']
 
+/**
+ * MOD-325: one row per (kind, subtask, attempt): an earlier row that shares all three with a later one is dropped, so a re-verify of the
+ * same attempt counts its spend once. A subtask absent reads 'main'; a row without a numeric attempt is kept. Kept rows keep the order of
+ * their last appearance.
+ */
+export function lastPerAttempt(rows: readonly LedgerRowLike[]): LedgerRowLike[] {
+  const keyOf = (r: LedgerRowLike): string | undefined =>
+    typeof r.attempt === 'number' && Number.isFinite(r.attempt) ? `${String(r.kind)}\u0000${typeof r.subtask === 'string' && r.subtask !== '' ? r.subtask : 'main'}\u0000${r.attempt}` : undefined
+  const last = new Map<string, number>()
+  rows.forEach((r, i) => {
+    const k = keyOf(r)
+    if (k !== undefined) last.set(k, i)
+  })
+  return rows.filter((r, i) => {
+    const k = keyOf(r)
+    return k === undefined || last.get(k) === i
+  })
+}
+
 /** One card as `pairHistory` counts it (MOD-275: the same reading, card by card). */
 export type CardOutcome = {
   task: string
@@ -89,7 +108,7 @@ export function cardOutcomes(rows: readonly LedgerRowLike[], cls?: string, class
     const judged = verdicts.filter(r => r.verdict === 'refuted' || r.verdict === 'no-report' || r.verdict === 'unverified')
     const defect = (r: LedgerRowLike): boolean => r.verdict !== 'refuted' || heldClaim({ verdict: 'refuted', firstFailed: typeof r.firstFailed === 'string' ? r.firstFailed : undefined }) !== undefined
     const briefDefect = !confirmed && judged.length > 0 && judged.every(defect)
-    const usdRows = rs.filter(r => USD_KINDS.includes(r.kind as string) && typeof r.usd === 'number' && Number.isFinite(r.usd) && r.usdApprox !== true)
+    const usdRows = lastPerAttempt(rs.filter(r => USD_KINDS.includes(r.kind as string) && typeof r.usd === 'number' && Number.isFinite(r.usd) && r.usdApprox !== true))
     out.push({
       task,
       alias: first.alias as string,
