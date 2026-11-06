@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.52 to 0.9.53
+
+No action needed. A task whose attempt predates 0.9.51 and was wrongly marked merged is cleared at its next hand-back, spend history no longer double-counts a re-verified attempt, and a repo whose workers pause on long runs may set `pauseCap` in its repo file. Detail: [CHANGELOG 0.9.53](../CHANGELOG.md).
+
 ### From 0.9.51 to 0.9.52
 
 No action needed. A worker's Bash now runs as typed whenever the session is in auto mode at the time of the call, not only when it was in auto mode at spawn. A host refusal the hooks never saw still latches the worker, and an uncommitted hand-back then reads `blocked by environment`. Detail: [CHANGELOG 0.9.52](../CHANGELOG.md).
