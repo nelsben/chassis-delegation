@@ -230,7 +230,7 @@ import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, do
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
-import { landedSha, mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
+import { landedSha, predatesSpawn, mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
@@ -3318,20 +3318,30 @@ const splitLabel = (label: string): { task: string; subtask: string } => {
   return { task, subtask }
 }
 
+/** MOD-324: does the sha's committer time predate the spawn `at` (ms)? A git read that fails says false. */
+async function commitPredates($: Host, root: string, sha: string, at: number): Promise<boolean> {
+  const r = await run($, ['git', '-C', root, 'log', '-1', '--format=%ct', sha], { cwd: root, timeoutMs: 10000 })
+  if (!r.ok || r.exitCode !== 0) return false
+  return predatesSpawn(/^\d+$/.test(r.stdout.trim()) ? Number(r.stdout.trim()) : NaN, at)
+}
+
 /**
  * What read-only git calls say of a task's last attempt: is its sha on origin/main, is its patch already on the session's
  * current branch (MOD-101, #158: work lands on a long-lived branch by cherry-pick, so its sha never reaches origin/main),
  * does its card read merged or landed (on origin/main, else in the working tree). undefined: could not say.
  */
-async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string, cardOnly = false, baseSha?: string): Promise<{ ancestor?: boolean; picked?: boolean; card?: string }> {
+async function retireProbe($: Host, task: string, sha: string | undefined, repo?: string, cardOnly = false, baseSha?: string, at?: number): Promise<{ ancestor?: boolean; picked?: boolean; card?: string }> {
   const sessionHome = await $.session.root()
   // MOD-44: a task for another local repo is looked for in that repo's origin/main; its card is not read (it sits under a folder the allowlist does not name)
   const other = repo !== undefined && repo.replace(/\/+$/, '') !== sessionHome.replace(/\/+$/, '')
   const root = other ? (repo as string).replace(/\/+$/, '') : sessionHome
   const out: { ancestor?: boolean; picked?: boolean; card?: string } = {}
   if (!cardOnly && sha !== undefined && isSha(sha)) {
+    // MOD-324: no base recorded (an attempt spawned before 0.9.51): a commit older than the spawn is not this attempt's work
+    let older = false
+    if (baseSha === undefined && at !== undefined) older = await commitPredates($, root, sha, at)
     // MOD-316: the dispatch base is an ancestor of origin/main trivially: it is no landing, so the ancestry read is skipped for it
-    if (landedSha(sha, baseSha)) {
+    if (!older && landedSha(sha, baseSha)) {
       const r = await run($, ['git', '-C', root, 'merge-base', '--is-ancestor', sha, 'origin/main'], { cwd: root, timeoutMs: 10000 })
       if (r.ok && r.exitCode === 0) return { ancestor: true }
       if (r.ok && r.exitCode === 1) out.ancestor = false
@@ -3339,7 +3349,7 @@ async function retireProbe($: Host, task: string, sha: string | undefined, repo?
     // MOD-101: git cherry's answer, spelled as a log the allowlist knows: `=` marks a commit of the sha's side with a patch-equal commit on HEAD, `>` one without.
     // Landed means at least one `=` and no `>`; an empty list proves nothing (and, for a consistent verdict only, as the ancestry check is)
     // the session's own branch only: a task for another local repo is looked for in that repo's origin/main alone (MOD-97)
-    const c = other ? undefined : await run($, ['git', '-C', root, 'log', '--cherry-mark', '--right-only', '--no-merges', '--format=%m%H', `HEAD...${sha}`], { cwd: root, timeoutMs: 10000 })
+    const c = other || older ? undefined : await run($, ['git', '-C', root, 'log', '--cherry-mark', '--right-only', '--no-merges', '--format=%m%H', `HEAD...${sha}`], { cwd: root, timeoutMs: 10000 })
     if (c?.ok && c.exitCode === 0) {
       const marks = c.stdout.split('\n').map(l => l.trim()[0]).filter(Boolean)
       if (marks.includes('=') && !marks.includes('>')) return { ...out, picked: true }
@@ -3391,7 +3401,7 @@ async function retireCheck($: Host, label: string, t: number, force = false, car
       return { retired: true, checked: true }
     }
     if (!force && !retireDue(records, subtask, t)) return { retired: false, checked: last.retireCheckedAt !== undefined }
-    const patch = retirePatch(await retireProbe($, task, last.sha, last.root, cardOnly, last.baseSha), t)
+    const patch = retirePatch(await retireProbe($, task, last.sha, last.root, cardOnly, last.baseSha, last.at), t)
     // a card-only check (a non-consistent verdict) records nothing unless the card reads merged: it must not hold off the sha check of the 15-minute retire sweep
     if (cardOnly && patch.retired === undefined) return { retired: false, checked: last.retireCheckedAt !== undefined }
     await saveAttempts($, ref, patchRecord(await loadAttemptsRaw($, ref), subtask, last.attempt, patch))
@@ -6941,6 +6951,19 @@ async function closedReason($: Host, spawn: SpawnRecord, report: ReturnType<type
         await saveAttempts($, spawn, patchRecord(await loadAttemptsRaw($, spawn), spawn.subtask, last.attempt, { retired: undefined, retireTriedAt: undefined, retireCheckedAt: undefined, mergedSha: undefined }, lane))
         debug($, `${taskLabel(spawn.task, spawn.subtask)}: retire marker cleared: ${s.slice(0, 7)} is the dispatch base, not the task's commit`)
         return undefined
+      }
+    }
+    // MOD-324: no baseSha (spawned before 0.9.51): a commit older than the attempt's spawn is no merge either
+    if (last?.retired === 'merged' && last.baseSha === undefined) {
+      const s = last.mergedSha ?? last.sha
+      if (s !== undefined && isSha(s)) {
+        const root = ((last.root ?? '') !== '' ? (last.root as string) : await $.session.root()).replace(/\/+$/, '')
+        const r = await run($, ['git', '-C', root, 'log', '-1', '--format=%ct', s], { cwd: root, timeoutMs: 10000 })
+        if (r.ok && r.exitCode === 0 && predatesSpawn(/^\d+$/.test(r.stdout.trim()) ? Number(r.stdout.trim()) : NaN, last.at)) {
+          await saveAttempts($, spawn, patchRecord(await loadAttemptsRaw($, spawn), spawn.subtask, last.attempt, { retired: undefined, retireTriedAt: undefined, retireCheckedAt: undefined, mergedSha: undefined }, lane))
+          debug($, `${taskLabel(spawn.task, spawn.subtask)}: retire marker cleared: ${s.slice(0, 7)} predates attempt ${last.attempt}'s spawn, not the task's commit`)
+          return undefined
+        }
       }
     }
     if (last?.retired) return 'merged'
