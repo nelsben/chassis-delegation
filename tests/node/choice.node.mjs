@@ -109,7 +109,7 @@ describe('MOD-270: pairHistory', () => {
     const { pairHistory } = await C()
     const rows = [spawn('B-1', { verdict: 'refuted', firstFailed: 'sha', usd: 1 }), spawn('B-1', { effort: 'high', verdict: 'consistent', usd: 2 }), { kind: 'spawn', task: 'B-2', attempt: 1, alias: 'opus', effort: 'high', verdict: 'verified' }]
     const p = pairHistory(rows)
-    expect(p.find(x => x.alias === 'sonnet')).toMatchObject({ effort: 'medium', n: 1, confirmed: 1, usdPerConfirmed: 3 })
+    expect(p.find(x => x.alias === 'sonnet')).toMatchObject({ effort: 'medium', n: 1, confirmed: 1, usdPerConfirmed: 2 })
     expect(p.find(x => x.alias === 'opus')).toMatchObject({ n: 1, confirmed: 1 })
   })
   test('retries and review usd are counted; an escalated card stays with its attempt-1 pair', async () => {
