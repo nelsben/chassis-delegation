@@ -15,7 +15,7 @@ import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from 
 import { addBounded, setBounded, MAP_CAPS } from './lib/cut'
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { addDrive, callKind, driveCall, driveLines, driveOutput, driveSpeaks, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
-import { extractPause, pauseCapLine, pauseRow, PAUSE_CAP, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
+import { extractPause, pauseCapLine, pauseRow, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
 import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
 import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
 import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
@@ -704,6 +704,8 @@ type Config = {
   issueRepoOwn: boolean
   /** MOD-319: the `gh pr merge` flag the merge block prints. */
   mergeStyle: MergeStyle
+  /** MOD-326: pauses per attempt before the next is charged. */
+  pauseCap: number
   /** MOD-319: extra paths `merge --finish` never stops on. */
   finishSkip: string[]
   /** MOD-15: a verdict row is followed by a `$.prompt.submit`, a turn of the brain's own. MOD-64: off unless the option is true. */
@@ -826,6 +828,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       issueRepo: issues.repo,
       issueRepoOwn: issues.own,
       mergeStyle: eff.mergeStyle,
+      pauseCap: eff.pauseCap,
       finishSkip: eff.finishSkip,
       wakeOnVerdict: o.wakeOnVerdict === true,
       landNudge: o.landNudge !== false,
@@ -7015,13 +7018,13 @@ async function pausedHandback($: Host, spawn: SpawnRecord, pause: Pause, n: numb
   const label = taskLabel(spawn.task, spawn.subtask)
   const t = await now($)
   const since = spawn.agentId ? waitStates.get(spawn.agentId)?.since : undefined
-  const full = pauseRow({ task: label, attempt: spawn.attempt, budget: spawn.budget, n, reason: pause.reason, waited: since !== undefined ? t - since : 0 })
-  const quiet = `chassis-delegation: ${label} attempt ${spawn.attempt}/${spawn.budget} paused (${n}/${PAUSE_CAP - 1}) · ${waitText(label, since !== undefined ? t - since : 0)} · next=resume — ${pause.reason}`
+  const full = pauseRow({ task: label, attempt: spawn.attempt, budget: spawn.budget, n, reason: pause.reason, waited: since !== undefined ? t - since : 0, cap: cfg.pauseCap })
+  const quiet = `chassis-delegation: ${label} attempt ${spawn.attempt}/${spawn.budget} paused (${n}/${cfg.pauseCap - 1}) · ${waitText(label, since !== undefined ? t - since : 0)} · next=resume — ${pause.reason}`
   await storeSet($, K.spawn(spawn.key), { ...((await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn), verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: full, verdictLine: quiet, pauses: n, pausedAs: textKey(text) })
   await setLastVerdict($, { task: label, attempt: spawn.attempt, verdict: 'paused', next: 'resume', at: t, text: full })
   await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'paused', line: quiet, at: t })
   await appendLedger($, { kind: 'pause', task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, pause: n, reason: pause.reason, at: t, sessionId: await sessionIdOf($) })
-  debug($, `${label}: attempt ${spawn.attempt} paused (${n}/${PAUSE_CAP - 1}): ${pause.reason}`)
+  debug($, `${label}: attempt ${spawn.attempt} paused (${n}/${cfg.pauseCap - 1}): ${pause.reason}`)
   return { full, line: quiet }
 }
 
@@ -7083,8 +7086,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   let pauseCharge: string | undefined
   if (pause) {
     const n = (spawn.pauses ?? 0) + 1
-    if (n < PAUSE_CAP) return pausedHandback($, spawn, pause, n, text)
-    pauseCharge = pauseCapLine(n, spawn.attempt)
+    if (n < cfg.pauseCap) return pausedHandback($, spawn, pause, n, text)
+    pauseCharge = pauseCapLine(n, spawn.attempt, cfg.pauseCap)
   }
   const cardless = report !== undefined && isCardless(spawn)
   if (!block) verdict = 'no-report'

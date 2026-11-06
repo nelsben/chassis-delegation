@@ -78,9 +78,9 @@ export function textKey(text: string): string {
 }
 
 /** The row for a recorded pause (the long form; the wait state's text rides under it). */
-export const pauseRow = (p: { task: string; attempt: number; budget: number; n: number; reason: string; waited: number }): string =>
-  `chassis-delegation: verdict=paused task=${p.task} attempt=${p.attempt}/${p.budget} pause=${p.n}/${PAUSE_CAP - 1} next=resume — ${p.reason}\n${waitText(p.task, p.waited)}`
+export const pauseRow = (p: { task: string; attempt: number; budget: number; n: number; reason: string; waited: number; cap?: number }): string =>
+  `chassis-delegation: verdict=paused task=${p.task} attempt=${p.attempt}/${p.budget} pause=${p.n}/${(p.cap ?? PAUSE_CAP) - 1} next=resume — ${p.reason}\n${waitText(p.task, p.waited)}`
 
 /** The row's line for a pause that reached the cap and is charged as an attempt. */
-export const pauseCapLine = (n: number, attempt: number): string =>
-  `pause cap: pause ${n} in attempt ${attempt} is charged as an attempt (a worker may pause ${PAUSE_CAP - 1} times per attempt); hand back a report, or stop`
+export const pauseCapLine = (n: number, attempt: number, cap: number = PAUSE_CAP): string =>
+  `pause cap: pause ${n} in attempt ${attempt} is charged as an attempt (a worker may pause ${cap - 1} times per attempt); hand back a report, or stop`

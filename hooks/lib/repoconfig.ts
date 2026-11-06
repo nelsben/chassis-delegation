@@ -116,6 +116,8 @@ export type RepoConfig = {
   issueRepo?: string
   /** MOD-319: the flag the merge block's `gh pr merge` line carries (rebase | merge | squash); default rebase. */
   mergeStyle?: MergeStyle
+  /** MOD-326: pauses per attempt before the next is charged as an attempt (a whole number from 2 to 20); default 3. */
+  pauseCap?: number
   /** MOD-319: extra paths `merge --finish` never stops on, matched like FINISH_SKIP. */
   finishSkip?: string[]
   /** MOD-21: a read-only reviewer after a consistent verdict (off | on | on-frontier); default on-frontier. */
@@ -142,7 +144,7 @@ export type RepoConfig = {
 export const MERGE_STYLES = ['rebase', 'merge', 'squash'] as const
 export type MergeStyle = (typeof MERGE_STYLES)[number]
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'pauseCap', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -172,6 +174,7 @@ export type Effective = {
   delegateOnly: DelegateOnly
   issueRepo: string
   mergeStyle: MergeStyle
+  pauseCap: number
   finishSkip: string[]
   review: ReviewMode
   /** '' = one tier below the worker's. */
@@ -506,6 +509,10 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
           else errors.push(`issueRepo${where}: ${JSON.stringify(v)} is not owner/name (ignored)`)
         } else if (strict) config.issueRepo = '' // MOD-18: the repo file's own "" turns posting off; in /config an empty string is "unset"
         break
+      case 'pauseCap':
+        if (typeof v === 'number' && Number.isInteger(v) && v >= 2 && v <= 20) config.pauseCap = v
+        else errors.push(`pauseCap${where}: needs a whole number from 2 to 20 (ignored)`)
+        break
       case 'mergeStyle':
         if (typeof v === 'string' && (MERGE_STYLES as readonly string[]).includes(v.trim())) config.mergeStyle = v.trim() as MergeStyle
         else errors.push(`mergeStyle${where}: needs rebase, merge or squash (ignored)`)
@@ -618,6 +625,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     delegateOnly: pick('delegateOnly', 'warn'),
     issueRepo: pick('issueRepo', ''),
     mergeStyle: pick('mergeStyle', 'rebase'),
+    pauseCap: pick('pauseCap', 3),
     finishSkip: [...pick('finishSkip', [])],
     review: pick('review', 'on-frontier'),
     reviewTier: settings.reviewTier ?? user.reviewTier ?? repo.reviewTier ?? '',
