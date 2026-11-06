@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.53 — 2026-11-06
+
+### Added
+
+- **A repo-file key `pauseCap` (a whole number from 2 to 20, default 3) sets how many pauses an attempt may take before the next is charged as an attempt, so repos whose proof runs outlast two pauses can raise it; any other value is named in the config errors and 3 is used (MOD-326).**
+
+### Fixed
+
+- **A `merged` mark on an attempt that recorded no dispatch base (spawned before 0.9.51) is cleared when its commit's committer time predates the attempt's spawn, and the retire check skips such a commit, so a still-running task is no longer treated as merged and its hand-back is verified (MOD-324).**
+- **Spend in the pair history and the adaptive suggestion counts one row per kind, subtask and attempt: a refuted verdict followed by a consistent re-verify of the same attempt no longer doubles that attempt's usd (MOD-325).**
+
 ## 0.9.52 — 2026-11-05
 
 ### Fixed
