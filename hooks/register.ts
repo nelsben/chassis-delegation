@@ -9219,8 +9219,12 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
   // MOD-188: the open cards under the same parent; the ledger decides "done" (the card status lags)
   let siblings: { id: string; scope: readonly string[] }[] = []
   const parentIn = Number(input.parent)
-  if (input.parent !== undefined && Number.isInteger(parentIn) && parentIn >= 1) {
-    const done = doneTasks((await ledgerAt($, root)).rows)
+  const hasParent = input.parent !== undefined && Number.isInteger(parentIn) && parentIn >= 1
+  // MOD-328: the board (id, status, issue) and the done set, read when the card has a parent or names blockedBy
+  const board: { id: string; status?: string; issue?: number }[] = []
+  let done: Set<string> = new Set()
+  if (hasParent || input.blockedBy !== undefined) {
+    done = doneTasks((await ledgerAt($, root)).rows)
     const found: SiblingCard[] = []
     // MOD-244: through the index; the session's own board is read too when the target's folder differs, as cardNames above does
     const folders = target ? [...new Set([dir, cardDirPath(root, cfg.cardDir)])] : [dir]
@@ -9231,12 +9235,18 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       } catch {
         // an unlistable folder holds no sibling
       }
-      for (const { card: sib } of indexed) found.push({ id: sib.id, status: sib.status, parent: sib.fields.parent, scope: sib.scope })
+      for (const { card: sib } of indexed) {
+        found.push({ id: sib.id, status: sib.status, parent: sib.fields.parent, scope: sib.scope })
+        const ref = issueRef(sib.fields.issue)
+        board.push({ id: sib.id, ...(sib.status !== undefined ? { status: sib.status } : {}), ...(ref !== undefined ? { issue: ref } : {}) })
+      }
     }
-    siblings = openSiblings(found, parentIn, done)
+    if (hasParent) siblings = openSiblings(found, parentIn, done)
   }
   const made = cardsFromFields(input, {
     siblings,
+    board,
+    done,
     domains: target ? target.domains : cfg.domains,
     gateIds: Object.keys(target ? target.gateMap : cfg.gateMap).filter(k => k !== EMPTY_GATE_KEY),
     refusedGates: target ? target.refusedGates : cfg.refusedGates,
@@ -9272,17 +9282,24 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     if (target) await storeSet($, K.taskRepo(c.id, await cardRepo($)), target.path)
   }
   for (const m of matchesOf) wrote.push(...m.map(p => plannedLine(p)))
+  for (const c of made) wrote.push(...(c.notes ?? []))
   // MOD-22: dispatch reads the mode from the card (`repo:`); here is passed only when the card says repo: here
   const dispatchArgs = (c: NewCard, dryRun: boolean): DispatchArgs => ({ id: c.id, dryRun, base: 'origin/main', ...(c.repo === 'here' ? { here: true as const } : {}), ...(target ? { repo: target.path } : {}) })
+  // MOD-328: a blocked card is a card file only: no dry run, no dispatch, even with dispatch: true; each lane is judged on its own
+  const blockedText = (c: NewCard): string => `${c.id} · blocked by ${(c.blockers ?? []).join(', ')} · no brief or worktree yet; merge --finish of its last blocker releases it`
   if (input.dispatch === true) {
-    if (made.length === 1) return [...wrote, await runDispatch($, dispatchArgs(made[0] as NewCard, false))].join('\n')
+    if (made.length === 1) return [...wrote, (made[0] as NewCard).blockers ? blockedText(made[0] as NewCard) : await runDispatch($, dispatchArgs(made[0] as NewCard, false))].join('\n')
     const results: string[] = []
-    for (const c of made) results.push(`--- ${c.id} ---`, await runDispatch($, dispatchArgs(c, false)))
+    for (const c of made) results.push(`--- ${c.id} ---`, c.blockers ? blockedText(c) : await runDispatch($, dispatchArgs(c, false)))
     return [...wrote, ...results].join('\n')
   }
   const shown: string[] = []
   const shownIds: string[] = []
   for (const c of made) {
+    if (c.blockers) {
+      shown.push(blockedText(c))
+      continue
+    }
     const dry = await runDispatch($, dispatchArgs(c, true))
     const lines = dry.split('\n')
     const header = lines.at(-1) ?? ''

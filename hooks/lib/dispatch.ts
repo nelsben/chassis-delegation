@@ -3,6 +3,7 @@
 // worker; the brain makes the Agent call the block names, and the spawn hook
 // shapes and records it like any other. Pure: no `$`.
 import { isBaseRef, isSha, isTaskId } from './allow'
+import { blockedLine } from './blocked'
 import { isSpacedPath, listForHeader, parseBudget, parseHeader } from './brief'
 import { worktreePath as worktreePathOf } from './paths'
 import { DEFAULT_AGENT_TYPES, DEFAULT_DOMAINS } from './repoconfig'
@@ -25,6 +26,8 @@ export type Card = {
   forbid: string[]
   /** MOD-196: the parent issue's scope block (`parentScope: [hooks/**]`), written into the brief header as parent_scope=. */
   parentScope: string[]
+  /** MOD-328: the ids a `status: blocked` card waits on (`blocked_by: [MOD-3]`). */
+  blockedBy: string[]
   budget?: string
   /** GH-106: the card's `spend:` ceiling in dollars, as written. */
   spend?: string
@@ -176,6 +179,7 @@ export function parseCard(text: string): Card | { error: string } {
     scope: asList(f.scope),
     forbid: asList(f.forbid),
     parentScope: asList(f.parentScope),
+    blockedBy: asList(f.blocked_by),
     budget: asText(f.budget).trim() || undefined,
     spend: asText(f.spend).trim() || undefined,
     repo: asText(f.repo).trim() || undefined,
@@ -190,6 +194,7 @@ export function parseCard(text: string): Card | { error: string } {
 
 export function checkStatus(card: Card): string | undefined {
   const status = card.status ?? '(none)'
+  if (status === 'blocked') return card.blockedBy.length > 0 ? blockedLine(card.id, card.blockedBy) : `${card.id} is blocked; set status: queued to dispatch it`
   if (status === 'parked') return `${card.id} is parked; set status: queued to dispatch it`
   return status === 'queued' || status === 'claimed' ? undefined : `${card.id} is status ${status}; /dispatch takes a queued or claimed card`
 }

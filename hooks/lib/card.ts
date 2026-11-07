@@ -6,6 +6,7 @@
 // MOD-23: `resources` names what the worker holds while it runs, and `lanes` splits one
 // sentence into several cards (one per worker) with sequential ids, the shared fields
 // and each lane's own scope.
+import { blockersOf, resolveBlockedBy, type BoardCard } from './blocked'
 import { isSpacedPath, RESOURCE_NAME, scopeForbidClashes, scopeForbidClashLine, scopeOverlap } from './brief'
 import { dollars, spendCeiling } from './cost'
 import { cardEffort, cleanReason, type CardEffort } from './choice'
@@ -33,6 +34,10 @@ export type CardCtx = {
   repoPath?: string
   /** MOD-188: the open cards under the same parent (register.ts reads the card folder and the ledger); used only when the input names a parent. */
   siblings?: readonly { id: string; scope: readonly string[] }[]
+  /** MOD-328: every card on the board (id, status, issue), so blockedBy resolves an issue number to a card id. */
+  board?: readonly BoardCard[]
+  /** MOD-328: the task ids with an accepted or merged ledger row; a blocker among them is dropped. */
+  done?: ReadonlySet<string>
 }
 
 /** MOD-22: where the worker runs: in its own worktree (the default), in the session's checkout, or with no repo at all. */
@@ -65,6 +70,10 @@ export type NewCard = {
   tierReason?: string
   effort?: CardEffort
   effortReason?: string
+  /** MOD-328: the ids this card waits on; non-empty means it was written `status: blocked` (no brief, no worktree). */
+  blockers?: string[]
+  /** MOD-328: lines for the output (`note: blockedBy X already merged; not a blocker`). */
+  notes?: string[]
 }
 
 export const CARD_TOOL = {
@@ -107,9 +116,10 @@ export const CARD_TOOL = {
         },
       },
       issue: { type: 'number', description: "The task's GitHub issue number in this repo (a whole number, 1 or more); not with lanes, one issue per card" },
-      parent: { type: 'number', description: 'The issue number this task hangs under (a whole number, 1 or more); the card gains the scope globs of its open sibling cards under the same parent as forbid' },
+      parent: { type: 'number', description: 'The issue number this task hangs under (a whole number, 1 or more); the card gains the scope globs of its open sibling cards under the same parent as forbid; a sibling whose scope overlaps makes the card blocked instead' },
       parentScope: { type: 'array', items: { type: 'string' }, description: "The parent issue's scope block, repo-relative globs; every scope glob of the card must sit inside it. Needs parent" },
       parentForbid: { type: 'array', items: { type: 'string' }, description: "The parent issue's forbid block, repo-relative globs, added to the card's forbid. Needs parent" },
+      blockedBy: { type: 'array', items: { type: ['string', 'number'] }, description: 'task ids or issue numbers this card waits on; the card is written blocked, with no brief or worktree, until they merge' },
       dispatch: { type: 'boolean', description: 'Dispatch right after writing the card, instead of the dry run (default false)' },
     },
     required: ['title', 'why', 'doneWhen', 'redTest'],
@@ -211,15 +221,15 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
     if (stray !== undefined) return { error: `scope ${stray} is outside parent #${parent}'s scope (${parentScope.join(', ')})` }
   }
   const siblings = parent === undefined ? [] : (ctx.siblings ?? [])
-  for (const sib of siblings) {
-    const pair = scopeOverlap(scope, sib.scope)
-    if (pair) return { error: `scope ${pair.mine} overlaps open sibling ${sib.id} under parent #${parent}; wait for it to merge, or narrow the scope` }
-  }
+  // MOD-328: an overlapping open sibling (and each blockedBy id) makes the card blocked, not refused
+  const explicit = resolveBlockedBy(input.blockedBy, ctx.board ?? [], ctx.done ?? new Set())
+  if ('error' in explicit) return explicit
+  const { blockers, overlapping } = blockersOf(scope, siblings, explicit.ids)
   // MOD-227 (#304): a scope path under the card's own forbid can never be touched; refused before any card is written.
   // A parent or sibling forbid is not the card's own: it is added and dispatch warns, naming where it came from.
   const ownClash = scopeForbidClashes(scope, ownForbid)[0]
   if (ownClash !== undefined) return { error: scopeForbidClashLine(ownClash.entry, ownClash.forbid) }
-  const forbid = [...new Set([...ownForbid, ...parentForbid, ...siblings.flatMap(s => s.scope)])]
+  const forbid = [...new Set([...ownForbid, ...parentForbid, ...siblings.filter(s => !overlapping.has(s.id)).flatMap(s => s.scope)])]
   const allow = resourceNames(input.allow, 'allow', 'live-reads')
   if ('error' in allow) return allow
 
@@ -292,7 +302,7 @@ id: ${id}
 title: ${yamlScalar(title)}
 domain: ${domain}
 tier: ${tier}
-${tierReason !== '' ? `tier_reason: ${tierReason}\n` : ''}${eff.effort ? `effort: ${eff.effort}\n` : ''}${effortReason !== '' ? `effort_reason: ${effortReason}\n` : ''}status: queued
+${tierReason !== '' ? `tier_reason: ${tierReason}\n` : ''}${eff.effort ? `effort: ${eff.effort}\n` : ''}${effortReason !== '' ? `effort_reason: ${effortReason}\n` : ''}${blockers.length > 0 ? `status: blocked\nblocked_by: [${blockers.join(', ')}]` : 'status: queued'}
 ${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${parent !== undefined && parentScope.length > 0 ? `parentScope: [${parentScope.map(inList).join(', ')}]\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
 forbid: [${forbid.map(inList).join(', ')}]
 ${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
@@ -308,7 +318,7 @@ ${why}
 
 ${done.map(d => `- ${d}`).join('\n')}
 `
-  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow, ...(mergeCheck !== '' ? { mergeCheck } : {}), ...(tierReason !== '' ? { tierReason } : {}), ...(eff.effort ? { effort: eff.effort } : {}), ...(effortReason !== '' ? { effortReason } : {}) }
+  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow, ...(mergeCheck !== '' ? { mergeCheck } : {}), ...(tierReason !== '' ? { tierReason } : {}), ...(eff.effort ? { effort: eff.effort } : {}), ...(effortReason !== '' ? { effortReason } : {}), ...(blockers.length > 0 ? { blockers } : {}), ...(explicit.notes.length > 0 ? { notes: explicit.notes } : {}) }
 }
 
 /**

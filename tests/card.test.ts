@@ -432,9 +432,10 @@ describe('MOD-188: issue, parent, parentScope, parentForbid', () => {
   test('siblings are ignored without parent', () => {
     expect(ok(cardFromFields(input(), ctx({ siblings: [{ id: 'OPS-3', scope: ['lib/**'] }] }))).forbid).toEqual([])
   })
-  test('an open sibling whose scope overlaps is refused, naming the first overlap', () => {
-    const r = cardFromFields(input(tree), ctx({ siblings: [{ id: 'OPS-3', scope: ['src/export/**'] }] }))
-    expect(r).toEqual({ error: 'scope src/export/a.ts overlaps open sibling OPS-3 under parent #7; wait for it to merge, or narrow the scope' })
+  test('an open sibling whose scope overlaps makes the card blocked (MOD-328), and its scope is not forbidden', () => {
+    const r = ok(cardFromFields(input(tree), ctx({ siblings: [{ id: 'OPS-3', scope: ['src/export/**'] }] })))
+    expect(r.text).toContain('status: blocked\nblocked_by: [OPS-3]\n')
+    expect(r.forbid).toEqual([])
   })
   test('issue is refused with lanes; parent applies to every lane', () => {
     const lanes = [{ title: 'A', scope: ['src/export/a/**'] }, { title: 'B', scope: ['src/other/**'] }]
