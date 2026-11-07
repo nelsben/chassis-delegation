@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.53 to 0.9.54
+
+No action needed. A card cut under a parent whose scope overlaps an open sibling is now written blocked instead of refused, and `merge --finish` of its last blocker releases it to queued; set `status: queued` on the card by hand to dispatch it sooner. Detail: [CHANGELOG 0.9.54](../CHANGELOG.md).
+
 ### From 0.9.52 to 0.9.53
 
 No action needed. A task whose attempt predates 0.9.51 and was wrongly marked merged is cleared at its next hand-back, spend history no longer double-counts a re-verified attempt, and a repo whose workers pause on long runs may set `pauseCap` in its repo file. Detail: [CHANGELOG 0.9.53](../CHANGELOG.md).

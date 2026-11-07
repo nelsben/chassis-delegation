@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.54 — 2026-11-07
+
+### Added
+
+- **`card` writes a card whose scope overlaps an open sibling under the same parent as a blocked card (`status: blocked`, `blocked_by: [ids]`) instead of refusing it, and takes `blockedBy` (card ids or `#n` issue numbers) to name blockers by hand; a blocked card gets no dry run, brief or worktree until it is released, and dispatch refuses it (MOD-328).**
+- **`merge --finish` releases each blocked card whose last blocker it lands, in card-id order: the card goes to `status: queued` and the output prints `released: <id> (its last blocker <id> merged): dispatch task=<id>`; a card with blockers left, or whose scope overlaps an open sibling, stays blocked and the output names them (`still blocked: <id> by <ids>`) (MOD-329).**
+- **`tree` shows a blocked card as a `blocked` row naming its blockers, and its counts line adds `n blocked` when any card is blocked (MOD-329).**
+
 ## 0.9.53 — 2026-11-06
 
 ### Added
