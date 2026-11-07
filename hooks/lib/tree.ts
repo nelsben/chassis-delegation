@@ -3,9 +3,9 @@
 
 import { tierMixLine, type Tier } from './tier'
 
-export type TreeCard = { id: string; issue?: number; status?: string; tier?: Tier }
-export type TreeRow = { number: number; title: string; kind: 'done' | 'in flight' | 'planned'; card?: string }
-export type Tree = { header: string; scope: string[]; forbid: string[]; rows: TreeRow[]; counts: { done: number; inFlight: number; planned: number }; /** MOD-276: the tier mix of the cards on in flight rows; absent with fewer than two. */ mix?: string }
+export type TreeCard = { id: string; issue?: number; status?: string; tier?: Tier; /** MOD-329: the ids a blocked card waits on. */ blockedBy?: string[] }
+export type TreeRow = { number: number; title: string; kind: 'done' | 'in flight' | 'planned' | 'blocked'; card?: string; /** MOD-329: the blockers of a blocked row. */ by?: string[] }
+export type Tree = { header: string; scope: string[]; forbid: string[]; rows: TreeRow[]; counts: { done: number; inFlight: number; planned: number; blocked: number }; /** MOD-276: the tier mix of the cards on in flight rows; absent with fewer than two. */ mix?: string }
 
 /** The lines of the first ```<name> fenced block, trimmed, blank lines dropped; [] when there is none. */
 export function fencedBlock(body: string, name: string): string[] {
@@ -45,11 +45,12 @@ export function treeOf(json: unknown, cards: readonly TreeCard[], done: Readonly
   const rows: TreeRow[] = subsOf(j.subIssues).map(s => {
     const card = cards.find(c => c.issue === s.number)
     const isDone = s.state.toUpperCase() === 'CLOSED' || (card !== undefined && done.has(card.id))
-    return { number: s.number, title: s.title, kind: isDone ? 'done' : card ? 'in flight' : 'planned', ...(card ? { card: card.id } : {}) }
+    const isBlocked = !isDone && card?.status === 'blocked'
+    return { number: s.number, title: s.title, kind: isDone ? 'done' : isBlocked ? 'blocked' : card ? 'in flight' : 'planned', ...(card ? { card: card.id } : {}), ...(isBlocked ? { by: card?.blockedBy ?? [] } : {}) }
   })
   const count = (k: TreeRow['kind']) => rows.filter(r => r.kind === k).length
   const mix = tierMixLine(rows.filter(r => r.kind === 'in flight').map(r => cards.find(c => c.id === r.card)?.tier ?? 'standard'))
-  return { header: `#${String(j.number)} ${type}: ${String(j.title ?? '')} (${state})`, scope: fencedBlock(body, 'scope'), forbid: fencedBlock(body, 'forbid'), rows, counts: { done: count('done'), inFlight: count('in flight'), planned: count('planned') }, ...(mix ? { mix } : {}) }
+  return { header: `#${String(j.number)} ${type}: ${String(j.title ?? '')} (${state})`, scope: fencedBlock(body, 'scope'), forbid: fencedBlock(body, 'forbid'), rows, counts: { done: count('done'), inFlight: count('in flight'), planned: count('planned'), blocked: count('blocked') }, ...(mix ? { mix } : {}) }
 }
 
 export function treeText(t: Tree): string {
@@ -57,8 +58,8 @@ export function treeText(t: Tree): string {
     t.header,
     ...(t.scope.length > 0 ? [`scope: ${t.scope.join(', ')}`] : []),
     ...(t.forbid.length > 0 ? [`forbid: ${t.forbid.join(', ')}`] : []),
-    ...t.rows.map(r => `${r.kind} #${r.number} ${r.title}${r.card ? ` ${r.card}` : ''}`),
-    `${t.counts.done} done · ${t.counts.inFlight} in flight · ${t.counts.planned} planned`,
+    ...t.rows.map(r => `${r.kind} #${r.number} ${r.title}${r.card ? ` ${r.card}` : ''}${r.kind === 'blocked' && r.by && r.by.length > 0 ? ` (by ${r.by.join(', ')})` : ''}`),
+    `${t.counts.done} done · ${t.counts.inFlight} in flight · ${t.counts.planned} planned${t.counts.blocked > 0 ? ` · ${t.counts.blocked} blocked` : ''}`,
     ...(t.mix ? [t.mix] : []),
     ...(t.scope.length > 0 ? [`parentScope for a task card: ${JSON.stringify(t.scope)}`] : []),
   ].join('\n')
