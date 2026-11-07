@@ -30,7 +30,7 @@ describe('MOD-194: treeOf and treeText', () => {
     const { treeOf } = await lib()
     const t = treeOf(view, [{ id: 'MOD-7', issue: 52, status: 'queued' }, { id: 'MOD-8', issue: 54, status: 'queued' }], new Set(['MOD-8']))
     expect(t.rows.map(r => [r.number, r.kind, r.card])).toEqual([[51, 'done', undefined], [52, 'in flight', 'MOD-7'], [53, 'planned', undefined], [54, 'done', 'MOD-8']])
-    expect(t.counts).toEqual({ done: 2, inFlight: 1, planned: 1 })
+    expect(t.counts).toEqual({ done: 2, inFlight: 1, planned: 1, blocked: 0 })
     expect(t.scope).toEqual(['hooks/**', 'docs/a.md'])
     expect(t.forbid).toEqual(['docs/cards/**'])
   })

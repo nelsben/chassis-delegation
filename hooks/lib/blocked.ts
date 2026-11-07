@@ -63,3 +63,82 @@ export function resolveBlockedBy(
   }
   return { ids, notes }
 }
+
+/** MOD-329: a board card as the release reads it. */
+export type ReleaseCard = { id: string; status?: string; parent?: number; scope: readonly string[]; blockedBy: readonly string[] }
+export type ReleaseStep = { id: string; action: 'release' } | { id: string; action: 'still'; blockers: string[] }
+
+const idNumber = (id: string): number => Number(/(\d+)\s*$/.exec(id)?.[1] ?? Number.MAX_SAFE_INTEGER)
+
+/**
+ * What landing `mergedId` does to the blocked cards waiting on it, in id order. A card with blockers left stays blocked by
+ * them; one with none left is released unless its scope overlaps an open sibling under the same parent (including the
+ * cards released earlier in this pass), which then blocks it.
+ */
+export function releasePlan(mergedId: string, cards: readonly ReleaseCard[], done: ReadonlySet<string>): ReleaseStep[] {
+  const mergedIds = new Set(cards.filter(c => c.status === 'merged').map(c => c.id))
+  const gone = (id: string): boolean => id === mergedId || done.has(id) || mergedIds.has(id)
+  const waiting = cards
+    .filter(c => c.status === 'blocked' && c.blockedBy.includes(mergedId))
+    .sort((a, b) => idNumber(a.id) - idNumber(b.id) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const released: ReleaseCard[] = []
+  const out: ReleaseStep[] = []
+  for (const c of waiting) {
+    const remaining = c.blockedBy.filter(b => !gone(b))
+    if (remaining.length > 0) {
+      out.push({ id: c.id, action: 'still', blockers: remaining })
+      continue
+    }
+    const hits: string[] = []
+    if (c.parent !== undefined) {
+      const open = cards.filter(s => s.parent === c.parent && s.id !== c.id && !gone(s.id) && s.status !== 'blocked' && s.status !== 'merged')
+      for (const s of [...open, ...released.filter(r => r.parent === c.parent)]) {
+        if (!hits.includes(s.id) && scopeOverlap(c.scope, s.scope)) hits.push(s.id)
+      }
+    }
+    if (hits.length > 0) {
+      out.push({ id: c.id, action: 'still', blockers: hits })
+    } else {
+      out.push({ id: c.id, action: 'release' })
+      released.push(c)
+    }
+  }
+  return out
+}
+
+/**
+ * The card text after a release step: with no `blockers` the frontmatter's `status: blocked` becomes `status: queued` and
+ * its `blocked_by:` line goes; with blockers it stays blocked and `blocked_by` names them. Nothing else changes; a text
+ * with no `status: blocked` line in its frontmatter comes back as it was.
+ */
+export function rewriteBlocked(cardText: string, blockers?: readonly string[]): string {
+  const m = /^---\r?\n([\s\S]*?\r?\n)---/.exec(cardText)
+  if (!m) return cardText
+  const front = m[1] as string
+  const lines = front.split('\n')
+  if (!lines.some(l => /^status:\s*blocked\s*\r?$/.test(l))) return cardText
+  const eol = front.includes('\r\n') ? '\r' : ''
+  const out: string[] = []
+  let wrote = false
+  const withBlockers = blockers !== undefined && blockers.length > 0
+  for (const l of lines) {
+    if (/^blocked_by:/.test(l)) {
+      if (withBlockers && !wrote) {
+        out.push(`blocked_by: [${blockers.join(', ')}]${eol}`)
+        wrote = true
+      }
+      continue
+    }
+    if (/^status:\s*blocked\s*\r?$/.test(l)) {
+      out.push(withBlockers ? l : `status: queued${eol}`)
+      if (withBlockers && !lines.some(x => /^blocked_by:/.test(x))) {
+        out.push(`blocked_by: [${blockers.join(', ')}]${eol}`)
+        wrote = true
+      }
+      continue
+    }
+    out.push(l)
+  }
+  const head = cardText.slice(0, cardText.indexOf(front))
+  return head + out.join('\n') + cardText.slice(head.length + front.length)
+}

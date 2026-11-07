@@ -217,6 +217,7 @@ import { handbackMessages, workerSaid } from './lib/handback'
 import { AUTO_NOTICE, LATCH_LINE, allRefused, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
+import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { doneComment, epicsOf, landedFor, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
@@ -4125,10 +4126,12 @@ async function finishRecord($: Host, o: { root: string; id: string; def: string;
       closed.ancestors.push(await closeOne(a))
     }
   }
+  const releaseLines = await releaseBlocked($, root, id)
   return [
     header,
     ...notes,
     ...closedLines,
+    ...releaseLines,
     remoteBlock('remote: run these lines verbatim (the mod never pushes):', finishLines({
       branch,
       ...(version ? { version } : {}),
@@ -4140,6 +4143,40 @@ async function finishRecord($: Host, o: { root: string; id: string; def: string;
   ].join('\n')
 }
 
+
+/** MOD-329: the blocked cards waiting on `mergedId` are released (queued) or kept blocked by what is left; one line each. Never throws. */
+async function releaseBlocked($: Host, root: string, mergedId: string): Promise<string[]> {
+  try {
+    const dir = cardDirPath(root, cfg.cardDir)
+    const board = await indexedCards($, dir)
+    const cards = board.map(({ card: c }) => {
+      const parent = issueRef(c.fields.parent)
+      return { id: c.id, status: c.status, ...(parent !== undefined ? { parent } : {}), scope: c.scope, blockedBy: c.blockedBy }
+    })
+    const done = doneTasks((await ledgerAt($, root)).rows)
+    const lines: string[] = []
+    for (const step of releasePlan(mergedId, cards, done)) {
+      const name = board.find(b => b.card.id === step.id)?.name
+      if (!name) continue
+      const path = `${dir}/${name}`
+      try {
+        const text = await $.fs.read(path)
+        const next = rewriteBlocked(text, step.action === 'still' ? step.blockers : undefined)
+        if (next !== text) {
+          await $.fs.write(path, next)
+          cardIndex.delete(path)
+        }
+      } catch (err) {
+        lines.push(`note: ${step.id}: blocked card not updated: ${String(err instanceof Error ? err.message : err).split('\n')[0]?.slice(0, 200)}`)
+        continue
+      }
+      lines.push(step.action === 'release' ? `released: ${step.id} (its last blocker ${mergedId} merged): dispatch task=${step.id}` : `still blocked: ${step.id} by ${step.blockers.join(', ')}`)
+    }
+    return lines
+  } catch (err) {
+    return [`note: blocked cards not released: ${String(err instanceof Error ? err.message : err).split('\n')[0]?.slice(0, 200)}`]
+  }
+}
 
 async function recipeDir($: Host): Promise<string | undefined> {
   const sid = await sessionIdOf($)
@@ -4909,7 +4946,7 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
   try {
     for (const { card: c } of await indexedCards($, cardDir)) {
       const ref = issueRef(c.fields.issue, ownerRepo)
-      cards.push({ id: c.id, status: c.status, tier: tierOf(c.tier) ?? 'standard', ...(ref !== undefined ? { issue: ref } : {}) })
+      cards.push({ id: c.id, status: c.status, tier: tierOf(c.tier) ?? 'standard', ...(ref !== undefined ? { issue: ref } : {}), ...(c.blockedBy.length > 0 ? { blockedBy: c.blockedBy } : {}) })
     }
   } catch {
     // no card folder: no cards
