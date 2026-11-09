@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The planned-task hint names no closed issue: a plan item filed with a `close:` line is never a candidate, and the state of up to six candidates is read with `gh issue view` before one is suggested, so a closed issue is skipped and an unreadable state keeps the hint (MOD-339).**
+
 ## 0.9.54 — 2026-11-07
 
 ### Added
