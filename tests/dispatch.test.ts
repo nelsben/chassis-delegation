@@ -1,5 +1,6 @@
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
+import { world, sessionStart, brainSpawn, ROOT, SCRATCH } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER } from './fixtures/sample-card'
 import * as dispatchLib from '../hooks/lib/dispatch'
 import {
@@ -473,5 +474,31 @@ describe('MOD-44: repo as a path on /dispatch and the tool', () => {
     const card = parseCard(FIXTURE_CARD) as dispatchLib.Card
     const header = renderHeader({ card, tier: 'standard', alias: 'sonnet', budget: 2, spend: 6, repo: '/Users/b/notes-app' })
     expect(header).toContain(' gate=G2,G8p repo=/Users/b/notes-app spend=6 budget=2-attempts')
+  })
+})
+
+describe('MOD-341: the spawn row records whether the card has an issue link and the cards it repairs', () => {
+  const TOOL = 'mcp__chassis-delegation__dispatch'
+  const resultText = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  const cardAt = (card: string) => ({ files: { [`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`]: card }, dirs: { [`${ROOT}/agents/tasks`]: [FIXTURE_CARD_NAME] }, store: { 'delegation.agentTypes': ['general-purpose', 'backend', 'frontend'] } })
+  const spawnRowOf = (w: { files: Map<string, string> }) =>
+    (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>).find(r => r.event === 'spawn')
+
+  test('issue: 12 and fixes: [MOD-12] give linked true and fixes on the spawn row', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { ...cardAt(FIXTURE_CARD.replace('status: queued', 'status: queued\nissue: 12\nfixes: [MOD-12]')), listAgents: true })
+    await $.session.start(sessionStart)
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    await brainSpawn($, text, { tool_use_id: 'toolu_FIX00001' })
+    expect(spawnRowOf(w)).toMatchObject({ task: 'BE-101', linked: true, fixes: ['MOD-12'] })
+  })
+
+  test('a card with neither gives linked false and no fixes', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { ...cardAt(FIXTURE_CARD), listAgents: true })
+    await $.session.start(sessionStart)
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    await brainSpawn($, text, { tool_use_id: 'toolu_FIX00002' })
+    const row = spawnRowOf(w)
+    expect(row).toMatchObject({ task: 'BE-101', linked: false })
+    expect('fixes' in (row ?? {})).toBe(false)
   })
 })

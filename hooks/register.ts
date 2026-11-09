@@ -227,7 +227,7 @@ import { landedTail, matchPlanned, openCandidates, MATCH_POOL, plannedFromLanded
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
 import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
-import { CARD_TOOL, cardsFromFields, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
+import { CARD_TOOL, cardsFromFields, fixesOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
@@ -2986,7 +2986,7 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
 }
 
 /** MOD-274: what /dispatch stores about a card for the spawn: its class, and whether it hand-set an effort or a reason. */
-type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean }
+type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean; fixes?: string[]; linked?: boolean }
 
 /**
  * MOD-279: whether a card's attempt explores, and how. One decision for the spawn hook and for /dispatch (which prints it before the
@@ -8700,6 +8700,9 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
     kind: classKind,
     hasEffort: typeof card.fields.effort === 'string' && card.fields.effort.trim() !== '',
     hasReason: cleanReason(card.fields.tier_reason) !== '' || cleanReason(card.fields.effort_reason) !== '',
+    // MOD-341: whether the card has an issue link, and the merged cards it repairs
+    linked: issueRef(card.fields.issue) !== undefined,
+    ...(fixesOf(card.fields.fixes).length > 0 ? { fixes: fixesOf(card.fields.fixes) } : {}),
   }
   await storeSet($, K.cardClass(id, await cardRepo($, target?.path)), cardClassRecord)
 
@@ -10094,7 +10097,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     } else if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
     // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
-    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)))
+    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(cardCls?.fixes ? { fixes: cardCls.fixes } : {}), ...(typeof cardCls?.linked === 'boolean' ? { linked: cardCls.linked } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)))
     // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
     if (s?.stopped) {
       debug($, `${label}: started; its views skipped (the hook was ${s.stopped === 'abort' ? 'abandoned' : 'near its budget'})`)

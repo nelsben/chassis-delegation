@@ -11,6 +11,7 @@ import { isSpacedPath, RESOURCE_NAME, scopeForbidClashes, scopeForbidClashLine, 
 import { dollars, spendCeiling } from './cost'
 import { cardEffort, cleanReason, type CardEffort } from './choice'
 import { scopeLooksProse, yamlScalar } from './dispatch'
+import { cardKind } from './explore'
 import { gateCommandTemplates } from './gates'
 import { matchGlob } from './norepo'
 import { mergeCheckRefusal } from './repoconfig'
@@ -74,6 +75,8 @@ export type NewCard = {
   blockers?: string[]
   /** MOD-328: lines for the output (`note: blockedBy X already merged; not a blocker`). */
   notes?: string[]
+  /** MOD-341: the merged cards this card repairs (present when the input gave it, possibly empty). */
+  fixes?: string[]
 }
 
 export const CARD_TOOL = {
@@ -119,6 +122,7 @@ export const CARD_TOOL = {
       parent: { type: 'number', description: 'The issue number this task hangs under (a whole number, 1 or more); the card gains the scope globs of its open sibling cards under the same parent as forbid; a sibling whose scope overlaps makes the card blocked instead' },
       parentScope: { type: 'array', items: { type: 'string' }, description: "The parent issue's scope block, repo-relative globs; every scope glob of the card must sit inside it. Needs parent" },
       parentForbid: { type: 'array', items: { type: 'string' }, description: "The parent issue's forbid block, repo-relative globs, added to the card's forbid. Needs parent" },
+      fixes: { type: 'array', items: { type: 'string' }, description: "Task ids of merged cards this card repairs (work a verdict passed that later proved wrong). [] says you checked and it repairs none. Not with lanes" },
       blockedBy: { type: 'array', items: { type: ['string', 'number'] }, description: 'task ids or issue numbers this card waits on; the card is written blocked, with no brief or worktree, until they merge' },
       dispatch: { type: 'boolean', description: 'Dispatch right after writing the card, instead of the dry run (default false)' },
     },
@@ -155,6 +159,15 @@ const inList = (e: string): string => (isSpacedPath(e) ? `"${e}"` : e)
 
 /** The title as a file-name slug: lower case, at most six words joined by `-`. */
 export const slugOf = (title: string): string => (title.toLowerCase().match(/[a-z0-9]+/g) ?? []).slice(0, 6).join('-') || 'task'
+
+/** MOD-341: a task id like MOD-12. */
+const FIX_ID = /^[A-Za-z][A-Za-z0-9]*-\d+$/
+
+/** MOD-341: a card's `fixes:` value (a list, or the `[A, B]` string the tool writes) as the ids that read as task ids. */
+export function fixesOf(v: unknown): string[] {
+  const parts = Array.isArray(v) ? v : typeof v === 'string' ? v.replace(/^\s*\[|\]\s*$/g, '').split(',') : []
+  return [...new Set(parts.filter((x): x is string => typeof x === 'string').map(x => x.trim()).filter(x => FIX_ID.test(x)))]
+}
 
 /** MOD-188: an issue number: absent, or a whole number 1 or more. */
 function issueNumber(key: 'issue' | 'parent', v: unknown): number | undefined | { error: string } {
@@ -211,6 +224,13 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   if (typeof issue === 'object') return issue
   const parent = issueNumber('parent', input.parent)
   if (typeof parent === 'object') return parent
+  // MOD-341: the merged cards this card repairs
+  let fixes: string[] | undefined
+  if (input.fixes !== undefined) {
+    const raw = input.fixes
+    if (!Array.isArray(raw) || raw.length > 5 || raw.some(x => typeof x !== 'string' || !FIX_ID.test(x.trim()))) return { error: 'fixes must be a list of task ids (like MOD-12), at most 5' }
+    fixes = [...new Set((raw as string[]).map(x => x.trim()))]
+  }
   if (parent === undefined && (input.parentScope !== undefined || input.parentForbid !== undefined)) return { error: 'parentScope and parentForbid need parent: the issue number the task hangs under' }
   const parentScope = globs('scope', input.parentScope, false)
   if ('error' in parentScope) return { error: parentScope.error.replace(/^scope/, 'parentScope') }
@@ -297,13 +317,16 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
 
   const prefix = domainPrefix(domain)
   const id = `${prefix}-${nextNumber(ctx.names, prefix) + at}`
+  if (fixes?.includes(id)) return { error: 'fixes cannot name the card itself' }
+  const fixNotes = fixes === undefined && cardKind({ kind: undefined, title, scope }) === 'bug' ? ['note: this reads as a fix; if it repairs a card that already merged, pass fixes: ["<that card\'s id>"], or fixes: [] when it does not'] : []
+  const notes = [...explicit.notes, ...fixNotes]
   const body = `---
 id: ${id}
 title: ${yamlScalar(title)}
 domain: ${domain}
 tier: ${tier}
 ${tierReason !== '' ? `tier_reason: ${tierReason}\n` : ''}${eff.effort ? `effort: ${eff.effort}\n` : ''}${effortReason !== '' ? `effort_reason: ${effortReason}\n` : ''}${blockers.length > 0 ? `status: blocked\nblocked_by: [${blockers.join(', ')}]` : 'status: queued'}
-${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${parent !== undefined && parentScope.length > 0 ? `parentScope: [${parentScope.map(inList).join(', ')}]\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
+${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${fixes !== undefined ? `fixes: [${fixes.join(', ')}]\n` : ''}${parent !== undefined && parentScope.length > 0 ? `parentScope: [${parentScope.map(inList).join(', ')}]\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
 forbid: [${forbid.map(inList).join(', ')}]
 ${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
 gate: ${gate.join(', ')}
@@ -318,7 +341,7 @@ ${why}
 
 ${done.map(d => `- ${d}`).join('\n')}
 `
-  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow, ...(mergeCheck !== '' ? { mergeCheck } : {}), ...(tierReason !== '' ? { tierReason } : {}), ...(eff.effort ? { effort: eff.effort } : {}), ...(effortReason !== '' ? { effortReason } : {}), ...(blockers.length > 0 ? { blockers } : {}), ...(explicit.notes.length > 0 ? { notes: explicit.notes } : {}) }
+  return { id, file: `${id}-${slugOf(title)}.md`, text: body, title, domain, tier, scope, forbid, gate, redTest, budget, spend, repo, resources, allow, ...(mergeCheck !== '' ? { mergeCheck } : {}), ...(tierReason !== '' ? { tierReason } : {}), ...(eff.effort ? { effort: eff.effort } : {}), ...(effortReason !== '' ? { effortReason } : {}), ...(blockers.length > 0 ? { blockers } : {}), ...(notes.length > 0 ? { notes } : {}), ...(fixes !== undefined ? { fixes } : {}) }
 }
 
 /**
@@ -333,6 +356,7 @@ export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): N
     return 'error' in one ? one : [one]
   }
   const raw = input.lanes
+  if (input.fixes !== undefined) return { error: 'fixes belongs to one card; drop it when lanes are given' }
   if (input.issue !== undefined) return { error: 'issue belongs to one card; drop it when lanes are given (one issue per card)' }
   if (!Array.isArray(raw) || raw.length === 0) return { error: 'lanes must be a list of { title, scope, doneWhen? }, one per worker' }
   if (input.scope !== undefined) return { error: 'scope belongs to each lane when lanes are given (lanes: [{ title, scope }]); drop the shared scope' }

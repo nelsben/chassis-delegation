@@ -157,6 +157,9 @@ describe('GH-111: cardFromFields', () => {
     // MOD-23: scope is each lane's own on a call with lanes, so the schema no longer requires a shared one (the card still refuses a single card without it)
     expect(CARD_TOOL.inputSchema.required).toEqual(['title', 'why', 'doneWhen', 'redTest'])
     expect(CARD_TOOL.description).toContain('Never ask the person to edit a card file.')
+    // MOD-341
+    expect((CARD_TOOL.inputSchema.properties as Record<string, { type: string; description: string }>).fixes.type).toBe('array')
+    expect((CARD_TOOL.inputSchema.properties as Record<string, { description: string }>).fixes.description).toContain('Task ids of merged cards this card repairs')
     // MOD-338
     expect(CARD_TOOL.description).toContain('name it there as left to the worker')
     expect(CARD_TOOL.description.endsWith('the worker lists the choices it had to make, and the verdict shows the count.')).toBe(true)
