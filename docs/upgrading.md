@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.55 to 0.9.56
+
+No action needed. Brain dollars recorded from this version on read about 30% higher than before for the same work: the host's main loop writes 1-hour cache entries, which were priced at the 5-minute rate. Stored records are not repriced, so a chart of brain spend steps up at the upgrade. A brain pair now names the model version (`fable-5.2/high`), and the scorecard's `brains` and `contexts` blocks read only sessions on this version or later. The card tool and dispatch warn about a scope or forbid glob such as `tests/**/x`, which here needs a folder between and misses `tests/x`. Detail: [CHANGELOG 0.9.56](../CHANGELOG.md).
+
 ### From 0.9.54 to 0.9.55
 
 No action needed. Ledger rows gain fields (a worker's `choices`, a spawn row's `fixes` and `linked`, and `brain` on judged and merged rows), and `node bin/evidence.mjs --scorecard <ledger>` prints a scorecard by week, by worker model and by brain setup; a ledger written before this version reads as before, with those columns empty. Detail: [CHANGELOG 0.9.55](../CHANGELOG.md).
