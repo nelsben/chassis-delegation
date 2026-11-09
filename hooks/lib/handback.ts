@@ -64,3 +64,34 @@ export function workerSaid(answer: string, handbacks: readonly string[]): string
   }
   return parts.join('\n')
 }
+
+/** MOD-338: the choices a worker listed in its hand-back. */
+export type HandbackChoices = { stated: boolean; count: number; lines: string[] }
+
+const CHOICE_LINE = /^ *(?:[-*] +)?`?choice:(.*)$/i
+
+/**
+ * MOD-338: the decisions a worker says the card left open, one `choice: <open> -> <picked>` line each,
+ * read from the text above the last `[[report`. `choice: none` states there were none. Counted, never judged.
+ */
+export function handbackChoices(text: string): HandbackChoices {
+  const at = text.lastIndexOf('[[report')
+  const head = at === -1 ? text : text.slice(0, at)
+  const seen = new Set<string>()
+  const found: string[] = []
+  let none = false
+  for (const raw of head.split('\n')) {
+    const m = CHOICE_LINE.exec(raw)
+    if (!m) continue
+    const body = m[1].trim().replace(/`$/, '').trim()
+    if (body === '') continue
+    if (/^none\.?$/i.test(body)) {
+      none = true
+      continue
+    }
+    if (seen.has(body)) continue
+    seen.add(body)
+    found.push(body)
+  }
+  return { stated: none || found.length > 0, count: found.length, lines: found.slice(0, 12).map(l => l.slice(0, 160)) }
+}

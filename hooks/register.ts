@@ -213,7 +213,7 @@ import {
 import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, runsEngineSuite, waitedLine, withTrailingLine, type EngineLock } from './lib/gates'
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
-import { handbackMessages, workerSaid } from './lib/handback'
+import { handbackChoices, handbackMessages, workerSaid } from './lib/handback'
 import { AUTO_NOTICE, LATCH_LINE, allRefused, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
@@ -7135,6 +7135,10 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     red = { ...(v.red !== undefined ? { red: v.red } : {}), ...(v.redHash !== undefined ? { redHash: v.redHash } : {}), redHeld: v.redHeld }
   }
   if (pauseCharge) lines = [...lines, pauseCharge]
+  // MOD-338: the choices the worker listed as left open by the card, counted and never judged; an ad hoc spawn and a cardless hand-back have no card to be silent
+  const choiceRead = spawn.adhoc || cardless ? undefined : handbackChoices(text)
+  const choiceStated = choiceRead?.stated === true
+  if (choiceRead && choiceStated) lines = [...lines, choiceRead.count > 0 ? `choices: ${choiceRead.count} the card left open` : 'choices: none stated']
   // MOD-279: a worker whose Bash the host refused and whose report has no usable sha was blocked by its environment: that is no
   // failure of the work (not charged, not escalated, not shown as a fabrication). The count is per attempt: read once, then cleared.
   let blocked: string | undefined
@@ -7230,6 +7234,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
         ...(model !== undefined ? { resolvedModel: model } : {}),
         // MOD-22: the report's metrics=, recorded on the attempt and never judged
         ...(metrics ? { metrics } : {}),
+        // MOD-338: how many decisions the card left open, as the worker listed them
+        ...(choiceRead && choiceStated ? { choices: choiceRead.count } : {}),
         ...red,
       },
       lane,
@@ -7343,7 +7349,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line: quiet, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}), ...(report?.sha ? { sha: report.sha } : {}), ...(spawn.key.includes('-rejudge-') ? { rejudge: true } : {}) })
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
     const verdictBrief = spawn.briefPath !== undefined ? await readText($, spawn.briefPath) : undefined
-    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
+    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
   }
   return { full, line }
 }

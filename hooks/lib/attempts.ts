@@ -69,6 +69,8 @@ export type AttemptRecord = {
   resetsAt?: string
   /** The report's own `gate=` claim. */
   reportGate?: string
+  /** MOD-338: how many decisions the worker listed as left open by the card; 0 when it wrote 'choice: none'; absent when it stated nothing. */
+  choices?: number
   /**
    * GH-104: the sha the attempt's report named (as written), or a
    * `work-present` / `verify` attempt's branch head. A judged one is not new
