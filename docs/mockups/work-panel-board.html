@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Work pane · Board view (mockup)</title>
+<style>
+/* ---- colour block (copied from work-panel-list.html) ---- */
+:root {
+  --fg: #1f2328;
+  --dim: #6b7280;
+  --accent: #0b5fd6;
+  --done: #1a7f37;
+  --wait: #9a6700;
+  --blocked: #cf222e;
+  --bg: #ffffff;
+  --frame: #8c959f;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6edf3;
+    --dim: #8b949e;
+    --accent: #58a6ff;
+    --done: #3fb950;
+    --wait: #d29922;
+    --blocked: #ff7b72;
+    --bg: #0d1117;
+    --frame: #6e7681;
+  }
+}
+/* ---- end colour block ---- */
+
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 2ch;
+}
+h1 { font-size: 14px; font-weight: bold; margin: 0 0 2ch 0; }
+.label { color: var(--dim); margin: 2ch 0 0.5ch 0; }
+.panel { border: 1px solid var(--frame); padding: 1ch; box-sizing: content-box; max-width: 100%; overflow: hidden; }
+.sec { margin-top: 1.45em; }
+.ln { display: flex; justify-content: space-between; white-space: pre; }
+.ln > .l, .ln > .r { white-space: pre; }
+.ln > .r { margin-left: auto; }
+.dim { color: var(--dim); }
+.bold { font-weight: bold; }
+.c-done { color: var(--done); }
+.c-wait { color: var(--wait); }
+.c-blocked { color: var(--blocked); }
+.c-accent { color: var(--accent); }
+button {
+  font: inherit; color: var(--accent); background: none; border: 0; margin: 0; padding: 0;
+  cursor: pointer; white-space: pre; text-align: left;
+}
+button.plain { color: var(--fg); }
+button.dim { color: var(--dim); }
+button.c-done { color: var(--done); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul.notes { margin: 1ch 0 0 0; padding-left: 3ch; }
+
+.ln { overflow: hidden; }
+.cols { display: flex; gap: 1ch; }
+.col { flex: none; }
+.item { margin-bottom: 1.45em; }
+.lane { margin-top: 1.45em; }
+</style>
+</head>
+<body>
+<h1>Work pane · Board view (mockup)</h1>
+<div id="panels"></div>
+<h1 style="margin-top:3ch">Notes</h1>
+<ul class="notes">
+  <li>No drag and drop: a card moves to another column when its state changes.</li>
+  <li>The real pane scrolls inside its box and redraws by itself as workers hand back; here only clicks change a row.</li>
+  <li>Keyboard: Tab walks the buttons; l and b switch views, g switches grouping. Not wired here, and [List] does nothing.</li>
+</ul>
+
+<script>
+/* ---- data block (copied from work-panel-list.html) ---- */
+const DATA = {
+  asOf: "4 min ago",
+  epics: [
+    { id: 10, title: "Checkout rework", features: [
+      { id: 11, title: "Saved carts", items: [
+        { id: 12, type: "story", title: "Save a cart from the basket", closed: true },
+        { id: 13, type: "story", title: "Restore a saved cart", card: "MOD-900" },
+        { id: 14, type: "story", title: "Expire saved carts after 30 days", card: "MOD-902" },
+        { id: 15, type: "bug", title: "Saved cart loses the coupon" }
+      ] },
+      { id: 20, title: "Address book", items: [
+        { id: 21, type: "story", title: "Pick a saved address", closed: true },
+        { id: 22, type: "story", title: "Edit an address inline", closed: true },
+        { id: 23, type: "story", title: "Validate postcodes per country", card: "MOD-901" },
+        { id: 24, type: "story", title: "Default address per account", card: "MOD-903" },
+        { id: 25, type: "task", title: "Migrate old address rows" }
+      ] }
+    ] },
+    { id: 30, title: "Reporting", features: [
+      { id: 31, title: "Weekly digest", items: [
+        { id: 32, type: "story", title: "Digest email template", card: "MOD-904" },
+        { id: 33, type: "story", title: "Pick the digest day", card: "MOD-905" },
+        { id: 34, type: "story", title: "Unsubscribe link" },
+        { id: 35, type: "spike", title: "Can the digest reuse the export job?" }
+      ] },
+      { id: 40, title: "CSV export", items: [
+        { id: 41, type: "story", title: "Export orders as CSV", closed: true },
+        { id: 42, type: "story", title: "Export filters" },
+        { id: 43, type: "story", title: "Scheduled exports" }
+      ] }
+    ] },
+    { id: 60, title: "Sign-in hardening", features: [
+      { id: 61, title: "Passkeys", items: [
+        { id: 62, type: "story", title: "Register a passkey", closed: true },
+        { id: 63, type: "story", title: "Sign in with a passkey", closed: true }
+      ] }
+    ] }
+  ],
+  cards: [
+    { id: "MOD-900", state: "working", tier: "standard", model: "sonnet", attempt: "1/2", min: 6, cost: 0.31 },
+    { id: "MOD-904", state: "working", tier: "economy", model: "haiku", attempt: "2/2", min: 2, cost: 0.02 },
+    { id: "MOD-901", state: "to review", tier: "standard", model: "sonnet", attempt: "1/2", cost: 0.52 },
+    { id: "MOD-902", state: "queued" },
+    { id: "MOD-905", state: "queued", slot: true },
+    { id: "MOD-906", state: "queued", title: "Bump the lint config" },
+    { id: "MOD-903", state: "blocked", by: "MOD-901" }
+  ],
+  unsorted: [
+    { id: 70, type: "issue", title: "Typo on the pricing page" }
+  ]
+};
+const EMPTY = { asOf: "4 min ago", epics: [], cards: [], unsorted: [] };
+
+/* ---- model helpers ---- */
+const GLYPH = { economy: "🟢", standard: "🔵", frontier: "🟣" };
+const SEP = " · ";
+const COLS = [
+  { key: "backlog", name: "BACKLOG" }, { key: "queued", name: "QUEUED" },
+  { key: "working", name: "WORKING" }, { key: "to review", name: "TO REVIEW" },
+  { key: "done", name: "DONE" }
+];
+function cells(s) { let n = 0; for (const ch of s) n += ch.codePointAt(0) > 0x1F000 ? 2 : 1; return n; }
+function trunc(s, n) { return s.length <= n ? s : (n <= 1 ? "…" : s.slice(0, n - 1) + "…"); }
+function bar(done, total) { const n = Math.round(8 * done / total); return "▰".repeat(n) + "▱".repeat(8 - n); }
+function cardOf(d, id) { return d.cards.find(c => c.id === id); }
+
+/* flatten the hierarchy into board entries: one per leaf issue or card */
+function entries(d) {
+  const out = [];
+  const used = new Set();
+  for (const e of d.epics) for (const f of e.features) for (const l of f.items) {
+    const c = l.card ? cardOf(d, l.card) : null;
+    if (c) used.add(c.id);
+    out.push({ epic: e.id, feat: f.title, issue: l, card: c, state: c ? c.state : (l.closed ? "done" : "backlog") });
+  }
+  for (const c of d.cards) if (!used.has(c.id)) out.push({ epic: null, feat: "", issue: null, card: c, state: c.state });
+  for (const l of d.unsorted) out.push({ epic: null, feat: "", issue: l, card: null, state: "backlog" });
+  return out;
+}
+function colOf(e) {
+  return e.state === "blocked" ? "queued" : e.state;
+}
+function inCol(list, key) {
+  const r = list.filter(e => colOf(e) === key);
+  if (key === "queued") return r.filter(e => e.state === "queued").concat(r.filter(e => e.state === "blocked"));
+  if (key === "done") return r.sort((a, b) => b.issue.id - a.issue.id);
+  return r;
+}
+function totals(list) {
+  const by = s => list.filter(e => e.state === s).length;
+  return { working: by("working"), review: by("to review"), queued: by("queued"), blocked: by("blocked"),
+    backlog: by("backlog"), done: by("done") };
+}
+function titleOf(e) { return e.card && e.card.title ? e.card.title : e.issue.title; }
+function wrap(s, n) {
+  const lines = []; let cur = "";
+  s.split(" ").forEach(w => {
+    if (cur && (cur + " " + w).length > n) { lines.push(cur); cur = w; } else cur = cur ? cur + " " + w : w;
+  });
+  lines.push(cur);
+  return lines;
+}
+function pack(items, W) {
+  const lines = []; let cur = "";
+  for (const it of items) {
+    const next = cur ? cur + SEP + it : it;
+    if (cur && next.length > W) { lines.push(cur); cur = it; } else cur = next;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+/* ---- drawing: every line is a flex row of text, buttons and links on a ch grid ---- */
+function mkSeg(seg) {
+  let el;
+  if (seg.fn) {
+    el = document.createElement("button"); el.type = "button"; el.addEventListener("click", seg.fn);
+  } else if (seg.link) {
+    el = document.createElement("a"); el.href = "#"; el.addEventListener("click", e => e.preventDefault());
+  } else {
+    el = document.createElement("span");
+  }
+  el.textContent = seg.t;
+  if (seg.c) el.className = seg.c;
+  return el;
+}
+function line(W, indent, left, right) {
+  left = left.map(s => Object.assign({}, s));
+  right = (right || []).map(s => Object.assign({}, s));
+  const len = a => a.reduce((n, s) => n + cells(s.t), 0);
+  const rl = len(right);
+  const avail = W - indent - rl - (rl ? 1 : 0);
+  const over = len(left) - avail;
+  if (over > 0) { const s = left.find(x => x.tr); if (s) s.t = trunc(s.t, Math.max(1, s.t.length - over)); }
+  const row = document.createElement("div");
+  row.className = "ln";
+  const l = document.createElement("span");
+  l.className = "l";
+  if (indent) l.appendChild(document.createTextNode(" ".repeat(indent)));
+  left.forEach(s => l.appendChild(mkSeg(s)));
+  row.appendChild(l);
+  if (right.length) {
+    const r = document.createElement("span"); r.className = "r";
+    right.forEach(s => r.appendChild(mkSeg(s)));
+    row.appendChild(r);
+  }
+  return row;
+}
+const STATE_C = { working: "c-accent", "to review": "c-wait", queued: "c-wait", blocked: "c-blocked", done: "c-done" };
+
+function makePanel(host, label, W, data, opts) {
+  opts = opts || {};
+  const lab = document.createElement("div");
+  lab.className = "label"; lab.textContent = label;
+  const box = document.createElement("div");
+  box.className = "panel"; box.style.width = W + "ch";
+  host.appendChild(lab); host.appendChild(box);
+
+  const st = { group: opts.group || "none", doneAll: false, asked: {}, confirm: {}, open: {}, dflt: {} };
+  const all = entries(data);
+  const redraw = () => render();
+  const nCols = W >= 100 ? 5 : W >= 60 ? 3 : 0;
+  const colDefs = nCols === 5 ? COLS : COLS.slice(1, 4);
+  const cw = nCols ? Math.floor((W - (nCols - 1)) / nCols) : 0;
+
+  function header(out) {
+    const t = totals(all);
+    const left = [{ t: "Work" }, { t: "  " }, { t: "[List]", fn: () => {} }, { t: " " }, { t: "[Board]", c: "bold" }];
+    let ago = "as of " + data.asOf + " ";
+    if (4 + 2 + 6 + 1 + 7 + 1 + cells(ago) + 9 > W) ago = data.asOf + " ";
+    out.appendChild(line(W, 0, left, [{ t: ago, c: "dim" }, { t: "[Refresh]", fn: redraw }]));
+    const items = [t.working + " working", t.review + " to review", t.queued + " queued",
+      t.blocked + " blocked", t.backlog + " backlog"];
+    pack(items, W).forEach(s => out.appendChild(line(W, 0, [{ t: s, c: "dim" }])));
+  }
+  function groupLine(out) {
+    const set = g => () => { st.group = g; redraw(); };
+    const seg = (name, g) => st.group === g ? { t: "[" + name + "]", c: "bold" } : { t: "[" + name + "]", fn: set(g) };
+    out.appendChild(line(W, 0, [{ t: "Group: " }, seg("None", "none"), { t: " " }, seg("Epic", "epic")]));
+  }
+
+  function itemEl(e) {
+    const el = document.createElement("div");
+    el.className = "item";
+    const id = e.card ? e.card.id : "#" + e.issue.id;
+    const sc = STATE_C[e.state];
+    const head = e.card
+      ? [{ t: e.card.id, c: sc }].concat(e.card.tier ? [{ t: " " + GLYPH[e.card.tier] }] : [])
+      : [{ t: "#" + e.issue.id, link: true }, { t: " " + e.issue.type }];
+    el.appendChild(line(cw, 0, head));
+    el.appendChild(line(cw, 0, [{ t: titleOf(e), tr: true }]));
+    const asked = st.asked[id], confirming = st.confirm[id];
+    if (confirming) {
+      el.textContent = "";
+      el.appendChild(line(cw, 0, head));
+      wrap("Unblock " + id + "? " + e.card.by + " still overlaps it.", cw).forEach(s => el.appendChild(line(cw, 0, [{ t: s }])));
+      el.appendChild(line(cw, 0, [
+        { t: "[Unblock]", fn: () => { st.confirm[id] = false; st.asked[id] = true; redraw(); } }, { t: " " },
+        { t: "[Cancel]", fn: () => { st.confirm[id] = false; redraw(); } }]));
+      return el;
+    }
+    if (asked) {
+      wrap("asked · waiting for the session", cw).forEach(s => el.appendChild(line(cw, 0, [{ t: s, c: "dim" }])));
+      return el;
+    }
+    const press = (act) => () => { if (act === "Unblock") st.confirm[id] = true; else st.asked[id] = true; redraw(); };
+    let l3;
+    if (e.state === "backlog") l3 = [{ t: e.feat, c: "dim", tr: true }];
+    else if (e.state === "queued") l3 = (e.card.slot ? [{ t: "slot… ", c: "c-wait" }] : []).concat([{ t: "[Dispatch]", fn: press("Dispatch") }]);
+    else if (e.state === "blocked") l3 = [{ t: "by " + e.card.by, c: "c-blocked" }, { t: " " }, { t: "[Unblock]", fn: press("Unblock") }];
+    else if (e.state === "working") l3 = [{ t: e.card.attempt + SEP + e.card.min + " min" + SEP + "$" + e.card.cost.toFixed(2), c: "dim" }];
+    else if (e.state === "to review") l3 = [{ t: "$" + e.card.cost.toFixed(2) + " ", c: "dim" }, { t: "[Review]", fn: press("Review") }];
+    else l3 = [{ t: "✓", c: "c-done" }, { t: " " + e.feat, c: "dim", tr: true }];
+    el.appendChild(line(cw, 0, l3));
+    return el;
+  }
+
+  /* heading row: name + count, a rule under it; counts are the overall counts */
+  function headings(out) {
+    const row = document.createElement("div"); row.className = "cols";
+    for (const c of colDefs) {
+      const col = document.createElement("div"); col.className = "col"; col.style.width = cw + "ch";
+      col.appendChild(line(cw, 0, [{ t: c.name + " " + inCol(all, c.key).length, c: "bold" }]));
+      col.appendChild(line(cw, 0, [{ t: "─".repeat(cw) }]));
+      row.appendChild(col);
+    }
+    out.appendChild(row);
+  }
+  function doneShown() {
+    const d = inCol(all, "done");
+    return st.doneAll ? d : d.slice(0, 3);
+  }
+  function grid(out, list) {
+    const shown = new Set(doneShown());
+    const row = document.createElement("div"); row.className = "cols";
+    for (const c of colDefs) {
+      const col = document.createElement("div"); col.className = "col"; col.style.width = cw + "ch";
+      inCol(list, c.key).filter(e => c.key !== "done" || shown.has(e)).forEach(e => col.appendChild(itemEl(e)));
+      row.appendChild(col);
+    }
+    out.appendChild(row);
+  }
+  function moreRow(out) {
+    const n = inCol(all, "done").length - 3;
+    if (nCols !== 5 || n <= 0) return;
+    const row = document.createElement("div"); row.className = "cols";
+    colDefs.forEach(c => {
+      const col = document.createElement("div"); col.className = "col"; col.style.width = cw + "ch";
+      if (c.key === "done") col.appendChild(line(cw, 0, [{ t: st.doneAll ? "− fewer" : "+ " + n + " more", c: "dim",
+        fn: () => { st.doneAll = !st.doneAll; redraw(); } }]));
+      row.appendChild(col);
+    });
+    out.appendChild(row);
+  }
+  function lane(out, key, dflt, parts, list) {
+    st.dflt[key] = dflt;
+    const open = key in st.open ? st.open[key] : dflt;
+    const fn = () => { st.open[key] = !open; redraw(); };
+    const wrapEl = document.createElement("div"); wrapEl.className = "lane";
+    const left = [{ t: (open ? "▾" : "▸") + " ", fn, c: "plain" }].concat(parts.map(p => p.link ? p : Object.assign({ fn, c: "plain" }, p)));
+    wrapEl.appendChild(line(W, 0, left));
+    out.appendChild(wrapEl);
+    if (open) grid(out, list);
+  }
+
+  function render() {
+    box.textContent = "";
+    header(box);
+    if (!nCols) {
+      box.appendChild(line(W, 0, [{ t: "Board needs 60 cells; showing List", c: "dim" }]));
+      const sec = document.createElement("div"); sec.className = "sec";
+      sec.appendChild(line(W, 0, [{ t: "(List view as in work-panel-list.html)", c: "dim" }]));
+      box.appendChild(sec);
+      return;
+    }
+    groupLine(box);
+    const sec = document.createElement("div"); sec.className = "sec";
+    box.appendChild(sec);
+    headings(sec);
+    if (!all.length) {
+      const m = document.createElement("div"); m.className = "sec";
+      wrap("No work breakdown yet. /delegation tree import <file> files one, or /delegation land epic <title> starts one.", W)
+        .forEach(s => m.appendChild(line(W, 0, [{ t: s }])));
+      box.appendChild(m);
+      return;
+    }
+    if (st.group === "none") {
+      grid(sec, all);
+    } else {
+      for (const e of data.epics) {
+        const list = all.filter(x => x.epic === e.id);
+        const t = totals(list);
+        const total = list.length;
+        lane(sec, "e" + e.id, t.done < total,
+          [{ t: "#" + e.id, link: true }, { t: " " + e.title + "  " + bar(t.done, total) + " " + t.done + "/" + total }], list);
+      }
+      lane(sec, "none", true, [{ t: "No epic" }], all.filter(x => x.epic === null));
+    }
+    moreRow(sec);
+    if (nCols === 3) {
+      const t = totals(all);
+      const m = document.createElement("div"); m.className = "sec";
+      m.appendChild(line(W, 0, [{ t: t.backlog + " backlog" + SEP + t.done + " done are in the List view", c: "dim" }]));
+      box.appendChild(m);
+    }
+  }
+  render();
+}
+
+const host = document.getElementById("panels");
+makePanel(host, "1. Board, group None, 110 cells", 110, DATA);
+makePanel(host, "2. Board, group Epic, 110 cells", 110, DATA, { group: "epic" });
+makePanel(host, "3. Board at 72 cells (three columns)", 72, DATA);
+makePanel(host, "4. Board at 44 cells (fallback)", 44, DATA);
+makePanel(host, "5. Empty state, 110 cells", 110, EMPTY);
+</script>
+</body>
+</html>
