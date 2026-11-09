@@ -286,3 +286,13 @@ describe('MOD-306: the gate line tells the worker to run the gate in the foregro
     expect(renderSections(read('hooks/templates/brief.md'), 'here').includes(want)).toBe(true)
   })
 })
+
+describe('MOD-338: the brief asks for choice lines in every mode', () => {
+  test('a brief rendered in each of the three modes contains choice: none', async () => {
+    const { renderSections } = await import('../../hooks/lib/dispatch.ts')
+    const t = read('hooks/templates/brief.md')
+    for (const mode of ['worktree', 'here', 'none']) expect(renderSections(t, mode).includes('choice: none')).toBe(true)
+    expect(t.includes('choice: none')).toBe(true)
+    expect(t.includes('choice lines go above those.')).toBe(true)
+  })
+})

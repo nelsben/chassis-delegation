@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **A worker lists the decisions the card left open in its hand-back (`choice: <what was open> -> <what you picked>`, or `choice: none`); the mod counts them as `choices` on the attempt and the ledger row, keeps the lines as `choiceLines` in the ledger only, and the verdict shows `choices: <n> the card left open`; the count is never judged (MOD-338).**
+
 ### Fixed
 
 - **`tree reconcile` counts a card whose `status` is `merged` even when the ledger has no merged row for it (a repo adopted before those rows existed, or a trimmed ledger), so its `issue` or `parent` sub-issue is listed as done in that card; other status words are not read (MOD-340).**

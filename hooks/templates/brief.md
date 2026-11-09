@@ -33,6 +33,7 @@ You were started by the brain's own Agent call: the mod recorded this attempt, s
 - Test: {{redTest}}. No red evidence file: the mod checks your scope, the files you name and your artefacts, then runs the gate.
 {{/none}}
 - Stay inside the brief's scope= and never touch a forbid= path. A file outside scope: an amend block on its own line, `[[amend v=1 scope+=<path> reason=<one line>]]`. A fix only in a forbid= path: touch nothing, hand back gate=fail with `[[amend v=1 forbid-=<the forbid entry> scope+=<path> reason=<one line>]]`.
+- Choices: where the card leaves a decision to you (a name, a wording, a default, a layout, what an edge case does) and another worker could fairly have decided it differently, decide it and list it in your hand-back, one per line: `choice: <what was open> -> <what you picked>`. With none, write one line: `choice: none`. The mod counts them and never judges them. What the card, the Lessons or the code around your change already settles is not a choice.
 {{#outdir}}
 - Output folder: {{outdir}}. Deliverables go there. The mod lists it and every outside folder your scope or forbid names, before and after your run: a path changed outside scope or inside a forbid refutes you. Report deliverables as artefacts= (relative to the folder or absolute; each must exist and not be empty) and numbers as metrics="k=v,k=v". Say only what you ran: the verifier re-runs the gate and checks every file you name.
 {{/outdir}}
@@ -70,7 +71,7 @@ You were started by the brain's own Agent call: the mod recorded this attempt, s
 {{/lessons}}
 
 ## Report (the last line of your hand-back, exactly)
-Amend blocks go on their own lines just above it.
+Amend blocks go on their own lines just above it; choice lines go above those.
 {{#worktree}}
 [[report v=1 task={{id}} subtask=main branch={{branch}} pr=none sha=<short sha> gate=pass|fail red={{redField}} files=<comma-separated repo-relative paths>{{reportExtra}}]]
 {{/worktree}}

@@ -140,6 +140,8 @@ message (a background worker's from its transcript):
 
 A brief with no output folder has no `artefacts=` or `metrics=` in its report line.
 
+**Choice lines (MOD-338).** Above the report line (and above any amend blocks), the worker lists each decision the card left to it, one per line: `choice: <what was open> -> <what you picked>`. With none it writes `choice: none`. The mod counts the distinct lines above the last report, records the count as `choices` on the attempt, and adds a verdict line `choices: <n> the card left open` (or `choices: none stated`); a hand-back with no choice line adds nothing. The count is never judged: it changes no verdict, next step, tier or budget. An ad hoc spawn and a cardless hand-back are not read.
+
 ### Amend
 
 A worker that had to change a file outside its scope says so on its own line, just above the report:
