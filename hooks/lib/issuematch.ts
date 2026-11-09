@@ -17,6 +17,9 @@ export const MATCH_TYPES = ['task', 'bug', 'spike'] as const
 /** At most this many suggestions per card. */
 export const MATCH_LIMIT = 3
 
+/** MOD-339: the candidates read before the state check: up to this many, of which the open ones (at most MATCH_LIMIT) are suggested. */
+export const MATCH_POOL = 6
+
 /** A planned item the mod filed: its issue number, title, type, the repo paths it touches, and its parent's issue when known. */
 export type Planned = { number: number; title: string; type: string; paths: string[]; parent?: number }
 
@@ -65,9 +68,11 @@ export function plannedFromPlan(json: unknown): Planned[] {
     if (!Array.isArray(items)) return
     for (const raw of items) {
       if (typeof raw !== 'object' || raw === null) continue
-      const o = raw as { type?: unknown; title?: unknown; paths?: unknown; issue?: unknown; children?: unknown }
+      const o = raw as { type?: unknown; title?: unknown; paths?: unknown; issue?: unknown; close?: unknown; children?: unknown }
       const issue = typeof o.issue === 'number' && Number.isInteger(o.issue) && o.issue >= 1 ? o.issue : undefined
-      if (issue !== undefined) {
+      // MOD-339: an item filed closed (a close line with some text) is done, so it is never a candidate; its children still are
+      const closed = typeof o.close === 'string' && o.close.trim() !== ''
+      if (issue !== undefined && !closed) {
         const paths = Array.isArray(o.paths) ? o.paths.filter((p): p is string => typeof p === 'string') : []
         out.push({ number: issue, title: typeof o.title === 'string' ? o.title : '', type: typeof o.type === 'string' ? o.type : '', paths, ...(parent !== undefined ? { parent } : {}) })
       }
@@ -81,8 +86,9 @@ export function plannedFromPlan(json: unknown): Planned[] {
 /**
  * Up to MATCH_LIMIT candidates whose paths overlap the card's scope, most overlapping first (then by issue number). A candidate
  * is out when it is not a task, bug or spike, has no paths, or its number is already named by a card or a ledger row.
+ * MOD-339: `limit` is how many are returned (MATCH_LIMIT when not given).
  */
-export function matchPlanned(scope: readonly string[], planned: readonly Planned[], named: ReadonlySet<number>): (Planned & { overlap: number })[] {
+export function matchPlanned(scope: readonly string[], planned: readonly Planned[], named: ReadonlySet<number>, limit: number = MATCH_LIMIT): (Planned & { overlap: number })[] {
   const scored: (Planned & { overlap: number })[] = []
   for (const p of planned) {
     if (named.has(p.number) || !(MATCH_TYPES as readonly string[]).includes(p.type)) continue
@@ -90,7 +96,15 @@ export function matchPlanned(scope: readonly string[], planned: readonly Planned
     if (overlap > 0) scored.push({ ...p, overlap })
   }
   scored.sort((a, b) => b.overlap - a.overlap || a.number - b.number)
-  return scored.slice(0, MATCH_LIMIT)
+  return scored.slice(0, limit)
+}
+
+/**
+ * MOD-339: the candidates whose issue is not known to be closed, first `limit`; a number absent from `states` is kept.
+ * A candidate is dropped only when `states` holds its number with a value that is `closed` in any letter case. Order is kept.
+ */
+export function openCandidates<T extends { number: number }>(cands: readonly T[], states: ReadonlyMap<number, string>, limit: number = MATCH_LIMIT): T[] {
+  return cands.filter(c => states.get(c.number)?.toLowerCase() !== 'closed').slice(0, limit)
 }
 
 /** The head of a candidate's line: `planned task #<n> "<title>"`, with ` (under #<p>)` when its parent is known. */
