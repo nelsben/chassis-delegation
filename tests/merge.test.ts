@@ -436,7 +436,7 @@ describe('MOD-75: /delegation merge <id>', () => {
     const rec = w.store.get('delegation.brain.0') as { usd: number }
     const rows = (w.files.get(LEDGER) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
     const merged = rows.find(r => r.kind === 'merged')
-    expect(merged?.brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0 })
+    expect(merged?.brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0, pair: 'fable/default', window: 200000, compactions: 0 })
   })
 
   test('MOD-309: --finish with the worktree gone and the sha not in origin/main returns the not-yet line and records nothing', async ($, on) => {

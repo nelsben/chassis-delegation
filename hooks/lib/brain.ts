@@ -15,12 +15,26 @@ export type BrainRecord = {
   /** The brain's own writes (Edit, Write, MultiEdit, NotebookEdit, a Bash write into the root), allowed or not. */
   edits: number
   byModel: Record<string, BrainModel>
+  /** MOD-344: dollars and turns by `<family>/<effort>` (`opus/medium`); the effort is `default` when the step named none. */
+  byPair?: Record<string, { usd: number; turns: number }>
+  /** MOD-344: compactions of the main conversation this session. */
+  compactions?: number
+  /** MOD-344: the context tokens just before the latest compaction: the window the session really ran at. */
+  compactTokens?: number
+  /** MOD-344: the context window of the session's model, in tokens, as the host reports it. */
+  window?: number
 }
 
 export const emptyBrain = (): BrainRecord => ({ tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0 }, usd: 0, unpriced: false, turns: 0, edits: 0, byModel: {} })
 
-/** The record with one more main-loop turn. */
-export function brainTurn(acc: BrainRecord | undefined, u: UsageLike): BrainRecord {
+/** MOD-344: `<family>/<effort>`; the effort is `default` when none was named. */
+export function brainPair(model: string | undefined, effort: string | number | undefined): string {
+  const e = effort === undefined ? '' : String(effort).trim().toLowerCase()
+  return `${brainFamily(model)}/${e === '' ? 'default' : e}`
+}
+
+/** The record with one more main-loop turn; with an effort, its dollars and turn also go to its pair. */
+export function brainTurn(acc: BrainRecord | undefined, u: UsageLike, effort?: string | number): BrainRecord {
   const prev = acc ?? emptyBrain()
   const t = tokensOf(u)
   const price = priceFor(u.model)
@@ -28,25 +42,65 @@ export function brainTurn(acc: BrainRecord | undefined, u: UsageLike): BrainReco
   const model = u.model || 'unknown'
   const was = prev.byModel[model] ?? { usd: 0, tokens: 0, turns: 0 }
   const sum = addTurn({ tokens: prev.tokens, usd: 0, turns: prev.turns, models: [] }, u)
+  const pair = brainPair(u.model, effort)
+  const wasPair = prev.byPair?.[pair] ?? { usd: 0, turns: 0 }
   return {
+    ...prev,
     tokens: sum.tokens,
     usd: round4(prev.usd + usd),
     unpriced: prev.unpriced || price === undefined,
     turns: prev.turns + 1,
     edits: prev.edits,
     byModel: { ...prev.byModel, [model]: { usd: round4(was.usd + usd), tokens: was.tokens + t.in + t.out + t.cacheRead + t.cacheWrite, turns: was.turns + 1 } },
+    byPair: { ...prev.byPair, [pair]: { usd: round4(wasPair.usd + usd), turns: wasPair.turns + 1 } },
   }
+}
+
+/** MOD-344: the record with one more compaction; `tokens` (when above 0) is the window the session ran at. */
+export function brainCompacted(acc: BrainRecord | undefined, tokens?: number): BrainRecord {
+  const prev = acc ?? emptyBrain()
+  const keep = tokens !== undefined && Number.isFinite(tokens) && tokens > 0
+  return { ...prev, compactions: (prev.compactions ?? 0) + 1, ...(keep ? { compactTokens: tokens } : {}) }
+}
+
+/** MOD-344: the record with the model's context window; unchanged when the window is not above 0. */
+export function brainWindow(acc: BrainRecord | undefined, window: number | undefined): BrainRecord {
+  if (window === undefined || !Number.isFinite(window) || window <= 0) return acc ?? emptyBrain()
+  return { ...(acc ?? emptyBrain()), window }
 }
 
 /** The record with one more brain edit. */
 export const brainEdit = (acc: BrainRecord | undefined): BrainRecord => ({ ...(acc ?? emptyBrain()), edits: (acc?.edits ?? 0) + 1 })
 
-export type BrainStamp = { since: number; usd: number; turns: number; edits: number }
+export type BrainStamp = {
+  since: number
+  usd: number
+  turns: number
+  edits: number
+  /** MOD-344: the `<family>/<effort>` pair with the most dollars. */
+  pair?: string
+  /** MOD-344: the model's context window, in tokens. */
+  window?: number
+  compactions: number
+  /** MOD-344: the context tokens just before the latest compaction. */
+  compactTokens?: number
+}
 
 /** MOD-342: the brain's running total for a ledger row; undefined before its first turn. */
 export function brainStamp(rec: BrainRecord | undefined, since: number): BrainStamp | undefined {
   if (!rec || !(rec.turns > 0)) return undefined
-  return { since: Number.isFinite(since) ? since : 0, usd: round4(rec.usd), turns: rec.turns, edits: rec.edits }
+  const pairs = Object.entries(rec.byPair ?? {})
+  const top = pairs.sort((a, b) => b[1].usd - a[1].usd || b[1].turns - a[1].turns || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0]
+  return {
+    since: Number.isFinite(since) ? since : 0,
+    usd: round4(rec.usd),
+    turns: rec.turns,
+    edits: rec.edits,
+    ...(top ? { pair: top[0] } : {}),
+    ...(rec.window !== undefined ? { window: rec.window } : {}),
+    compactions: rec.compactions ?? 0,
+    ...(rec.compactTokens !== undefined ? { compactTokens: rec.compactTokens } : {}),
+  }
 }
 
 export type BrainFamily = 'fable' | 'opus' | 'sonnet' | 'haiku' | 'other'

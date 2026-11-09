@@ -4,6 +4,7 @@
 
 ### Added
 
+- **The brain's stamp on a ledger row says how the brain was run: `pair` (the model family and effort that spent the most), `window` (the context window in tokens), `compactions` and `compactTokens` (the context tokens just before the latest compaction), so a reader can see what a model or effort level cost (MOD-344).**
 - **`node bin/evidence.mjs --scorecard <ledger>...` prints a scorecard by ISO week (UTC) and by model: cards, first-try and strict first-try rates, rework, mean choices, linked and escaped cards, the brain's share of spend and dollars; the JSON carries the same numbers under `scorecard` (MOD-343).**
 - **A judged ledger row and a `merged` row carry `brain` (`since`, `usd`, `turns`, `edits`), the brain's running spend in the session when the row is written, so a ledger-only reader can see the brain's share of a delegated card's cost; read the largest `usd` per `since` (MOD-342).**
 - **The `card` tool takes `fixes` (up to 5 task ids of merged cards the card repairs, or `[]`), written as a `fixes:` line and nudged for when a title starts `Bug` or `Fix`; each spawn row records `fixes` and `linked` (whether the card has an issue link) so the ledger can count repaired verdicts and linked cards (MOD-341).**

@@ -56,8 +56,8 @@ export type World = {
   commands: string[]
   /** The session cost `session.usage` reports; a test moves it to give an attempt a cost. */
   usd: number
-  /** MOD-48: the context `session.usage` reports. */
-  context: { window: number; percent: number }
+  /** MOD-48: the context `session.usage` reports. MOD-344: `tokens` is the input the last response was answered over (absent by default). */
+  context: { window: number; percent: number; tokens?: number }
   /** MOD-128: the rate-limit windows `session.usage` reports (percentUsed in points, resetsAt in epoch seconds). */
   rateLimits: { kind: string; percentUsed: number; resetsAt?: number }[]
   /** `$.state` values, keyed `<plugin>.<key>`. */
