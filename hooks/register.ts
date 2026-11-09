@@ -9223,6 +9223,7 @@ async function plannedFor($: Host, root: string, scope: readonly string[], cardD
   const states = new Map<number, string>()
   const ownerRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '')
   if (ownerRepo) {
+    landRepo = ownerRepo // MOD-339: the allowlist passes the issue view only with landRepo set, as the tree and land paths do
     for (const c of pool) {
       const r = await run($, ['gh', 'issue', 'view', String(c.number), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 15000 })
       if (!r.ok || r.exitCode !== 0) continue
