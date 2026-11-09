@@ -16,6 +16,33 @@ export type Reconciled = {
   notRead: number[]
 }
 
+/** MOD-340: a card as the folder read gives it. */
+export type CardLite = { id: string; status?: string; issue?: number; parent?: number; scope: readonly string[] }
+
+/** MOD-340: the merged cards reconcile matches against: ledger merged rows newest first, then cards whose status is merged that no row named. */
+export function mergedCards(rows: readonly Record<string, unknown>[], cards: readonly CardLite[]): MergedCard[] {
+  const byId = new Map(cards.map(c => [c.id, c]))
+  const out: MergedCard[] = []
+  const seen = new Set<string>()
+  const refs = (c: CardLite | undefined) => ({ ...(c?.issue !== undefined ? { issue: c.issue } : {}), ...(c?.parent !== undefined ? { parent: c.parent } : {}) })
+  for (const row of rows.filter(r => r.kind === 'merged' && typeof r.task === 'string').reverse()) {
+    const id = row.task as string
+    if (seen.has(id)) continue
+    seen.add(id)
+    const card = byId.get(id)
+    const files = rows.filter(r => r.task === id && Array.isArray(r.files)).flatMap(r => (r.files as unknown[]).filter((f): f is string => typeof f === 'string'))
+    const scope = card && card.scope.length > 0 ? card.scope : files
+    if (scope.length === 0) continue
+    out.push({ id, scope, ...(typeof row.pr === 'number' ? { pr: row.pr } : {}), ...refs(card) })
+  }
+  for (const card of cards) {
+    if (card.status !== 'merged' || seen.has(card.id) || card.scope.length === 0) continue
+    seen.add(card.id)
+    out.push({ id: card.id, scope: card.scope, ...refs(card) })
+  }
+  return out
+}
+
 /** MOD-303: the merged card an open sub-issue is done in: the card whose issue is the sub-issue, else a card whose parent is it while every child is CLOSED. Never a scope overlap. */
 function doneIn(sub: ReconSub, merged: readonly MergedCard[]): MergedCard | undefined {
   const named = merged.find(m => m.issue === sub.number)

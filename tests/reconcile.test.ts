@@ -64,3 +64,28 @@ describe('MOD-288: tree reconcile', () => {
     expect(out).toContain('closed #51')
   })
 })
+
+describe('MOD-340: a merged card with no ledger row', () => {
+  const bare = (on: any) =>
+    world(on, {
+      files: {
+        [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards' }),
+        [`${CARDS}/MOD-9-a.md`]: card('MOD-9', 'merged', 'hooks/x.ts', 51),
+        ...gitCfg('https://github.com/o/r.git'),
+      },
+      dirs: { [CARDS]: ['MOD-9-a.md'] },
+      run: ghRun,
+    })
+  test('the dry run lists the sub-issue as done in the card', async ($, on) => {
+    bare(on)
+    await $.session.start(sessionStart)
+    const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 50, reconcile: true } as never))
+    expect(out).toContain('#51 Fix header — done in MOD-9')
+  })
+  test('confirm closes it with done in <card id>', async ($, on) => {
+    const w = bare(on)
+    await $.session.start(sessionStart)
+    await $.command.run({ command: 'delegation', args: 'tree reconcile 50 --confirm', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
+    expect(closes(w)).toEqual([['gh', 'issue', 'close', '51', '--repo', 'o/r', '--comment', 'done in MOD-9']])
+  })
+})

@@ -219,7 +219,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan,
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { doneComment, epicsOf, landedFor, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
+import { doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
@@ -5023,19 +5023,8 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
   const rows = (await ledgerAt($, root)).rows
   const inFlight = new Set<number>()
   for (const c of cardsById.values()) if (c.issue !== undefined && c.status !== 'merged' && c.status !== 'parked') inFlight.add(c.issue)
-  // merged cards, newest first: a ledger merged row, its scope from the card file, else the files of a row of that task
-  const merged: MergedCard[] = []
-  const seen = new Set<string>()
-  for (const row of rows.filter(r => r.kind === 'merged' && typeof r.task === 'string').reverse()) {
-    const id = row.task as string
-    if (seen.has(id)) continue
-    seen.add(id)
-    const card = cardsById.get(id)
-    const files = rows.filter(r => r.task === id && Array.isArray(r.files)).flatMap(r => (r.files as unknown[]).filter((f): f is string => typeof f === 'string'))
-    const scope = card && card.scope.length > 0 ? card.scope : files
-    if (scope.length === 0) continue
-    merged.push({ id, scope, ...(typeof row.pr === 'number' ? { pr: row.pr } : {}), ...(card?.issue !== undefined ? { issue: card.issue } : {}), ...(card?.parent !== undefined ? { parent: card.parent } : {}) })
-  }
+  // MOD-340: ledger merged rows newest first, then cards whose status is merged that no row named
+  const merged = mergedCards(rows, [...cardsById].map(([id, c]) => ({ id, ...c })))
   const subsOf = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : []).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { number?: unknown }).number === 'number')
   const parts: { number: number; title: string; result: Reconciled }[] = []
   for (const epic of epics) {

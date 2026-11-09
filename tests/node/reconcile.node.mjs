@@ -82,3 +82,42 @@ describe('MOD-288: args and landed files', () => {
     expect(landedFor(files, 9)).toBeUndefined()
   })
 })
+
+describe('MOD-340: mergedCards', () => {
+  const c = (id, status, scope, extra = {}) => ({ id, status, scope, ...extra })
+  const row = (task, extra = {}) => ({ kind: 'merged', task, ...extra })
+  test('a ledger row with its card gives the row pr and the card issue', async () => {
+    const { mergedCards } = await lib()
+    expect(mergedCards([row('A-1', { pr: 7 })], [c('A-1', 'merged', ['a/**'], { issue: 5 })])).toEqual([{ id: 'A-1', scope: ['a/**'], pr: 7, issue: 5 }])
+  })
+  test('a merged card with no row counts, with issue and parent and no pr', async () => {
+    const { mergedCards } = await lib()
+    expect(mergedCards([], [c('A-2', 'merged', ['b/x.ts'], { issue: 6, parent: 3 })])).toEqual([{ id: 'A-2', scope: ['b/x.ts'], issue: 6, parent: 3 }])
+  })
+  test('a merged card with an empty scope is skipped', async () => {
+    const { mergedCards } = await lib()
+    expect(mergedCards([], [c('A-3', 'merged', [])])).toEqual([])
+  })
+  test('a queued card is not merged', async () => {
+    const { mergedCards } = await lib()
+    expect(mergedCards([], [c('A-4', 'queued', ['c/**'])])).toEqual([])
+  })
+  test('only the word merged counts', async () => {
+    const { mergedCards } = await lib()
+    expect(mergedCards([], [c('A-5', 'done', ['c/**'])])).toEqual([])
+  })
+  test('a card the ledger named appears once, then the card-only one', async () => {
+    const { mergedCards } = await lib()
+    const r = mergedCards([row('A-1')], [c('A-1', 'merged', ['a/**']), c('A-2', 'merged', ['b/**'])])
+    expect(r.map(m => m.id)).toEqual(['A-1', 'A-2'])
+  })
+  test('ledger rows come newest first', async () => {
+    const { mergedCards } = await lib()
+    const r = mergedCards([row('A-1'), row('A-6')], [c('A-1', 'merged', ['a/**']), c('A-6', 'merged', ['f/**'])])
+    expect(r.map(m => m.id)).toEqual(['A-6', 'A-1'])
+  })
+  test('a row with no card takes the files of its rows as scope', async () => {
+    const { mergedCards } = await lib()
+    expect(mergedCards([row('A-7'), { kind: 'report', task: 'A-7', files: ['d/y.ts'] }], [])).toEqual([{ id: 'A-7', scope: ['d/y.ts'] }])
+  })
+})

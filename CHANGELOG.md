@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **`tree reconcile` counts a card whose `status` is `merged` even when the ledger has no merged row for it (a repo adopted before those rows existed, or a trimmed ledger), so its `issue` or `parent` sub-issue is listed as done in that card; other status words are not read (MOD-340).**
 - **The planned-task hint names no closed issue: a plan item filed with a `close:` line is never a candidate, and the state of up to six candidates is read with `gh issue view` before one is suggested, so a closed issue is skipped and an unreadable state keeps the hint (MOD-339).**
 
 ## 0.9.54 — 2026-11-07
