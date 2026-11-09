@@ -18,7 +18,7 @@ import { addDrive, callKind, driveCall, driveLines, driveOutput, driveSpeaks, dr
 import { extractPause, pauseCapLine, pauseRow, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
 import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
 import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
-import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, type BrainRecord, type BrainFamily } from './lib/brain'
+import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, brainStamp, type BrainRecord, type BrainFamily, type BrainStamp } from './lib/brain'
 import { paneTree, type PaneTable, type PaneView } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, SAMPLE_LIVE_MS, sampleEvery, sampleMoved, idsHashOf, probeSkipped, type ProbeFailed, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
@@ -1756,9 +1756,12 @@ async function readSpend($: Host): Promise<SpendPoint[]> {
  * record kept there lost every turn before the change. `$.state` stays as the view.
  */
 let brainKeyCache: string | undefined
+/** MOD-342: the session start the key was built from, kept beside it so a ledger row needs no extra session.usage call. */
+let brainSinceCache: number | undefined
 /** MOD-239: the key is read from session.usage at session.start and at a main-loop turn.start, not on every call. */
 async function refreshBrainKey($: Host): Promise<string> {
   brainKeyCache = undefined
+  brainSinceCache = undefined
   return brainKey($)
 }
 async function brainKey($: Host): Promise<string> {
@@ -1770,7 +1773,18 @@ async function brainKey($: Host): Promise<string> {
     // unknown: one record for the unknown start
   }
   brainKeyCache = K.brain(since)
+  brainSinceCache = since
   return brainKeyCache
+}
+
+/** MOD-342: the brain's running total for the judged and merged ledger rows; undefined before its first turn, or on any failure. */
+async function brainStampNow($: Host): Promise<BrainStamp | undefined> {
+  try {
+    const rec = await readBrain($)
+    return brainStamp(rec, brainSinceCache ?? 0)
+  } catch {
+    return undefined
+  }
 }
 
 async function readBrain($: Host): Promise<BrainRecord | undefined> {
@@ -4056,7 +4070,8 @@ async function finishRecord($: Host, o: { root: string; id: string; def: string;
   } catch (err) {
     debug($, `${id}: merge not recorded on the task: ${String(err)}`)
   }
-  await appendLedger($, { kind: 'merged', task: id, sha, ...(pr ? { pr: Number(pr) } : {}), at: t, ...(sid ? { sessionId: sid } : {}) })
+  const stamp = await brainStampNow($)
+  await appendLedger($, { kind: 'merged', task: id, sha, ...(pr ? { pr: Number(pr) } : {}), at: t, ...(sid ? { sessionId: sid } : {}), ...(stamp ? { brain: stamp } : {}) })
   await clearOwed($, id)
   if (sid) {
     const list = ((await storeGet<MergedEntry[]>($, K.merged(sid))) ?? []).filter(m => m.task !== id)
@@ -7349,7 +7364,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     await noteRecent($, { task: shownLabel, attempt: shownAttempt, verdict, line: quiet, at: t, ...(owed ? { owed } : {}), ...(report?.pr ? { pr: report.pr } : {}), ...(report?.sha ? { sha: report.sha } : {}), ...(spawn.key.includes('-rejudge-') ? { rejudge: true } : {}) })
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
     const verdictBrief = spawn.briefPath !== undefined ? await readText($, spawn.briefPath) : undefined
-    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
+    const brainAt = await brainStampNow($)
+    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), ...(brainAt ? { brain: brainAt } : {}), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
   }
   return { full, line }
 }

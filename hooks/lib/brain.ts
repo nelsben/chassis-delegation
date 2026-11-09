@@ -41,6 +41,14 @@ export function brainTurn(acc: BrainRecord | undefined, u: UsageLike): BrainReco
 /** The record with one more brain edit. */
 export const brainEdit = (acc: BrainRecord | undefined): BrainRecord => ({ ...(acc ?? emptyBrain()), edits: (acc?.edits ?? 0) + 1 })
 
+export type BrainStamp = { since: number; usd: number; turns: number; edits: number }
+
+/** MOD-342: the brain's running total for a ledger row; undefined before its first turn. */
+export function brainStamp(rec: BrainRecord | undefined, since: number): BrainStamp | undefined {
+  if (!rec || !(rec.turns > 0)) return undefined
+  return { since: Number.isFinite(since) ? since : 0, usd: round4(rec.usd), turns: rec.turns, edits: rec.edits }
+}
+
 export type BrainFamily = 'fable' | 'opus' | 'sonnet' | 'haiku' | 'other'
 
 /** The family of a model alias or id. */

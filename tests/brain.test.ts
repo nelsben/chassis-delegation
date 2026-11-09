@@ -1,7 +1,7 @@
 // GH-113: the brain's own spend, priced and kept apart from the workers', and the delegate-only decision table (pure).
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, sessionStart, usage } from './harness'
+import { world, sessionStart, usage, spawnInput, turnInput, agentResult, SCRATCH, ROOT } from './harness'
 import { priceFor } from '../hooks/lib/cost'
 import { brainTurn, brainEdit, brainSplit, brainFamily, brainSummary, brainLine, brainTileText, bashWrites, bashCommits, delegateDecision, DELEGATE_DENY, PREMIUM_POSTURE } from '../hooks/lib/brain'
 import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
@@ -305,5 +305,39 @@ describe('MOD-239: a brain tool call keeps its drive count in memory', () => {
     for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: `/repo/f${i}.ts` } as never)
     await $.turn.complete(mainTurn(usage(FABLE, 1000, 10)))
     expect((w.store.get(BRAIN_KEY) as { drive: { read: number } }).drive.read).toBe(8)
+  })
+})
+
+describe('MOD-342: the judged ledger row carries the brain\'s running total', () => {
+  const FABLE = 'claude-fable-5-1'
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const REPORT = '[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
+  const mainTurn = (u: ReturnType<typeof usage>) => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: u }) as never
+  const judged = (w: { files: Map<string, string> }) =>
+    (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>).filter(r => r.event !== 'spawn' && typeof r.verdict === 'string')
+
+  test('after a brain turn, the hand-back row has brain.turns 1 and brain.usd equal to the record', async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, agentId: 'agent-4', model: FABLE })
+    await $.session.start(sessionStart)
+    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000)))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT))
+    const rec = w.store.get('delegation.brain.0') as { usd: number; turns: number }
+    expect(rec.turns).toBe(1)
+    const rows = judged(w)
+    expect(rows).toHaveLength(1)
+    const brain = rows[0]?.brain as Record<string, unknown>
+    expect(brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0 })
+  })
+
+  test('with no brain turn before the hand-back, the row has no brain key', async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, agentId: 'agent-4', model: FABLE })
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT))
+    const rows = judged(w)
+    expect(rows).toHaveLength(1)
+    expect('brain' in (rows[0] ?? {})).toBe(false)
   })
 })

@@ -4,6 +4,7 @@
 
 ### Added
 
+- **A judged ledger row and a `merged` row carry `brain` (`since`, `usd`, `turns`, `edits`), the brain's running spend in the session when the row is written, so a ledger-only reader can see the brain's share of a delegated card's cost; read the largest `usd` per `since` (MOD-342).**
 - **The `card` tool takes `fixes` (up to 5 task ids of merged cards the card repairs, or `[]`), written as a `fixes:` line and nudged for when a title starts `Bug` or `Fix`; each spawn row records `fixes` and `linked` (whether the card has an issue link) so the ledger can count repaired verdicts and linked cards (MOD-341).**
 - **A worker lists the decisions the card left open in its hand-back (`choice: <what was open> -> <what you picked>`, or `choice: none`); the mod counts them as `choices` on the attempt and the ledger row, keeps the lines as `choiceLines` in the ledger only, and the verdict shows `choices: <n> the card left open`; the count is never judged (MOD-338).**
 
