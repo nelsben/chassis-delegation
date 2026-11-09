@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`node bin/evidence.mjs --scorecard` gains a block that compares brain setups (the brain's model, effort and context window): sessions, cards, first-try and strict rates, rework, choices, grants, compactions, and the brain's dollars and turns per card and its share of spend; the JSON carries it as `scorecard.brains` (MOD-345).**
 - **The brain's stamp on a ledger row says how the brain was run: `pair` (the model family and effort that spent the most), `window` (the context window in tokens), `compactions` and `compactTokens` (the context tokens just before the latest compaction), so a reader can see what a model or effort level cost (MOD-344).**
 - **`node bin/evidence.mjs --scorecard <ledger>...` prints a scorecard by ISO week (UTC) and by model: cards, first-try and strict first-try rates, rework, mean choices, linked and escaped cards, the brain's share of spend and dollars; the JSON carries the same numbers under `scorecard` (MOD-343).**
 - **A judged ledger row and a `merged` row carry `brain` (`since`, `usd`, `turns`, `edits`), the brain's running spend in the session when the row is written, so a ledger-only reader can see the brain's share of a delegated card's cost; read the largest `usd` per `since` (MOD-342).**

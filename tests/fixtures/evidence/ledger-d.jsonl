@@ -1,0 +1,9 @@
+{"task":"D-1","subtask":"main","lineage":1,"attempt":1,"verdict":"consistent","alias":"sonnet","usd":1,"choices":1,"brain":{"since":100,"usd":2,"turns":10,"edits":0,"pair":"opus/medium","window":1000000,"compactions":0},"at":1794301200000}
+{"task":"D-2","subtask":"main","lineage":1,"attempt":1,"verdict":"refuted","alias":"sonnet","usd":1,"brain":{"since":100,"usd":4,"turns":20,"edits":0,"pair":"opus/medium","window":1000000,"compactions":1,"compactTokens":243000},"at":1794304800000}
+{"task":"D-2","subtask":"main","kind":"amend","source":"brain","at":1794305100000}
+{"task":"D-2","subtask":"main","lineage":1,"attempt":1,"verdict":"consistent","alias":"sonnet","usd":1,"choices":3,"brain":{"since":100,"usd":5,"turns":24,"edits":0,"pair":"opus/medium","window":1000000,"compactions":1,"compactTokens":243000},"at":1794305400000}
+{"task":"D-3","subtask":"main","lineage":1,"attempt":1,"verdict":"consistent","alias":"sonnet","usd":2,"choices":0,"brain":{"since":200,"usd":6,"turns":12,"edits":0,"pair":"fable/low","window":1000000,"compactions":0},"at":1794308400000}
+{"task":"D-4","subtask":"main","lineage":1,"attempt":1,"verdict":"refuted","alias":"sonnet","usd":1,"brain":{"since":300,"usd":1,"turns":4,"edits":0,"compactions":0},"at":1794312000000}
+{"task":"D-4","subtask":"main","lineage":1,"attempt":2,"verdict":"consistent","alias":"sonnet","usd":1,"brain":{"since":300,"usd":2,"turns":8,"edits":0,"compactions":0},"at":1794313800000}
+{"task":"D-1","subtask":"main","kind":"amend","source":"worker","at":1794315600000}
+{"task":"D-5","subtask":"main","lineage":1,"attempt":1,"verdict":"consistent","alias":"sonnet","usd":1,"at":1794319200000}
