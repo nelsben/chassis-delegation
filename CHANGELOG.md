@@ -10,6 +10,7 @@
 
 ### Changed
 
+- **An issue state read for the card match is remembered for ten minutes, so the card call, the dry run and the dispatch of one card read each issue once; a failed read is tried again, and a new session starts empty (MOD-350).**
 - **The scorecard's weekly `brainUsd` is now the sum of the differences between a session's stamps, placed in the week of each row, not one total in the week of the newest row; `scorecard.brains` is keyed by model-and-effort pair, reads only stamps that carry `pairs` (so 0.9.55 stamps no longer appear there), and counts dollars and requests spent on the pair, with cards assigned by the pair their task spent most on (MOD-349).**
 
 ### Fixed

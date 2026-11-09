@@ -104,3 +104,27 @@ describe('MOD-339: a closed planned task is never suggested', () => {
     expect(w.runs.some(r => r.argv[0] === 'gh' && r.argv[1] === 'issue' && r.argv[2] === 'view')).toBe(false)
   })
 })
+
+describe('MOD-350: an issue state read for the match is remembered', () => {
+  const views = (w: { runs: { argv: string[] }[] }, n?: number) => w.runs.filter(r => r.argv[0] === 'gh' && r.argv[1] === 'issue' && r.argv[2] === 'view' && (n === undefined || r.argv[3] === String(n))).length
+  test('two card calls over the same candidates run one view per candidate', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = cardRun(on as never, planned([[75, ['src/export/a.ts']], [58, ['src/export/a.ts']]]), stateOf({ 75: 'CLOSED', 58: 'OPEN' }))
+    await $.session.start(sessionStart)
+    await $.tool.call({ tool: TOOL, ...given } as never)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given, title: 'Fix the export row drop again' } as never))
+    expect(views(w)).toBe(2)
+    expect(out).toContain('planned task #58 "export task" overlaps this scope; pass issue: 58')
+    expect(out).not.toContain('#75')
+  })
+
+  test('a candidate whose view failed is read again on the next call', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = cardRun(on as never, planned([[75, ['src/export/a.ts']], [58, ['src/export/a.ts']]]), stateOf({ 58: 'OPEN' }))
+    await $.session.start(sessionStart)
+    await $.tool.call({ tool: TOOL, ...given } as never)
+    const [first75, first58] = [views(w, 75), views(w, 58)]
+    await $.tool.call({ tool: TOOL, ...given, title: 'Fix the export row drop again' } as never)
+    expect(first58).toBe(1)
+    expect(views(w, 75)).toBeGreaterThan(first75) // the failed read is tried again
+    expect(views(w, 58)).toBe(1) // the read one is not
+  })
+})
