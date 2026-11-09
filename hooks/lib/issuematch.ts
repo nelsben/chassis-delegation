@@ -107,6 +107,31 @@ export function openCandidates<T extends { number: number }>(cands: readonly T[]
   return cands.filter(c => states.get(c.number)?.toLowerCase() !== 'closed').slice(0, limit)
 }
 
+/** MOD-350: how long a read issue state is trusted. */
+export const STATE_TTL_MS = 10 * 60 * 1000
+/** MOD-350: the most entries the cache holds; past it the cache is emptied. */
+export const STATE_CACHE_MAX = 200
+export type StateCache = Map<string, { state: string; at: number }>
+const stateKey = (repo: string, n: number): string => `${repo.toLowerCase()}#${n}`
+
+/** MOD-350: a state read less than STATE_TTL_MS ago (and not in the future), or undefined; a stale or future entry is deleted. */
+export function cachedState(cache: StateCache, repo: string, n: number, now: number): string | undefined {
+  const key = stateKey(repo, n)
+  const e = cache.get(key)
+  if (!e) return undefined
+  const age = now - e.at
+  if (age >= 0 && age < STATE_TTL_MS) return e.state
+  cache.delete(key)
+  return undefined
+}
+
+/** MOD-350: remember a read state; a full cache is emptied first when the key is new. */
+export function rememberState(cache: StateCache, repo: string, n: number, state: string, now: number): void {
+  const key = stateKey(repo, n)
+  if (cache.size >= STATE_CACHE_MAX && !cache.has(key)) cache.clear()
+  cache.set(key, { state, at: now })
+}
+
 /** The head of a candidate's line: `planned task #<n> "<title>"`, with ` (under #<p>)` when its parent is known. */
 export function plannedHead(p: Planned): string {
   return `planned task #${p.number} "${p.title}"${p.parent !== undefined ? ` (under #${p.parent})` : ''}`

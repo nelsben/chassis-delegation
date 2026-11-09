@@ -223,7 +223,7 @@ import { doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, recon
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
-import { landedTail, matchPlanned, openCandidates, MATCH_POOL, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned } from './lib/issuematch'
+import { cachedState, rememberState, landedTail, matchPlanned, openCandidates, MATCH_POOL, type StateCache, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned } from './lib/issuematch'
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
 import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
@@ -917,6 +917,7 @@ let recordsCache: { at: number; records: AttemptRecord[] } | undefined
 const RECORDS_TTL_MS = 15_000
 let probeTimer: { cancel: () => void } | undefined
 let spawnSeq = 0
+const issueStates: StateCache = new Map() // MOD-350: issue states read for the card match, kept ten minutes; emptied at session start
 // Part 2: the main loop's turn state, the idle timers, the scheduler's slots.
 // A (re)load does not know whether a main turn is running, so it assumes one is
 // until the next main-loop turn.complete: nothing runs in the background before.
@@ -9258,12 +9259,21 @@ async function plannedFor($: Host, root: string, scope: readonly string[], cardD
   const ownerRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '')
   if (ownerRepo) {
     landRepo = ownerRepo // MOD-339: the allowlist passes the issue view only with landRepo set, as the tree and land paths do
+    const at = await now($) // MOD-350: a state read inside ten minutes is not read again; a failed read is never kept
     for (const c of pool) {
+      const hit = cachedState(issueStates, ownerRepo, c.number, at)
+      if (hit !== undefined) {
+        states.set(c.number, hit)
+        continue
+      }
       const r = await run($, ['gh', 'issue', 'view', String(c.number), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 15000 })
       if (!r.ok || r.exitCode !== 0) continue
       try {
         const state = (JSON.parse(r.stdout) as { state?: unknown } | null)?.state
-        if (typeof state === 'string') states.set(c.number, state)
+        if (typeof state === 'string') {
+          states.set(c.number, state)
+          rememberState(issueStates, ownerRepo, c.number, state, at)
+        }
       } catch {
         // not JSON: the candidate is kept
       }
@@ -10983,6 +10993,7 @@ export const register: Register = (on, opts) => {
   on('session.start', async ($, e, next) => {
     // MOD-239: the brain key is read once here; counts held from an earlier start are dropped (the store keeps its own)
     drivePending = undefined
+    issueStates.clear() // MOD-350
     driveFlushedAt = 0
     await refreshBrainKey($)
     // MOD-128: the host status line is retired; this clears a line an earlier version pinned
