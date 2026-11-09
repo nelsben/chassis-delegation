@@ -416,6 +416,29 @@ type GlobTok = { kind: 'lit'; c: string } | { kind: 'star'; slash: boolean } | {
 /** A leading `/` or `~` names a folder outside the repo: the absolute rule. */
 const isAbsoluteGlob = (g: string): boolean => g.startsWith('/') || g.startsWith('~')
 
+/**
+ * MOD-351: in a repo path a double star is a single star, so `dir/` + double star + `/x` needs a folder between and misses
+ * `dir/x`. For each scope then forbid entry that holds such a part, the fill (a leading double-star folder dropped, every
+ * double-star folder between slashes made one slash) is the path it misses; when no other entry of the same list equals or
+ * matches the fill, one `warning:` line names the entry to add. Absolute entries are skipped (there it spans zero folders).
+ * Pure; nothing is refused and the matcher does not change.
+ */
+export function globGapWarnings(scope: readonly string[], forbid: readonly string[]): string[] {
+  const out: string[] = []
+  for (const [list, entries] of [['scope', scope], ['forbid', forbid]] as const) {
+    const seen = new Set<string>()
+    for (const entry of entries) {
+      if (entry === '' || isAbsoluteGlob(entry) || seen.has(entry)) continue
+      seen.add(entry)
+      const fill = (entry.startsWith('**/') ? entry.slice(3) : entry).replaceAll('/**/', '/')
+      if (fill === entry) continue
+      if (entries.some(o => o !== '' && o !== entry && (o === fill || globMatches(fill, o)))) continue
+      out.push(`warning: ${list} ${entry} needs a folder at every **/ here, so it misses ${fill}: add ${fill} to the ${list}`)
+    }
+  }
+  return out
+}
+
 /** The glob characters the verifier reads for this rule (an absolute glob reads `{` and not `[`). */
 const hasWild = (g: string, abs: boolean): boolean => (abs ? /[*?{]/ : /[*?[]/).test(g)
 

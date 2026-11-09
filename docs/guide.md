@@ -94,6 +94,7 @@ spec. The `card` tool writes it. `<ID>` is `<PREFIX>-<number>[letter]`, such as 
 Glob rules for `scope` and `forbid`:
 
 - `*` crosses folders; `**` is the same as `*`;
+- so `dir/**/x` needs a folder between and does not match `dir/x`: write `dir/*x` or add `dir/x`; the card tool and dispatch warn;
 - `?` is one character;
 - a trailing `/` means everything under the folder;
 - an absolute entry (a leading `~` is the home folder) is allowed; there `*` stays inside one folder, `**` and `dir/**` span folders; the first one is the output folder (see [Research cards](contracts.md#research-cards), `repo=none`);

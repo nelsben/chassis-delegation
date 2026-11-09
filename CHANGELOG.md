@@ -4,6 +4,7 @@
 
 ### Added
 
+- **The card tool and dispatch say a scope or forbid glob such as `tests/**/*.test.ts` that needs a folder at `**/` and so misses `tests/card.test.ts`, with the entry to add (`tests/*.test.ts`); nothing is refused (MOD-351).**
 - **A brain pair names the model version (`fable-5.2/high`) and counts `steps` (model requests) and `ctx` (prompt tokens); the stamp carries `pairs`, every pair's running totals, so the difference between two stamps is what the brain spent between them, and a spawn row carries the stamp too (MOD-348).**
 - **`node bin/evidence.mjs --scorecard` gains a `repaired` column (cards a later card had to repair, joined back from `fixes`), a `contexts` block (cards grouped by the brain's average context per request, in 50k buckets), and per-pair `reqs`, `ctx/req`, `$/req`, median and `reqs/card` in the brains block; the JSON carries `scorecard.contexts` and the new keys (MOD-349).**
 - **Price rows for Fable 5.2 and Mythos 5.2 ($8/$40, cache reads $0.20), so a brain turn on them is priced (MOD-348).**
