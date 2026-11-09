@@ -73,3 +73,52 @@ describe('MOD-287: the planned-task match', () => {
     expect(issueMatchOf('yes')).toBeUndefined()
   })
 })
+
+// MOD-339: a plan item filed closed is never a candidate; the candidates are checked for state before one is suggested.
+describe('MOD-339: a closed issue is never suggested', () => {
+  test('a plan item with a close line is not a candidate', async () => {
+    const { plannedFromPlan } = await lib()
+    const planned = plannedFromPlan({ version: 1, items: [{ type: 'task', issue: 75, paths: ['a/x.ts'], close: 'done in OPS-1' }] })
+    expect(planned.map(p => p.number)).not.toContain(75)
+  })
+  test('the children of a closed parent are still candidates, under that parent; the parent is not', async () => {
+    const { plannedFromPlan } = await lib()
+    const planned = plannedFromPlan({ version: 1, items: [{ type: 'feature', issue: 70, close: 'done', children: [{ type: 'task', issue: 71, paths: ['a/x.ts'] }] }] })
+    expect(planned.map(p => [p.number, p.parent])).toEqual([[71, 70]])
+  })
+  test('a close line of only blanks does not close the item', async () => {
+    const { plannedFromPlan } = await lib()
+    const planned = plannedFromPlan({ version: 1, items: [{ type: 'task', issue: 76, paths: ['a/x.ts'], close: '   ' }] })
+    expect(planned.map(p => p.number)).toEqual([76])
+  })
+  test('matchPlanned takes a fourth argument as the limit; three arguments keep the limit of 3', async () => {
+    const { matchPlanned } = await lib()
+    const planned = [1, 2, 3, 4, 5].map(number => ({ number, title: `T${number}`, type: 'task', paths: ['src/a.ts'] }))
+    expect(matchPlanned(['src/**'], planned, new Set(), 6).map(x => x.number)).toEqual([1, 2, 3, 4, 5])
+    expect(matchPlanned(['src/**'], planned, new Set()).map(x => x.number)).toEqual([1, 2, 3])
+  })
+  test('MATCH_POOL is 6', async () => {
+    const { MATCH_POOL } = await lib()
+    expect(MATCH_POOL).toBe(6)
+  })
+  test('openCandidates drops a candidate whose state is closed in any case', async () => {
+    const { openCandidates } = await lib()
+    const c = [1, 2, 3, 4].map(number => ({ number }))
+    expect(openCandidates(c, new Map([[1, 'CLOSED'], [3, 'closed']])).map(x => x.number)).toEqual([2, 4])
+  })
+  test('openCandidates keeps a candidate whose state is unknown', async () => {
+    const { openCandidates } = await lib()
+    const c = [1, 2].map(number => ({ number }))
+    expect(openCandidates(c, new Map()).map(x => x.number)).toEqual([1, 2])
+  })
+  test('openCandidates returns the first limit of the open ones', async () => {
+    const { openCandidates } = await lib()
+    const c = [1, 2, 3, 4, 5].map(number => ({ number }))
+    expect(openCandidates(c, new Map([[1, 'OPEN']]), 3).map(x => x.number)).toEqual([1, 2, 3])
+  })
+  test('openCandidates defaults to the limit of 3', async () => {
+    const { openCandidates } = await lib()
+    const c = [1, 2, 3, 4, 5].map(number => ({ number }))
+    expect(openCandidates(c, new Map()).map(x => x.number)).toEqual([1, 2, 3])
+  })
+})

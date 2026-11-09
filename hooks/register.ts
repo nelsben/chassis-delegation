@@ -223,7 +223,7 @@ import { doneComment, epicsOf, landedFor, parseReconcileArgs, reconcileAllText, 
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
-import { landedTail, matchPlanned, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned } from './lib/issuematch'
+import { landedTail, matchPlanned, openCandidates, MATCH_POOL, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned } from './lib/issuematch'
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
 import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
@@ -9172,7 +9172,8 @@ async function runSetup($: Host, viaTool = false, pathIn?: string): Promise<stri
  */
 /**
  * MOD-287: the planned tasks a card with this scope is matched against: the landed files and plan files the mod filed, less any
- * issue a card or a ledger row already names. Empty when issueMatch is off or the scope is empty.
+ * issue a card or a ledger row already names. Empty when issueMatch is off or the scope is empty. MOD-339: a candidate whose
+ * issue is read as closed is dropped; one whose state cannot be read is kept.
  */
 async function plannedFor($: Host, root: string, scope: readonly string[], cardDirs: readonly string[]): Promise<(Planned & { overlap: number })[]> {
   if (cfg.issueMatch === 'off' || scope.length === 0) return []
@@ -9216,7 +9217,24 @@ async function plannedFor($: Host, root: string, scope: readonly string[], cardD
     const n = (r as { issue?: unknown }).issue
     if (typeof n === 'number' && Number.isInteger(n) && n >= 1) named.add(n)
   }
-  return matchPlanned(scope, planned, named)
+  // MOD-339: a candidate filed as planned can have been closed since; read the state of the pool's candidates and drop a closed one
+  const pool = matchPlanned(scope, planned, named, MATCH_POOL)
+  if (pool.length === 0) return []
+  const states = new Map<number, string>()
+  const ownerRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '')
+  if (ownerRepo) {
+    for (const c of pool) {
+      const r = await run($, ['gh', 'issue', 'view', String(c.number), '--repo', ownerRepo, '--json', 'number,title,state,labels,body,subIssues'], { cwd: root, timeoutMs: 15000 })
+      if (!r.ok || r.exitCode !== 0) continue
+      try {
+        const state = (JSON.parse(r.stdout) as { state?: unknown } | null)?.state
+        if (typeof state === 'string') states.set(c.number, state)
+      } catch {
+        // not JSON: the candidate is kept
+      }
+    }
+  }
+  return openCandidates(pool, states)
 }
 
 async function runCard($: Host, input: Record<string, unknown>): Promise<string> {
