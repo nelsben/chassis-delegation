@@ -145,7 +145,7 @@ It never emits a path, task id, sha, session id, agent id, brief path or free te
 so its output is safe to commit. Run `node bin/evidence.mjs a/ledger.jsonl b/ledger.jsonl`.
 No arguments: usage on stderr, exit 2. A missing file: an error naming its position, exit 1.
 
-`--scorecard` (anywhere among the arguments) prints a weekly scorecard as text instead of the JSON, and the JSON carries the same numbers under `scorecard: { weeks, models }`. A card is one `[repo, task, subtask, lineage]`; a row's time is its `verdictAt`, else its `at`, and a row with neither is left out; a week is the ISO week of that time in UTC (`2026-W45`). Per week (`weeks`), with every key below; per model alias (`models`) the keys `cards` to `rework`, `usd`, `choicesStated` and `choicesMean`, with the same meanings:
+`--scorecard` (anywhere among the arguments) prints a weekly scorecard as text instead of the JSON, and the JSON carries the same numbers under `scorecard: { weeks, models, brains }`. A card is one `[repo, task, subtask, lineage]`; a row's time is its `verdictAt`, else its `at`, and a row with neither is left out; a week is the ISO week of that time in UTC (`2026-W45`). Per week (`weeks`), with every key below; per model alias (`models`) the keys `cards` to `rework`, `usd`, `choicesStated` and `choicesMean`, with the same meanings:
 
 - `cards`: cards whose attempt 1 has a judged row, placed in the week of that earliest row.
 - `firstTry`: of those, the cards whose newest attempt-1 row is `consistent` and that have no judged row above attempt 1.
@@ -158,7 +158,16 @@ No arguments: usage on stderr, exit 2. A missing file: an error naming its posit
 - `merged`: distinct tasks with a `merged` row in the week.
 - `brainUsd`, `brainShare`: for each `[repo, brain.since]`, the largest `brain.usd` on any row, placed in the week of the newest row with that `since`; and `brainUsd / (brainUsd + usd)`. Both `null` where nothing is placed.
 
-The text form has a title, a header, one line per week oldest first, then one line per model; `1st try` reads `firstTry/cards` and a percent, `linked` reads `linked/linkedKnown`, and a `-` means no value. With no judged row at all it prints `no judged attempts`.
+`brains` compares brain setups. A session is one `[repo, brain.since]` over the rows that carry a `brain` stamp; its `pair`, `window`, `compactions`, `compactTokens`, `usd` and `turns` come from its newest stamped row, except `usd` and `turns`, which are the largest seen. A setup is named `<pair> @<window label>` (for example `opus/medium @250k`): the label is `compactTokens`, else `window`, rounded to the nearest 50,000 and written in thousands, else `unknown`; a missing `pair` is `unknown`. A card belongs to the session whose `since` is on its earliest judged attempt-1 row (a card whose row has no stamp is left out). A grant is an `amend` row whose `source` is not `worker`; it belongs to the session of the card of its task and subtask with the largest lineage. `brains` is `{}` with no stamped row; each setup holds:
+
+- `sessions`, `brainUsd`, `turns`, `compactions`: sessions with the setup, and the sums of their `usd`, `turns` and `compactions` (absent is 0).
+- `cards`, `firstTry`, `firstTryStrict`, `rework`: as above, over the cards that belong to those sessions.
+- `choicesMean`: the mean `choices` over the folded judged rows of those cards (`null` when none).
+- `grants`: grants that belong to those sessions.
+- `workerUsd`: the dollars of the folded judged rows of those cards.
+- `brainUsdPerCard`, `turnsPerCard`, `brainShare`: `brainUsd / cards`, `turns / cards` (1 decimal) and `brainUsd / (brainUsd + workerUsd)`; `null` when the divisor is 0.
+
+The text form has a title, a header, one line per week oldest first, then one line per model, then (when `brains` is not empty) a blank line, a header and one line per setup, most cards first; `1st try` reads `firstTry/cards` and a percent, `linked` reads `linked/linkedKnown`, and a `-` means no value. With no judged row at all it prints `no judged attempts`.
 
 ## Developing
 

@@ -9,6 +9,7 @@ const script = here('../../bin/evidence.mjs')
 const A = here('../fixtures/evidence/ledger-a.jsonl')
 const B = here('../fixtures/evidence/ledger-b.jsonl')
 const C = here('../fixtures/evidence/ledger-c.jsonl')
+const D = here('../fixtures/evidence/ledger-d.jsonl')
 const run = (...args) => spawnSync(process.execPath, ['--no-warnings', script, ...args], { encoding: 'utf8' })
 const out = (...args) => {
   const r = run(...args)
@@ -121,6 +122,33 @@ describe('bin/evidence.mjs', () => {
     expect(lines.some(l => l.trim().split(/\s+/)[0] === 'sonnet')).toBe(true)
     expect(lines.some(l => l.trim().split(/\s+/)[0] === 'haiku')).toBe(true)
     expect(r.stdout.includes('T-1')).toBe(false)
+  })
+  test('scorecard brains: the setups of ledger-d', () => {
+    const b = out(D).scorecard.brains
+    expect(Object.keys(b)).toEqual(['fable/low @1000k', 'opus/medium @250k', 'unknown @unknown'])
+    expect(b['opus/medium @250k']).toEqual({ sessions: 1, brainUsd: 5, turns: 24, compactions: 1, cards: 2, firstTry: 2, firstTryStrict: 1, rework: 0, choicesMean: 2, grants: 1, workerUsd: 2, brainUsdPerCard: 2.5, turnsPerCard: 12, brainShare: 0.71 })
+    expect(b['fable/low @1000k']).toEqual({ sessions: 1, brainUsd: 6, turns: 12, compactions: 0, cards: 1, firstTry: 1, firstTryStrict: 1, rework: 0, choicesMean: 0, grants: 0, workerUsd: 2, brainUsdPerCard: 6, turnsPerCard: 12, brainShare: 0.75 })
+    expect(b['unknown @unknown']).toEqual({ sessions: 1, brainUsd: 2, turns: 8, compactions: 0, cards: 1, firstTry: 0, firstTryStrict: 0, rework: 1, choicesMean: null, grants: 0, workerUsd: 2, brainUsdPerCard: 2, turnsPerCard: 8, brainShare: 0.5 })
+  })
+  test('scorecard brains: stamps without pair or window fall under unknown, and no stamp gives {}', () => {
+    expect(Object.keys(out(A, B, C).scorecard.brains)).toEqual(['unknown @unknown'])
+    expect(out(A, B).scorecard.brains).toEqual({})
+    expect(out(A).scorecard.brains).toEqual({})
+    expect(out(C).scorecard.brains['unknown @unknown'].sessions).toBe(2)
+  })
+  test('--scorecard over ledger-d has a brains block with no task id', () => {
+    const r = run('--scorecard', D)
+    expect(r.status).toBe(0)
+    const lines = r.stdout.split('\n')
+    expect(lines.some(l => l.startsWith('opus/medium @250k') && l.includes('2/2 100%'))).toBe(true)
+    expect(lines.some(l => l.startsWith('fable/low @1000k'))).toBe(true)
+    expect(r.stdout.includes('D-1')).toBe(false)
+  })
+  test('--scorecard over ledger-a prints no brains block', () => {
+    const r = run('--scorecard', A)
+    expect(r.status).toBe(0)
+    expect(r.stdout.includes('sessions')).toBe(false)
+    expect(r.stdout.includes('@')).toBe(false)
   })
   test('--scorecard over an empty ledger prints no judged attempts', () => {
     const r = run('--scorecard', '/dev/null')

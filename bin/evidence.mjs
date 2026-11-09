@@ -46,7 +46,7 @@ files.forEach((file, i) => {
     process.stderr.write(`error: cannot read ledger at argument ${i + 1}\n`)
     process.exit(1)
   }
-  const R = (repos[label(i)] = { judged: new Map(), tasks: new Set(), accepted: new Set(), merged: new Set(), mergedRows: [], spawns: [], brain: [], judgedRows: [] })
+  const R = (repos[label(i)] = { judged: new Map(), tasks: new Set(), accepted: new Set(), merged: new Set(), mergedRows: [], spawns: [], brain: [], judgedRows: [], amends: [] })
   for (const line of text.split('\n')) {
     if (!line.trim()) continue
     let r
@@ -55,7 +55,8 @@ files.forEach((file, i) => {
     const task = String(r.task ?? '')
     const at = num(r.at)
     if (at !== null) allDays.push(at)
-    if (r.brain !== null && typeof r.brain === 'object' && num(r.brain.since) !== null) R.brain.push({ row: r, since: num(r.brain.since), usd: num(r.brain.usd) })
+    if (r.brain !== null && typeof r.brain === 'object' && num(r.brain.since) !== null) R.brain.push({ row: r, since: num(r.brain.since), usd: num(r.brain.usd), turns: num(r.brain.turns) })
+    if (r.kind === 'amend') { if (r.source !== 'worker') R.amends.push({ task, subtask: r.subtask ?? 'main' }); continue }
     if (r.kind === 'accept') { R.accepted.add(task); continue }
     if (r.kind === 'merged') { R.merged.add(task); R.mergedRows.push({ ...r, task }); continue }
     if (r.event === 'spawn') { R.spawns.push({ ...r, task }); continue }
@@ -149,6 +150,11 @@ const scorecardOf = repoMap => {
     if (!models.has(a)) models.set(a, { cards: 0, firstTry: 0, firstTryStrict: 0, rework: 0, usd: 0, choicesStated: 0, choicesSum: 0 })
     return models.get(a)
   }
+  const groups = new Map()
+  const G = s => {
+    if (!groups.has(s)) groups.set(s, { sessions: 0, brainUsd: 0, turns: 0, compactions: 0, cards: 0, firstTry: 0, firstTryStrict: 0, rework: 0, choicesStated: 0, choicesSum: 0, grants: 0, workerUsd: 0 })
+    return groups.get(s)
+  }
   const cardKey = (name, r) => JSON.stringify([name, String(r.task ?? ''), r.subtask ?? null, r.lineage ?? null])
   for (const [name, R] of Object.entries(repoMap)) {
     const cards = new Map()
@@ -156,7 +162,7 @@ const scorecardOf = repoMap => {
     for (const r of R.judgedRows) {
       if (when(r) === null) continue
       const k = cardKey(name, r)
-      const c = cards.get(k) ?? { first: null, newest: null, rework: false }
+      const c = cards.get(k) ?? { first: null, newest: null, rework: false, task: String(r.task ?? ''), subtask: r.subtask ?? null, lineage: num(r.lineage) ?? 0 }
       cards.set(k, c)
       const n = num(r.attempt)
       if (n === 1) { if (!c.first || order(r) < order(c.first)) c.first = r }
@@ -217,6 +223,59 @@ const scorecardOf = repoMap => {
       if (!e.newest || order(b.row) >= order(e.newest)) e.newest = b.row
       brainKeys.set(k, e)
     }
+    // sessions: per [repo, since], the facts of the newest stamped row, the largest usd and turns on any row
+    const sessions = new Map()
+    for (const b of R.brain) {
+      const k = JSON.stringify([name, b.since])
+      const e = sessions.get(k) ?? { usd: 0, turns: 0, newest: null }
+      if (b.usd !== null) e.usd = Math.max(e.usd, b.usd)
+      if (b.turns !== null) e.turns = Math.max(e.turns, b.turns)
+      if (!e.newest || order(b.row) >= order(e.newest)) e.newest = b.row
+      sessions.set(k, e)
+    }
+    const setupOf = new Map()
+    for (const [k, e] of sessions) {
+      const bs = e.newest.brain
+      const k50 = v => `${Math.round(v / 50000) * 50}k`
+      const win = num(bs.compactTokens) !== null ? k50(bs.compactTokens) : num(bs.window) !== null ? k50(bs.window) : 'unknown'
+      const setup = `${typeof bs.pair === 'string' && bs.pair ? bs.pair : 'unknown'} @${win}`
+      setupOf.set(k, setup)
+      const g = G(setup)
+      g.sessions++
+      g.brainUsd += e.usd
+      g.turns += e.turns
+      g.compactions += num(bs.compactions) ?? 0
+    }
+    // cards belong to the session on their earliest attempt-1 row
+    const cardSetup = new Map()
+    for (const [k, c] of cards) {
+      if (!c.first || !c.first.brain || num(c.first.brain.since) === null) continue
+      const setup = setupOf.get(JSON.stringify([name, num(c.first.brain.since)]))
+      if (!setup) continue
+      cardSetup.set(k, setup)
+      const g = G(setup)
+      const firstTry = c.newest !== null && c.newest.verdict === 'consistent' && !c.rework
+      g.cards++
+      if (firstTry) g.firstTry++
+      if (c.first.verdict === 'consistent' && !c.rework) g.firstTryStrict++
+      if (c.rework) g.rework++
+    }
+    for (const r of R.judged.values()) {
+      if (when(r) === null) continue
+      const setup = cardSetup.get(cardKey(name, r))
+      if (!setup) continue
+      const g = G(setup)
+      g.workerUsd += num(r.usd) ?? 0
+      if (num(r.choices) !== null) { g.choicesStated++; g.choicesSum += r.choices }
+    }
+    // a grant belongs to the session of the card of its task and subtask with the largest lineage
+    for (const a of R.amends) {
+      let best = null
+      for (const [k, c] of cards) {
+        if (c.task === a.task && (c.subtask ?? 'main') === a.subtask && cardSetup.has(k) && (!best || c.lineage > best.lineage)) best = { lineage: c.lineage, setup: cardSetup.get(k) }
+      }
+      if (best) G(best.setup).grants++
+    }
     for (const e of brainKeys.values()) {
       if (e.usd === null) continue
       const wk = W(weekOf(when(e.newest)))
@@ -257,11 +316,30 @@ const scorecardOf = repoMap => {
       choicesMean: e.choicesStated ? round(e.choicesSum / e.choicesStated, 2) : null,
     }
   }
-  return { weeks: sortKeys(weekOut), models: sortKeys(modelOut) }
+  const brainOut = {}
+  for (const [setup, e] of groups) {
+    brainOut[setup] = {
+      sessions: e.sessions,
+      brainUsd: round(e.brainUsd, 2),
+      turns: e.turns,
+      compactions: e.compactions,
+      cards: e.cards,
+      firstTry: e.firstTry,
+      firstTryStrict: e.firstTryStrict,
+      rework: e.rework,
+      choicesMean: e.choicesStated ? round(e.choicesSum / e.choicesStated, 2) : null,
+      grants: e.grants,
+      workerUsd: round(e.workerUsd, 2),
+      brainUsdPerCard: e.cards ? round(e.brainUsd / e.cards, 2) : null,
+      turnsPerCard: e.cards ? round(e.turns / e.cards, 1) : null,
+      brainShare: e.brainUsd + e.workerUsd > 0 ? round(e.brainUsd / (e.brainUsd + e.workerUsd), 2) : null,
+    }
+  }
+  return { weeks: sortKeys(weekOut), models: sortKeys(modelOut), brains: sortKeys(brainOut) }
 }
 
 // The text form: one line per week oldest first, then one per model; right-aligned columns.
-const scorecardText = ({ weeks, models }) => {
+const scorecardText = ({ weeks, models, brains }) => {
   const pct = (n, d) => (d > 0 ? `${Math.round((100 * n) / d)}%` : '-')
   const head = ['week', 'cards', '1st try', 'strict', 'rework', 'choices', 'linked', 'escaped', 'brain', 'usd']
   const cells = (name, e) => [
@@ -283,6 +361,29 @@ const scorecardText = ({ weeks, models }) => {
   const line = row => row.map((c, i) => c.padStart(widths[i])).join('  ')
   const lines = ['scorecard, ISO weeks in UTC', line(head), ...weekRows.map(line)]
   if (modelRows.length) lines.push('', ...modelRows.map(line))
+  const setups = Object.entries(brains ?? {}).sort(([a, x], [b, y]) => y.cards - x.cards || (a < b ? -1 : a > b ? 1 : 0))
+  if (setups.length) {
+    const bhead = ['brain', 'sessions', 'cards', '1st try', 'strict', 'rework', 'choices', 'grants', 'compactions', 'brain $/card', 'turns/card', 'brain', 'brain $']
+    const dash = (v, f) => (v === null || v === undefined ? '-' : f(v))
+    const brows = setups.map(([name, e]) => [
+      name,
+      String(e.sessions),
+      String(e.cards),
+      e.cards ? `${e.firstTry}/${e.cards} ${pct(e.firstTry, e.cards)}` : '-',
+      pct(e.firstTryStrict, e.cards),
+      String(e.rework),
+      dash(e.choicesMean, v => v.toFixed(2)),
+      String(e.grants),
+      String(e.compactions),
+      dash(e.brainUsdPerCard, v => v.toFixed(2)),
+      dash(e.turnsPerCard, v => v.toFixed(1)),
+      dash(e.brainShare, v => `${Math.round(v * 100)}%`),
+      e.brainUsd.toFixed(2),
+    ])
+    const bw = bhead.map((_, i) => Math.max(...[bhead, ...brows].map(row => row[i].length)))
+    const bline = row => row.map((c, i) => (i === 0 ? c.padEnd(bw[i]) : c.padStart(bw[i]))).join('  ')
+    lines.push('', bline(bhead), ...brows.map(bline))
+  }
   return lines.join('\n') + '\n'
 }
 
