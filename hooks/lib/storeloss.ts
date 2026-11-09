@@ -36,6 +36,9 @@ export type SpawnRow = {
   base?: string
   /** MOD-274: the card's class, and an exploratory attempt's mark and the pair it moved from. */
   class?: string
+  /** MOD-341: the merged cards this card repairs, and whether the card has an issue link. */
+  fixes?: string[]
+  linked?: boolean
   explore?: true
   exploreFrom?: string
   sessionId?: string
@@ -71,6 +74,8 @@ export function spawnRow(s: SpawnFields, sessionId?: string): SpawnRow {
     ...(s.here ? { here: s.here } : {}),
     ...(s.replay ? { replay: true as const, ...(s.base ? { base: s.base } : {}) } : {}),
     ...(s.class ? { class: s.class } : {}),
+    ...(s.fixes && s.fixes.length > 0 ? { fixes: [...s.fixes] } : {}),
+    ...(typeof s.linked === 'boolean' ? { linked: s.linked } : {}),
     ...(s.explore ? { explore: true as const, ...(s.exploreFrom ? { exploreFrom: s.exploreFrom } : {}) } : {}),
     ...(sessionId ? { sessionId } : {}),
   }

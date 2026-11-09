@@ -4,6 +4,7 @@
 
 ### Added
 
+- **The `card` tool takes `fixes` (up to 5 task ids of merged cards the card repairs, or `[]`), written as a `fixes:` line and nudged for when a title starts `Bug` or `Fix`; each spawn row records `fixes` and `linked` (whether the card has an issue link) so the ledger can count repaired verdicts and linked cards (MOD-341).**
 - **A worker lists the decisions the card left open in its hand-back (`choice: <what was open> -> <what you picked>`, or `choice: none`); the mod counts them as `choices` on the attempt and the ledger row, keeps the lines as `choiceLines` in the ledger only, and the verdict shows `choices: <n> the card left open`; the count is never judged (MOD-338).**
 
 ### Fixed
