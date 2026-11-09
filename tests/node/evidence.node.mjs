@@ -10,6 +10,7 @@ const A = here('../fixtures/evidence/ledger-a.jsonl')
 const B = here('../fixtures/evidence/ledger-b.jsonl')
 const C = here('../fixtures/evidence/ledger-c.jsonl')
 const D = here('../fixtures/evidence/ledger-d.jsonl')
+const E = here('../fixtures/evidence/ledger-e.jsonl')
 const run = (...args) => spawnSync(process.execPath, ['--no-warnings', script, ...args], { encoding: 'utf8' })
 const out = (...args) => {
   const r = run(...args)
@@ -92,19 +93,19 @@ describe('bin/evidence.mjs', () => {
   test('scorecard: the weeks and models of ledger-c', () => {
     const s = out(C).scorecard
     expect(Object.keys(s.weeks)).toEqual(['2026-W45', '2026-W46'])
-    expect(s.weeks['2026-W45']).toEqual({ cards: 3, firstTry: 2, firstTryStrict: 1, rework: 1, usd: 4, choicesStated: 2, choicesMean: 1, linkedKnown: 2, linked: 1, fixCards: 0, escaped: 0, merged: 2, brainUsd: 5, brainShare: 0.56 })
-    expect(s.weeks['2026-W46']).toEqual({ cards: 2, firstTry: 2, firstTryStrict: 2, rework: 0, usd: 2, choicesStated: 1, choicesMean: 4, linkedKnown: 2, linked: 2, fixCards: 2, escaped: 2, merged: 0, brainUsd: 1, brainShare: 0.33 })
+    expect(s.weeks['2026-W45']).toEqual({ cards: 3, firstTry: 2, firstTryStrict: 1, rework: 1, usd: 4, choicesStated: 2, choicesMean: 1, linkedKnown: 2, linked: 1, fixCards: 0, escaped: 0, repaired: 2, merged: 2, brainUsd: 5, brainShare: 0.56 })
+    expect(s.weeks['2026-W46']).toEqual({ cards: 2, firstTry: 2, firstTryStrict: 2, rework: 0, usd: 2, choicesStated: 1, choicesMean: 4, linkedKnown: 2, linked: 2, fixCards: 2, escaped: 2, repaired: 0, merged: 0, brainUsd: 1, brainShare: 0.33 })
     expect(Object.keys(s.models)).toEqual(['haiku', 'sonnet'])
-    expect(s.models.sonnet).toEqual({ cards: 4, firstTry: 4, firstTryStrict: 3, rework: 0, usd: 5, choicesStated: 3, choicesMean: 2 })
-    expect(s.models.haiku).toEqual({ cards: 1, firstTry: 0, firstTryStrict: 0, rework: 1, usd: 1, choicesStated: 0, choicesMean: null })
+    expect(s.models.sonnet).toEqual({ cards: 4, firstTry: 4, firstTryStrict: 3, rework: 0, usd: 5, choicesStated: 3, choicesMean: 2, repaired: 2 })
+    expect(s.models.haiku).toEqual({ cards: 1, firstTry: 0, firstTryStrict: 0, rework: 1, usd: 1, choicesStated: 0, choicesMean: null, repaired: 0 })
   })
   test('scorecard: a ledger without the new fields reads zero on them, and its cards add up', () => {
     const s = out(A, B).scorecard
     const weeks = Object.values(s.weeks)
     expect(weeks.length > 0).toBe(true)
     for (const w of weeks) {
-      expect({ choicesStated: w.choicesStated, choicesMean: w.choicesMean, linkedKnown: w.linkedKnown, fixCards: w.fixCards, escaped: w.escaped, brainUsd: w.brainUsd, brainShare: w.brainShare })
-        .toEqual({ choicesStated: 0, choicesMean: null, linkedKnown: 0, fixCards: 0, escaped: 0, brainUsd: null, brainShare: null })
+      expect({ choicesStated: w.choicesStated, choicesMean: w.choicesMean, linkedKnown: w.linkedKnown, fixCards: w.fixCards, escaped: w.escaped, repaired: w.repaired, brainUsd: w.brainUsd, brainShare: w.brainShare })
+        .toEqual({ choicesStated: 0, choicesMean: null, linkedKnown: 0, fixCards: 0, escaped: 0, repaired: 0, brainUsd: null, brainShare: null })
     }
     // ALP-1, ALP-2, BET-7 and BET-8 each have a judged attempt 1
     expect(weeks.reduce((n, w) => n + w.cards, 0)).toBe(4)
@@ -123,26 +124,42 @@ describe('bin/evidence.mjs', () => {
     expect(lines.some(l => l.trim().split(/\s+/)[0] === 'haiku')).toBe(true)
     expect(r.stdout.includes('T-1')).toBe(false)
   })
-  test('scorecard brains: the setups of ledger-d', () => {
-    const b = out(D).scorecard.brains
-    expect(Object.keys(b)).toEqual(['fable/low @1000k', 'opus/medium @250k', 'unknown @unknown'])
-    expect(b['opus/medium @250k']).toEqual({ sessions: 1, brainUsd: 5, turns: 24, compactions: 1, cards: 2, firstTry: 2, firstTryStrict: 1, rework: 0, choicesMean: 2, grants: 1, workerUsd: 2, brainUsdPerCard: 2.5, turnsPerCard: 12, brainShare: 0.71 })
-    expect(b['fable/low @1000k']).toEqual({ sessions: 1, brainUsd: 6, turns: 12, compactions: 0, cards: 1, firstTry: 1, firstTryStrict: 1, rework: 0, choicesMean: 0, grants: 0, workerUsd: 2, brainUsdPerCard: 6, turnsPerCard: 12, brainShare: 0.75 })
-    expect(b['unknown @unknown']).toEqual({ sessions: 1, brainUsd: 2, turns: 8, compactions: 0, cards: 1, firstTry: 0, firstTryStrict: 0, rework: 1, choicesMean: null, grants: 0, workerUsd: 2, brainUsdPerCard: 2, turnsPerCard: 8, brainShare: 0.5 })
+  test('scorecard brains and contexts: old ledgers have none', () => {
+    for (const files of [[A], [A, B], [A, B, C], [D]]) {
+      const s = out(...files).scorecard
+      expect(s.brains).toEqual({})
+      expect(s.contexts).toEqual({})
+    }
+    for (const w of Object.values(out(A, B).scorecard.weeks)) expect(w.repaired).toBe(0)
   })
-  test('scorecard brains: stamps without pair or window fall under unknown, and no stamp gives {}', () => {
-    expect(Object.keys(out(A, B, C).scorecard.brains)).toEqual(['unknown @unknown'])
-    expect(out(A, B).scorecard.brains).toEqual({})
-    expect(out(A).scorecard.brains).toEqual({})
-    expect(out(C).scorecard.brains['unknown @unknown'].sessions).toBe(2)
+  test('scorecard: the weeks and models of ledger-e', () => {
+    const s = out(E).scorecard
+    expect(Object.keys(s.weeks)).toEqual(['2026-W46', '2026-W47'])
+    expect(s.weeks['2026-W46']).toEqual({ cards: 5, firstTry: 4, firstTryStrict: 3, rework: 1, usd: 7, choicesStated: 3, choicesMean: 1.33, linkedKnown: 3, linked: 2, fixCards: 1, escaped: 1, repaired: 1, merged: 1, brainUsd: 23.5, brainShare: 0.77 })
+    expect(s.weeks['2026-W47']).toEqual({ cards: 0, firstTry: 0, firstTryStrict: 0, rework: 0, usd: 0, choicesStated: 0, choicesMean: null, linkedKnown: 0, linked: 0, fixCards: 0, escaped: 0, repaired: 0, merged: 1, brainUsd: 1, brainShare: 1 })
+    expect(s.models.sonnet).toEqual({ cards: 5, firstTry: 4, firstTryStrict: 3, rework: 1, usd: 7, choicesStated: 3, choicesMean: 1.33, repaired: 1 })
   })
-  test('--scorecard over ledger-d has a brains block with no task id', () => {
-    const r = run('--scorecard', D)
+  test('scorecard brains: the pairs of ledger-e', () => {
+    const b = out(E).scorecard.brains
+    expect(Object.keys(b)).toEqual(['fable-5.2/high', 'opus-5.5/medium'])
+    expect(b['opus-5.5/medium']).toEqual({ sessions: 2, brainUsd: 7, turns: 13, steps: 27, usdPerStep: 0.2593, ctxPerStep: 112963, compactions: 0, cards: 2, firstTry: 1, firstTryStrict: 1, rework: 1, choicesMean: 1, grants: 0, workerUsd: 3, repaired: 1, brainUsdPerCard: 3.25, brainUsdMedian: 3, stepsPerCard: 12.5, brainShare: 0.68 })
+    expect(b['fable-5.2/high']).toEqual({ sessions: 1, brainUsd: 5.5, turns: 5, steps: 11, usdPerStep: 0.5, ctxPerStep: 250000, compactions: 1, cards: 1, firstTry: 1, firstTryStrict: 0, rework: 0, choicesMean: 3, grants: 1, workerUsd: 1, repaired: 0, brainUsdPerCard: 6, brainUsdMedian: 6, stepsPerCard: 13, brainShare: 0.86 })
+  })
+  test('scorecard contexts: the buckets of ledger-e', () => {
+    const c = out(E).scorecard.contexts
+    expect(Object.keys(c)).toEqual(['50-100k', '100-150k', '200-250k'])
+    expect(c['50-100k']).toEqual({ cards: 1, firstTry: 0, firstTryStrict: 0, rework: 1, repaired: 0, brainUsdPerCard: 3, stepsPerCard: 9 })
+    expect(c['100-150k']).toEqual({ cards: 1, firstTry: 1, firstTryStrict: 1, rework: 0, repaired: 1, brainUsdPerCard: 3.5, stepsPerCard: 16 })
+    expect(c['200-250k']).toEqual({ cards: 1, firstTry: 1, firstTryStrict: 0, rework: 0, repaired: 0, brainUsdPerCard: 6, stepsPerCard: 13 })
+  })
+  test('--scorecard over ledger-e has a brains block and a contexts block with no task id', () => {
+    const r = run('--scorecard', E)
     expect(r.status).toBe(0)
     const lines = r.stdout.split('\n')
-    expect(lines.some(l => l.startsWith('opus/medium @250k') && l.includes('2/2 100%'))).toBe(true)
-    expect(lines.some(l => l.startsWith('fable/low @1000k'))).toBe(true)
-    expect(r.stdout.includes('D-1')).toBe(false)
+    expect(lines.some(l => l.startsWith('fable-5.2/high') && l.includes('1/1 100%'))).toBe(true)
+    expect(lines.some(l => l.startsWith('opus-5.5/medium') && l.includes('1/2 50%') && l.includes('113k'))).toBe(true)
+    expect(lines.some(l => l.startsWith('200-250k'))).toBe(true)
+    expect(r.stdout.includes('E-1')).toBe(false)
   })
   test('--scorecard over ledger-a prints no brains block', () => {
     const r = run('--scorecard', A)
