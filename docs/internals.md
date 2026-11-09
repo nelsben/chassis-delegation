@@ -144,6 +144,21 @@ It never emits a path, task id, sha, session id, agent id, brief path or free te
 so its output is safe to commit. Run `node bin/evidence.mjs a/ledger.jsonl b/ledger.jsonl`.
 No arguments: usage on stderr, exit 2. A missing file: an error naming its position, exit 1.
 
+`--scorecard` (anywhere among the arguments) prints a weekly scorecard as text instead of the JSON, and the JSON carries the same numbers under `scorecard: { weeks, models }`. A card is one `[repo, task, subtask, lineage]`; a row's time is its `verdictAt`, else its `at`, and a row with neither is left out; a week is the ISO week of that time in UTC (`2026-W45`). Per week (`weeks`), with every key below; per model alias (`models`) the keys `cards` to `rework`, `usd`, `choicesStated` and `choicesMean`, with the same meanings:
+
+- `cards`: cards whose attempt 1 has a judged row, placed in the week of that earliest row.
+- `firstTry`: of those, the cards whose newest attempt-1 row is `consistent` and that have no judged row above attempt 1.
+- `firstTryStrict`: of those, the cards whose earliest attempt-1 row is `consistent` and that have no attempt above 1.
+- `rework`: of those, the cards with a judged row above attempt 1.
+- `usd`: the dollars of the folded judged rows in the week (a re-verify is not counted twice).
+- `choicesStated`, `choicesMean`: the folded judged rows whose `choices` is a number, and their mean (`null` when none).
+- `linkedKnown`, `linked`: the attempt-1 spawn rows that state `linked`, one per card (the earliest), and those that are `true`.
+- `fixCards`, `escaped`: the attempt-1 spawn rows, one per card, that name `fixes`, and the distinct `[repo, id]` pairs they name.
+- `merged`: distinct tasks with a `merged` row in the week.
+- `brainUsd`, `brainShare`: for each `[repo, brain.since]`, the largest `brain.usd` on any row, placed in the week of the newest row with that `since`; and `brainUsd / (brainUsd + usd)`. Both `null` where nothing is placed.
+
+The text form has a title, a header, one line per week oldest first, then one line per model; `1st try` reads `firstTry/cards` and a percent, `linked` reads `linked/linkedKnown`, and a `-` means no value. With no judged row at all it prints `no judged attempts`.
+
 ## Developing
 
     claude plugin validate <this folder>     # the gate: manifest + what the module hooks and calls
