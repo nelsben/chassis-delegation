@@ -227,7 +227,7 @@ import { cachedState, rememberState, landedTail, matchPlanned, openCandidates, M
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
 import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
-import { CARD_TOOL, cardsFromFields, fixesOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, redTestWarnings, sayGo, type NewCard } from './lib/card'
+import { CARD_TOOL, cardsFromFields, fixesOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, globGapWarnings, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
@@ -8706,6 +8706,8 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   if (fixLine !== undefined) out.push(`   ${fixLine}`)
   // MOD-55: a path the red_test names that the scope leaves out, or a forbid covers, is said once (nothing is added to the scope)
   for (const line of redTestWarnings(card.redTest, (shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid)) out.push(`   ${line}`)
+  // MOD-351: a `**/` that needs a folder and so misses the files directly in it is said with the entry to add (nothing is refused)
+  for (const line of globGapWarnings((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid)) out.push(`   ${line}`)
   // MOD-54: a wide scope warns, and a small standard card is told economy would do (nothing is refused or changed)
   const sizeScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
   const sizeWarn = scopeSizeWarning(sizeScope)

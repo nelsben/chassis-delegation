@@ -1,5 +1,5 @@
 import { expect, describe } from 'claude-code/testing'
-import { test } from './harness'
+import { test, world, sessionStart, ROOT } from './harness'
 import { CARD_TOOL, cardFromFields, cardsFromFields, cardSummary, donePaths, forbidCollisions, redTestWarnings, type CardCtx } from '../hooks/lib/card'
 import { parseCard } from '../hooks/lib/dispatch'
 
@@ -461,5 +461,20 @@ describe('MOD-318: a done-when path the sentence says is forbidden is not a writ
     expect(forbidCollisions([], ['docs/findings.md'], ['writes `docs/findings.md`'])).toEqual([
       'warning: forbid docs/findings.md matches docs/findings.md named in done-when',
     ])
+  })
+})
+
+describe('MOD-351: the card tool says a scope glob that needs a folder', () => {
+  const resultText = (r: { result?: unknown; text?: string }) => (typeof r.result === 'string' ? r.result : r.text ?? '')
+  test('tests/**/*.test.ts gets the warning with the entry to add, and the card is still written', async ($, on) => {
+    const w = world(on, {
+      files: { [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ gateMap: { test: 'npm test' } }) },
+      dirs: { [`${ROOT}/agents/tasks`]: ['README.md'] },
+      store: { 'delegation.agentTypes': ['general-purpose'] },
+    })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: 'mcp__chassis-delegation__card', title: 'The rom reader returns the header size', why: 'The decompiler cannot tell how big a header is.', doneWhen: ['read_header(path) returns the size'], scope: ['tests/**/*.test.ts'], redTest: 'python3 -m unittest tests.test_rom' } as never))
+    expect(out).toContain('warning: scope tests/**/*.test.ts needs a folder at every **/ here, so it misses tests/*.test.ts: add tests/*.test.ts to the scope')
+    expect(w.files.get(`${ROOT}/agents/tasks/OPS-1-the-rom-reader-returns-the-header.md`)).toContain('id: OPS-1\n')
   })
 })
