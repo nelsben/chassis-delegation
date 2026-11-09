@@ -9,7 +9,7 @@ Worker cost is priced per attempt (see the [Dashboard](guide.md#dashboard)); the
 - **The split.** Each main-loop `turn.complete` with a `usage` adds to one record (tokens, dollars by model, turns, brain edits)
   keyed by the conversation's start; `/clear` starts a new one. Brain share = brain dollars over session total.
 - **The spawn.** A worker starts from the brain's own Agent call, whose tokens are the brain's. The worker is priced from its own usage..
-- **The dollars.** API list prices (see [the cost formula](#the-cost-formula)), priced per message from reported usage; a turn delivered twice counts once.
+- **The dollars.** API list prices (see [the cost formula](#the-cost-formula)), priced per message from reported usage; a turn delivered twice counts once. The brain's cache writes are priced at the 1-hour rate (2x input), because the host's main loop writes 1-hour entries and the turn usage carries no split; where a session's main loop writes 5-minute entries the brain's figure is a ceiling. Workers are priced as before.
   Cache writes cost 1.25x input (2x for `ephemeral_1h_input_tokens`). Left out: fast mode and account discounts.
 
 | Where | What it shows |

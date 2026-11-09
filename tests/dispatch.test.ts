@@ -1,6 +1,6 @@
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, sessionStart, brainSpawn, ROOT, SCRATCH } from './harness'
+import { world, sessionStart, brainSpawn, usage, ROOT, SCRATCH } from './harness'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME, FIXTURE_HEADER } from './fixtures/sample-card'
 import * as dispatchLib from '../hooks/lib/dispatch'
 import {
@@ -490,6 +490,17 @@ describe('MOD-341: the spawn row records whether the card has an issue link and 
     const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
     await brainSpawn($, text, { tool_use_id: 'toolu_FIX00001' })
     expect(spawnRowOf(w)).toMatchObject({ task: 'BE-101', linked: true, fixes: ['MOD-12'] })
+  })
+
+  test('MOD-348: a briefed spawn after one main-loop turn writes a spawn row carrying the brain stamp', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { ...cardAt(FIXTURE_CARD), listAgents: true })
+    await $.session.start(sessionStart)
+    await $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: usage('claude-opus-5-5', 1000, 100) } as never)
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    await brainSpawn($, text, { tool_use_id: 'toolu_FIX00003' })
+    const brain = spawnRowOf(w)?.brain as { turns: number; pairs: Record<string, unknown> }
+    expect(brain.turns).toBe(1)
+    expect(Object.keys(brain.pairs)).toHaveLength(1)
   })
 
   test('a card with neither gives linked false and no fixes', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {

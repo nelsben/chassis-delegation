@@ -1762,6 +1762,8 @@ let brainSinceCache: number | undefined
 let brainWindowCache: number | undefined
 /** MOD-344: the effort of the latest main-loop step (a subagent's step never sets it); undefined clears it. */
 let brainEffort: string | number | undefined
+/** MOD-348: main-loop steps since the last main-loop turn.complete. */
+let brainSteps = 0
 /** MOD-239: the key is read from session.usage at session.start and at a main-loop turn.start, not on every call. */
 async function refreshBrainKey($: Host): Promise<string> {
   brainKeyCache = undefined
@@ -10131,7 +10133,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     } else if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
     // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
-    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(cardCls?.fixes ? { fixes: cardCls.fixes } : {}), ...(typeof cardCls?.linked === 'boolean' ? { linked: cardCls.linked } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)))
+    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, ...(await brainStampNow($).then(b => (b ? { brain: b } : {}))), toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(cardCls?.fixes ? { fixes: cardCls.fixes } : {}), ...(typeof cardCls?.linked === 'boolean' ? { linked: cardCls.linked } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)))
     // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
     if (s?.stopped) {
       debug($, `${label}: started; its views skipped (the hook was ${s.stopped === 'abort' ? 'abandoned' : 'near its budget'})`)
@@ -10882,8 +10884,10 @@ export const register: Register = (on, opts) => {
       // GH-113: the brain's own turn, priced apart from the workers'
       // MOD-239: the turn's drive counts and its brain spend go in one write
       const u = e.usage
+      const steps = brainSteps
+      brainSteps = 0
       // the update runs after readBrain has built the key, so the window cache is read after it is set
-      await flushDrive($, u ? r => brainWindow(brainTurn(r, u, brainEffort), brainWindowCache) : undefined)
+      await flushDrive($, u ? r => brainWindow(brainTurn(r, u, brainEffort, steps), brainWindowCache) : undefined)
       armIdle($)
       await flushWakes($)
     }
@@ -10898,6 +10902,7 @@ export const register: Register = (on, opts) => {
     if (!e.agentId && turnOpen) for (const h of heldWakes) h.read = true
     // MOD-344: the brain's own effort for the turn its record is stamped with
     if (!e.agentId) brainEffort = e.effort
+    if (!e.agentId) brainSteps++
     const effort = e.agentId ? await stepEffort($, e.agentId) : undefined
     return yield* next(effort !== undefined ? { ...e, effort } : e)
   })

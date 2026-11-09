@@ -27,15 +27,15 @@ describe('GH-113: Fable is priced', () => {
 describe('GH-113: the brain record', () => {
   test('main-loop turns add up by model: tokens, dollars, turns', () => {
     let r = brainTurn(undefined, turn('claude-fable-5-1', 100_000, 10_000, 500_000, 20_000))
-    // in 1.00 + out 0.50 + read 0.125 (Fable 5.1: $0.25/MTok) + write 0.25
-    expect(r.usd).toBe(1.875)
+    // in 1.00 + out 0.50 + read 0.125 (Fable 5.1: $0.25/MTok) + write 0.40 (MOD-348: the 1-hour rate)
+    expect(r.usd).toBe(2.025)
     expect(r.turns).toBe(1)
-    expect(r.tokens).toEqual({ in: 100_000, out: 10_000, cacheRead: 500_000, cacheWrite: 20_000 })
+    expect(r.tokens).toEqual({ in: 100_000, out: 10_000, cacheRead: 500_000, cacheWrite: 20_000, cacheWrite1h: 20_000 })
     r = brainTurn(r, turn('claude-fable-5-1', 10_000, 1_000))
     r = brainTurn(r, turn('claude-opus-5-5', 100_000, 10_000)) // 0.40 + 0.20
     expect(r.turns).toBe(3)
-    expect(Math.round(r.usd * 1e4) / 1e4).toBe(2.625)
-    expect(r.byModel['claude-fable-5-1']).toMatchObject({ turns: 2, usd: 2.025 })
+    expect(Math.round(r.usd * 1e4) / 1e4).toBe(2.775)
+    expect(r.byModel['claude-fable-5-1']).toMatchObject({ turns: 2, usd: 2.175 })
     expect(r.byModel['claude-opus-5-5']).toMatchObject({ turns: 1, usd: 0.6 })
     expect(r.unpriced).toBe(false)
   })
@@ -71,8 +71,8 @@ describe('GH-113: the split', () => {
   test('the line and the tile', () => {
     const rec = brainTurn(brainTurn(undefined, turn('claude-fable-5-1', 100_000, 10_000, 500_000, 20_000)), turn('claude-fable-5-1', 0, 0))
     const s = brainSummary(rec, 0.75, 3)
-    expect(brainLine(s)).toBe('brain: fable $1.88 over 2 turns · workers $0.75 (3 attempts) · brain share 71%')
-    expect(brainTileText(s)).toBe('brain $1.88 / workers $0.75')
+    expect(brainLine(s)).toBe('brain: fable $2.02 over 2 turns · workers $0.75 (3 attempts) · brain share 73%')
+    expect(brainTileText(s)).toBe('brain $2.02 / workers $0.75')
   })
 })
 
@@ -328,7 +328,7 @@ describe('MOD-342: the judged ledger row carries the brain\'s running total', ()
     const rows = judged(w)
     expect(rows).toHaveLength(1)
     const brain = rows[0]?.brain as Record<string, unknown>
-    expect(brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0, pair: 'fable/default', window: 200000, compactions: 0 })
+    expect(brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0, pair: 'fable-5.1/default', window: 200000, compactions: 0, pairs: { 'fable-5.1/default': { usd: rec.usd, turns: 1, steps: 1, ctx: expect.any(Number) } } })
   })
 
   test('with no brain turn before the hand-back, the row has no brain key', async ($, on) => {
@@ -348,14 +348,14 @@ describe('MOD-344: the brain record says which pair ran each turn', () => {
   const turnDone = (u: ReturnType<typeof usage>) => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: u }) as never
   const BRAIN_KEY = 'delegation.brain.0'
 
-  test('a main-loop step at medium, then its turn.complete: byPair has opus/medium with one turn', async ($, on) => {
+  test('a main-loop step at medium, then its turn.complete: byPair has opus-5.5/medium with one turn', async ($, on) => {
     const w = world(on, { model: OPUS })
     await $.session.start(sessionStart)
     for await (const chunk of $.turn.step(stepInput(undefined, 'medium'))) void chunk
     await $.turn.complete(turnDone(usage(OPUS, 100_000, 10_000)))
     const rec = w.store.get(BRAIN_KEY) as { byPair: Record<string, { usd: number; turns: number }> }
-    expect(Object.keys(rec.byPair)).toEqual(['opus/medium'])
-    expect(rec.byPair['opus/medium']?.turns).toBe(1)
+    expect(Object.keys(rec.byPair)).toEqual(['opus-5.5/medium'])
+    expect(rec.byPair['opus-5.5/medium']?.turns).toBe(1)
   })
 
   test('a subagent step at another effort between them does not change the pair', async ($, on) => {
@@ -365,7 +365,22 @@ describe('MOD-344: the brain record says which pair ran each turn', () => {
     for await (const chunk of $.turn.step(stepInput('agent-9', 'xhigh'))) void chunk
     await $.turn.complete(turnDone(usage(OPUS, 100_000, 10_000)))
     const rec = w.store.get(BRAIN_KEY) as { byPair: Record<string, { usd: number; turns: number }> }
-    expect(Object.keys(rec.byPair)).toEqual(['opus/medium'])
+    expect(Object.keys(rec.byPair)).toEqual(['opus-5.5/medium'])
+  })
+
+  test('MOD-348: main-loop steps are counted per turn, a subagent step is not, and the count resets', async ($, on) => {
+    const w = world(on, { model: OPUS })
+    await $.session.start(sessionStart)
+    for await (const chunk of $.turn.step(stepInput(undefined, 'medium'))) void chunk
+    for await (const chunk of $.turn.step(stepInput('agent-9', 'medium'))) void chunk
+    for await (const chunk of $.turn.step(stepInput(undefined, 'medium'))) void chunk
+    await $.turn.complete(turnDone(usage(OPUS, 100_000, 10_000)))
+    const rec1 = w.store.get(BRAIN_KEY) as { byPair: Record<string, { steps: number }> }
+    expect(rec1.byPair['opus-5.5/medium']?.steps).toBe(2)
+    for await (const chunk of $.turn.step(stepInput(undefined, 'medium'))) void chunk
+    await $.turn.complete(turnDone(usage(OPUS, 100_000, 10_000)))
+    const rec2 = w.store.get(BRAIN_KEY) as { byPair: Record<string, { steps: number }> }
+    expect(rec2.byPair['opus-5.5/medium']?.steps).toBe(3)
   })
 
   test('the context window the session reports is stamped with the turn', async ($, on) => {

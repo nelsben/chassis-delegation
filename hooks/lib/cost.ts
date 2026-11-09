@@ -16,17 +16,19 @@ export type Tokens = {
 export type Price = { in: number; out: number; cacheRead?: number }
 
 /**
- * MOD-47, MOD-168: prices are API list prices, checked 2026-10-25 against
+ * MOD-47, MOD-168: prices are API list prices, checked 2026-11-09 against
  * https://platform.claude.com/docs/en/about-claude/pricing (Opus 5.5 $4/$20, cache reads $0.20;
  * Sonnet 5.5 $2/$10, cache reads $0.10; Sonnet 5 $2/$10; Fable 5.1 and Mythos 5.1 $10/$50, cache
  * reads $0.25; Haiku 5.5 $0.10/$0.50 up to 100K-token prompts). A model with no `cacheRead` of its own reads the cache at 0.1x input.
- * Cache writes: 1.25x input for the 5-minute TTL, 2x for the 1-hour TTL (Claude Code writes 1-hour entries).
+ * Cache writes: 1.25x input for the 5-minute TTL, 2x for the 1-hour TTL (the host's main loop writes 1-hour entries and its subagents 5-minute ones; a turn's usage carries no split, so brainTurn prices the main loop's writes at the 1-hour rate).
  */
 export const CACHE_READ = 0.1
 export const CACHE_WRITE = 1.25
 export const CACHE_WRITE_1H = 2
 
 const TABLE: readonly [string, Price][] = [
+  ['fable-5-2', { in: 8, out: 40, cacheRead: 0.2 }],
+  ['mythos-5-2', { in: 8, out: 40, cacheRead: 0.2 }],
   ['fable-5-1', { in: 10, out: 50, cacheRead: 0.25 }],
   ['mythos-5-1', { in: 10, out: 50, cacheRead: 0.25 }],
   ['fable-5', { in: 10, out: 50 }],
