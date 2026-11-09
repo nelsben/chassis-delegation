@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Work pane (prototype)</title>
+<style>
+:root {
+  --bg: #ffffff; --surface: #f7f8f9; --hover: #f1f2f4; --selected: #e9f2ff; --border: #dcdfe4;
+  --text: #172b4d; --subtle: #626f86; --accent: #0c66e4; --on-accent: #ffffff; --glyph: #ffffff;
+  --st-working-bg: #e9f2ff; --st-working-fg: #0055cc;
+  --st-review-bg: #fff7d6; --st-review-fg: #7f5f01;
+  --st-queued-bg: #f1f2f4; --st-queued-fg: #44546f;
+  --st-blocked-bg: #ffeceb; --st-blocked-fg: #ae2e24;
+  --st-done-bg: #dcfff1; --st-done-fg: #216e4e;
+  --t-epic: #8270db; --t-feature: #f38a3f; --t-story: #22a06b; --t-task: #1d7afc; --t-bug: #e2483d; --t-spike: #626f86;
+  --tier-economy: #22a06b; --tier-standard: #1d7afc; --tier-frontier: #8270db;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1d2125; --surface: #22272b; --hover: #2c333a; --selected: #1c2b41; --border: #38414a;
+    --text: #b6c2cf; --subtle: #8c9bab; --accent: #579dff; --on-accent: #1d2125;
+    --st-working-bg: #09326c; --st-working-fg: #85b8ff;
+    --st-review-bg: #533f04; --st-review-fg: #f5cd47;
+    --st-queued-bg: #2c333a; --st-queued-fg: #9fadbc;
+    --st-blocked-bg: #5d1f1a; --st-blocked-fg: #fd9891;
+    --st-done-bg: #164b35; --st-done-fg: #7ee2b8;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 20px 16px 40px; background: var(--bg); color: var(--text);
+  font: 13px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-variant-numeric: tabular-nums; }
+a { color: var(--accent); text-decoration: none; cursor: pointer; }
+a:hover { text-decoration: underline; }
+button, input, select { font: inherit; color: inherit; }
+.subtle { color: var(--subtle); }
+.tn { font-variant-numeric: tabular-nums; }
+
+/* page chrome (outside the pane) */
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 12px; }
+.head h1 { font-size: 16px; line-height: 24px; margin: 0; }
+.under { margin-top: 12px; display: flex; gap: 16px; }
+.notes { margin-top: 20px; max-width: 720px; }
+.notes h2 { font-size: 13px; margin: 0 0 4px; }
+.notes ul { margin: 0; padding-left: 18px; color: var(--subtle); }
+
+/* controls */
+.btn { height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { background: var(--hover); }
+.btn.sm { height: 24px; padding: 0 8px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.btn.primary:hover { background: var(--accent); }
+.seg { display: inline-flex; }
+.seg .btn { border-radius: 0; margin-left: -1px; }
+.seg .btn:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+.seg .btn:last-child { border-radius: 0 4px 4px 0; }
+.seg .btn.on { background: var(--selected); color: var(--accent); font-weight: 600; position: relative; }
+input[type=text], select { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); min-width: 0; }
+select { max-width: 100%; }
+#epicSel { width: 92px; flex: 0 1 92px; }
+.tb .right > * { flex-shrink: 0; }
+.tb .right > .ell { flex-shrink: 1; }
+
+/* pane */
+.frame { border: 1px solid var(--border); border-radius: 4px; background: var(--bg); overflow: hidden; max-width: 100%; }
+.tb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.tb .left { display: flex; align-items: center; gap: 12px; }
+.tb .ptitle { font-size: 16px; font-weight: 700; }
+.tb .mid { flex: 1 1 150px; min-width: 120px; display: flex; }
+.tb .mid input { flex: 1; width: 100%; }
+.tb .right { display: flex; flex-wrap: nowrap; min-width: 0; max-width: 100%; align-items: center; gap: 8px; margin-left: auto; }
+.cb { flex: none; }
+.cb .box { fill: var(--bg); stroke: var(--border); }
+.cb.on .box { fill: var(--accent); stroke: var(--accent); }
+.cb .tick { fill: none; stroke: var(--on-accent); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 8px; border-bottom: 1px solid var(--border); }
+.chip { flex: 1 1 56px; min-width: 0; text-align: left; padding: 2px 3px 2px 5px; background: var(--bg); border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; cursor: pointer; line-height: 16px; }
+.chip:hover { background: var(--hover); }
+.chip.on { background: var(--selected); }
+.chip b { display: block; font-size: 14px; line-height: 20px; }
+.chip span { display: block; font-size: 11px; color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip.working { border-left-color: var(--st-working-fg); } .chip.review { border-left-color: var(--st-review-fg); }
+.chip.queued { border-left-color: var(--st-queued-fg); } .chip.blocked { border-left-color: var(--st-blocked-fg); }
+.chip.backlog { border-left-color: var(--subtle); } .chip.done { border-left-color: var(--st-done-fg); }
+
+.body { display: flex; align-items: stretch; }
+.main { flex: 1 1 0; min-width: 0; }
+.detail { flex: none; width: 340px; border-left: 1px solid var(--border); }
+.detail.full { width: auto; border-left: 0; flex: 1 1 0; min-width: 0; }
+
+/* lozenges, icons */
+.loz { display: inline-block; font-size: 11px; line-height: 16px; font-weight: 700; padding: 0 6px; border-radius: 3px; white-space: nowrap; }
+.loz.working { background: var(--st-working-bg); color: var(--st-working-fg); }
+.loz.review { background: var(--st-review-bg); color: var(--st-review-fg); }
+.loz.queued { background: var(--st-queued-bg); color: var(--st-queued-fg); }
+.loz.blocked { background: var(--st-blocked-bg); color: var(--st-blocked-fg); }
+.loz.done { background: var(--st-done-bg); color: var(--st-done-fg); }
+.loz.backlog { background: transparent; border: 1px solid var(--border); color: var(--subtle); line-height: 14px; }
+.ti { flex: none; display: block; }
+.t-epic .tbg { fill: var(--t-epic); } .t-feature .tbg { fill: var(--t-feature); } .t-story .tbg { fill: var(--t-story); }
+.t-task .tbg { fill: var(--t-task); } .t-bug .tbg { fill: var(--t-bug); } .t-spike .tbg { fill: var(--t-spike); }
+.g { fill: var(--glyph); stroke: none; }
+.gs { fill: none; stroke: var(--glyph); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.chev { flex: none; display: block; cursor: pointer; }
+.chev .cs { fill: none; stroke: var(--subtle); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.dot { flex: none; display: block; }
+.dot.economy circle { fill: var(--tier-economy); } .dot.standard circle { fill: var(--tier-standard); } .dot.frontier circle { fill: var(--tier-frontier); }
+.pb-bg { fill: var(--border); } .pb-fg { fill: var(--st-done-fg); }
+.pbar { flex: none; display: block; }
+.asked { color: var(--subtle); font-style: italic; }
+.ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* list */
+.lh, .row { display: grid; align-items: center; column-gap: 8px; padding: 0 12px; }
+.lh { height: 28px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--subtle); }
+.row { height: 36px; border-bottom: 1px solid var(--border); border-left: 2px solid transparent; padding-left: 10px; cursor: pointer; }
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--selected); border-left-color: var(--accent); }
+.row.p0 { font-weight: 700; } .row.p1 { font-weight: 600; }
+.row > div { min-width: 0; }
+.c-work { display: flex; align-items: center; gap: 6px; }
+.c-work .num { color: var(--subtle); flex: none; font-weight: 400; }
+.c-work .spc { width: 16px; flex: none; }
+.c-status { display: flex; align-items: center; gap: 8px; }
+.c-prog { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+.c-card { color: var(--subtle); font-weight: 400; }
+.c-worker { display: flex; align-items: center; gap: 4px; font-weight: 400; }
+.c-cost { text-align: right; font-weight: 400; }
+.c-act { display: flex; align-items: center; justify-content: flex-start; font-weight: 400; }
+.below { padding: 6px 12px 6px 36px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.hrow { height: 28px; display: flex; align-items: center; padding: 0 12px; color: var(--subtle); border-bottom: 1px solid var(--border); }
+.msg { padding: 28px 12px; text-align: center; color: var(--subtle); }
+.msg b { display: block; color: var(--text); font-size: 14px; margin-bottom: 4px; }
+
+/* board */
+.bscroll { overflow-x: auto; padding: 12px; }
+.binner { min-width: 782px; }
+.binner.one { min-width: 0; }
+.bgrid { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 8px; }
+.bgrid.one { grid-template-columns: minmax(0, 1fr); }
+.bch { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--subtle); padding: 4px 8px; background: var(--surface); border-radius: 4px; }
+.lane { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; margin-top: 12px; border-bottom: 1px solid var(--border); font-weight: 600; cursor: pointer; }
+.lane .tt { min-width: 0; }
+.lane .tn { font-weight: 400; }
+.bcol { background: var(--surface); border-radius: 4px; padding: 8px; display: flex; flex-direction: column; gap: 8px; min-width: 0; margin-top: 8px; }
+.bcol .none { color: var(--subtle); text-align: center; }
+.bcol .doneh { color: var(--subtle); }
+.card { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.card:hover { background: var(--hover); }
+.card.sel { border-color: var(--accent); }
+.card .ct { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card .cm { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 6px; }
+.card .cm .num { color: var(--subtle); }
+.card .cm .cid { margin-left: auto; color: var(--subtle); }
+.card .cw { color: var(--subtle); }
+.card .cw .dot { display: inline-block; margin-right: 4px; }
+.card .btn { width: 100%; justify-content: center; }
+.card .cq { display: flex; flex-direction: column; gap: 6px; }
+.card .cq .btns { display: flex; gap: 6px; }
+.card .cq .btns .btn { flex: 1; width: auto; }
+
+/* detail */
+.dp { padding: 12px 16px 20px; }
+.dp .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.dp .crumb { min-width: 0; }
+.dp .crumb a { color: var(--subtle); }
+.dp .back { display: block; margin-bottom: 8px; }
+.dp .ttl { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 8px; }
+.dp .ttl .ti { margin-top: 4px; }
+.dp .ttl .num { color: var(--subtle); margin-top: 0; flex: none; line-height: 24px; }
+.dp .ttl h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.dp .srow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+.dp .q { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.fields { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px 12px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.fields .k { color: var(--subtle); }
+.fields .v { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dp h3 { font-size: 13px; margin: 16px 0 8px; }
+.tl { position: relative; padding-left: 20px; margin: 0; list-style: none; }
+.tl::before { content: ""; position: absolute; left: 3px; top: 6px; bottom: 6px; border-left: 1px solid var(--border); }
+.tl li { position: relative; padding-bottom: 10px; }
+.tl li::before { content: ""; position: absolute; left: -20px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--subtle); }
+.tl li:first-child::before { background: var(--accent); }
+.tl li .when { display: block; color: var(--subtle); font-size: 12px; line-height: 16px; }
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>Work pane (prototype)</h1>
+  <div class="seg" id="widths"></div>
+</div>
+<div class="frame" id="frame" aria-label="Work pane"><div id="pane"></div></div>
+<div class="under"><a id="vEmpty" href="#">View empty state</a><a id="vSample" href="#">View sample</a></div>
+<div class="notes">
+  <h2>Notes</h2>
+  <ul>
+    <li>In the real pane, rows redraw as workers hand back; here nothing moves on its own.</li>
+    <li>Keyboard: Tab walks the controls; this page only shows the mouse path.</li>
+    <li>The terminal draws a plainer text version of the same data.</li>
+    <li>Corner radius and the select's look are the host's, not these.</li>
+    <li>Nothing here calls GitHub; the sample data is invented.</li>
+  </ul>
+</div>
+
+<script>
+const DATA = {
+  epics: [
+    { num: 10, title: 'Checkout rework', features: [
+      { num: 11, title: 'Saved carts', items: [
+        { num: 12, title: 'Save a cart from the basket', type: 'story', state: 'done' },
+        { num: 13, title: 'Restore a saved cart', type: 'story', state: 'working', card: 'MOD-900', tier: 'standard', model: 'sonnet', attempt: [1, 2], mins: 6, cost: 0.31 },
+        { num: 14, title: 'Expire saved carts after 30 days', type: 'story', state: 'queued', card: 'MOD-902' },
+        { num: 15, title: 'Saved cart loses the coupon', type: 'bug', state: 'backlog' }
+      ] },
+      { num: 20, title: 'Address book', items: [
+        { num: 21, title: 'Pick a saved address', type: 'story', state: 'done' },
+        { num: 22, title: 'Edit an address inline', type: 'story', state: 'done' },
+        { num: 23, title: 'Validate postcodes per country', type: 'story', state: 'review', card: 'MOD-901', tier: 'standard', model: 'sonnet', attempt: [1, 2], cost: 0.52 },
+        { num: 24, title: 'Default address per account', type: 'story', state: 'blocked', card: 'MOD-903', by: 'MOD-901' },
+        { num: 25, title: 'Migrate old address rows', type: 'task', state: 'backlog' }
+      ] }
+    ] },
+    { num: 30, title: 'Reporting', features: [
+      { num: 31, title: 'Weekly digest', items: [
+        { num: 32, title: 'Digest email template', type: 'story', state: 'working', card: 'MOD-904', tier: 'economy', model: 'haiku', attempt: [2, 2], mins: 2, cost: 0.02 },
+        { num: 33, title: 'Pick the digest day', type: 'story', state: 'queued', card: 'MOD-905', slot: true },
+        { num: 34, title: 'Unsubscribe link', type: 'story', state: 'backlog' },
+        { num: 35, title: 'Can the digest reuse the export job?', type: 'spike', state: 'backlog' }
+      ] },
+      { num: 40, title: 'CSV export', items: [
+        { num: 41, title: 'Export orders as CSV', type: 'story', state: 'done' },
+        { num: 42, title: 'Export filters', type: 'story', state: 'backlog' },
+        { num: 43, title: 'Scheduled exports', type: 'story', state: 'backlog' }
+      ] }
+    ] },
+    { num: 60, title: 'Sign-in hardening', features: [
+      { num: 61, title: 'Passkeys', items: [
+        { num: 62, title: 'Register a passkey', type: 'story', state: 'done' },
+        { num: 63, title: 'Sign in with a passkey', type: 'story', state: 'done' }
+      ] }
+    ] }
+  ],
+  noEpic: [
+    { title: 'Bump the lint config', type: 'task', state: 'queued', card: 'MOD-906' },
+    { num: 70, title: 'Typo on the pricing page', type: 'bug', state: 'backlog' }
+  ]
+};
+const EMPTY = { epics: [], noEpic: [] };
+
+const LABEL = { working: 'WORKING', review: 'TO REVIEW', queued: 'QUEUED', blocked: 'BLOCKED', done: 'DONE', backlog: 'BACKLOG' };
+const CHIPS = [['working', 'Working'], ['review', 'To review'], ['queued', 'Queued'], ['blocked', 'Blocked'], ['backlog', 'Backlog'], ['done', 'Done']];
+const ACTION = { queued: 'Dispatch', blocked: 'Unblock', review: 'Review' };
+const COLS = [['backlog', 'Backlog'], ['queued', 'Queued'], ['working', 'Working'], ['review', 'To review'], ['done', 'Done']];
+const TYPE_NAME = { epic: 'Epic', feature: 'Feature', story: 'Story', task: 'Task', bug: 'Bug', spike: 'Spike' };
+const GLYPH = {
+  epic: '<path class="g" d="M9 2.5 4.5 9H8l-1 4.5L11.5 7H8z"/>',
+  feature: '<path class="gs" d="M5 3v10"/><path class="g" d="M5.5 3.5h6l-1.6 2.2 1.6 2.2h-6z"/>',
+  story: '<path class="g" d="M5 3h6v10l-3-2.4L5 13z"/>',
+  task: '<path class="gs" d="M4.5 8.5 7 11l4.5-5.5"/>',
+  bug: '<circle class="g" cx="8" cy="8" r="3"/>',
+  spike: '<path class="gs" d="M6.2 6.4a1.9 1.9 0 1 1 2.8 1.7c-.7.4-1 .8-1 1.4"/><circle class="g" cx="8" cy="11.7" r=".9"/>'
+};
+
+const S = {
+  view: 'list', q: '', chips: new Set(), epic: '', showDone: false, sel: null, empty: false,
+  open: new Set(['e:10', 'f:11', 'f:20', 'e:30', 'f:31', 'n']),
+  lanes: new Set(['l:10', 'l:30', 'l:n']),
+  revealed: new Set(), act: {}, col: 'working', pw: 1100, want: 1100
+};
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------- model ---------- */
+function model(D) {
+  const leaves = [];
+  const add = (i, epic, feat) => leaves.push(Object.assign({}, i, { epic, feat, key: i.num ? '#' + i.num : i.card }));
+  D.epics.forEach(e => e.features.forEach(f => f.items.forEach(i => add(i, e, f))));
+  D.noEpic.forEach(i => add(i, null, null));
+  return { D, leaves, byKey: Object.fromEntries(leaves.map(l => [l.key, l])), byCard: Object.fromEntries(leaves.filter(l => l.card).map(l => [l.card, l])) };
+}
+let M = model(DATA);
+const pk = i => i.feat ? 'f:' + i.feat.num : 'n';
+const prog = list => ({ d: list.filter(i => i.state === 'done').length, n: list.length });
+const featLeaves = f => M.leaves.filter(i => i.feat === f);
+const epicLeaves = e => M.leaves.filter(i => i.epic === e);
+
+function filtering() { return !!S.q || S.chips.size > 0 || !!S.epic; }
+function matches(i) {
+  if (S.q) {
+    const q = S.q.toLowerCase();
+    const hay = [i.title, i.num ? '#' + i.num : '', i.num ? String(i.num) : '', i.card || ''];
+    if (!hay.some(h => h.toLowerCase().includes(q))) return false;
+  }
+  if (S.chips.size && !S.chips.has(i.state)) return false;
+  if (S.epic && !(i.epic && String(i.epic.num) === S.epic)) return false;
+  return true;
+}
+const doneHidden = i => i.state === 'done' && !S.showDone && !S.chips.has('done');
+const listHidden = i => doneHidden(i) && !S.revealed.has(pk(i));
+
+/* ---------- small pieces ---------- */
+function icon(t) {
+  return '<svg class="ti t-' + t + '" width="16" height="16" viewBox="0 0 16 16" aria-label="' + TYPE_NAME[t] + '"><rect class="tbg" width="16" height="16" rx="3"/>' + GLYPH[t] + '</svg>';
+}
+function chev(open) {
+  return '<svg class="chev" width="16" height="16" viewBox="0 0 16 16"><path class="cs" d="' + (open ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4') + '"/></svg>';
+}
+function dot(tier) { return '<svg class="dot ' + tier + '" width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4"/></svg>'; }
+function bar(p) {
+  const w = p.n ? Math.round(64 * p.d / p.n) : 0;
+  return '<svg class="pbar" width="64" height="6" viewBox="0 0 64 6"><rect class="pb-bg" width="64" height="6" rx="3"/>' + (w ? '<rect class="pb-fg" width="' + w + '" height="6" rx="3"/>' : '') + '</svg>';
+}
+const loz = s => '<span class="loz ' + s + '">' + LABEL[s] + '</span>';
+const numHtml = i => '<a class="num" href="#">' + (i.num ? '#' + i.num : '—') + '</a>';
+const fmt = c => '$' + c.toFixed(2);
+const attempt = i => i.attempt ? i.attempt[0] + '/' + i.attempt[1] : '';
+const showWorker = i => i.state === 'working' || i.state === 'review';
+
+function confirmHtml(i) {
+  return '<span class="q">' + esc(i.by) + ' still overlaps it. Unblock anyway?</span>' +
+    '<span class="q"><button class="btn sm primary" data-act="unblock-yes" data-key="' + esc(i.key) + '">Unblock</button>' +
+    '<button class="btn sm" data-act="unblock-no" data-key="' + esc(i.key) + '">Cancel</button></span>';
+}
+/* ctx: table | card | detail */
+function actionHtml(i, ctx, tier) {
+  const label = ACTION[i.state];
+  if (!label) return '';
+  const st = S.act[i.key];
+  if (st === 'asked') return (ctx === 'table' && tier === 'narrow') ? '' : '<span class="asked">Asked · waiting for the session</span>';
+  if (st === 'confirm') return ctx === 'table' ? '' : (ctx === 'card' ? '<div class="cq">' + confirmHtml(i) + '</div>' : '<span class="q">' + confirmHtml(i) + '</span>');
+  return '<button class="btn ' + (ctx === 'detail' ? 'primary' : 'sm') + '" data-act="act" data-key="' + esc(i.key) + '">' + label + '</button>';
+}
+function belowHtml(i, tier) {
+  if (!ACTION[i.state]) return '';
+  const st = S.act[i.key];
+  if (st === 'confirm') return '<div class="below">' + confirmHtml(i) + '</div>';
+  if (st === 'asked' && tier === 'narrow') return '<div class="below"><span class="asked">Asked · waiting for the session</span></div>';
+  return '';
+}
+
+/* ---------- toolbar and strip ---------- */
+function toolbar() {
+  const eps = M.D.epics.map(e => '<option value="' + e.num + '"' + (String(e.num) === S.epic ? ' selected' : '') + '>Epic: ' + esc(e.title) + '</option>').join('');
+  return '<div class="tb"><div class="left"><span class="ptitle">Work</span><span class="seg">' +
+    '<button class="btn' + (S.view === 'list' ? ' on' : '') + '" data-act="view" data-v="list">List</button>' +
+    '<button class="btn' + (S.view === 'board' ? ' on' : '') + '" data-act="view" data-v="board">Board</button></span></div>' +
+    '<div class="mid"><input type="text" id="q" placeholder="Search work" value="' + esc(S.q) + '" aria-label="Search work"></div>' +
+    '<div class="right"><select id="epicSel" aria-label="Epic"><option value="">Epic: All</option>' + eps + '</select>' +
+    '<button class="btn cb' + (S.showDone ? ' on' : '') + '" data-act="toggle-done" aria-pressed="' + S.showDone + '">' +
+    '<svg width="14" height="14" viewBox="0 0 14 14"><rect class="box" x=".5" y=".5" width="13" height="13" rx="3"/>' + (S.showDone ? '<path class="tick" d="M3.5 7.2 6 9.6l4.5-5"/>' : '') + '</svg>Show done</button>' +
+    '<span class="subtle ell">Updated 4 min ago</span><button class="btn" data-act="noop">Refresh</button></div></div>';
+}
+function chipsHtml() {
+  return '<div class="chips">' + CHIPS.map(c => {
+    const n = M.leaves.filter(i => i.state === c[0]).length;
+    return '<button class="chip ' + c[0] + (S.chips.has(c[0]) ? ' on' : '') + '" data-act="chip" data-st="' + c[0] + '"><b>' + n + '</b><span>' + c[1] + '</span></button>';
+  }).join('') + '</div>';
+}
+
+/* ---------- list ---------- */
+const GRID = {
+  wide: 'minmax(0,1fr) 170px 104px 72px 130px 52px 180px',
+  mid: 'minmax(0,1fr) 92px 104px 72px 180px',
+  narrow: 'minmax(0,1fr) 80px 84px'
+};
+function listHead(tier) {
+  const h = ['Work', 'Status'];
+  if (tier !== 'narrow') h.push('Progress', 'Card');
+  if (tier === 'wide') h.push('Worker', 'Cost');
+  h.push('Action');
+  return '<div class="lh" style="grid-template-columns:' + GRID[tier] + '">' + h.map(x => '<div' + (x === 'Cost' ? ' style="text-align:right"' : '') + '>' + x + '</div>').join('') + '</div>';
+}
+function parentRow(key, level, ic, title, p, open, tier) {
+  const forced = filtering();
+  let h = '<div class="row p' + level + '" data-act="toggle" data-k="' + key + '" style="grid-template-columns:' + GRID[tier] + '">' +
+    '<div class="c-work" style="padding-left:' + (level * 20) + 'px">' + chev(open || forced) + (ic ? icon(ic) : '') + '<span class="ell">' + esc(title) + '</span></div><div class="c-status"></div>';
+  if (tier !== 'narrow') h += '<div class="c-prog">' + bar(p) + '<span class="tn">' + p.d + '/' + p.n + '</span></div><div class="c-card"></div>';
+  if (tier === 'wide') h += '<div class="c-worker"></div><div class="c-cost"></div>';
+  return h + '<div class="c-act"></div></div>';
+}
+function leafRow(i, level, tier) {
+  let h = '<div class="row' + (S.sel === i.key ? ' sel' : '') + '" data-act="select" data-key="' + esc(i.key) + '" style="grid-template-columns:' + GRID[tier] + '">' +
+    '<div class="c-work" style="padding-left:' + (level * 20) + 'px"><span class="spc"></span>' + icon(i.type) + numHtml(i) + '<span class="ell">' + esc(i.title) + '</span></div>' +
+    '<div class="c-status">' + loz(i.state) + (tier === 'wide' && i.slot ? '<span class="subtle ell">waiting for a slot</span>' : '') + '</div>';
+  if (tier !== 'narrow') h += '<div class="c-prog"></div><div class="c-card">' + (i.card || '') + '</div>';
+  if (tier === 'wide') h += '<div class="c-worker">' + (showWorker(i) ? dot(i.tier) + '<span class="ell">' + i.model + ' · ' + attempt(i) + '</span>' : '') + '</div>' +
+    '<div class="c-cost">' + (showWorker(i) ? fmt(i.cost) : '') + '</div>';
+  h += '<div class="c-act">' + actionHtml(i, 'table', tier) + '</div></div>';
+  return '<div>' + h + belowHtml(i, tier) + '</div>';
+}
+function hiddenRow(n, key, level) {
+  return '<div class="hrow" style="padding-left:' + (12 + level * 20 + 22) + 'px">' + '<span>' + n + ' done hidden · <a href="#" data-act="reveal" data-k="' + key + '">show</a></span></div>';
+}
+function listHtml(tier) {
+  const F = filtering();
+  const vis = items => items.filter(i => matches(i) && !listHidden(i));
+  const hid = items => items.filter(i => matches(i) && listHidden(i));
+  let out = '', drawn = 0;
+  M.D.epics.forEach(e => {
+    const eVis = e.features.reduce((n, f) => n + vis(featLeaves2(f)).length, 0);
+    if (!eVis) return;
+    const open = F || S.open.has('e:' + e.num);
+    out += parentRow('e:' + e.num, 0, 'epic', e.title, prog(epicLeaves2(e)), open, tier);
+    if (!open) return;
+    e.features.forEach(f => {
+      const items = featLeaves2(f), v = vis(items), h = hid(items);
+      if (!v.length && !h.length) return;
+      const fo = F || S.open.has('f:' + f.num);
+      out += parentRow('f:' + f.num, 1, 'feature', f.title, prog(items), fo, tier);
+      if (!fo) return;
+      v.forEach(i => { out += leafRow(i, 2, tier); drawn++; });
+      if (h.length) out += hiddenRow(h.length, 'f:' + f.num, 2);
+    });
+  });
+  const nItems = M.leaves.filter(i => !i.epic);
+  const nv = vis(nItems), nh = hid(nItems);
+  if (nv.length || nh.length) {
+    const open = F || S.open.has('n');
+    out += parentRow('n', 0, null, 'No epic', prog(nItems), open, tier);
+    if (open) {
+      nv.forEach(i => { out += leafRow(i, 1, tier); drawn++; });
+      if (nh.length) out += hiddenRow(nh.length, 'n', 1);
+    }
+  }
+  if (!drawn && !out) out = '<div class="msg">No work matches. <a href="#" data-act="clear">Clear filters</a></div>';
+  return listHead(tier) + out;
+}
+const featLeaves2 = f => M.leaves.filter(i => i.feat && i.feat.num === f.num);
+const epicLeaves2 = e => M.leaves.filter(i => i.epic && i.epic.num === e.num);
+
+/* ---------- board ---------- */
+const colOf = i => i.state === 'blocked' ? 'queued' : i.state;
+function cardHtml(i) {
+  let h = '<div class="card' + (S.sel === i.key ? ' sel' : '') + '" data-act="select" data-key="' + esc(i.key) + '"><div class="ct">' + esc(i.title) + '</div>' +
+    '<div class="cm">' + icon(i.type) + numHtml(i) + (i.state === 'blocked' ? loz('blocked') : '') + '<span class="cid">' + (i.card || '') + '</span></div>';
+  if (showWorker(i)) h += '<div class="cw">' + dot(i.tier) + i.model + ' · ' + attempt(i) + ' · ' + fmt(i.cost) + '</div>';
+  return h + actionHtml(i, 'card') + '</div>';
+}
+function boardHtml(mainW) {
+  const one = mainW < 560;
+  const F = filtering();
+  const counts = {};
+  M.leaves.filter(matches).forEach(i => { counts[colOf(i)] = (counts[colOf(i)] || 0) + 1; });
+  const lanes = M.D.epics.map(e => ({ key: 'l:' + e.num, e, title: e.title, items: epicLeaves2(e) }));
+  lanes.push({ key: 'l:n', e: null, title: 'No epic', items: M.leaves.filter(i => !i.epic) });
+  const colList = one ? COLS.filter(c => c[0] === S.col) : COLS;
+  let h = '<div class="bscroll"><div class="binner' + (one ? ' one' : '') + '">';
+  if (one) {
+    h += '<div style="margin-bottom:4px"><select id="colSel" aria-label="Column">' + COLS.map(c => '<option value="' + c[0] + '"' + (c[0] === S.col ? ' selected' : '') + '>Column: ' + c[1] + ' (' + (counts[c[0]] || 0) + ')</option>').join('') + '</select></div>';
+  } else {
+    h += '<div class="bgrid">' + COLS.map(c => '<div class="bch">' + c[1] + ' ' + (counts[c[0]] || 0) + '</div>').join('') + '</div>';
+  }
+  let drawnLanes = 0;
+  lanes.forEach(L => {
+    const m = L.items.filter(matches);
+    if (F && !m.length) return;
+    if (!L.items.length) return;
+    drawnLanes++;
+    const open = S.lanes.has(L.key);
+    const p = prog(L.items);
+    h += '<div class="lane" data-act="lane" data-k="' + L.key + '">' + chev(open) + (L.e ? icon('epic') : '') + '<span class="tt ell">' + esc(L.title) + '</span>' +
+      (L.e ? bar(p) + '<span class="tn">' + p.d + '/' + p.n + '</span>' : '') + '</div>';
+    if (!open) return;
+    h += '<div class="bgrid' + (one ? ' one' : '') + '">' + colList.map(c => {
+      const cards = m.filter(i => colOf(i) === c[0]);
+      let inner;
+      if (c[0] === 'done' && !S.showDone && !S.chips.has('done')) {
+        inner = cards.length ? '<div class="doneh">' + cards.length + ' done · <a href="#" data-act="toggle-done-on">show</a></div>' : '<div class="none">—</div>';
+      } else {
+        inner = cards.length ? cards.map(cardHtml).join('') : '<div class="none">—</div>';
+      }
+      return '<div class="bcol">' + inner + '</div>';
+    }).join('') + '</div>';
+  });
+  if (!drawnLanes) h += '<div class="msg">No work matches. <a href="#" data-act="clear">Clear filters</a></div>';
+  return h + '</div></div>';
+}
+
+/* ---------- detail ---------- */
+function activity(i) {
+  const a = i.attempt || [1, 2];
+  const open = i.num ? ['Issue opened', '3 days ago'] : null;
+  const cut = i.card ? ['Card ' + i.card + ' cut', '1 day ago'] : null;
+  const disp = ['Dispatched to ' + i.model + ', attempt ' + a[0] + ' of ' + a[1], i.mins ? i.mins + ' min ago' : '47 min ago'];
+  const map = {
+    backlog: [open], queued: [cut, open], working: [disp, cut, open],
+    review: [['Handed back, gates green', '8 min ago'], disp, cut, open],
+    blocked: [['Blocked by ' + i.by + ': its scope overlaps', '20 min ago'], cut, open],
+    done: [['Merged', '2 hours ago'], ['Verdict consistent', '3 hours ago'], open]
+  };
+  return map[i.state].filter(Boolean);
+}
+function detailHtml(i, full) {
+  const crumb = i.epic ? '<a href="#" data-act="crumb" data-epic="' + i.epic.num + '">' + esc(i.epic.title) + '</a> / <a href="#" data-act="crumb" data-epic="' + i.epic.num + '">' + esc(i.feat.title) + '</a>' : '<span class="subtle">No epic</span>';
+  const f = (k, v) => '<div class="k">' + k + '</div><div class="v">' + v + '</div>';
+  const dash = '<span class="subtle">—</span>';
+  let fields = f('Type', TYPE_NAME[i.type]) + f('Card', i.card || dash) +
+    f('Worker', showWorker(i) ? dot(i.tier) + esc(i.model) : dash) + f('Attempt', i.attempt ? i.attempt[0] + ' of ' + i.attempt[1] : dash);
+  if (i.state === 'working') fields += f('Running', i.mins + ' min');
+  fields += f('Cost', showWorker(i) ? fmt(i.cost) : dash);
+  if (i.state === 'blocked') fields += f('Blocked by', M.byCard[i.by] ? '<a href="#" data-act="select" data-key="' + esc(M.byCard[i.by].key) + '">' + esc(i.by) + '</a>' : esc(i.by));
+  fields += f('Parent', i.feat ? esc(i.feat.title) : dash);
+  const tl = activity(i).map(a => '<li>' + esc(a[0]) + '<span class="when">' + a[1] + '</span></li>').join('');
+  return '<div class="detail' + (full ? ' full' : '') + '"><div class="dp">' +
+    (full ? '<a class="back" href="#" data-act="close">← Back to ' + S.view + '</a>' : '') +
+    '<div class="top"><div class="crumb ell">' + crumb + '</div><button class="btn sm" data-act="close">Close</button></div>' +
+    '<div class="ttl">' + icon(i.type) + '<span class="num">' + (i.num ? '#' + i.num : '—') + '</span><h2>' + esc(i.title) + '</h2></div>' +
+    '<div class="srow">' + loz(i.state) + (i.slot ? '<span class="subtle">waiting for a slot</span>' : '') + actionHtml(i, 'detail') + '</div>' +
+    '<div class="fields">' + fields + '</div><h3>Activity</h3><ul class="tl">' + tl + '</ul></div></div>';
+}
+
+/* ---------- render ---------- */
+const pane = document.getElementById('pane');
+const frame = document.getElementById('frame');
+function render() {
+  const pw = S.pw;
+  const sideDetail = pw >= 1000;
+  const it = S.sel && M.byKey[S.sel] ? M.byKey[S.sel] : null;
+  const keep = document.activeElement && document.activeElement.id === 'q' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+  const prevScroll = pane.querySelector('.bscroll') ? pane.querySelector('.bscroll').scrollLeft : 0;
+  let h = toolbar();
+  if (!M.leaves.length) {
+    h += chipsHtml() + '<div class="msg"><b>No work breakdown yet</b>Import one with /delegation tree import &lt;file&gt;, or start one with /delegation land epic &lt;title&gt;.</div>';
+  } else if (it && !sideDetail) {
+    h += detailHtml(it, true);
+  } else {
+    const mainW = pw - (it ? 342 : 2);
+    const tier = mainW >= 900 ? 'wide' : mainW >= 560 ? 'mid' : 'narrow';
+    h += chipsHtml() + '<div class="body"><div class="main">' + (S.view === 'list' ? listHtml(tier) : boardHtml(mainW)) + '</div>' + (it ? detailHtml(it, false) : '') + '</div>';
+  }
+  pane.innerHTML = h;
+  const sc = pane.querySelector('.bscroll'); if (sc) sc.scrollLeft = prevScroll;
+  if (keep) { const q = document.getElementById('q'); q.focus(); q.setSelectionRange(keep[0], keep[1]); }
+}
+
+pane.addEventListener('click', ev => {
+  if (ev.target.closest('a')) ev.preventDefault();
+  const t = ev.target.closest('[data-act]');
+  if (!t) return;
+  const a = t.dataset.act, k = t.dataset.key;
+  if (a === 'view') S.view = t.dataset.v;
+  else if (a === 'toggle') { const set = S.open; set.has(t.dataset.k) ? set.delete(t.dataset.k) : set.add(t.dataset.k); }
+  else if (a === 'lane') { const set = S.lanes; set.has(t.dataset.k) ? set.delete(t.dataset.k) : set.add(t.dataset.k); }
+  else if (a === 'select') S.sel = k;
+  else if (a === 'close') S.sel = null;
+  else if (a === 'chip') { const s = t.dataset.st; S.chips.has(s) ? S.chips.delete(s) : S.chips.add(s); }
+  else if (a === 'toggle-done') S.showDone = !S.showDone;
+  else if (a === 'toggle-done-on') S.showDone = true;
+  else if (a === 'reveal') S.revealed.add(t.dataset.k);
+  else if (a === 'clear') { S.q = ''; S.chips.clear(); S.epic = ''; }
+  else if (a === 'crumb') { S.epic = t.dataset.epic; if (S.pw < 1000) S.sel = null; }
+  else if (a === 'act') S.act[k] = M.byKey[k].state === 'blocked' ? 'confirm' : 'asked';
+  else if (a === 'unblock-yes') S.act[k] = 'asked';
+  else if (a === 'unblock-no') delete S.act[k];
+  else if (a === 'noop') return;
+  render();
+});
+pane.addEventListener('input', ev => { if (ev.target.id === 'q') { S.q = ev.target.value; render(); } });
+pane.addEventListener('change', ev => {
+  if (ev.target.id === 'epicSel') S.epic = ev.target.value;
+  else if (ev.target.id === 'colSel') S.col = ev.target.value;
+  else return;
+  render();
+});
+
+/* ---------- page chrome ---------- */
+const WIDTHS = [['Side panel 420', 420], ['Split 720', 720], ['Wide 1100', 1100]];
+function drawWidths() {
+  document.getElementById('widths').innerHTML = WIDTHS.map(w => '<button class="btn' + (S.want === w[1] ? ' on' : '') + '" data-w="' + w[1] + '">' + w[0] + '</button>').join('');
+  frame.style.width = S.want + 'px';
+}
+document.getElementById('widths').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-w]'); if (!b) return;
+  S.want = +b.dataset.w; drawWidths(); measure();
+});
+function measure() {
+  const w = frame.clientWidth;
+  if (w && w !== S.pw) { S.pw = w; render(); }
+}
+document.getElementById('vEmpty').addEventListener('click', ev => { ev.preventDefault(); M = model(EMPTY); S.sel = null; render(); });
+document.getElementById('vSample').addEventListener('click', ev => { ev.preventDefault(); M = model(DATA); render(); });
+if (window.ResizeObserver) new ResizeObserver(measure).observe(frame);
+window.addEventListener('resize', measure);
+drawWidths();
+S.pw = frame.clientWidth || S.want;
+render();
+</script>
+</body>
+</html>
