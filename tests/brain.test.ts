@@ -1,7 +1,7 @@
 // GH-113: the brain's own spend, priced and kept apart from the workers', and the delegate-only decision table (pure).
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, sessionStart, usage, spawnInput, turnInput, agentResult, SCRATCH, ROOT } from './harness'
+import { world, sessionStart, stepInput, usage, spawnInput, turnInput, agentResult, SCRATCH, ROOT } from './harness'
 import { priceFor } from '../hooks/lib/cost'
 import { brainTurn, brainEdit, brainSplit, brainFamily, brainSummary, brainLine, brainTileText, bashWrites, bashCommits, delegateDecision, DELEGATE_DENY, PREMIUM_POSTURE } from '../hooks/lib/brain'
 import { mergeConfig, parseRepoConfig, settingsLayer } from '../hooks/lib/repoconfig'
@@ -328,7 +328,7 @@ describe('MOD-342: the judged ledger row carries the brain\'s running total', ()
     const rows = judged(w)
     expect(rows).toHaveLength(1)
     const brain = rows[0]?.brain as Record<string, unknown>
-    expect(brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0 })
+    expect(brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0, pair: 'fable/default', window: 200000, compactions: 0 })
   })
 
   test('with no brain turn before the hand-back, the row has no brain key', async ($, on) => {
@@ -339,5 +339,40 @@ describe('MOD-342: the judged ledger row carries the brain\'s running total', ()
     const rows = judged(w)
     expect(rows).toHaveLength(1)
     expect('brain' in (rows[0] ?? {})).toBe(false)
+  })
+})
+
+describe('MOD-344: the brain record says which pair ran each turn', () => {
+  const FABLE = 'claude-fable-5-1'
+  const OPUS = 'claude-opus-5-5'
+  const turnDone = (u: ReturnType<typeof usage>) => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: u }) as never
+  const BRAIN_KEY = 'delegation.brain.0'
+
+  test('a main-loop step at medium, then its turn.complete: byPair has opus/medium with one turn', async ($, on) => {
+    const w = world(on, { model: OPUS })
+    await $.session.start(sessionStart)
+    for await (const chunk of $.turn.step(stepInput(undefined, 'medium'))) void chunk
+    await $.turn.complete(turnDone(usage(OPUS, 100_000, 10_000)))
+    const rec = w.store.get(BRAIN_KEY) as { byPair: Record<string, { usd: number; turns: number }> }
+    expect(Object.keys(rec.byPair)).toEqual(['opus/medium'])
+    expect(rec.byPair['opus/medium']?.turns).toBe(1)
+  })
+
+  test('a subagent step at another effort between them does not change the pair', async ($, on) => {
+    const w = world(on, { model: OPUS })
+    await $.session.start(sessionStart)
+    for await (const chunk of $.turn.step(stepInput(undefined, 'medium'))) void chunk
+    for await (const chunk of $.turn.step(stepInput('agent-9', 'xhigh'))) void chunk
+    await $.turn.complete(turnDone(usage(OPUS, 100_000, 10_000)))
+    const rec = w.store.get(BRAIN_KEY) as { byPair: Record<string, { usd: number; turns: number }> }
+    expect(Object.keys(rec.byPair)).toEqual(['opus/medium'])
+  })
+
+  test('the context window the session reports is stamped with the turn', async ($, on) => {
+    const w = world(on, { model: FABLE })
+    w.context = { window: 1000000, percent: 5 }
+    await $.session.start(sessionStart)
+    await $.turn.complete(turnDone(usage(FABLE, 1000, 10)))
+    expect((w.store.get(BRAIN_KEY) as { window?: number }).window).toBe(1000000)
   })
 })

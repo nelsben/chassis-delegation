@@ -1,5 +1,5 @@
 import { expect, describe } from 'claude-code/testing'
-import { test } from './harness'
+import { test, world, sessionStart, usage } from './harness'
 import { renderState, isEmptyState, compactBlock, appendInstructions, composeSection, emptySnapshot, owedRowsFrom, splitOwed, KEEP_VERBATIM, SECTION_ID, ACT_POSTURE, actPending, isRespawnOwed, type StateSnapshot } from '../hooks/lib/compaction'
 
 // 2026-10-03 14:00Z
@@ -155,5 +155,33 @@ describe('MOD-15: the posture line for a brain that has a call to make', () => {
     const out = lines(s, ['You are the brain on a premium model.'])
     expect(out.slice(0, 3)).toEqual(['Delegation state (chassis-delegation):', 'You are the brain on a premium model.', ACT_POSTURE])
     expect(out.length).toBeLessThanOrEqual(40)
+  })
+})
+
+describe('MOD-344: the brain record counts the compactions', () => {
+  const OFF = { options: { autoDebrief: false, autoEval: false } }
+  const FABLE = 'claude-fable-5-1'
+  const BRAIN_KEY = 'delegation.brain.0'
+  const doneTurn = (u: ReturnType<typeof usage>) => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: u }) as never
+  const compact = (over: object) => ({ trigger: 'auto', messages: [{ role: 'user', text: 'hi', toolUses: [] }], ...over }) as never
+
+  test('an auto compaction of the main conversation counts one, with the tokens it ran at', OFF, async ($, on) => {
+    const w = world(on, { model: FABLE })
+    w.context = { window: 1000000, percent: 24, tokens: 240000 }
+    await $.session.start(sessionStart)
+    await $.turn.complete(doneTurn(usage(FABLE, 1000, 10)))
+    await $.session.compact(compact({}))
+    const rec = w.store.get(BRAIN_KEY) as { compactions?: number; compactTokens?: number }
+    expect(rec.compactions).toBe(1)
+    expect(rec.compactTokens).toBe(240000)
+  })
+
+  test('a precompute, or a subagent compaction, does not move the count', OFF, async ($, on) => {
+    const w = world(on, { model: FABLE })
+    await $.session.start(sessionStart)
+    await $.turn.complete(doneTurn(usage(FABLE, 1000, 10)))
+    await $.session.compact(compact({ trigger: 'precompute' }))
+    await $.session.compact(compact({ agentId: 'agent-1' }))
+    expect((w.store.get(BRAIN_KEY) as { compactions?: number }).compactions ?? 0).toBe(0)
   })
 })

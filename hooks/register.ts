@@ -18,7 +18,7 @@ import { addDrive, callKind, driveCall, driveLines, driveOutput, driveSpeaks, dr
 import { extractPause, pauseCapLine, pauseRow, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
 import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
 import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
-import { bashCommits, bashWrites, emptyBrain, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, brainStamp, type BrainRecord, type BrainFamily, type BrainStamp } from './lib/brain'
+import { bashCommits, bashWrites, emptyBrain, brainCompacted, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, brainWindow, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, brainStamp, type BrainRecord, type BrainFamily, type BrainStamp } from './lib/brain'
 import { paneTree, type PaneTable, type PaneView } from './lib/pane'
 import { attempts as attemptsOf, dashboardText, isActive, liveView, pickScheme, SAMPLE_LIVE_MS, sampleEvery, sampleMoved, idsHashOf, probeSkipped, type ProbeFailed, sessionRecords, spendSeries, workersUsd as workersUsdOf, type LiveView, type SpendPoint } from './lib/live'
 import { metricsFromRecords } from './lib/metrics'
@@ -1758,23 +1758,41 @@ async function readSpend($: Host): Promise<SpendPoint[]> {
 let brainKeyCache: string | undefined
 /** MOD-342: the session start the key was built from, kept beside it so a ledger row needs no extra session.usage call. */
 let brainSinceCache: number | undefined
+/** MOD-344: the session model's context window, read in the same session.usage call as the key (set and cleared with it). */
+let brainWindowCache: number | undefined
+/** MOD-344: the effort of the latest main-loop step (a subagent's step never sets it); undefined clears it. */
+let brainEffort: string | number | undefined
 /** MOD-239: the key is read from session.usage at session.start and at a main-loop turn.start, not on every call. */
 async function refreshBrainKey($: Host): Promise<string> {
   brainKeyCache = undefined
   brainSinceCache = undefined
+  brainWindowCache = undefined
   return brainKey($)
 }
 async function brainKey($: Host): Promise<string> {
   if (brainKeyCache !== undefined) return brainKeyCache
   let since = 0
+  let window: number | undefined
   try {
-    since = (await $.session.usage()).startedAt ?? 0
+    const usage = await $.session.usage()
+    since = usage.startedAt ?? 0
+    window = usage.context?.window
   } catch {
     // unknown: one record for the unknown start
   }
   brainKeyCache = K.brain(since)
   brainSinceCache = since
+  brainWindowCache = window
   return brainKeyCache
+}
+
+/** MOD-344: the context tokens the last response was answered over, read once per compaction; undefined on any failure. */
+async function compactTokensNow($: Host): Promise<number | undefined> {
+  try {
+    return (await $.session.usage()).context?.tokens
+  } catch {
+    return undefined
+  }
 }
 
 /** MOD-342: the brain's running total for the judged and merged ledger rows; undefined before its first turn, or on any failure. */
@@ -10864,7 +10882,8 @@ export const register: Register = (on, opts) => {
       // GH-113: the brain's own turn, priced apart from the workers'
       // MOD-239: the turn's drive counts and its brain spend go in one write
       const u = e.usage
-      await flushDrive($, u ? r => brainTurn(r, u) : undefined)
+      // the update runs after readBrain has built the key, so the window cache is read after it is set
+      await flushDrive($, u ? r => brainWindow(brainTurn(r, u, brainEffort), brainWindowCache) : undefined)
       armIdle($)
       await flushWakes($)
     }
@@ -10877,6 +10896,8 @@ export const register: Register = (on, opts) => {
   on('turn.step', async function* ($, e, next) {
     // MOD-62: a main-loop step (no agentId) carries every row appended before it; a subagent's step never counts
     if (!e.agentId && turnOpen) for (const h of heldWakes) h.read = true
+    // MOD-344: the brain's own effort for the turn its record is stamped with
+    if (!e.agentId) brainEffort = e.effort
     const effort = e.agentId ? await stepEffort($, e.agentId) : undefined
     return yield* next(effort !== undefined ? { ...e, effort } : e)
   })
@@ -11196,14 +11217,25 @@ export const register: Register = (on, opts) => {
   // ---- session.compact: keep the loop position (2E) ----------------------------------
   on('session.compact', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
-    let block: string
+    // MOD-344: the main conversation's compactions, but not a precompute; the tokens are read before the compaction
+    const counted = e.trigger !== 'precompute'
+    const tokens = counted ? await compactTokensNow($) : undefined
+    let block: string | undefined
     try {
       block = compactBlock(await snapshot($), await recipeDir($))
     } catch (err) {
       debug($, `compaction block not built: ${String(err)}`)
-      return next(e)
     }
-    return next({ ...e, instructions: appendInstructions(e.instructions, block) })
+    const out = await next(block === undefined ? e : { ...e, instructions: appendInstructions(e.instructions, block) })
+    const skipped = typeof (out as { skip?: unknown } | undefined)?.skip === 'string'
+    if (counted && !skipped) {
+      try {
+        await updateBrain($, r => brainCompacted(r, tokens))
+      } catch (err) {
+        debug($, `compaction not counted: ${String(err)}`)
+      }
+    }
+    return out
   })
 
   // ---- prompt.compose: the live "Delegation state" section (2E) ---------------------
