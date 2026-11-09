@@ -1,0 +1,15 @@
+{"task":"T-1","subtask":"main","lineage":1,"event":"spawn","attempt":1,"alias":"sonnet","linked":true,"at":1793696400000}
+{"task":"T-1","subtask":"main","lineage":1,"attempt":1,"verdict":"consistent","alias":"sonnet","usd":1,"choices":2,"brain":{"since":100,"usd":3,"turns":4,"edits":0},"at":1793697000000}
+{"task":"T-1","subtask":"main","lineage":1,"kind":"merged","at":1793697600000}
+{"task":"T-2","subtask":"main","lineage":1,"event":"spawn","attempt":1,"alias":"sonnet","linked":false,"at":1793700000000}
+{"task":"T-2","subtask":"main","lineage":1,"attempt":1,"verdict":"refuted","firstFailed":"scope","alias":"sonnet","usd":2,"at":1793700600000}
+{"task":"T-2","subtask":"main","lineage":1,"attempt":1,"verdict":"consistent","alias":"sonnet","usd":2,"choices":0,"brain":{"since":100,"usd":5,"turns":9,"edits":0},"at":1793700900000}
+{"task":"T-2","subtask":"main","lineage":1,"kind":"merged","at":1793701200000}
+{"task":"T-3","subtask":"main","lineage":1,"event":"spawn","attempt":1,"alias":"haiku","at":1793703600000}
+{"task":"T-3","subtask":"main","lineage":1,"attempt":1,"verdict":"refuted","alias":"haiku","usd":0.5,"at":1793704200000}
+{"task":"T-3","subtask":"main","lineage":1,"event":"spawn","attempt":2,"alias":"haiku","at":1793704800000}
+{"task":"T-3","subtask":"main","lineage":1,"attempt":2,"verdict":"consistent","alias":"haiku","usd":0.5,"at":1793705400000}
+{"task":"T-4","subtask":"main","lineage":1,"event":"spawn","attempt":1,"alias":"sonnet","linked":true,"fixes":["T-1","T-2"],"at":1794301200000}
+{"task":"T-4","subtask":"main","lineage":1,"attempt":1,"verdict":"consistent","alias":"sonnet","usd":1,"brain":{"since":200,"usd":1,"turns":2,"edits":0},"at":1794301800000}
+{"task":"T-5","subtask":"main","lineage":1,"event":"spawn","attempt":1,"alias":"sonnet","linked":true,"fixes":["T-1"],"at":1794304800000}
+{"task":"T-5","subtask":"main","lineage":1,"attempt":1,"verdict":"consistent","alias":"sonnet","usd":1,"choices":4,"at":1794305400000}

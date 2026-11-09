@@ -170,6 +170,10 @@ One committed file per domain, `<cardDir>/lessons/<domain>.md`, appended to ever
 - `/delegation lesson <domain>` prints the file.
 - Dry run and dispatch print `lessons: n lines from <path>`.
 
+## Is the mod working?
+
+Run `node bin/evidence.mjs --scorecard <repo>/.delegation/ledger.jsonl` (one ledger per repo, several allowed). Each week gets a line: `cards` is the cards that reached a first verdict, `1st try` is how many were consistent on the first attempt with no rework (the percent beside it is of `cards`), `strict` is the same without a re-verify rescue, `rework` counts cards that needed a second attempt, `choices` is the mean number of decisions a worker left open, `linked` is how many cards had an issue link, `escaped` is how many earlier cards a later card repaired, `brain` is the brain's share of the week's spend, and `usd` is the week's spend. A week that gets worse on `1st try` or `rework` is the signal to look at the verdicts that week. The model lines below the weeks give the same figures per model.
+
 ## Dashboard
 
 | Place | Opens | Shows |
