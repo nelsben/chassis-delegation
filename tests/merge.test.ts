@@ -3,7 +3,7 @@
 // cleans up after the PR lands. Every git call here is answered by the harness; nothing real runs.
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, sessionStart, ROOT, NOW, type RunAnswer } from './harness'
+import { world, sessionStart, usage, ROOT, NOW, type RunAnswer } from './harness'
 import { isRemoteArgv } from '../hooks/lib/allow'
 import { cardDiff, labelIsMerged, markMerged, parseMergeArgs, prBody, readsMerged } from '../hooks/lib/mergecmd'
 
@@ -425,6 +425,18 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(recs[0]).toMatchObject({ retired: 'merged', mergedSha: GONE })
     const rows = (w.files.get(LEDGER) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
     expect(rows.at(-1)).toMatchObject({ kind: 'merged', task: ID, sha: GONE })
+  })
+
+  test('MOD-342: after a brain turn, the merged row written by a finish carries the brain total with the session start', async ($, on) => {
+    const FABLE = 'claude-fable-5-1'
+    const w = world(on, { files: files(), dirs, store: goneStore, run: gone(true), model: FABLE })
+    await $.session.start(sessionStart)
+    await $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: usage(FABLE, 100_000, 10_000) } as never)
+    await $.command.run(mergeCmd(`${ID} --finish`))
+    const rec = w.store.get('delegation.brain.0') as { usd: number }
+    const rows = (w.files.get(LEDGER) ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    const merged = rows.find(r => r.kind === 'merged')
+    expect(merged?.brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0 })
   })
 
   test('MOD-309: --finish with the worktree gone and the sha not in origin/main returns the not-yet line and records nothing', async ($, on) => {
