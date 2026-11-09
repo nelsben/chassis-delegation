@@ -504,10 +504,10 @@ describe('GH-113: the brain spend and delegate-only', () => {
   test('a main-loop turn.complete on fable adds to the brain spend; /delegation splits brain from workers', async ($, on) => {
     world(on, { model: FABLE })
     await $.session.start(sessionStart)
-    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000))) // $1.875
+    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000))) // $2.025
     await $.turn.complete(mainTurn(usage(FABLE, 0, 0)))
     const out = await $.command.run(delegation)
-    expect(out.text).toContain('brain: fable $1.88 over 2 turns · workers $0.00 (0 attempts) · brain share 100%')
+    expect(out.text).toContain('brain: fable $2.02 over 2 turns · workers $0.00 (0 attempts) · brain share 100%')
   })
 
   test('MOD-48: after a turn with three identical Bash runs, /delegation shows 3 run-or-poll calls and the average context; at 300K the third raises one warn row', async ($, on) => {
@@ -547,14 +547,14 @@ describe('GH-113: the brain spend and delegate-only', () => {
     const w = world(on, { model: FABLE, store: { 'delegation.tasks.T-77': [other] } })
     w.usd = 9
     await $.session.start(sessionStart)
-    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000))) // $1.875
+    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000))) // $2.025
     await $.agent.spawn(spawnInput({ prompt: 'Look around and tell me what you find.' })) // agent-1, ad hoc
     await $.turn.complete(turnInput('agent-1', 'found', usage(SONNET, 1_000_000, 0))) // $2.00
     const text = (await $.command.run(delegation)).text
     expect(text).toContain('workers $0.00 (0 attempts)')
     expect(text).toContain('ad hoc $2.00 (1 agents)')
-    expect(text).toContain('unattributed $5.13')
-    expect(text).toContain('brain share 21%')
+    expect(text).toContain('unattributed $4.97')
+    expect(text).toContain('brain share 22%')
     expect(w.store.get('delegation.adhoc')).toMatchObject([{ sessionId: 'sess-1' }])
   })
 
@@ -572,7 +572,7 @@ describe('GH-113: the brain spend and delegate-only', () => {
     w.state.clear()
     await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000)))
     const out = await $.command.run(delegation)
-    expect(out.text).toContain('brain: fable $7.50 over 4 turns')
+    expect(out.text).toContain('brain: fable $8.10 over 4 turns')
   })
 
   test('MOD-47: an ad hoc agent resumed once is counted once, however many times a turn.complete reaches the hook', async ($, on) => {
@@ -710,8 +710,8 @@ describe('GH-113: the brain spend and delegate-only', () => {
     await $.session.start(sessionStart)
     await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000, 500_000, 20_000)))
     const out = await $.command.run({ command: 'delegation', args: 'dashboard', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)
-    expect(out.text).toContain('Spend split: brain $1.88 / workers $0.00')
-    expect(out.text).toContain('brain · fable · $1.88 · 630k tok · 1 turn')
+    expect(out.text).toContain('Spend split: brain $2.02 / workers $0.00')
+    expect(out.text).toContain('brain · fable · $2.02 · 630k tok · 1 turn')
   })
 })
 

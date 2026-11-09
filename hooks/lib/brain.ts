@@ -16,7 +16,7 @@ export type BrainRecord = {
   edits: number
   byModel: Record<string, BrainModel>
   /** MOD-344: dollars and turns by `<family>/<effort>` (`opus/medium`); the effort is `default` when the step named none. */
-  byPair?: Record<string, { usd: number; turns: number }>
+  byPair?: Record<string, { usd: number; turns: number; steps?: number; ctx?: number }>
   /** MOD-344: compactions of the main conversation this session. */
   compactions?: number
   /** MOD-344: the context tokens just before the latest compaction: the window the session really ran at. */
@@ -27,14 +27,22 @@ export type BrainRecord = {
 
 export const emptyBrain = (): BrainRecord => ({ tokens: { in: 0, out: 0, cacheRead: 0, cacheWrite: 0 }, usd: 0, unpriced: false, turns: 0, edits: 0, byModel: {} })
 
-/** MOD-344: `<family>/<effort>`; the effort is `default` when none was named. */
+/** MOD-348: `<family>-<major>[.<minor>]` of a model id (`fable-5.2`); the bare family for an alias; `other` when no family is named. */
+export function brainLabel(model: string | undefined): string {
+  const m = (model ?? '').toLowerCase().match(/(fable|opus|sonnet|haiku)-(\d{1,2})(?:-(\d{1,2}))?(?!\d)/)
+  return m ? `${m[1]}-${m[2]}${m[3] !== undefined ? `.${m[3]}` : ''}` : brainFamily(model)
+}
+
+/** MOD-344: `<label>/<effort>` (`opus-5.5/medium`); the effort is `default` when none was named. */
 export function brainPair(model: string | undefined, effort: string | number | undefined): string {
   const e = effort === undefined ? '' : String(effort).trim().toLowerCase()
-  return `${brainFamily(model)}/${e === '' ? 'default' : e}`
+  return `${brainLabel(model)}/${e === '' ? 'default' : e}`
 }
 
 /** The record with one more main-loop turn; with an effort, its dollars and turn also go to its pair. */
-export function brainTurn(acc: BrainRecord | undefined, u: UsageLike, effort?: string | number): BrainRecord {
+export function brainTurn(acc: BrainRecord | undefined, u0: UsageLike, effort?: string | number, steps?: number): BrainRecord {
+  // MOD-348: the host's turn usage has no TTL split; the main loop writes 1-hour entries
+  const u: UsageLike = u0.cache_creation ? u0 : { ...u0, cache_creation: { ephemeral_1h_input_tokens: u0.cache_creation_input_tokens || 0 } }
   const prev = acc ?? emptyBrain()
   const t = tokensOf(u)
   const price = priceFor(u.model)
@@ -44,6 +52,7 @@ export function brainTurn(acc: BrainRecord | undefined, u: UsageLike, effort?: s
   const sum = addTurn({ tokens: prev.tokens, usd: 0, turns: prev.turns, models: [] }, u)
   const pair = brainPair(u.model, effort)
   const wasPair = prev.byPair?.[pair] ?? { usd: 0, turns: 0 }
+  const n = typeof steps === 'number' && Number.isFinite(steps) && steps >= 1 ? Math.floor(steps) : 1
   return {
     ...prev,
     tokens: sum.tokens,
@@ -52,7 +61,7 @@ export function brainTurn(acc: BrainRecord | undefined, u: UsageLike, effort?: s
     turns: prev.turns + 1,
     edits: prev.edits,
     byModel: { ...prev.byModel, [model]: { usd: round4(was.usd + usd), tokens: was.tokens + t.in + t.out + t.cacheRead + t.cacheWrite, turns: was.turns + 1 } },
-    byPair: { ...prev.byPair, [pair]: { usd: round4(wasPair.usd + usd), turns: wasPair.turns + 1 } },
+    byPair: { ...prev.byPair, [pair]: { usd: round4(wasPair.usd + usd), turns: wasPair.turns + 1, steps: (wasPair.steps ?? 0) + n, ctx: (wasPair.ctx ?? 0) + t.in + t.cacheRead + t.cacheWrite } },
   }
 }
 
@@ -84,6 +93,8 @@ export type BrainStamp = {
   compactions: number
   /** MOD-344: the context tokens just before the latest compaction. */
   compactTokens?: number
+  /** MOD-348: the running totals of every pair; the difference of two stamps of one `since` is what the brain spent between them. */
+  pairs?: Record<string, { usd: number; turns: number; steps: number; ctx: number }>
 }
 
 /** MOD-342: the brain's running total for a ledger row; undefined before its first turn. */
@@ -97,6 +108,7 @@ export function brainStamp(rec: BrainRecord | undefined, since: number): BrainSt
     turns: rec.turns,
     edits: rec.edits,
     ...(top ? { pair: top[0] } : {}),
+    ...(pairs.length > 0 ? { pairs: Object.fromEntries(pairs.map(([k, v]) => [k, { usd: round4(v.usd), turns: v.turns, steps: v.steps ?? 0, ctx: v.ctx ?? 0 }])) } : {}),
     ...(rec.window !== undefined ? { window: rec.window } : {}),
     compactions: rec.compactions ?? 0,
     ...(rec.compactTokens !== undefined ? { compactTokens: rec.compactTokens } : {}),

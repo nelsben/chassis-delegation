@@ -6,6 +6,8 @@
 /** Where a verdict's attempt came from when its store record did not read back. */
 export type Fallback = 'memory' | 'ledger'
 
+import type { BrainStamp } from './brain'
+
 /** One spawn row: `event: spawn` marks it (never `kind`, which a verdict row takes from its attempt record). */
 export type SpawnRow = {
   event: 'spawn'
@@ -42,6 +44,8 @@ export type SpawnRow = {
   explore?: true
   exploreFrom?: string
   sessionId?: string
+  /** MOD-348: the brain's running total at the spawn. */
+  brain?: BrainStamp
 }
 
 /** The fields of a spawn record a spawn row is made from. */
@@ -77,6 +81,7 @@ export function spawnRow(s: SpawnFields, sessionId?: string): SpawnRow {
     ...(s.fixes && s.fixes.length > 0 ? { fixes: [...s.fixes] } : {}),
     ...(typeof s.linked === 'boolean' ? { linked: s.linked } : {}),
     ...(s.explore ? { explore: true as const, ...(s.exploreFrom ? { exploreFrom: s.exploreFrom } : {}) } : {}),
+    ...(s.brain ? { brain: s.brain } : {}),
     ...(sessionId ? { sessionId } : {}),
   }
 }

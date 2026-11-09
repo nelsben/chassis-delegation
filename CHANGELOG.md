@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A brain pair names the model version (`fable-5.2/high`) and counts `steps` (model requests) and `ctx` (prompt tokens); the stamp carries `pairs`, every pair's running totals, so the difference between two stamps is what the brain spent between them, and a spawn row carries the stamp too (MOD-348).**
+- **Price rows for Fable 5.2 and Mythos 5.2 ($8/$40, cache reads $0.20), so a brain turn on them is priced (MOD-348).**
+
+### Fixed
+
+- **The brain's cache writes were priced at the 5-minute rate, which understated brain dollars by about 30%; the host's main loop writes 1-hour entries, so they are now priced at 2x input; records already stored are not repriced (MOD-348).**
+
 ## 0.9.55 — 2026-11-08
 
 ### Added
