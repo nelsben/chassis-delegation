@@ -8,6 +8,7 @@ import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
 import type { TestBody } from 'claude-code/testing'
 import { world, spawnInput, turnInput, mainTurn, sessionStart, commandInput, spawnCallOf, stepInput, bandProps, usage, ROOT, SCRATCH, HOME, NOW, type RunAnswer } from './harness'
+import { parseRepoConfig } from '../hooks/lib/repoconfig'
 import { FIXTURE_CARD, FIXTURE_CARD_NAME } from './fixtures/sample-card'
 
 type Tester = Parameters<TestBody>[0]
@@ -203,6 +204,17 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(await say($, 'issueMatch')).toContain('issueMatch = suggest (default)')
     await set($, 'issueMatch', 'require')
     expect(await say($, 'issueMatch')).toContain('issueMatch = require (yours)')
+  })
+
+  test('issueLink: hint is the value in force; require is read back, the repo file is read, and a bad value is named', async ($, on) => {
+    world(on)
+    await $.session.start(sessionStart)
+    expect(await say($, 'issueLink')).toContain('issueLink = hint (default)')
+    await set($, 'issueLink', 'require')
+    expect(await say($, 'issueLink')).toContain('issueLink = require (yours)')
+    expect(await say($, 'issueLink sometimes')).toContain('takes one of off, hint, require')
+    expect(parseRepoConfig('{"issueLink":"sometimes"}').errors).toEqual(['issueLink: needs off, hint or require (ignored)'])
+    expect(parseRepoConfig('{"issueLink":"off"}').config.issueLink).toBe('off')
   })
 
   test('maxWorkers: 3 lets a third briefed worker start at once (the built-in 2 queues it)', async ($, on) => {
