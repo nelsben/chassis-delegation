@@ -219,7 +219,8 @@ import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan,
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { parseWorkIssues, updatedText, workModel, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkCard, type WorkIssue, type WorkModel } from './lib/work'
+import { parseWorkIssues, updatedText, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkCard, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
+import { workTree, type WorkHandlers } from './lib/workpane'
 import { doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
@@ -408,6 +409,8 @@ const UPDATE_CHECK = 'delegation.updateCheck'
 const UPDATE_CHECK_MS = 10 * 60 * 1000
 /** GH-112: the pane `/delegation dashboard` and the band's `[ details ]` open. */
 const DASH_PANE = 'delegation-dash'
+/** MOD-354: the pane `/delegation work` opens. */
+const WORK_PANE = 'delegation-work'
 
 /**
  * MOD-117 (#185, #184): every key below that takes a card id takes the card's repo too, `<id>@<repo>` (MOD-97's form for
@@ -921,6 +924,11 @@ let spawnSeq = 0
 const issueStates: StateCache = new Map() // MOD-350: issue states read for the card match, kept ten minutes; emptied at session start
 /** MOD-353: the Work view's one read of the repo's issues, kept WORK_TTL_MS; cleared at session start. */
 let workCache: { repo: string; at: number; issues: WorkIssue[]; capped: boolean } | undefined
+/** MOD-354: the Work pane's toggles and filters; one background read at a time; when the last read was tried; the last failure. Cleared at session start. */
+let workUi: { closed: Set<string>; shown: Set<string>; query: string; states: Set<WorkState>; root?: string; showDone: boolean } = { closed: new Set(), shown: new Set(), query: '', states: new Set(), showDone: false }
+let workReading = false
+let workTriedAt: number | undefined
+let workFail: { repo: string; why: string } | undefined
 // Part 2: the main loop's turn state, the idle timers, the scheduler's slots.
 // A (re)load does not know whether a main turn is running, so it assumes one is
 // until the next main-loop turn.complete: nothing runs in the background before.
@@ -1574,6 +1582,56 @@ function landSeen($: Host, tool: 'land' | 'land_plan' | 'card' | 'dispatch' | 'v
   landLine = undefined
   if (tool !== 'verdict' && tool !== 'merge') parentLine = undefined
   if (had) redraw($)
+}
+
+/** MOD-354: the Work pane's handlers; each one changes workUi (or starts the read) and redraws. */
+function workHandlers($: Host): WorkHandlers {
+  const toggleIn = (set: Set<string>, v: string) => (set.has(v) ? set.delete(v) : set.add(v))
+  return {
+    toggle: key => {
+      toggleIn(workUi.closed, key)
+      redraw($)
+    },
+    show: parent => {
+      workUi.shown.add(parent)
+      redraw($)
+    },
+    chip: state => {
+      toggleIn(workUi.states, state)
+      redraw($)
+    },
+    query: text => {
+      workUi.query = text.trim()
+      redraw($)
+    },
+    root: value => {
+      workUi.root = value === 'all' ? undefined : value
+      redraw($)
+    },
+    showDone: () => {
+      workUi.showDone = !workUi.showDone
+      if (!workUi.showDone) workUi.shown.clear()
+      redraw($)
+    },
+    clear: () => {
+      workUi.query = ''
+      workUi.states.clear()
+      workUi.root = undefined
+      redraw($)
+    },
+    refresh: () => {
+      if (workReading) return
+      workReading = true
+      redraw($)
+      void workData($, true)
+        .catch(() => undefined)
+        .then(() => {
+          workReading = false
+          redraw($)
+        })
+    },
+    close: () => void $.ui.close({ id: WORK_PANE }),
+  }
 }
 
 // ---- GH-112: the live dashboard (the band above the prompt and the pane) -----------
@@ -5007,7 +5065,7 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
  * MOD-353: the Work view's read. The cards, the done task ids and the live rows are joined to one `gh issue list` of the repo, kept
  * WORK_TTL_MS (force reads again). A failed read keeps the list read earlier for this repo, else shows the cards alone, with a note.
  */
-async function workData($: Host, force: boolean): Promise<{ model: WorkModel; at?: number; notes: string[] }> {
+async function workData($: Host, force: boolean, noRead = false): Promise<{ model: WorkModel; at?: number; notes: string[]; stale: boolean; repo?: string }> {
   await loadRepoConfig($)
   const root = (await $.session.root()).replace(/\/+$/, '')
   const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
@@ -5027,11 +5085,21 @@ async function workData($: Host, force: boolean): Promise<{ model: WorkModel; at
   const done = doneTasks((await ledgerAt($, root)).rows)
   const live = (await liveModel($)).view.rows
   const build = (issues: readonly WorkIssue[]): WorkModel => workModel({ issues, cards, done, live })
-  if (!ownerRepo) return { model: build([]), notes: ['origin is not a GitHub remote: cards only'] }
+  if (!ownerRepo) return { model: build([]), notes: ['origin is not a GitHub remote: cards only'], stale: false }
   const at = await now($)
-  if (workCache !== undefined && workCache.repo === ownerRepo && !force && at - workCache.at >= 0 && at - workCache.at < WORK_TTL_MS) {
-    return { model: build(workCache.issues), at: workCache.at, notes: workCache.capped ? ['the newest 300 issues only'] : [] }
+  const has = workCache !== undefined && workCache.repo === ownerRepo
+  const age = has && workCache !== undefined ? at - workCache.at : 0
+  const stale = !has || age >= WORK_TTL_MS
+  // MOD-354: a failure note outlives the call that made it, so a later noRead call still carries it
+  const failWhy = workFail !== undefined && workFail.repo === ownerRepo ? workFail.why : undefined
+  if (noRead || (!force && has && age >= 0 && age < WORK_TTL_MS)) {
+    if (has && workCache !== undefined) {
+      const notes = [...(failWhy !== undefined ? [`could not read the issues (${failWhy}): showing the list read earlier`] : []), ...(workCache.capped ? ['the newest 300 issues only'] : [])]
+      return { model: build(workCache.issues), at: workCache.at, notes, stale, repo: ownerRepo }
+    }
+    return { model: build([]), notes: failWhy !== undefined ? [`could not read the issues (${failWhy}): cards only`] : [], stale, repo: ownerRepo }
   }
+  workTriedAt = at
   const r = await run($, ['gh', 'issue', 'list', '--repo', ownerRepo, '--state', 'all', '--limit', '300', '--json', 'number,title,state,labels,parent'], { cwd: root, timeoutMs: 60000 })
   let json: unknown
   let failure: string | undefined
@@ -5048,13 +5116,15 @@ async function workData($: Host, force: boolean): Promise<{ model: WorkModel; at
     const issues = parseWorkIssues(json)
     const capped = Array.isArray(json) && json.length >= WORK_LIST_LIMIT
     workCache = { repo: ownerRepo, at, issues, capped }
-    return { model: build(issues), at, notes: capped ? ['the newest 300 issues only'] : [] }
+    workFail = undefined
+    return { model: build(issues), at, notes: capped ? ['the newest 300 issues only'] : [], stale: false, repo: ownerRepo }
   }
   const why = failure.slice(0, 200)
-  if (workCache !== undefined && workCache.repo === ownerRepo) {
-    return { model: build(workCache.issues), at: workCache.at, notes: [`could not read the issues (${why}): showing the list read earlier`, ...(workCache.capped ? ['the newest 300 issues only'] : [])] }
+  workFail = { repo: ownerRepo, why }
+  if (has && workCache !== undefined) {
+    return { model: build(workCache.issues), at: workCache.at, notes: [`could not read the issues (${why}): showing the list read earlier`, ...(workCache.capped ? ['the newest 300 issues only'] : [])], stale, repo: ownerRepo }
   }
-  return { model: build([]), notes: [`could not read the issues (${why}): cards only`] }
+  return { model: build([]), notes: [`could not read the issues (${why}): cards only`], stale, repo: ownerRepo }
 }
 
 /**
@@ -11054,6 +11124,10 @@ export const register: Register = (on, opts) => {
     drivePending = undefined
     issueStates.clear() // MOD-350
     workCache = undefined // MOD-353
+    workUi = { closed: new Set(), shown: new Set(), query: '', states: new Set(), showDone: false } // MOD-354
+    workReading = false
+    workTriedAt = undefined
+    workFail = undefined
     driveFlushedAt = 0
     await refreshBrainKey($)
     // MOD-128: the host status line is retired; this clears a line an earlier version pinned
@@ -11072,7 +11146,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|work [refresh]|land <type> <title> [--dry-run]|tree <n>|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|work [refresh|text]|land <type> <title> [--dry-run]|tree <n>|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -11205,9 +11279,30 @@ export const register: Register = (on, opts) => {
     if (arg === 'ration') return { text: await rationReportText($) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'merge' || arg.startsWith('merge ')) return { text: await runMerge($, parseMergeArgs(arg.slice('merge'.length))) }
-    if (arg === 'work' || arg === 'work refresh') {
-      const w = await workData($, arg === 'work refresh')
+    if (arg === 'work text') {
+      const w = await workData($, false)
       return { text: workText(w.model, { ...(w.at !== undefined ? { updated: updatedText(w.at, await now($)) } : {}), notes: w.notes }) }
+    }
+    if (arg === 'work' || arg === 'work refresh') {
+      // MOD-354: the pane opens on fresh data; a screen that places no panes gets the same text as `work text`
+      const w = await workData($, arg === 'work refresh')
+      let placed = false
+      let why = ''
+      try {
+        const opened = await $.ui.open({ id: WORK_PANE, title: 'Work', focus: true })
+        placed = opened.isPlaced
+        if (!opened.isPlaced) why = opened.reason
+      } catch (err) {
+        why = String(err)
+      }
+      if (placed) return { text: 'Work opened in a pane.' }
+      try {
+        await $.ui.close({ id: WORK_PANE })
+      } catch {
+        // it never opened
+      }
+      const text = workText(w.model, { ...(w.at !== undefined ? { updated: updatedText(w.at, await now($)) } : {}), notes: w.notes })
+      return { text: [`This screen does not show a mod's panes (${why}), so here is the work list as text.`, '', text].join('\n') }
     }
     if (arg === 'dashboard') {
       let placed = false
@@ -11230,7 +11325,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|debrief ingest <note.md>|dashboard|work [refresh]|ration|land <type> <title>|tree <n>|tree import <file>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|debrief ingest <note.md>|dashboard|work [refresh|text]|ration|land <type> <title>|tree <n>|tree import <file>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => (landSeen($, 'card'), { result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => (landSeen($, 'verdict'), { result: await runVerdictSafe($, e as unknown as Record<string, unknown>) }))
@@ -11290,6 +11385,28 @@ export const register: Register = (on, opts) => {
       return paneTree(p, { blocks, open: openItemLines(items, view.now, !cfg.wakeOnVerdict, glyphOf), columns: e.props.bodyColumns, live: view, scheme: pickScheme(e), ...(ration ? { ration } : {}) }, () => void $.ui.close({ id: DASH_PANE })) as never
     } catch (err) {
       debug($, `pane not drawn: ${String(err)}`)
+      return next(e)
+    }
+  })
+
+  // MOD-354: the Work pane. The hook never awaits gh: a stale or missing list starts one background read, at most one per WORK_TTL_MS.
+  on('ui.render', { component: 'Pane', requestId: WORK_PANE }, async ($, e, next) => {
+    try {
+      const at = await now($)
+      const d = await workData($, false, true)
+      if (d.stale && !workReading && (workTriedAt === undefined || at - workTriedAt >= WORK_TTL_MS)) {
+        workReading = true
+        void workData($, true)
+          .catch(() => undefined)
+          .then(() => {
+            workReading = false
+            redraw($)
+          })
+      }
+      const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
+      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}) }, workHandlers($)) as never
+    } catch (err) {
+      debug($, `work pane not drawn: ${String(err)}`)
       return next(e)
     }
   })

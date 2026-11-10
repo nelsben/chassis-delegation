@@ -38,7 +38,7 @@ describe('MOD-353: /delegation work', () => {
   test('prints the summary line, the parent line and the card leaves', async ($, on) => {
     const w = setup(on)
     await $.session.start(sessionStart)
-    const out = await run($, 'work')
+    const out = await run($, 'work text')
     expect(out).toContain('**Work** · 0 working · 0 to review · 2 queued · 0 blocked · 1 backlog · 1 done · Updated just now')
     expect(out).toContain('- **#10 Checkout rework** 1/3')
     expect(out).toContain('  - QUEUED — Lint config · MOD-8')
@@ -48,8 +48,8 @@ describe('MOD-353: /delegation work', () => {
   test('a second work within five minutes runs no second gh issue list; work refresh reads again', async ($, on) => {
     const w = setup(on)
     await $.session.start(sessionStart)
-    await run($, 'work')
-    await run($, 'work')
+    await run($, 'work text')
+    await run($, 'work text')
     expect(listCalls(w)).toHaveLength(1)
     await run($, 'work refresh')
     expect(listCalls(w)).toHaveLength(2)
@@ -58,7 +58,7 @@ describe('MOD-353: /delegation work', () => {
   test('a failed read gives the cards-only note and still lists the cards', async ($, on) => {
     setup(on, { gh: () => ({ exitCode: 1, stdout: '', stderr: 'boom' }) })
     await $.session.start(sessionStart)
-    const out = await run($, 'work')
+    const out = await run($, 'work text')
     expect(out).toContain('could not read the issues (gh issue list failed: boom): cards only')
     expect(out).toContain('MOD-9')
     expect(out).toContain('QUEUED — Lint config · MOD-8')
@@ -67,7 +67,7 @@ describe('MOD-353: /delegation work', () => {
   test('an origin that is not GitHub gives its note and runs no gh', async ($, on) => {
     const w = setup(on, { url: 'https://example.com/o/r.git' })
     await $.session.start(sessionStart)
-    const out = await run($, 'work')
+    const out = await run($, 'work text')
     expect(out).toContain('origin is not a GitHub remote: cards only')
     expect(w.runs.filter((r: { argv: string[] }) => r.argv[0] === 'gh')).toEqual([])
   })
