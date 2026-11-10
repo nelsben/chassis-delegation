@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A leaf's title in the Work pane opens its detail (fields, and its activity from the ledger), with Dispatch, Review or Unblock for a queued, to-review or blocked card: a press puts one line to the session and the item reads `Asked · waiting for the session`; Unblock asks first** (MOD-356)
+
 ## 0.9.57 — 2026-11-09
 
 ### Added

@@ -1,7 +1,7 @@
 // MOD-354: /delegation work opens the Work pane (the list view); the drawing's keys, toggles, chips, filters and background read.
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, sessionStart, ROOT } from './harness'
+import { world, sessionStart, ROOT, NOW } from './harness'
 
 const CARDS = `${ROOT}/docs/cards`
 const REPO_FILE = `${ROOT}/.chassis-delegation.json`
@@ -20,15 +20,27 @@ const ISSUES = JSON.stringify([
   issue(30, 'Search', 'OPEN', 'epic'),
   issue(31, 'Filter chips', 'OPEN', 'story', 30),
 ])
-const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; unplaced?: string } = {}) =>
+// MOD-356: a blocked card waiting on MOD-9 (no epic), and ledger rows for MOD-9
+const BLOCKED = ['---', 'id: MOD-7', 'title: Blocked thing', 'domain: mod', 'tier: standard', 'status: blocked', 'blocked_by: [MOD-9]', 'scope: [hooks/x.ts]', 'gate: node', '---', '## Done when', '', '- It works.', ''].join('\n')
+const LEDGER = [
+  { task: 'MOD-9', kind: 'amend', at: NOW - 3_600_000 },
+  { task: 'MOD-9', kind: 'accept', at: NOW - 600_000 },
+  { task: 'MOD-9', kind: 'verify', verdict: 'pass', verdictAt: NOW - 120_000 },
+  { task: 'MOD-8', kind: 'amend', at: NOW - 30_000 },
+]
+  .map(r => JSON.stringify(r))
+  .join('\n')
+const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; unplaced?: string; ledger?: boolean } = {}) =>
   world(on, {
     files: {
+      [`${CARDS}/MOD-7-c.md`]: BLOCKED,
+      ...(opts.ledger ? { [`${ROOT}/.delegation/ledger.jsonl`]: `${LEDGER}\n` } : {}),
       [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards' }),
       [`${CARDS}/MOD-9-a.md`]: card('MOD-9', 'queued', 'Restore cart', 13),
       [`${CARDS}/MOD-8-b.md`]: card('MOD-8', 'queued', 'Lint config'),
       ...gitCfg(opts.url ?? 'https://github.com/o/r.git'),
     },
-    dirs: { [CARDS]: ['MOD-9-a.md', 'MOD-8-b.md'] },
+    dirs: { [CARDS]: ['MOD-9-a.md', 'MOD-8-b.md', 'MOD-7-c.md'] },
     ...(opts.unplaced !== undefined ? { panesUnplaced: opts.unplaced } : {}),
     run: async (argv: string[]) => {
       if (argv[0] === 'sleep') return { exitCode: 0, stdout: '' }
@@ -210,5 +222,118 @@ describe('MOD-354: the Work pane', () => {
     const text = String((await command($, 'work text')).text)
     expect(text.startsWith('**Work**')).toBe(true)
     expect(w.opened.filter((id: string) => id === 'delegation-work')).toHaveLength(1)
+  })
+})
+
+describe('MOD-356: the Work pane detail and actions', () => {
+  const DISPATCH = 'Work pane: Dispatch was pressed on MOD-9. Dispatch MOD-9.'
+  const UNBLOCK = 'Work pane: Unblock was pressed and confirmed on MOD-7, which waits on MOD-9. Release its card (status queued, no blocked_by line) and say what it still overlaps.'
+  const open = async ($: any, w: any, columns = 130, key = 'work-open-i13', opts: { surface?: string } = {}) => {
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, columns, opts.surface ?? 'terminal')
+    await ui.press({ key })
+    await ui.redraw()
+    return ui
+  }
+
+  test('at 130 columns a leaf opens its detail beside the table', async ($, on) => {
+    const w = setup(on)
+    const ui = await open($, w)
+    expect(await ui.find({ key: 'work-detail' }), w.debugLogs.join('\n')).toBeDefined()
+    expect(await ui.find({ key: 'work-table' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Checkout rework / Cart totals' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Restore a saved cart' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'MOD-9' })).toBeDefined()
+    expect((await ui.find({ key: 'work-act-i13' }))?.props.label).toBe('Dispatch')
+    expect((await ui.find({ key: 'work-detail-close' }))?.props.label).toBe('Close')
+  })
+
+  test('at 80 columns the detail takes the table\'s place and Back brings the table back', async ($, on) => {
+    const w = setup(on)
+    const ui = await open($, w, 80)
+    expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+    expect(await ui.find({ key: 'work-table' })).toBeUndefined()
+    expect((await ui.find({ key: 'work-detail-close' }))?.props.label).toBe('← Back to list')
+    await ui.press({ key: 'work-detail-close' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-table' })).toBeDefined()
+    expect(await ui.find({ key: 'work-detail' })).toBeUndefined()
+  })
+
+  test('Dispatch submits its line once and the item reads Asked', async ($, on) => {
+    const w = setup(on)
+    const ui = await open($, w)
+    await ui.press({ key: 'work-act-i13' })
+    await settle()
+    await ui.redraw()
+    expect(w.submitted.map((x: { text: string }) => x.text)).toEqual([DISPATCH])
+    expect(await ui.find({ type: 'Text', text: 'Asked · waiting for the session' })).toBeDefined()
+    expect(await ui.find({ key: 'work-act-i13' })).toBeUndefined()
+  })
+
+  test('Unblock asks first; Cancel submits nothing; confirming submits the line and the item reads Asked', async ($, on) => {
+    const w = setup(on)
+    const ui = await open($, w, 130, 'work-open-MOD-7')
+    expect((await ui.find({ key: 'work-act-MOD-7' }))?.props.label).toBe('Unblock')
+    expect(await ui.find({ key: 'work-by-MOD-9' })).toBeDefined()
+    await ui.press({ key: 'work-act-MOD-7' })
+    await settle()
+    await ui.redraw()
+    expect(w.submitted).toHaveLength(0)
+    expect(await ui.find({ type: 'Text', text: 'Still waiting on MOD-9. Unblock anyway?' })).toBeDefined()
+    expect(await ui.find({ key: 'work-confirm-yes-MOD-7' })).toBeDefined()
+    await ui.press({ key: 'work-confirm-no-MOD-7' })
+    await settle()
+    await ui.redraw()
+    expect(w.submitted).toHaveLength(0)
+    expect(await ui.find({ key: 'work-act-MOD-7' })).toBeDefined()
+    await ui.press({ key: 'work-act-MOD-7' })
+    await settle()
+    await ui.redraw()
+    await ui.press({ key: 'work-confirm-yes-MOD-7' })
+    await settle()
+    await ui.redraw()
+    expect(w.submitted.map((x: { text: string }) => x.text)).toEqual([UNBLOCK])
+    expect(await ui.find({ type: 'Text', text: 'Asked · waiting for the session' })).toBeDefined()
+  })
+
+  test('a backlog leaf has no action button and its Card field reads a dash', async ($, on) => {
+    const w = setup(on)
+    const ui = await open($, w, 130, 'work-open-i14')
+    expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+    expect(await ui.find({ key: 'work-act-i14' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-field-card' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '—' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'No card yet.' })).toBeDefined()
+  })
+
+  test('the detail lists the ledger rows of its card, newest first', async ($, on) => {
+    const w = setup(on, { ledger: true })
+    const ui = await open($, w)
+    expect(await ui.find({ type: 'Text', text: 'Activity' })).toBeDefined()
+    const row = async (i: number) => JSON.stringify(await ui.find({ key: `work-event-${i}` }))
+    expect(await row(0)).toContain('Verified by hand: pass')
+    expect(await row(1)).toContain('Accepted')
+    expect(await row(2)).toContain('Scope amended')
+    expect(await ui.find({ key: 'work-event-3' })).toBeUndefined()
+  })
+
+  test('with a detail open the drawing mounts on desktop, vscode and mobile', async ($, on) => {
+    const w = setup(on)
+    await open($, w)
+    for (const surface of ['desktop', 'vscode', 'mobile']) {
+      const ui = await mountWork($, 100, surface)
+      expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+    }
+  })
+
+  test('a new session.start closes the detail', async ($, on) => {
+    const w = setup(on)
+    await open($, w)
+    await $.session.start(sessionStart)
+    const ui = await mountWork($, 130, 'desktop')
+    expect(await ui.find({ key: 'work-table' })).toBeDefined()
+    expect(await ui.find({ key: 'work-detail' })).toBeUndefined()
   })
 })
