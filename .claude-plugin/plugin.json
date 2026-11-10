@@ -414,7 +414,7 @@
     "issueLink": {
       "type": "string",
       "title": "Issue link (off | hint | require)",
-      "description": "What a card with no issue gets. hint (the default): the card tool and /dispatch's dry run add one note naming the way out, and the card is still written. require: the card tool and /dispatch refuse the card. off: nothing. A release card (its title starts \"Release <version>\"), a card with repo none and a card whose whole scope sits outside the repo are never asked for an issue. A lanes call cannot carry an issue, so require gives it the note.",
+      "description": "What a card with no issue gets. hint (the default): the card tool and /dispatch's dry run add one note naming the way out, and the card is still written. require: the card tool and /dispatch refuse the card. off: nothing. A release card (its title starts \"Release <version>\"), a card with repo none and a card whose whole scope sits outside the repo are never asked for an issue. A lanes call cannot carry an issue, so require refuses it too unless its cards are exempt.",
       "options": [
         "off",
         "hint",

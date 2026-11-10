@@ -43,17 +43,19 @@ describe('MOD-359: issueLink', () => {
     expect(issueLinkCheck('require', card({ repo: 'none' }))).toEqual({})
   })
 
-  test('issueLinkCheck: require refuses, but a lanes call gets the note', async () => {
-    const { issueLinkCheck, ISSUE_LINK_REFUSAL, ISSUE_LINK_HINT } = await lib()
+  test('issueLinkCheck: require refuses, a lanes call with its own line; hint still gives a lanes call the note', async () => {
+    const { issueLinkCheck, ISSUE_LINK_REFUSAL, ISSUE_LINK_LANES_REFUSAL, ISSUE_LINK_HINT } = await lib()
     expect(issueLinkCheck('require', card())).toEqual({ refuse: ISSUE_LINK_REFUSAL })
     expect(issueLinkCheck('require', card({ lanes: false }))).toEqual({ refuse: ISSUE_LINK_REFUSAL })
-    expect(issueLinkCheck('require', card({ lanes: true }))).toEqual({ hint: ISSUE_LINK_HINT })
+    expect(issueLinkCheck('require', card({ lanes: true }))).toEqual({ refuse: ISSUE_LINK_LANES_REFUSAL })
+    expect(issueLinkCheck('hint', card({ lanes: true }))).toEqual({ hint: ISSUE_LINK_HINT })
+    expect(issueLinkCheck('require', card({ lanes: true, repo: 'none' }))).toEqual({})
   })
 
   test('issueLinkCheck: a planned-task match already named the issue; otherwise hint gives the note', async () => {
     const { issueLinkCheck, ISSUE_LINK_HINT } = await lib()
     expect(issueLinkCheck('hint', card({ matched: true }))).toEqual({})
-    expect(issueLinkCheck('require', card({ lanes: true, matched: true }))).toEqual({})
+    expect(issueLinkCheck('hint', card({ lanes: true, matched: true }))).toEqual({})
     expect(issueLinkCheck('hint', card())).toEqual({ hint: ISSUE_LINK_HINT })
     expect(ISSUE_LINK_HINT).toContain('names no issue')
   })
