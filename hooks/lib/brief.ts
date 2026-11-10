@@ -384,16 +384,17 @@ export function inScopeFolder(path: string, scope: readonly string[]): boolean {
 /**
  * MOD-170: whether a `scope+=` block waits for approval under scopeAmends. `apply`: never; `ask`: always;
  * `new-files`: unless every path it names is a literal path that did not exist at the base ('new') and
- * sits in a folder the scope already names. `within-parent` (MOD-196): unless the brief's parent_scope= is non-empty
- * and every path sits inside it (scopetree's `contained`). `base` gives each path's state; a path it does not know
+ * sits in a folder the scope already names. `within-parent` (MOD-196): with a non-empty parent_scope=, unless
+ * every path sits inside it (scopetree's `contained`; the scope's folders are no fallback there); with no parent
+ * scope (MOD-358), unless every path passes `inScopeFolder` against the card's scope. `base` gives each path's state; a path it does not know
  * (a git error) holds the block. A block with no `scope+=` is never held by this rule.
  */
 export function scopeAmendHeld(a: Amend, mode: ScopeAmends, scope: readonly string[], base: ReadonlyMap<string, 'new' | 'exists' | 'error'>, parentScope: readonly string[] = []): boolean {
   const paths = amendScopePaths(a)
   if (paths.length === 0 || mode === 'apply') return false
   if (mode === 'ask') return true
-  // MOD-196: within-parent applies only when the parent's scope is known and every path sits inside it; no parent scope behaves as ask
-  if (mode === 'within-parent') return !(parentScope.length > 0 && paths.every(p => contained(p, parentScope)))
+  // MOD-196: with a parent scope, within-parent applies only when every path sits inside it; MOD-358: with none, the card's own scope folders are the boundary
+  if (mode === 'within-parent') return !paths.every(p => parentScope.length > 0 ? contained(p, parentScope) : inScopeFolder(p, scope))
   return !paths.every(p => !hasWildcard(p) && base.get(p) === 'new' && inScopeFolder(p, scope))
 }
 

@@ -406,6 +406,22 @@ describe('tool.call on Agent: report capture and verify', () => {
       expect(rows(w)[0]?.text).toContain(HELD('new-files'))
     })
 
+    test('MOD-358 within-parent, no parent_scope: a block in a folder the card scope names is applied', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const Y = '[[amend v=1 scope+=a/y.ts reason=one more file beside a/x.ts]]'
+      const w = world(on, { files: { [BRIEF]: SCOPED + '\nbody', ...repoFile('within-parent') }, run: baseRun(['a/y.ts'], 'A\ta/x.ts\nM\ta/y.ts\n'), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [Y, reportOf('a/x.ts', 'a/y.ts')].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(SCOPED + '\nbody\n' + Y + '\n')
+      expect(rows(w)[0]?.text).toContain('amended: scope+=a/y.ts (reason one more file beside a/x.ts)')
+    })
+    test('MOD-358 within-parent, no parent_scope: a block in a folder the card scope does not name is held', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
+      const w = world(on, { files: { [BRIEF]: SCOPED + '\nbody', ...repoFile('within-parent') }, run: baseRun(['c/x.ts']), agentId: 'agent-4' })
+      await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+      await $.turn.complete(turnInput('agent-4', [AMEND_C, REPORT_C].join('\n')))
+      expect(w.files.get(BRIEF)).toBe(SCOPED + '\nbody')
+      expect(rows(w)[0]?.text).toContain(HELD('within-parent'))
+    })
+
     test('ask: forbid+= still applies on the worker\'s word', { options: { verdictVerbosity: 'full', ...GM } }, async ($, on) => {
       const F = '[[amend v=1 forbid+=d/** reason=keep out of d]]'
       const w = world(on, { files: { [BRIEF]: HEADER + '\nbody', ...repoFile('ask') }, run: baseRun([], 'A\ta/x.ts\n'), agentId: 'agent-4' })

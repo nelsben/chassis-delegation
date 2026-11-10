@@ -290,7 +290,7 @@ gh label create type:spike --repo acme/widgets
 
 To see the work across repos, use one GitHub Project that you own as the view. Set `/delegation config project <owner>/<number>` and `land` adds each issue it files to that Project (`gh project item-add`); nothing else of the Project is read or written, and with the option unset the mod never touches it.
 
-While parents are in use, set `/delegation config scopeAmends within-parent`. A card cut with `parentScope` carries it into the brief as `parent_scope=`; a worker's `scope+=` then applies on its word only when every path sits inside that scope, and anything that escapes it waits for your approval. `ask` holds every scope amend instead, and a brief with no `parent_scope=` waits every time under `within-parent`.
+While parents are in use, set `/delegation config scopeAmends within-parent`. A card cut with `parentScope` carries it into the brief as `parent_scope=`; a worker's `scope+=` then applies on its word only when every path sits inside that scope, and anything that escapes it waits for your approval. `ask` holds every scope amend instead, and a brief with no `parent_scope=` applies a block only when every path sits in a folder the card's own scope already names, and holds the rest, under `within-parent`.
 
 ### Land nudge
 
