@@ -1,0 +1,319 @@
+// MOD-353: the Work view's data, the pure half. The parsed issue list, the cards, the done task ids and the live rows
+// become one tree with one state per leaf; the view model says which rows show for a set of filters; the text form is
+// what `/delegation work` prints. No I/O, no clock: the caller reads the issues and the time.
+
+import type { Tier } from './tier'
+
+export type WorkState = 'working' | 'review' | 'queued' | 'blocked' | 'backlog' | 'done'
+/** The order of the summary: Working, To review, Queued, Blocked, Backlog, Done. */
+export const WORK_STATES: readonly WorkState[] = ['working', 'review', 'queued', 'blocked', 'backlog', 'done']
+export const STATE_LABEL: Record<WorkState, string> = { working: 'Working', review: 'To review', queued: 'Queued', blocked: 'Blocked', backlog: 'Backlog', done: 'Done' }
+export type WorkType = 'epic' | 'feature' | 'story' | 'task' | 'bug' | 'spike' | 'issue'
+export type WorkIssue = { number: number; title: string; closed: boolean; type: WorkType; parent?: number }
+export type WorkCard = { id: string; title: string; status?: string; tier?: Tier; issue?: number; parent?: number; blockedBy?: string[] }
+/** A live row; structurally a subset of live.ts WorktreeRow, so `view.rows` is passed as it is. */
+export type WorkLive = { task: string; kind: 'live' | 'queued' | 'verdict' | 'owed' | 'disk'; model?: string; state?: string; attempt?: string; usd?: number }
+export type WorkItem = {
+  /** `#<number>` for an issue, the card id for a card drawn by itself, `none` for the No epic group. */
+  key: string
+  number?: number
+  title: string
+  type: WorkType
+  state: WorkState
+  group?: true
+  card?: string
+  tier?: Tier
+  model?: string
+  attempt?: string
+  /** Working only: the row's `state` without its leading `live `, e.g. `6m`. */
+  running?: string
+  usd?: number
+  /** Queued, and its spawn waits in the queue. */
+  slot?: true
+  /** Queued, and a worktree for it is on disk from an earlier session. */
+  onDisk?: true
+  /** Blocked: the ids it waits on. */
+  by?: string[]
+  children: WorkItem[]
+  /** Leaf descendants, and how many are done. A leaf has leaves 1 and done 0 or 1. */
+  leaves: number
+  done: number
+}
+export type WorkModel = { roots: WorkItem[]; counts: Record<WorkState, number>; total: number }
+export type WorkUi = { closed: ReadonlySet<string>; shown: ReadonlySet<string>; query: string; states: ReadonlySet<WorkState>; root?: string; showDone: boolean }
+export type WorkRow =
+  | { kind: 'item'; item: WorkItem; depth: number; /** present on a parent */ open?: boolean }
+  | { kind: 'hidden'; parent: string; depth: number; n: number }
+  | { kind: 'older'; parent: string; depth: number; n: number }
+  | { kind: 'more'; n: number }
+
+export const DONE_CAP = 20
+export const ROW_CAP = 200
+export const WORK_TTL_MS = 5 * 60 * 1000
+export const WORK_LIST_LIMIT = 300
+export const DEFAULT_UI: WorkUi = { closed: new Set<string>(), shown: new Set<string>(), query: '', states: new Set<WorkState>(), showDone: false }
+
+const WORK_TYPES: readonly WorkType[] = ['epic', 'feature', 'story', 'task', 'bug', 'spike']
+const PARENT_LOOP_STEPS = 16
+const NO_EPIC = 'none'
+
+/** The parsed `gh issue list --json number,title,state,labels,parent` array: the issues, sorted by number, one per number. */
+export function parseWorkIssues(json: unknown): WorkIssue[] {
+  if (!Array.isArray(json)) return []
+  const seen = new Map<number, WorkIssue>()
+  for (const raw of json) {
+    const o = raw as { number?: unknown; title?: unknown; state?: unknown; labels?: unknown; parent?: unknown } | null
+    if (!o || typeof o.number !== 'number' || seen.has(o.number)) continue
+    const names = Array.isArray(o.labels) ? o.labels.map(l => (l as { name?: unknown } | null)?.name).filter((n): n is string => typeof n === 'string') : []
+    let type: WorkType = 'issue'
+    for (const name of names) {
+      const t = /^type:(.+)$/.exec(name)?.[1] as WorkType | undefined
+      if (t !== undefined && (WORK_TYPES as readonly string[]).includes(t)) {
+        type = t
+        break
+      }
+    }
+    const p = o.parent as { number?: unknown } | null | undefined
+    const parent = typeof p?.number === 'number' ? p.number : undefined
+    seen.set(o.number, {
+      number: o.number,
+      title: typeof o.title === 'string' ? o.title : '',
+      closed: typeof o.state === 'string' && o.state.toUpperCase() === 'CLOSED',
+      type,
+      ...(parent !== undefined ? { parent } : {}),
+    })
+  }
+  return [...seen.values()].sort((a, b) => a.number - b.number)
+}
+
+const byId = (a: string, b: string): number => a.localeCompare(b, undefined, { numeric: true })
+const cardById = (a: WorkCard, b: WorkCard): number => byId(a.id, b.id)
+
+/** The model's parts: the issues, the cards, the done task ids and the live rows, as a tree with one state per leaf. */
+export function workModel(i: { issues: readonly WorkIssue[]; cards: readonly WorkCard[]; done: ReadonlySet<string>; live: readonly WorkLive[] }): WorkModel {
+  const byNum = new Map<number, WorkIssue>()
+  for (const x of i.issues) if (!byNum.has(x.number)) byNum.set(x.number, x)
+  const issues = [...byNum.values()].sort((a, b) => a.number - b.number)
+
+  // rule 2: an issue's parent is its parent when that is in the list and the parent chain never comes back to the issue
+  const reaches = (start: number, self: number): boolean => {
+    let cur: number | undefined = start
+    for (let step = 0; step < PARENT_LOOP_STEPS && cur !== undefined; step++) {
+      if (cur === self) return true
+      cur = byNum.get(cur)?.parent
+    }
+    return false
+  }
+  const parentOf = new Map<number, number>()
+  for (const x of issues) {
+    if (x.parent === undefined || !byNum.has(x.parent) || reaches(x.parent, x.number)) continue
+    parentOf.set(x.number, x.parent)
+  }
+  const childIssues = new Map<number, number[]>()
+  for (const [n, p] of parentOf) childIssues.set(p, [...(childIssues.get(p) ?? []), n])
+
+  const liveOf = new Map<string, WorkLive>()
+  for (const r of i.live) {
+    const id = r.task.split(/[ /]/)[0] ?? ''
+    if (!liveOf.has(id)) liveOf.set(id, r)
+  }
+  const isDone = (c: WorkCard): boolean => c.status === 'merged' || c.status === 'landed' || i.done.has(c.id)
+
+  // rule 3: each card is placed once; a bound card is the leaf of its issue
+  const bound = new Map<number, WorkCard>()
+  const leafCards = new Map<number, WorkCard[]>()
+  const noneCards: WorkCard[] = []
+  const addTo = (n: number, c: WorkCard) => leafCards.set(n, [...(leafCards.get(n) ?? []), c])
+  const beats = (a: WorkCard, b: WorkCard): boolean => (isDone(a) !== isDone(b) ? !isDone(a) : byId(a.id, b.id) > 0)
+  for (const c of i.cards) {
+    if (c.status === 'parked' || c.status === 'template') continue
+    if (c.issue !== undefined && byNum.has(c.issue) && !childIssues.has(c.issue)) {
+      const prev = bound.get(c.issue)
+      if (prev === undefined || beats(c, prev)) bound.set(c.issue, c)
+    } else if (c.issue !== undefined && byNum.has(c.issue)) {
+      addTo(c.issue, c)
+    } else if (c.parent !== undefined && byNum.has(c.parent)) {
+      addTo(c.parent, c)
+    } else {
+      noneCards.push(c)
+    }
+  }
+  const isParent = (n: number): boolean => (childIssues.get(n)?.length ?? 0) > 0 || (leafCards.get(n)?.length ?? 0) > 0
+
+  // rule 5: a leaf's state, the first match wins
+  const leaf = (key: string, title: string, type: WorkType, number: number | undefined, card: WorkCard | undefined, closed: boolean): WorkItem => {
+    const live = card !== undefined ? liveOf.get(card.id) : undefined
+    const state: WorkState =
+      closed || (card !== undefined && isDone(card)) ? 'done'
+      : live?.kind === 'live' ? 'working'
+      : live?.kind === 'owed' || live?.kind === 'verdict' ? 'review'
+      : card?.status === 'blocked' ? 'blocked'
+      : card !== undefined ? 'queued'
+      : 'backlog'
+    const item: WorkItem = { key, title, type, state, children: [], leaves: 1, done: state === 'done' ? 1 : 0 }
+    if (number !== undefined) item.number = number
+    if (card !== undefined) {
+      item.card = card.id
+      if (card.tier !== undefined) item.tier = card.tier
+    }
+    if (state === 'working' || state === 'review') {
+      if (live?.model !== undefined) item.model = live.model
+      if (live?.attempt !== undefined) item.attempt = live.attempt
+      if (live?.usd !== undefined) item.usd = live.usd
+    }
+    if (state === 'working' && live?.state !== undefined) item.running = live.state.replace(/^live /, '')
+    if (state === 'blocked' && card?.blockedBy !== undefined && card.blockedBy.length > 0) item.by = [...card.blockedBy]
+    if (state === 'queued' && live?.kind === 'queued') item.slot = true
+    if (state === 'queued' && live?.kind === 'disk') item.onDisk = true
+    return item
+  }
+  const cardLeaf = (c: WorkCard): WorkItem => leaf(c.id, c.title, 'task', undefined, c, false)
+  const parentOfItems = (key: string, title: string, type: WorkType, number: number | undefined, children: WorkItem[], group?: true): WorkItem => {
+    const leaves = children.reduce((s, c) => s + c.leaves, 0)
+    const done = children.reduce((s, c) => s + c.done, 0)
+    return { key, title, type, ...(number !== undefined ? { number } : {}), ...(group ? { group } : {}), state: leaves > 0 && done === leaves ? 'done' : 'backlog', children, leaves, done }
+  }
+
+  // rule 6 and 7: an issue with child issues or card leaves is a parent; children are issues by number, then cards by id
+  const building = new Set<number>()
+  const buildIssue = (n: number): WorkItem => {
+    const x = byNum.get(n) as WorkIssue
+    building.add(n)
+    const kids = (childIssues.get(n) ?? []).filter(k => !building.has(k)).map(buildIssue)
+    const placed = leafCards.get(n) ?? []
+    building.delete(n)
+    if (kids.length === 0 && placed.length === 0) return leaf(`#${n}`, x.title, x.type, n, bound.get(n), x.closed)
+    // an issue that turns out a parent keeps its own bound card as a card leaf beside the others
+    const cards = [...(bound.has(n) ? [bound.get(n) as WorkCard] : []), ...placed].sort(cardById)
+    return parentOfItems(`#${n}`, x.title, x.type, n, [...kids, ...cards.map(cardLeaf)])
+  }
+
+  // rule 8: the roots, then the No epic group
+  const roots: WorkItem[] = []
+  const groupKids: WorkItem[] = []
+  for (const x of issues) {
+    if (parentOf.has(x.number)) continue
+    const it = buildIssue(x.number)
+    if (x.type === 'epic' || isParent(x.number)) roots.push(it)
+    else groupKids.push(it)
+  }
+  groupKids.push(...[...noneCards].sort(cardById).map(cardLeaf))
+  if (groupKids.length > 0) roots.push(parentOfItems(NO_EPIC, 'No epic', 'issue', undefined, groupKids, true))
+
+  // rule 9: the counts over the leaves of every root
+  const counts = Object.fromEntries(WORK_STATES.map(s => [s, 0])) as Record<WorkState, number>
+  const count = (it: WorkItem): void => {
+    if (it.children.length === 0) counts[it.state]++
+    else for (const c of it.children) count(c)
+  }
+  for (const r of roots) count(r)
+  const total = WORK_STATES.reduce((s, st) => s + counts[st], 0)
+  return { roots, counts, total }
+}
+
+/** The rows of the view for a set of filters: an unfiltered tree with done children folded, or the matches of a filter. */
+export function workRows(m: WorkModel, ui: WorkUi): WorkRow[] {
+  const q = ui.query.trim().toLowerCase()
+  const filtered = q !== '' || ui.states.size > 0
+  const roots = ui.root !== undefined && m.roots.some(r => r.key === ui.root) ? m.roots.filter(r => r.key === ui.root) : m.roots
+  const out: WorkRow[] = []
+
+  const listItem = (it: WorkItem, depth: number): void => {
+    if (it.children.length === 0) {
+      out.push({ kind: 'item', item: it, depth })
+      return
+    }
+    const open = !ui.closed.has(it.key)
+    out.push({ kind: 'item', item: it, depth, open })
+    if (!open) return
+    const listAll = ui.showDone || ui.shown.has(it.key)
+    const doneKids = it.children.filter(c => c.state === 'done')
+    const inPlace = new Set(listAll ? doneKids.slice(-DONE_CAP) : [])
+    for (const c of it.children) {
+      if (c.state !== 'done' || inPlace.has(c)) listItem(c, depth + 1)
+    }
+    if (doneKids.length === 0) return
+    if (listAll) {
+      const left = doneKids.length - inPlace.size
+      if (left > 0) out.push({ kind: 'older', parent: it.key, depth: depth + 1, n: left })
+    } else {
+      out.push({ kind: 'hidden', parent: it.key, depth: depth + 1, n: doneKids.length })
+    }
+  }
+
+  const leafMatches = (it: WorkItem): boolean =>
+    (ui.states.size === 0 || ui.states.has(it.state)) &&
+    (q === '' || `${it.title} #${it.number ?? ''} ${it.card ?? ''}`.toLowerCase().includes(q)) &&
+    (it.state !== 'done' || ui.showDone || ui.states.has('done'))
+  const anyMatch = (it: WorkItem): boolean => (it.children.length === 0 ? leafMatches(it) : it.children.some(anyMatch))
+  const listFiltered = (it: WorkItem, depth: number): void => {
+    if (it.children.length === 0) {
+      if (leafMatches(it)) out.push({ kind: 'item', item: it, depth })
+      return
+    }
+    if (!anyMatch(it)) return
+    out.push({ kind: 'item', item: it, depth, open: true })
+    for (const c of it.children) listFiltered(c, depth + 1)
+  }
+
+  for (const r of roots) {
+    if (filtered) listFiltered(r, 0)
+    else if (r.state !== 'done' || ui.showDone) listItem(r, 0)
+  }
+  if (out.length <= ROW_CAP) return out
+  return [...out.slice(0, ROW_CAP), { kind: 'more', n: out.length - ROW_CAP }]
+}
+
+/** The age of the read, in words: just now, N min ago, N h ago. A read in the future counts as just now. */
+export function updatedText(at: number, now: number): string {
+  const age = Math.max(0, now - at)
+  if (age < 60_000) return 'Updated just now'
+  if (age < 3_600_000) return `Updated ${Math.floor(age / 60_000)} min ago`
+  return `Updated ${Math.floor(age / 3_600_000)} h ago`
+}
+
+const leafFields = (it: WorkItem): string[] => {
+  const out: string[] = []
+  if (it.card !== undefined) out.push(it.card)
+  const who = [it.model, it.attempt].filter((x): x is string => x !== undefined && x !== '').join(' ')
+  if (who !== '') out.push(who)
+  if (it.running !== undefined) out.push(it.running)
+  if (it.usd !== undefined) out.push(`$${it.usd.toFixed(2)}`)
+  if (it.by !== undefined && it.by.length > 0) out.push(`by ${it.by.join(', ')}`)
+  if (it.slot) out.push('waiting for a slot')
+  if (it.onDisk) out.push('worktree on disk')
+  return out
+}
+
+/** The text form: a summary line, the notes, then the rows of the default view (or the import hint when there is no work). */
+export function workText(m: WorkModel, o: { updated?: string; notes?: readonly string[] } = {}): string {
+  const counts = WORK_STATES.map(s => `${m.counts[s]} ${STATE_LABEL[s].toLowerCase()}`).join(' · ')
+  const lines = [`**Work** · ${counts}${o.updated ? ` · ${o.updated}` : ''}`, ...(o.notes ?? [])]
+  if (m.total === 0) {
+    lines.push('No work breakdown yet. Import one with /delegation tree import <file>, or start one with /delegation land epic <title>.')
+    return lines.join('\n')
+  }
+  lines.push('')
+  for (const row of workRows(m, DEFAULT_UI)) {
+    const pad = (d: number) => '  '.repeat(d)
+    if (row.kind === 'item') {
+      const it = row.item
+      if (row.open !== undefined) {
+        const label = it.group ? 'No epic' : `#${it.number} ${it.title}`
+        lines.push(`${pad(row.depth)}- **${label}** ${it.done}/${it.leaves}`)
+        continue
+      }
+      const num = it.number !== undefined ? `#${it.number}` : '—'
+      const suffix = it.number !== undefined && (it.type === 'bug' || it.type === 'task' || it.type === 'spike') ? ` (${it.type})` : ''
+      const fields = leafFields(it)
+      lines.push(`${pad(row.depth)}- ${STATE_LABEL[it.state].toUpperCase()} ${num} ${it.title}${suffix}${fields.map(f => ` · ${f}`).join('')}`)
+    } else if (row.kind === 'hidden') {
+      lines.push(`${pad(row.depth)}- ${row.n} done hidden`)
+    } else if (row.kind === 'older') {
+      lines.push(`${pad(row.depth)}- ${row.n} older done not shown`)
+    } else {
+      lines.push(`… ${row.n} more rows`)
+    }
+  }
+  return lines.join('\n')
+}
