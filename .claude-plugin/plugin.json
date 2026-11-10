@@ -38,6 +38,12 @@
       "description": "Gate id to the command /delegation merge runs in the worktree before it rebases, for a card whose gate list has that id (a card's own merge_check wins); by argv (no shell), same rules as the gate map; {card}, {sha} and {worktree} are filled in; a non-zero exit refuses the merge. Empty or 0 = the repo file (.chassis-delegation.json), else none; a value here wins over both",
       "default": ""
     },
+    "statusMap": {
+      "type": "string",
+      "title": "Status words (JSON)",
+      "description": "A card status word of the repo's own mapped onto one of the mod's: queued, merged or parked, for example {\"done\":\"merged\",\"held\":\"parked\",\"todo\":\"queued\"}. The mod reads a card's status by its first word, lower-cased, so \"merged (PR 27)\" reads as merged; a first word in this map reads as the word it maps onto, wherever the mod lists the card folder (the Work view, the tree, reconcile, the sibling and blocker rules) and at /dispatch. A key may not be one of the mod's own words (queued, claimed, blocked, merged, landed, parked, template). The card file is never rewritten. Empty or 0 = the repo file (.chassis-delegation.json), else none; a value here is merged over it key by key",
+      "default": ""
+    },
     "probeModels": {
       "type": "boolean",
       "title": "Probe candidate models",

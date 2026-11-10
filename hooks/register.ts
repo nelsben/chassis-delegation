@@ -393,6 +393,7 @@ import { askLine, AUTO_POST_CAP, capLine, coveredBy, issueNumberOf, parsePostArg
 import { dropLocalQuotes, gitConfigValue, parseRedactList, redact, type RedactRules } from './lib/redact'
 import { allowOf, missingBlocks, missingBlockRefusal, noLocalRefusal, renderLocal, trackedRefusal, unreadableRefusal } from './lib/brieflocal'
 import { cardsOf, syncCardIndex, type CardIndex } from './lib/cardcache'
+import { statusRead, unknownStatusNote } from './lib/statusmap'
 import { abortedDeny, budgetDelay, decisionId, isStopped, outOfTimeDeny, stopper, turns, type Stopper } from './lib/serial'
 import { behindLine, changelogSlice, classifyRoot, codeSkewLine, folderVersion, inDevMods, migrateConfig, updateLine, upToDateLine } from './lib/update'
 
@@ -675,6 +676,8 @@ type Config = {
   refusedGates: Record<string, string>
   /** MOD-143: gate id → the command merge runs before it rebases. */
   mergeCheckMap: Record<string, string>
+  /** MOD-361: the repo's own card status words → queued, merged or parked. */
+  statusMap: Record<string, string>
   gateTemplates: string[][]
   agentTypes: Record<string, string>
   tierMap: Record<Tier, Alias>
@@ -813,6 +816,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       gateMap: eff.gateMap,
       refusedGates: eff.refusedGates,
       mergeCheckMap: eff.mergeCheckMap,
+      statusMap: eff.statusMap,
       gateTemplates: gateTemplatesOf(eff.gateMap),
       agentTypes: eff.agentTypes,
       tierMap: eff.tierMap,
@@ -4968,7 +4972,11 @@ async function indexedCards($: Host, dir: string): Promise<{ name: string; card:
   const listing = (await $.fs.list(dir)).map(e => ({ name: e.name, size: e.size, mtimeMs: e.mtimeMs }))
   const synced = await syncCardIndex(cardIndex, dir, listing, p => readText($, p))
   cardIndex = synced.index
-  return cardsOf(cardIndex, dir, listing)
+  // MOD-361: a status is read by its first word, through the repo's statusMap; the cached card is not mutated
+  return cardsOf(cardIndex, dir, listing).map(({ name, card }) => {
+    const status = statusRead(card.status, cfg.statusMap)
+    return status === card.status ? { name, card } : { name, card: { ...card, status } }
+  })
 }
 
 async function landWith($: Host, a: LandArgs | { error: string }): Promise<string> {
@@ -5137,10 +5145,13 @@ async function workData($: Host, force: boolean, noRead = false): Promise<{ mode
   } catch {
     // no card folder: no cards
   }
+  // MOD-361: a status word the mod does not know reads as queued; the view says how many cards carry one (last note)
+  const statusNote = unknownStatusNote(cards.map(c => c.status))
+  const withStatusNote = (notes: string[]): string[] => (statusNote === undefined ? notes : [...notes, statusNote])
   const done = doneTasks((await ledgerAt($, root)).rows)
   const live = (await liveModel($)).view.rows
   const build = (issues: readonly WorkIssue[]): WorkModel => workModel({ issues, cards, done, live })
-  if (!ownerRepo) return { model: build([]), notes: ['origin is not a GitHub remote: cards only'], stale: false }
+  if (!ownerRepo) return { model: build([]), notes: withStatusNote(['origin is not a GitHub remote: cards only']), stale: false }
   const at = await now($)
   const has = workCache !== undefined && workCache.repo === ownerRepo
   const age = has && workCache !== undefined ? at - workCache.at : 0
@@ -5150,9 +5161,9 @@ async function workData($: Host, force: boolean, noRead = false): Promise<{ mode
   if (noRead || (!force && has && age >= 0 && age < WORK_TTL_MS)) {
     if (has && workCache !== undefined) {
       const notes = [...(failWhy !== undefined ? [`could not read the issues (${failWhy}): showing the list read earlier`] : []), ...(workCache.capped ? ['the newest 300 issues only'] : [])]
-      return { model: build(workCache.issues), at: workCache.at, notes, stale, repo: ownerRepo }
+      return { model: build(workCache.issues), at: workCache.at, notes: withStatusNote(notes), stale, repo: ownerRepo }
     }
-    return { model: build([]), notes: failWhy !== undefined ? [`could not read the issues (${failWhy}): cards only`] : [], stale, repo: ownerRepo }
+    return { model: build([]), notes: withStatusNote(failWhy !== undefined ? [`could not read the issues (${failWhy}): cards only`] : []), stale, repo: ownerRepo }
   }
   workTriedAt = at
   const r = await run($, ['gh', 'issue', 'list', '--repo', ownerRepo, '--state', 'all', '--limit', '300', '--json', 'number,title,state,labels,parent'], { cwd: root, timeoutMs: 60000 })
@@ -5172,14 +5183,14 @@ async function workData($: Host, force: boolean, noRead = false): Promise<{ mode
     const capped = Array.isArray(json) && json.length >= WORK_LIST_LIMIT
     workCache = { repo: ownerRepo, at, issues, capped }
     workFail = undefined
-    return { model: build(issues), at, notes: capped ? ['the newest 300 issues only'] : [], stale: false, repo: ownerRepo }
+    return { model: build(issues), at, notes: withStatusNote(capped ? ['the newest 300 issues only'] : []), stale: false, repo: ownerRepo }
   }
   const why = failure.slice(0, 200)
   workFail = { repo: ownerRepo, why }
   if (has && workCache !== undefined) {
-    return { model: build(workCache.issues), at: workCache.at, notes: [`could not read the issues (${why}): showing the list read earlier`, ...(workCache.capped ? ['the newest 300 issues only'] : [])], stale, repo: ownerRepo }
+    return { model: build(workCache.issues), at: workCache.at, notes: withStatusNote([`could not read the issues (${why}): showing the list read earlier`, ...(workCache.capped ? ['the newest 300 issues only'] : [])]), stale, repo: ownerRepo }
   }
-  return { model: build([]), notes: [`could not read the issues (${why}): cards only`], stale, repo: ownerRepo }
+  return { model: build([]), notes: withStatusNote([`could not read the issues (${why}): cards only`]), stale, repo: ownerRepo }
 }
 
 /**
@@ -8565,7 +8576,7 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   // MOD-359: a card with no issue under issueLink; not on a replay
   const linkCheck = replay ? {} : issueLinkCheck(cfg.issueLink, { title: card.title, scope: card.scope, repo: card.repo, hasIssue: issueRef(card.fields.issue) !== undefined, matched: plannedHits.length > 0 })
   if (linkCheck.refuse !== undefined) return `/dispatch ${id}: refused — ${linkCheck.refuse}`
-  const refusal = checkStatus(card) ?? checkDomain(card, target ? target.domains : cfg.domains)
+  const refusal = checkStatus({ ...card, status: statusRead(card.status, cfg.statusMap) }) ?? checkDomain(card, target ? target.domains : cfg.domains)
   if (refusal) return `/dispatch ${id}: ${refusal}${replay ? ` (read at ${base})` : ''}`
   // the repo the work is cut from and judged in: the target's, else the session's
   const repoRoot = target ? target.path : root

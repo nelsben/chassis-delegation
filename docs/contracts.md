@@ -196,7 +196,7 @@ value has its quotes removed; a line that is not `key: value` is skipped.
 | `parentScope` | `parentScope: [hooks/**, docs/**]`, or a block list, or a scalar split on `,` and `;` | `/dispatch` copies it to the brief header as `parent_scope=` | same parse, and it is read even without `parent`. The tool refuses `parentScope` without `parent` and refuses a `scope` glob outside it; a hand-written card is not checked, so a `scope` outside `parentScope` dispatches |
 | `scope`, `forbid` | `scope: [a/**, b.md]` | the brief's `scope=`, `forbid=` | same |
 
-**Card status.** `status:` is one word; a missing or other value is refused by dispatch as `<ID> is status <value>; /dispatch takes a queued or claimed card`.
+**Card status.** A card's `status:` is read by its first word, lower-cased (so `Merged (PR 27)` reads as `merged`), and through the repo's `statusMap` when that word is in it; a missing or other value is refused by dispatch as `<ID> is status <value>; /dispatch takes a queued or claimed card`.
 
 | Status | Dispatch | Land overlap list and tree's open cards |
 | --- | --- | --- |
@@ -206,6 +206,8 @@ value has its quotes removed; a line that is not `key: value` is skipped.
 | `parked` | refuses it: `<ID> is parked; set status: queued to dispatch it` | left out, as merged |
 | `merged` | refuses it | left out |
 | `landed` | refuses it (any other word is refused the same way) | listed as open (same rule); no step reads it specially |
+
+The owed-row retire check (`cardReadsMerged`) reads the raw status word, not the read one.
 
 The land nudge reads no card status, so `parked` does not change it.
 

@@ -89,3 +89,29 @@ describe('MOD-340: a merged card with no ledger row', () => {
     expect(closes(w)).toEqual([['gh', 'issue', 'close', '51', '--repo', 'o/r', '--comment', 'done in MOD-9']])
   })
 })
+
+describe('MOD-361: a repo statusMap reads a card status as the mod word (tree reconcile)', () => {
+  const doneCard = (on: any, statusMap?: Record<string, string>) =>
+    world(on, {
+      files: {
+        [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards', ...(statusMap ? { statusMap } : {}) }),
+        [`${CARDS}/MOD-9-a.md`]: card('MOD-9', 'done', 'hooks/x.ts', 51),
+        ...gitCfg('https://github.com/o/r.git'),
+      },
+      dirs: { [CARDS]: ['MOD-9-a.md'] },
+      run: ghRun,
+    })
+  test('without a map a done card is not a merged one: sub-issue 51 is listed in no done-elsewhere line', async ($, on) => {
+    doneCard(on)
+    await $.session.start(sessionStart)
+    const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 50, reconcile: true } as never))
+    expect(out).not.toContain('#51 Fix header — done in MOD-9')
+  })
+  test('with statusMap done -> merged the card counts as merged and sub-issue 51 is done in MOD-9', async ($, on) => {
+    doneCard(on, { done: 'merged' })
+    await $.session.start(sessionStart)
+    const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 50, reconcile: true } as never))
+    expect(out).toContain('#51 Fix header — done in MOD-9')
+  })
+})
+
