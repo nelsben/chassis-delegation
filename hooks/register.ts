@@ -219,7 +219,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan,
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { actionLine, askedOn, findItem, parseWorkIssues, updatedText, workAction, workActivity, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkAsked, type WorkCard, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
+import { actionLine, askedOn, findItem, parseWorkIssues, updatedText, workAction, workActivity, workBoard, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkAsked, type WorkCard, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
 import { workTree, type WorkHandlers, type WorkView } from './lib/workpane'
 import { doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
@@ -926,6 +926,8 @@ const issueStates: StateCache = new Map() // MOD-350: issue states read for the 
 let workCache: { repo: string; at: number; issues: WorkIssue[]; capped: boolean } | undefined
 /** MOD-354: the Work pane's toggles and filters; one background read at a time; when the last read was tried; the last failure. Cleared at session start. */
 let workUi: { closed: Set<string>; shown: Set<string>; query: string; states: Set<WorkState>; root?: string; showDone: boolean } = { closed: new Set(), shown: new Set(), query: '', states: new Set(), showDone: false }
+/** MOD-357: the Work pane's view, the list or the board. Reset to the list at session start. */
+let workView: 'list' | 'board' = 'list'
 let workReading = false
 let workTriedAt: number | undefined
 let workFail: { repo: string; why: string } | undefined
@@ -1592,6 +1594,10 @@ function landSeen($: Host, tool: 'land' | 'land_plan' | 'card' | 'dispatch' | 'v
 function workHandlers($: Host): WorkHandlers {
   const toggleIn = (set: Set<string>, v: string) => (set.has(v) ? set.delete(v) : set.add(v))
   return {
+    view: v => {
+      workView = v
+      redraw($)
+    },
     toggle: key => {
       toggleIn(workUi.closed, key)
       redraw($)
@@ -11171,6 +11177,7 @@ export const register: Register = (on, opts) => {
     issueStates.clear() // MOD-350
     workCache = undefined // MOD-353
     workUi = { closed: new Set(), shown: new Set(), query: '', states: new Set(), showDone: false } // MOD-354
+    workView = 'list' // MOD-357
     workReading = false
     workTriedAt = undefined
     workFail = undefined
@@ -11476,7 +11483,7 @@ export const register: Register = (on, opts) => {
         }
       }
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
+      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, view: workView, ...(workView === 'board' ? { lanes: workBoard(d.model, workUi) } : {}), columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
     } catch (err) {
       debug($, `work pane not drawn: ${String(err)}`)
       return next(e)
