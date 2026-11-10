@@ -193,11 +193,13 @@ The four blocks:
 
 Spend samples every 15 seconds while a worker is live or queued, else every 60 (240 points kept).
 Tokens, cost and by-model bars update from `turn.complete` events, when a run ends.
-A screen with no mod panes (VS Code) gets the blocks as markdown text.
+A screen with no mod panes (an older VS Code extension, for example) gets the blocks as markdown text.
 
 ## Work
 
-`/delegation work` opens the Work pane: the repo's work as a tracker table, each epic and feature with a `done/leaves` count and a progress bar, each leaf issue or card with one state. `/delegation work text` prints the same listing as text, and a screen that places no panes (VS Code) gets the text form.
+`/delegation work` opens the Work pane: the repo's work as a tracker table, each epic and feature with a `done/leaves` count and a progress bar, each leaf issue or card with one state. `/delegation work text` prints the same listing as text, and a screen that places no panes (an older VS Code extension, for example) gets the text form.
+
+A leaf's title opens its detail: beside the table from 116 columns, in the table's place below that, with Close or Back to list to return. The detail shows the leaf's place in the tree, its status, its fields (type, card, worker, attempt, running time, cost, what blocks it, its parent) and its activity, the card's events from the ledger, newest first. A queued, to-review or blocked leaf with a card has one action: Dispatch, Review or Unblock. A press starts nothing itself: it puts one line to the session, and the item reads `Asked · waiting for the session` until its state changes or ten minutes pass. Unblock asks first and does nothing on Cancel.
 
 The pane has a toolbar (a search box that filters on Enter, an epic select when there is more than one epic, a Show done toggle, Refresh), a row of state chips with their counts (a chip filters the table to that state; Clear filters appears while a filter is set), and the table. The columns follow the width: Work and Status always, Progress and Card from 72 columns, Worker and Cost from 116. A parent's toggle opens or closes its children. Done leaves are folded under their parent, which shows `N done hidden · show`; Show done lists them all.
 

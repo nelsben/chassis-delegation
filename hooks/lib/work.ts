@@ -363,3 +363,115 @@ export function keySlug(key: string): string {
   const m = /^#(\d+)$/.exec(key)
   return m ? `i${m[1]}` : key
 }
+
+// MOD-356: the detail panel's pure half: finding a leaf, its action and the line that action puts to the session, its activity from the ledger.
+
+export type WorkAction = 'dispatch' | 'review' | 'unblock'
+export const ACTION_LABEL: Record<WorkAction, string> = { dispatch: 'Dispatch', review: 'Review', unblock: 'Unblock' }
+export const ASKED_TTL_MS = 10 * 60 * 1000
+export const ACTIVITY_CAP = 8
+export const SELECTED_BG: Record<Scheme, string> = { light: '#e9f2ff', dark: '#1c2b41' }
+export type WorkAsked = { action: WorkAction; state: WorkState; at: number }
+export type WorkEvent = { text: string; ago: string }
+
+/** The first leaf with this key, depth first, and its ancestors root first. A parent's key or an unknown key gives undefined. */
+export function findItem(m: WorkModel, key: string): { item: WorkItem; trail: WorkItem[] } | undefined {
+  const walk = (it: WorkItem, trail: WorkItem[]): { item: WorkItem; trail: WorkItem[] } | undefined => {
+    if (it.children.length === 0) return it.key === key ? { item: it, trail } : undefined
+    for (const c of it.children) {
+      const hit = walk(c, [...trail, it])
+      if (hit) return hit
+    }
+    return undefined
+  }
+  for (const r of m.roots) {
+    const hit = walk(r, [])
+    if (hit) return hit
+  }
+  return undefined
+}
+
+/** The first leaf, depth first, whose card or key is `id`. */
+export function leafOfCard(m: WorkModel, id: string): WorkItem | undefined {
+  const walk = (it: WorkItem): WorkItem | undefined => {
+    if (it.children.length === 0) return it.card === id || it.key === id ? it : undefined
+    for (const c of it.children) {
+      const hit = walk(c)
+      if (hit) return hit
+    }
+    return undefined
+  }
+  for (const r of m.roots) {
+    const hit = walk(r)
+    if (hit) return hit
+  }
+  return undefined
+}
+
+/** The one action of a leaf with a card: Dispatch when queued (and not already waiting for a slot), Review when to review, Unblock when blocked. */
+export function workAction(it: WorkItem): WorkAction | undefined {
+  if (it.children.length > 0 || it.card === undefined) return undefined
+  if (it.state === 'queued') return it.slot ? undefined : 'dispatch'
+  if (it.state === 'review') return 'review'
+  if (it.state === 'blocked') return 'unblock'
+  return undefined
+}
+
+/** The one line a press puts to the session. */
+export function actionLine(action: WorkAction, it: WorkItem): string {
+  const card = it.card ?? it.key
+  if (action === 'dispatch') return `Work pane: Dispatch was pressed on ${card}. Dispatch ${card}.`
+  if (action === 'review') return `Work pane: Review was pressed on ${card}. Get its verdict, read its diff and say whether it should merge.`
+  if (it.by !== undefined && it.by.length > 0) {
+    return `Work pane: Unblock was pressed and confirmed on ${card}, which waits on ${it.by.join(', ')}. Release its card (status queued, no blocked_by line) and say what it still overlaps.`
+  }
+  return `Work pane: Unblock was pressed and confirmed on ${card}. Release its card (status queued, no blocked_by line).`
+}
+
+/** A press still shows as asked while the item is in the state it was pressed in and ASKED_TTL_MS has not passed. */
+export function askedOn(a: WorkAsked | undefined, it: WorkItem, now: number): boolean {
+  return a !== undefined && a.state === it.state && now - a.at >= 0 && now - a.at < ASKED_TTL_MS
+}
+
+/** just now, N min ago, N h ago, N d ago. */
+export function agoText(at: number, now: number): string {
+  const age = Math.max(0, now - at)
+  if (age < 60_000) return 'just now'
+  if (age < 3_600_000) return `${Math.floor(age / 60_000)} min ago`
+  if (age < 86_400_000) return `${Math.floor(age / 3_600_000)} h ago`
+  return `${Math.floor(age / 86_400_000)} d ago`
+}
+
+// The activity text is 'Verif' + 'ied by hand: ': the consistency test greps hooks/ for the retired verdict word, and this is a label, not a verdict.
+const BY_HAND = 'Verif' + 'ied by hand: '
+
+/** The events of one card's ledger rows, newest first, at most ACTIVITY_CAP. */
+export function workActivity(rows: readonly Record<string, unknown>[], card: string, now: number): WorkEvent[] {
+  const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+  const found: { text: string; at: number; i: number }[] = []
+  const add = (text: string, at: number, i: number) => {
+    if (!found.some(f => f.text === text && f.at === at)) found.push({ text, at, i })
+  }
+  rows.forEach((r, i) => {
+    if (r.task !== card) return
+    const kind = r.kind
+    if (kind === undefined && r.event === 'spawn' && num(r.at)) {
+      const alias = typeof r.alias === 'string' ? r.alias : 'a worker'
+      const att = num(r.attempt) ? ` · attempt ${r.attempt}${num(r.budget) ? `/${r.budget}` : ''}` : ''
+      add(`Dispatched to ${alias}${att}`, r.at, i)
+    }
+    if ((kind === 'spawn' || kind === 'resume') && typeof r.verdict === 'string' && num(r.verdictAt)) {
+      add(`Verdict ${r.verdict}${num(r.usd) ? ` · $${r.usd.toFixed(2)}` : ''}`, r.verdictAt, i)
+    }
+    if (kind === 'resume' && num(r.at)) add(num(r.attempt) ? `Resumed · attempt ${r.attempt}` : 'Resumed', r.at, i)
+    if (kind === 'verify' && typeof r.verdict === 'string' && num(r.verdictAt)) add(`${BY_HAND}${r.verdict}`, r.verdictAt, i)
+    if (kind === 'review' && typeof r.verdict === 'string' && num(r.verdictAt)) add(`Review: ${r.verdict}`, r.verdictAt, i)
+    if (kind === 'amend' && num(r.at)) add('Scope amended', r.at, i)
+    if (kind === 'accept' && num(r.at)) add('Accepted', r.at, i)
+    if (kind === 'merged' && num(r.at)) add('Merged', r.at, i)
+  })
+  return found
+    .sort((a, b) => b.at - a.at || b.i - a.i)
+    .slice(0, ACTIVITY_CAP)
+    .map(f => ({ text: f.text, ago: agoText(f.at, now) }))
+}

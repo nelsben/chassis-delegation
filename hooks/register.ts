@@ -219,8 +219,8 @@ import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan,
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { parseWorkIssues, updatedText, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkCard, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
-import { workTree, type WorkHandlers } from './lib/workpane'
+import { actionLine, askedOn, findItem, parseWorkIssues, updatedText, workAction, workActivity, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkAsked, type WorkCard, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
+import { workTree, type WorkHandlers, type WorkView } from './lib/workpane'
 import { doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
@@ -929,6 +929,10 @@ let workUi: { closed: Set<string>; shown: Set<string>; query: string; states: Se
 let workReading = false
 let workTriedAt: number | undefined
 let workFail: { repo: string; why: string } | undefined
+/** MOD-356: the open leaf's key, the leaf whose Unblock question is showing, and the presses still waiting on the session. Cleared at session start. */
+let workSel: string | undefined
+let workConfirm: string | undefined
+const workAsked = new Map<string, WorkAsked>()
 // Part 2: the main loop's turn state, the idle timers, the scheduler's slots.
 // A (re)load does not know whether a main turn is running, so it assumes one is
 // until the next main-loop turn.complete: nothing runs in the background before.
@@ -1631,6 +1635,48 @@ function workHandlers($: Host): WorkHandlers {
         })
     },
     close: () => void $.ui.close({ id: WORK_PANE }),
+    // MOD-356: the detail and its actions. A press puts one line to the session (submitWake, never wakeBrain: it works with wakeOnVerdict off).
+    select: key => {
+      workSel = key
+      workConfirm = undefined
+      redraw($)
+    },
+    act: key => {
+      void (async () => {
+        try {
+          const item = findItem((await workData($, false, true)).model, key)?.item
+          const action = item !== undefined ? workAction(item) : undefined
+          if (item === undefined || action === undefined) return
+          if (action === 'unblock') {
+            workConfirm = key
+            redraw($)
+            return
+          }
+          void submitWake($, actionLine(action, item))
+          workAsked.set(key, { action, state: item.state, at: await now($) })
+          redraw($)
+        } catch (err) {
+          debug($, `work pane action failed: ${String(err)}`)
+        }
+      })()
+    },
+    confirm: (key, yes) => {
+      workConfirm = undefined
+      void (async () => {
+        try {
+          if (yes) {
+            const item = findItem((await workData($, false, true)).model, key)?.item
+            if (item !== undefined && workAction(item) === 'unblock') {
+              void submitWake($, actionLine('unblock', item))
+              workAsked.set(key, { action: 'unblock', state: item.state, at: await now($) })
+            }
+          }
+        } catch (err) {
+          debug($, `work pane action failed: ${String(err)}`)
+        }
+        redraw($)
+      })()
+    },
   }
 }
 
@@ -11128,6 +11174,9 @@ export const register: Register = (on, opts) => {
     workReading = false
     workTriedAt = undefined
     workFail = undefined
+    workSel = undefined // MOD-356
+    workConfirm = undefined
+    workAsked.clear()
     driveFlushedAt = 0
     await refreshBrainKey($)
     // MOD-128: the host status line is retired; this clears a line an earlier version pinned
@@ -11315,7 +11364,7 @@ export const register: Register = (on, opts) => {
         why = String(err)
       }
       if (placed) return { text: 'Delegation dashboard opened in a pane.' }
-      // a screen that places no mod panes (the VS Code extension): close the waiting pane and answer in text
+      // a screen that places no mod panes (an older VS Code extension, for example): close the waiting pane and answer in text
       try {
         await $.ui.close({ id: DASH_PANE })
       } catch {
@@ -11403,8 +11452,31 @@ export const register: Register = (on, opts) => {
             redraw($)
           })
       }
+      // MOD-356: the open leaf (closed when it left the list), the presses that no longer hold, and the open leaf's detail
+      const found = workSel !== undefined ? findItem(d.model, workSel) : undefined
+      if (workSel !== undefined && found === undefined) {
+        workSel = undefined
+        workConfirm = undefined
+      }
+      for (const [key, a] of [...workAsked]) {
+        const f = findItem(d.model, key)
+        if (f === undefined || !askedOn(a, f.item, at)) workAsked.delete(key)
+      }
+      let detail: WorkView['detail']
+      if (found !== undefined && workSel !== undefined) {
+        const root = (await $.session.root()).replace(/\/+$/, '')
+        const card = found.item.card
+        detail = {
+          item: found.item,
+          trail: found.trail,
+          ...(workAction(found.item) !== undefined ? { action: workAction(found.item) as NonNullable<ReturnType<typeof workAction>> } : {}),
+          asked: askedOn(workAsked.get(workSel), found.item, at),
+          confirming: workConfirm === workSel,
+          activity: card !== undefined ? workActivity((await ledgerAt($, root)).rows, card, at) : [],
+        }
+      }
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}) }, workHandlers($)) as never
+      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
     } catch (err) {
       debug($, `work pane not drawn: ${String(err)}`)
       return next(e)
