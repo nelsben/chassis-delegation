@@ -58,7 +58,7 @@ describe('MOD-288: reconcileText', () => {
   })
   test('not read rows say run again', async () => {
     const { reconcileText } = await lib()
-    const t = reconcileText({ done: [], closedOpen: [], noMatch: [], notRead: [8, 9] }, 'o/r')
+    const t = reconcileText({ done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [8, 9] }, 'o/r')
     expect(t).toContain('#8 — not read: run again')
   })
 })
@@ -119,5 +119,83 @@ describe('MOD-340: mergedCards', () => {
   test('a row with no card takes the files of its rows as scope', async () => {
     const { mergedCards } = await lib()
     expect(mergedCards([row('A-7'), { kind: 'report', task: 'A-7', files: ['d/y.ts'] }], [])).toEqual([{ id: 'A-7', scope: ['d/y.ts'] }])
+  })
+})
+
+describe('MOD-362: childrenDone and root', () => {
+  const none = new Set()
+  const closedKids = [{ number: 80, state: 'CLOSED' }, { number: 81, state: 'CLOSED' }]
+  const sub = (extra = {}) => ({ number: 70, title: 'Story', state: 'OPEN', subIssues: closedKids, ...extra })
+  const run = (subs, extra = {}) => lib().then(({ reconcileOf }) => reconcileOf({ subs, inFlight: none, merged: [], ...extra }))
+  test('an open sub-issue with two closed sub-issues and no card is childrenDone', async () => {
+    expect(await run([sub()])).toEqual({ done: [], childrenDone: [{ number: 70, title: 'Story', total: 2 }], closedOpen: [], noMatch: [], notRead: [] })
+  })
+  test('one sub-issue open, or none: noMatch', async () => {
+    const open = await run([sub({ subIssues: [closedKids[0], { number: 81, state: 'OPEN' }] })])
+    expect(open).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [{ number: 70, title: 'Story' }], notRead: [] })
+    const bare = await run([sub({ subIssues: [] })])
+    expect(bare.noMatch).toEqual([{ number: 70, title: 'Story' }])
+    expect(bare.childrenDone).toEqual([])
+  })
+  test('in openParents: noMatch', async () => {
+    const r = await run([sub()], { openParents: new Set([70]) })
+    expect(r).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [{ number: 70, title: 'Story' }], notRead: [] })
+  })
+  test('a merged card naming it as parent wins: done', async () => {
+    const r = await run([sub()], { merged: [{ id: 'MOD-1', parent: 70, scope: ['a'] }] })
+    expect(r).toEqual({ done: [{ number: 70, title: 'Story', card: 'MOD-1' }], childrenDone: [], closedOpen: [], noMatch: [], notRead: [] })
+  })
+  test('in flight, and read false: as today', async () => {
+    expect(await run([sub()], { inFlight: new Set([70]) })).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [] })
+    expect(await run([sub({ read: false })])).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [70] })
+  })
+  const root = { number: 50, title: 'Epic', state: 'OPEN' }
+  test('root with every sub-issue closed has after empty', async () => {
+    const r = await run([{ number: 70, title: 'A', state: 'CLOSED' }, { number: 71, title: 'B', state: 'closed' }], { root })
+    expect(r.root).toEqual({ number: 50, title: 'Epic', total: 2, after: [] })
+  })
+  test('root after lists done and childrenDone ascending', async () => {
+    const r = await run([sub({ number: 72 }), { number: 71, title: 'D', state: 'OPEN', subIssues: [] }, { number: 69, title: 'C', state: 'CLOSED' }], { root, merged: [{ id: 'MOD-2', issue: 71, scope: ['a'] }] })
+    expect(r.root).toEqual({ number: 50, title: 'Epic', total: 3, after: [71, 72] })
+  })
+  test('no root when something blocks it', async () => {
+    const closed = { number: 69, title: 'C', state: 'CLOSED' }
+    expect((await run([closed, { number: 71, title: 'N', state: 'OPEN', subIssues: [] }], { root })).root).toBeUndefined()
+    expect((await run([closed, { number: 71, title: 'N', state: 'OPEN', read: false }], { root })).root).toBeUndefined()
+    expect((await run([closed, { number: 71, title: 'F', state: 'OPEN' }], { root, inFlight: new Set([71]) })).root).toBeUndefined()
+    expect((await run([closed, { number: 72, title: 'X', state: 'CLOSED', subIssues: [{ number: 90, state: 'OPEN' }] }], { root })).root).toBeUndefined()
+    expect((await run([closed], { root: { ...root, state: 'CLOSED' } })).root).toBeUndefined()
+    expect((await run([closed], { root, inFlight: new Set([50]) })).root).toBeUndefined()
+    expect((await run([closed], { root, openParents: new Set([50]) })).root).toBeUndefined()
+    expect((await run([], { root })).root).toBeUndefined()
+    expect((await run([closed])).root).toBeUndefined()
+  })
+  test('reconcileText: row order, root row, counts line, close lines', async () => {
+    const { reconcileText } = await lib()
+    const r = {
+      done: [{ number: 61, title: 'Fix', card: 'MOD-9', pr: 41 }],
+      childrenDone: [{ number: 72, title: 'Story', total: 2 }],
+      closedOpen: [{ number: 62, title: 'Closed story', open: [70] }],
+      noMatch: [{ number: 63, title: 'Odd' }],
+      notRead: [64],
+      root: { number: 50, title: 'Epic', total: 4, after: [61, 72] },
+    }
+    expect(reconcileText(r, 'o/r').split('\n')).toEqual([
+      '#61 Fix — done in MOD-9 (#41)',
+      '#72 Story — open, all 2 sub-issues closed',
+      '#62 Closed story — closed, 1 children open (#70)',
+      '#63 Odd — no match',
+      '#64 — not read: run again',
+      '#50 Epic — open, all 4 sub-issues closed once the closes above run',
+      '1 done elsewhere · 2 open with every sub-issue closed · 1 closed with open children · 1 no match',
+      '',
+      "gh issue close 61 --repo o/r --comment 'done in MOD-9 (#41)'",
+      "gh issue close 72 --repo o/r --comment 'all 2 sub-issues done'",
+      "gh issue close 50 --repo o/r --comment 'all 4 sub-issues done'",
+      "# gh issue close 63 --repo o/r --comment 'not planned'",
+    ])
+    const plain = reconcileText({ ...r, done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [], root: { number: 50, title: 'Epic', total: 1, after: [] } }, 'o/r').split('\n')
+    expect(plain[0]).toBe('#50 Epic — open, all 1 sub-issues closed')
+    expect(plain[1]).toBe('0 done elsewhere · 1 open with every sub-issue closed · 0 closed with open children · 0 no match')
   })
 })

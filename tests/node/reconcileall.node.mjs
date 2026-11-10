@@ -2,9 +2,9 @@
 import { test, expect, describe } from './kit.mjs'
 
 const lib = () => import('../../hooks/lib/reconcile.ts')
-const empty = { done: [], closedOpen: [], noMatch: [], notRead: [] }
-const partA = { number: 5, title: 'Export', result: { done: [{ number: 61, title: 'Fix header', card: 'MOD-9', pr: 41 }], closedOpen: [], noMatch: [{ number: 63, title: 'Odd', }], notRead: [] } }
-const partB = { number: 9, title: 'Import', result: { done: [{ number: 71, title: 'Parse', card: 'MOD-3' }], closedOpen: [], noMatch: [{ number: 73, title: 'Stray' }], notRead: [74] } }
+const empty = { done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [] }
+const partA = { number: 5, title: 'Export', result: { done: [{ number: 61, title: 'Fix header', card: 'MOD-9', pr: 41 }], childrenDone: [], closedOpen: [], noMatch: [{ number: 63, title: 'Odd', }], notRead: [] } }
+const partB = { number: 9, title: 'Import', result: { done: [{ number: 71, title: 'Parse', card: 'MOD-3' }], childrenDone: [], closedOpen: [], noMatch: [{ number: 73, title: 'Stray' }], notRead: [74] } }
 
 describe('epicsOf', () => {
   test('orders descending (newest first) and keeps number and title', async () => {
@@ -45,6 +45,27 @@ describe('reconcileAllText', () => {
     expect(t).toContain('#74 — not read: run /delegation tree reconcile 9')
     expect(t).not.toContain('epics (')
     expect(t.split('\n').some(l => l.startsWith('not read:'))).toBe(false)
+  })
+})
+
+describe('MOD-362: reconcileAllText with open parents', () => {
+  test('a part with only childrenDone, or only a root, is not nothing to reconcile', async () => {
+    const { reconcileAllText } = await lib()
+    const a = reconcileAllText([{ number: 5, title: 'E', result: { ...empty, childrenDone: [{ number: 7, title: 'S', total: 2 }] } }], 'o/r')
+    expect(a).toContain('#7 S — open, all 2 sub-issues closed')
+    expect(a).not.toContain('nothing to reconcile')
+    const b = reconcileAllText([{ number: 5, title: 'E', result: { ...empty, root: { number: 5, title: 'E', total: 1, after: [] } } }], 'o/r')
+    expect(b).toContain('#5 E — open, all 1 sub-issues closed')
+    expect(b).not.toContain('nothing to reconcile')
+  })
+  test('the close block keeps a part root line after that parts sub-issue lines, live before commented', async () => {
+    const { reconcileAllText } = await lib()
+    const part = { number: 5, title: 'E', result: { ...empty, noMatch: [{ number: 9, title: 'N' }], childrenDone: [{ number: 7, title: 'S', total: 2 }], root: { number: 5, title: 'E', total: 3, after: [7] } } }
+    const lines = reconcileAllText([part], 'o/r').split('\n')
+    const i7 = lines.indexOf("gh issue close 7 --repo o/r --comment 'all 2 sub-issues done'")
+    const i5 = lines.indexOf("gh issue close 5 --repo o/r --comment 'all 3 sub-issues done'")
+    const i9 = lines.indexOf("# gh issue close 9 --repo o/r --comment 'not planned'")
+    expect(i7 > 0 && i7 < i5 && i5 < i9).toBe(true)
   })
 })
 

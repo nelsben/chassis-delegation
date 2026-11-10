@@ -221,7 +221,7 @@ import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { actionLine, askedOn, findItem, parseWorkIssues, updatedText, workAction, workActivity, workBoard, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkAsked, type WorkCard, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
 import { workTree, type WorkHandlers, type WorkView } from './lib/workpane'
-import { doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
+import { childrenComment, doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
@@ -5195,8 +5195,10 @@ async function workData($: Host, force: boolean, noRead = false): Promise<{ mode
 
 /**
  * MOD-288: `/delegation tree reconcile <n>|all [--confirm]` and the tree tool with reconcile: true. Reads the parent and one view per
- * open sub-issue with no in-flight card (at most treeImportBatch), matches them against the merged cards and prints three lists
- * with the close lines. Without confirm it writes nothing and closes nothing; with confirm it runs the done-elsewhere closes only.
+ * open sub-issue with no in-flight card (at most treeImportBatch), matches them against the merged cards and prints four lists
+ * (done elsewhere; MOD-362: open with every sub-issue closed, the named parent among them; closed with open children; no match)
+ * with the close lines. Without confirm it writes nothing and closes nothing; with confirm it runs the done-elsewhere closes, then
+ * the closes of open sub-issues whose sub-issues are all closed, then the named parent's, which is tried only when every close it waits on ran.
  * MOD-299: `all` walks every open type:epic issue with one report. MOD-304: newest first, the read cap counts per epic (a child past it
  * is `not read` and names its epic), views after the first are paced 250 ms, and with no epic the label list says whether setup is owed.
  */
@@ -5251,7 +5253,12 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
   }
   const rows = (await ledgerAt($, root)).rows
   const inFlight = new Set<number>()
-  for (const c of cardsById.values()) if (c.issue !== undefined && c.status !== 'merged' && c.status !== 'parked') inFlight.add(c.issue)
+  const openParents = new Set<number>() // MOD-362: parents named by a card that is neither merged nor parked
+  for (const c of cardsById.values()) {
+    if (c.status === 'merged' || c.status === 'parked') continue
+    if (c.issue !== undefined) inFlight.add(c.issue)
+    if (c.parent !== undefined) openParents.add(c.parent)
+  }
   // MOD-340: ledger merged rows newest first, then cards whose status is merged that no row named
   const merged = mergedCards(rows, [...cardsById].map(([id, c]) => ({ id, ...c })))
   const subsOf = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : []).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { number?: unknown }).number === 'number')
@@ -5276,7 +5283,9 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
       }
       subs.push(sub)
     }
-    parts.push({ number: epic.number, title: epic.title, result: reconcileOf({ subs, inFlight, merged }) })
+    const rootTitle = typeof parent.json.title === 'string' ? parent.json.title : epic.title
+    const rootState = typeof parent.json.state === 'string' ? parent.json.state : ''
+    parts.push({ number: epic.number, title: epic.title, result: reconcileOf({ subs, inFlight, merged, openParents, root: { number: epic.number, title: rootTitle, state: rootState } }) })
   }
   const head = 'all' in a ? `reconcile all (${ownerRepo})` : `reconcile #${epics[0]!.number} (${ownerRepo})`
   if (!a.confirm) return 'all' in a ? [head, reconcileAllText(parts, ownerRepo)].join('\n') : [head, reconcileText(parts[0]!.result, ownerRepo)].join('\n')
@@ -5295,22 +5304,29 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
   let stopped = false
   for (const part of parts) {
     if ('all' in a) lines.push(`## #${part.number} ${part.title}`)
-    if ('all' in a && part.result.done.length === 0 && !stopped) lines.push('nothing to reconcile')
-    for (const d of part.result.done) {
+    if ('all' in a && part.result.done.length === 0 && part.result.childrenDone.length === 0 && !part.result.root && !stopped) lines.push('nothing to reconcile')
+    // MOD-362: the done entries, then the open parents whose sub-issues are all closed, then the named parent
+    const closes = [
+      ...part.result.done.map(d => ({ number: d.number, comment: doneComment(d.card, d.pr) })),
+      ...part.result.childrenDone.map(c => ({ number: c.number, comment: childrenComment(c.total) })),
+    ]
+    const closedHere = new Set<number>()
+    const closeOne = async (c: { number: number; comment: string }): Promise<boolean | 'cap'> => {
       if (ran >= cfg.treeImportBatch) {
         if (!stopped) lines.push('stopped at treeImportBatch; run again to continue')
         stopped = true
-        break
+        return 'cap'
       }
       if (ran > 0) await pauseOffBudget($, 1000)
       ran++
-      const c = await run($, ['gh', 'issue', 'close', String(d.number), '--repo', ownerRepo, '--comment', doneComment(d.card, d.pr)], { cwd: root, timeoutMs: 60000 })
-      if (!c.ok || c.exitCode !== 0) {
-        lines.push(`close #${d.number} failed: ${(c.ok ? c.stderr || c.stdout : c.why).trim().replace(/\s+/g, ' ').slice(0, 400) || '(nothing on stderr)'}`)
-        continue
+      const r = await run($, ['gh', 'issue', 'close', String(c.number), '--repo', ownerRepo, '--comment', c.comment], { cwd: root, timeoutMs: 60000 })
+      if (!r.ok || r.exitCode !== 0) {
+        lines.push(`close #${c.number} failed: ${(r.ok ? r.stderr || r.stdout : r.why).trim().replace(/\s+/g, ' ').slice(0, 400) || '(nothing on stderr)'}`)
+        return false
       }
-      lines.push(`closed #${d.number}`)
-      const name = landedFor(landed, d.number)
+      lines.push(`closed #${c.number}`)
+      closedHere.add(c.number)
+      const name = landedFor(landed, c.number)
       if (name !== undefined) {
         try {
           const file = `${folder}/${name}`
@@ -5319,6 +5335,13 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
           debug($, `tree reconcile: closed line not written to ${name}: ${String(err)}`)
         }
       }
+      return true
+    }
+    for (const c of closes) if ((await closeOne(c)) === 'cap') break
+    const rt = part.result.root
+    if (rt) {
+      if (!rt.after.every(n => closedHere.has(n))) lines.push(`#${rt.number} left open: run again once its sub-issues are closed`)
+      else await closeOne({ number: rt.number, comment: childrenComment(rt.total) })
     }
   }
   return lines.join('\n')

@@ -7,7 +7,8 @@ const sub = { number: 353, title: 'Feed story', state: 'OPEN', body: '```scope\n
 describe('MOD-303: doneIn names, never overlaps', () => {
   test('a scope overlap alone is no match and shows the overlapping card', async () => {
     const { reconcileOf, reconcileText } = await lib()
-    const r = reconcileOf({ subs: [sub], inFlight: new Set(), merged: [{ id: 'X-1', issue: 713, scope: ['src/app/**'] }] })
+    // MOD-362: with every sub-issue closed it would be childrenDone, so one stays open here
+    const r = reconcileOf({ subs: [{ ...sub, subIssues: [{ number: 400, state: 'OPEN' }] }], inFlight: new Set(), merged: [{ id: 'X-1', issue: 713, scope: ['src/app/**'] }] })
     expect(r.done).toEqual([])
     expect(r.noMatch).toEqual([{ number: 353, title: 'Feed story', overlap: 'X-1' }])
     const text = reconcileText(r, 'o/r')
