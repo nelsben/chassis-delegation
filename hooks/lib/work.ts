@@ -3,6 +3,7 @@
 // what `/delegation work` prints. No I/O, no clock: the caller reads the issues and the time.
 
 import type { Tier } from './tier'
+import type { Scheme } from './live'
 
 export type WorkState = 'working' | 'review' | 'queued' | 'blocked' | 'backlog' | 'done'
 /** The order of the summary: Working, To review, Queued, Blocked, Backlog, Done. */
@@ -316,4 +317,49 @@ export function workText(m: WorkModel, o: { updated?: string; notes?: readonly s
     }
   }
   return lines.join('\n')
+}
+
+// MOD-354: the list view's layout, colours and key helpers. The pane draws these in character cells.
+
+export type WorkLayout = { mode: 'wide' | 'medium' | 'narrow'; work: number; status: number; progress: number; card: number; worker: number; cost: number }
+
+/** Cells per column for a body `columns` cells wide; 0 means the column is not drawn. */
+export function workLayout(columns: number): WorkLayout {
+  if (columns >= 116) return { mode: 'wide', work: columns - 68, status: 12, progress: 16, card: 10, worker: 22, cost: 8 }
+  if (columns >= 72) return { mode: 'medium', work: columns - 38, status: 12, progress: 16, card: 10, worker: 0, cost: 0 }
+  return { mode: 'narrow', work: Math.max(16, columns - 12), status: 12, progress: 0, card: 0, worker: 0, cost: 0 }
+}
+
+/** Filled cells of a parent's progress bar. */
+export function progressCells(done: number, leaves: number, width = 8): number {
+  if (leaves <= 0 || done <= 0) return 0
+  if (done >= leaves) return width
+  return Math.min(width - 1, Math.max(1, Math.round((done / leaves) * width)))
+}
+
+export const LOZENGE: Record<WorkState, Record<Scheme, { bg?: string; fg: string }>> = {
+  working: { light: { bg: '#e9f2ff', fg: '#0055cc' }, dark: { bg: '#09326c', fg: '#85b8ff' } },
+  review: { light: { bg: '#fff7d6', fg: '#7f5f01' }, dark: { bg: '#533f04', fg: '#f5cd47' } },
+  queued: { light: { bg: '#f1f2f4', fg: '#44546f' }, dark: { bg: '#2c333a', fg: '#9fadbc' } },
+  blocked: { light: { bg: '#ffeceb', fg: '#ae2e24' }, dark: { bg: '#5d1f1a', fg: '#fd9891' } },
+  done: { light: { bg: '#dcfff1', fg: '#216e4e' }, dark: { bg: '#164b35', fg: '#7ee2b8' } },
+  backlog: { light: { fg: '#626f86' }, dark: { fg: '#8c9bab' } },
+}
+
+export const TYPE_MARK: Record<WorkType, { glyph: string; color: string }> = {
+  epic: { glyph: '◆', color: '#8270db' },
+  feature: { glyph: '▲', color: '#f38a3f' },
+  story: { glyph: '■', color: '#22a06b' },
+  task: { glyph: '✓', color: '#1d7afc' },
+  bug: { glyph: '●', color: '#e2483d' },
+  spike: { glyph: '?', color: '#626f86' },
+  issue: { glyph: '○', color: '#626f86' },
+}
+
+export const TIER_COLOR: Record<Tier, string> = { economy: '#22a06b', standard: '#1d7afc', frontier: '#8270db', premium: '#f38a3f' }
+
+/** `#13` becomes `i13`; any other key unchanged. The part of an element key that names an item. */
+export function keySlug(key: string): string {
+  const m = /^#(\d+)$/.exec(key)
+  return m ? `i${m[1]}` : key
 }

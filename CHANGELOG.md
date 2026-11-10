@@ -5,6 +5,7 @@
 ### Added
 
 - **`/delegation work` prints the repo's work as text: epics, features and issues joined to their cards, one state per leaf (working, to review, queued, blocked, backlog, done), from one read of the issues kept five minutes; `/delegation work refresh` reads again (MOD-353).**
+- **`/delegation work` opens the Work pane: a tracker table of epics, features and leaves with status lozenges, progress, card, worker and cost, state chips, search, an epic select, Show done and Refresh; a screen with no panes gets the text, and `/delegation work text` always prints it (MOD-354).**
 
 ## 0.9.56 — 2026-11-09
 
