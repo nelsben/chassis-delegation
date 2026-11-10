@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`tree reconcile` lists an open sub-issue whose own sub-issues are all closed, and the named parent once its sub-issues are closed, each with a live `gh issue close` line (comment `all <n> sub-issues done`) instead of a commented `not planned` one; `--confirm` closes them, the named parent last and only when every close it waits on ran** (MOD-362)
 - **`statusMap` in the repo file maps the repo's own card status words onto queued, merged or parked (for example `{"done":"merged","held":"parked"}`); the Work view says how many cards carry a word the mod does not know** (MOD-361)
 
 ### Changed

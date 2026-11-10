@@ -1,5 +1,5 @@
 // MOD-288: tree reconcile, the pure half. Matches the open sub-issues of one parent against the merged cards and returns
-// three lists: done elsewhere, closed with open children, no match. No I/O, no gh; register.ts reads and closes.
+// four lists: done elsewhere, open with every sub-issue closed (MOD-362), closed with open children, no match. No I/O, no gh; register.ts reads and closes.
 import { scopeOverlap } from './brief'
 import { fencedBlock } from './tree'
 
@@ -11,10 +11,15 @@ export type MergedCard = { id: string; pr?: number; issue?: number; parent?: num
 export type ReconSub = { number: number; title: string; state: string; body?: string; subIssues?: readonly { number: number; state: string }[]; read?: boolean }
 export type Reconciled = {
   done: { number: number; title: string; card: string; pr?: number }[]
+  childrenDone: { number: number; title: string; total: number }[] // MOD-362
   closedOpen: { number: number; title: string; open: number[] }[]
   noMatch: { number: number; title: string; overlap?: string }[]
   notRead: number[]
+  root?: { number: number; title: string; total: number; after: number[] } // MOD-362
 }
+
+/** MOD-362: the comment a close of a parent whose sub-issues are all closed carries (the words a finish writes on an ancestor). */
+export const childrenComment = (total: number): string => `all ${total} sub-issues done`
 
 /** MOD-340: a card as the folder read gives it. */
 export type CardLite = { id: string; status?: string; issue?: number; parent?: number; scope: readonly string[] }
@@ -58,9 +63,19 @@ function overlapOf(sub: ReconSub, merged: readonly MergedCard[]): string | undef
   return merged.find(m => scopeOverlap(scope, m.scope) !== undefined)?.id
 }
 
-/** `merged` newest first. An open sub-issue with an in-flight card is in no list. */
-export function reconcileOf(o: { subs: readonly ReconSub[]; inFlight: ReadonlySet<number>; merged: readonly MergedCard[] }): Reconciled {
-  const out: Reconciled = { done: [], closedOpen: [], noMatch: [], notRead: [] }
+/**
+ * `merged` newest first. An open sub-issue with an in-flight card is in no list. MOD-362: `openParents` are the issues an unmerged card
+ * names as its parent (work with no issue of its own yet); `root` is the named parent, listed once nothing under it is left open.
+ */
+export function reconcileOf(o: {
+  subs: readonly ReconSub[]
+  inFlight: ReadonlySet<number>
+  merged: readonly MergedCard[]
+  openParents?: ReadonlySet<number>
+  root?: { number: number; title: string; state: string }
+}): Reconciled {
+  const out: Reconciled = { done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [] }
+  const openParents = o.openParents ?? new Set<number>()
   for (const s of [...o.subs].sort((a, b) => a.number - b.number)) {
     if (s.state.toUpperCase() === 'CLOSED') {
       const open = (s.subIssues ?? []).filter(c => c.state.toUpperCase() === 'OPEN').map(c => c.number)
@@ -74,9 +89,18 @@ export function reconcileOf(o: { subs: readonly ReconSub[]; inFlight: ReadonlySe
     }
     const m = doneIn(s, o.merged)
     if (m) out.done.push({ number: s.number, title: s.title, card: m.id, ...(m.pr !== undefined ? { pr: m.pr } : {}) })
-    else {
+    else if ((s.subIssues ?? []).length > 0 && (s.subIssues ?? []).every(c => c.state.toUpperCase() === 'CLOSED') && !openParents.has(s.number)) {
+      out.childrenDone.push({ number: s.number, title: s.title, total: (s.subIssues ?? []).length }) // MOD-362
+    } else {
       const overlap = overlapOf(s, o.merged)
       out.noMatch.push({ number: s.number, title: s.title, ...(overlap !== undefined ? { overlap } : {}) })
+    }
+  }
+  const r = o.root
+  if (r && r.state.toUpperCase() !== 'CLOSED' && o.subs.length > 0 && !o.inFlight.has(r.number) && !openParents.has(r.number) && out.closedOpen.length === 0) {
+    const listed = new Set([...out.done, ...out.childrenDone].map(x => x.number))
+    if (o.subs.every(s => s.state.toUpperCase() === 'CLOSED' || listed.has(s.number))) {
+      out.root = { number: r.number, title: r.title, total: o.subs.length, after: [...listed].sort((a, b) => a - b) }
     }
   }
   return out
@@ -89,17 +113,21 @@ export const doneComment = (card: string, pr?: number): string => `done in ${car
 function rowsOf(r: Reconciled, epic?: number): string[] {
   const rows = [
     ...r.done.map(d => `#${d.number} ${d.title} — ${doneComment(d.card, d.pr)}`),
+    ...r.childrenDone.map(c => `#${c.number} ${c.title} — open, all ${c.total} sub-issues closed`),
     ...r.closedOpen.map(c => `#${c.number} ${c.title} — closed, ${c.open.length} children open (${c.open.map(n => `#${n}`).join(', ')})`),
     ...r.noMatch.map(n => `#${n.number} ${n.title} — no match${n.overlap !== undefined ? ` (scope overlaps ${n.overlap})` : ''}`),
     ...r.notRead.map(n => `#${n} — not read: ${epic !== undefined ? `run /delegation tree reconcile ${epic}` : 'run again'}`),
+    ...(r.root ? [`#${r.root.number} ${r.root.title} — open, all ${r.root.total} sub-issues closed${r.root.after.length > 0 ? ' once the closes above run' : ''}`] : []),
   ]
-  const counts = `${r.done.length} done elsewhere · ${r.closedOpen.length} closed with open children · ${r.noMatch.length} no match`
+  const counts = `${r.done.length} done elsewhere · ${r.childrenDone.length + (r.root ? 1 : 0)} open with every sub-issue closed · ${r.closedOpen.length} closed with open children · ${r.noMatch.length} no match`
   return [...rows, counts]
 }
 
-/** The done-elsewhere close lines, then the commented not-planned lines. */
+/** The done-elsewhere close lines, the live lines for open parents (MOD-362: sub-issues, then the root), then the commented not-planned lines. */
 const closeLinesOf = (r: Reconciled, repo: string): string[] => [
   ...r.done.map(d => `gh issue close ${d.number} --repo ${repo} --comment '${doneComment(d.card, d.pr)}'`),
+  ...r.childrenDone.map(c => `gh issue close ${c.number} --repo ${repo} --comment '${childrenComment(c.total)}'`),
+  ...(r.root ? [`gh issue close ${r.root.number} --repo ${repo} --comment '${childrenComment(r.root.total)}'`] : []),
   ...r.noMatch.map(n => `# gh issue close ${n.number} --repo ${repo} --comment 'not planned'`),
 ]
 
@@ -124,7 +152,7 @@ export function reconcileAllText(parts: readonly { number: number; title: string
   for (const p of parts) {
     out.push(`## #${p.number} ${p.title}`)
     const r = p.result
-    out.push(...(r.done.length + r.closedOpen.length + r.noMatch.length + r.notRead.length === 0 ? ['nothing to reconcile'] : rowsOf(r, p.number)))
+    out.push(...(r.done.length + r.childrenDone.length + r.closedOpen.length + r.noMatch.length + r.notRead.length === 0 && !r.root ? ['nothing to reconcile'] : rowsOf(r, p.number)))
   }
   // the close block: every done-elsewhere line, then every commented not-planned line
   const closes = parts.flatMap(p => closeLinesOf(p.result, repo))

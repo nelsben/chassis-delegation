@@ -115,3 +115,68 @@ describe('MOD-361: a repo statusMap reads a card status as the mod word (tree re
   })
 })
 
+
+describe('MOD-362: an open parent whose sub-issues are all closed', () => {
+  // parent 60 has an open sub-issue 61 (its own two sub-issues closed) and a closed sub-issue 62
+  const P60 = JSON.stringify({
+    number: 60,
+    title: 'Parent story',
+    state: 'OPEN',
+    labels: [],
+    body: '',
+    subIssues: [
+      { number: 61, title: 'Open leaf parent', state: 'OPEN', subIssues: [{ number: 63, state: 'CLOSED' }, { number: 64, state: 'CLOSED' }] },
+      { number: 62, title: 'Done leaf', state: 'CLOSED' },
+    ],
+  })
+  const build = (on: any, failOn?: number) => {
+    const w = world(on, {
+      files: {
+        [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards' }),
+        ...gitCfg('https://github.com/o/r.git'),
+      },
+      run: async (argv: string[]) => {
+        if (argv[0] === 'sleep') return { exitCode: 0, stdout: '' }
+        if (argv[0] !== 'gh') return undefined
+        if (argv[2] === 'view') {
+          const n = Number(argv[3])
+          return { exitCode: 0, stdout: n === 60 ? P60 : JSON.stringify({ number: n, title: 't', state: 'OPEN', labels: [], body: '', subIssues: [{ number: 63, state: 'CLOSED' }, { number: 64, state: 'CLOSED' }] }) }
+        }
+        if (argv[2] === 'close' && Number(argv[3]) === failOn) return { exitCode: 1, stdout: '', stderr: 'boom' }
+        return { exitCode: 0, stdout: '' }
+      },
+    })
+    return w
+  }
+  const confirm = async ($: any) => String((await $.command.run({ command: 'delegation', args: 'tree reconcile 60 --confirm', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as never)).text)
+  test('the dry run prints both rows and both live close lines and closes nothing', async ($, on) => {
+    const w = build(on)
+    await $.session.start(sessionStart)
+    const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 60, reconcile: true } as never))
+    expect(out).toContain('#61 Open leaf parent — open, all 2 sub-issues closed')
+    expect(out).toContain('#60 Parent story — open, all 2 sub-issues closed once the closes above run')
+    expect(out).toContain("gh issue close 61 --repo o/r --comment 'all 2 sub-issues done'")
+    expect(out).toContain("gh issue close 60 --repo o/r --comment 'all 2 sub-issues done'")
+    expect(out).not.toContain('not planned')
+    expect(closes(w)).toEqual([])
+  })
+  test('confirm closes the sub-issue, then the parent', async ($, on) => {
+    const w = build(on)
+    await $.session.start(sessionStart)
+    const out = await confirm($)
+    expect(closes(w)).toEqual([
+      ['gh', 'issue', 'close', '61', '--repo', 'o/r', '--comment', 'all 2 sub-issues done'],
+      ['gh', 'issue', 'close', '60', '--repo', 'o/r', '--comment', 'all 2 sub-issues done'],
+    ])
+    expect(out).toContain('closed #61')
+    expect(out).toContain('closed #60')
+  })
+  test('a failed sub-issue close leaves the parent untried and says so', async ($, on) => {
+    const w = build(on, 61)
+    await $.session.start(sessionStart)
+    const out = await confirm($)
+    expect(closes(w).map((a: string[]) => a[3])).toEqual(['61'])
+    expect(out).toContain('close #61 failed: boom')
+    expect(out).toContain('#60 left open: run again once its sub-issues are closed')
+  })
+})
