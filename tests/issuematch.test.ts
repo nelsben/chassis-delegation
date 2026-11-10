@@ -178,6 +178,24 @@ describe('MOD-359: issueLink in the card tool and dispatch', () => {
     expect(w.files.has(`${CARD_FOLDER}/OPS-1-release-9-9-9-version-bumped.md`)).toBe(true)
   })
 
+  test('under require a lanes call with in-repo scopes is refused and writes no card', O, async ($, on) => {
+    const w = linkWorld(on as never, 'require')
+    await $.session.start(sessionStart)
+    const { scope: _s, ...shared } = given
+    const out = resultText(await $.tool.call({ tool: TOOL, ...shared, lanes: [{ title: 'Lane one', scope: ['src/a/**'] }, { title: 'Lane two', scope: ['src/b/**'] }] } as never))
+    expect(out).toBe('card refused: lanes cannot name an issue (issueLink require); cut one card per issue with issue: <n>, or set issueLink hint')
+    expect([...w.files.keys()].filter(f => f.startsWith(CARD_FOLDER))).toEqual([])
+  })
+
+  test('under require a lanes call with repo none is written', O, async ($, on) => {
+    const w = linkWorld(on as never, 'require')
+    await $.session.start(sessionStart)
+    const { scope: _s, ...shared } = given
+    const out = resultText(await $.tool.call({ tool: TOOL, ...shared, repo: 'none', lanes: [{ title: 'Lane one', scope: ['/tmp/a/**'] }, { title: 'Lane two', scope: ['/tmp/b/**'] }] } as never))
+    expect(out).not.toContain('card refused')
+    expect([...w.files.keys()].filter(f => f.startsWith(CARD_FOLDER)).length).toBe(2)
+  })
+
   test('under off nothing is said', O, async ($, on) => {
     const w = linkWorld(on as never, 'off')
     await $.session.start(sessionStart)

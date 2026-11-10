@@ -165,6 +165,8 @@ export function issueLinkOf(v: unknown): IssueLinkMode | undefined {
 export const ISSUE_LINK_HINT = 'note: this card names no issue; pass issue: <n> so the Work view lists it under its parent (file one with the land tool, or set issueLink off)'
 export const ISSUE_LINK_REFUSAL = 'this card names no issue (issueLink require); file one with the land tool and pass issue: <n>, or set issueLink hint'
 
+export const ISSUE_LINK_LANES_REFUSAL = 'lanes cannot name an issue (issueLink require); cut one card per issue with issue: <n>, or set issueLink hint'
+
 /** A card with no issue by nature: no repo work, every output outside the repo, or a release card. */
 export function issueLinkExempt(c: { title: string; scope: readonly string[]; repo?: string }): boolean {
   if ((c.repo ?? '').trim().toLowerCase() === 'none') return true
@@ -173,10 +175,10 @@ export function issueLinkExempt(c: { title: string; scope: readonly string[]; re
   return /^release v?\d+(\.\d+)+\b/i.test(c.title.trim())
 }
 
-/** What a card gets under the option: a refusal, a note, or nothing. A lanes call cannot carry an issue, so require gives it the note. */
+/** What a card gets under the option: a refusal, a note, or nothing. A lanes call cannot carry an issue, so require refuses it (exempt lanes apart). */
 export function issueLinkCheck(mode: IssueLinkMode, c: { title: string; scope: readonly string[]; repo?: string; hasIssue: boolean; lanes?: boolean; matched?: boolean }): { refuse?: string; hint?: string } {
   if (mode === 'off' || c.hasIssue || issueLinkExempt(c)) return {}
-  if (mode === 'require' && c.lanes !== true) return { refuse: ISSUE_LINK_REFUSAL }
+  if (mode === 'require') return { refuse: c.lanes === true ? ISSUE_LINK_LANES_REFUSAL : ISSUE_LINK_REFUSAL }
   if (c.matched === true) return {}
   return { hint: ISSUE_LINK_HINT }
 }
