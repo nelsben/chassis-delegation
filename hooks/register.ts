@@ -5262,6 +5262,8 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
   // MOD-340: ledger merged rows newest first, then cards whose status is merged that no row named
   const merged = mergedCards(rows, [...cardsById].map(([id, c]) => ({ id, ...c })))
   const subsOf = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : []).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { number?: unknown }).number === 'number')
+  // MOD-362: true when gh returned fewer sub-issue nodes than its totalCount
+  const cutShort = (v: unknown): boolean => !!v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { totalCount?: unknown }).totalCount === 'number' && (v as { totalCount: number }).totalCount > subsOf(v).length
   const parts: { number: number; title: string; result: Reconciled }[] = []
   for (const epic of epics) {
     let viewed = 0
@@ -5279,13 +5281,17 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
           const v = await view(number)
           if ('why' in v) return `tree reconcile: #${number}: ${v.why}`
           sub.body = typeof v.json.body === 'string' ? v.json.body : ''
+          // MOD-362: gh's view gives a sub-issue node no nested list, so the sub-issue's own view is the source of its sub-issues
+          const own = subsOf(v.json.subIssues)
+          if (own.length > 0) sub.subIssues = own.map(c => ({ number: c.number as number, state: typeof c.state === 'string' ? c.state : '' }))
+          if (cutShort(v.json.subIssues)) sub.partial = true
         }
       }
       subs.push(sub)
     }
     const rootTitle = typeof parent.json.title === 'string' ? parent.json.title : epic.title
     const rootState = typeof parent.json.state === 'string' ? parent.json.state : ''
-    parts.push({ number: epic.number, title: epic.title, result: reconcileOf({ subs, inFlight, merged, openParents, root: { number: epic.number, title: rootTitle, state: rootState } }) })
+    parts.push({ number: epic.number, title: epic.title, result: reconcileOf({ subs, inFlight, merged, openParents, root: { number: epic.number, title: rootTitle, state: rootState, partial: cutShort(parent.json.subIssues) } }) })
   }
   const head = 'all' in a ? `reconcile all (${ownerRepo})` : `reconcile #${epics[0]!.number} (${ownerRepo})`
   if (!a.confirm) return 'all' in a ? [head, reconcileAllText(parts, ownerRepo)].join('\n') : [head, reconcileText(parts[0]!.result, ownerRepo)].join('\n')

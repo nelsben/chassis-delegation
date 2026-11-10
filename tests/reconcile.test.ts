@@ -118,18 +118,21 @@ describe('MOD-361: a repo statusMap reads a card status as the mod word (tree re
 
 describe('MOD-362: an open parent whose sub-issues are all closed', () => {
   // parent 60 has an open sub-issue 61 (its own two sub-issues closed) and a closed sub-issue 62
-  const P60 = JSON.stringify({
-    number: 60,
-    title: 'Parent story',
-    state: 'OPEN',
-    labels: [],
-    body: '',
-    subIssues: [
-      { number: 61, title: 'Open leaf parent', state: 'OPEN', subIssues: [{ number: 63, state: 'CLOSED' }, { number: 64, state: 'CLOSED' }] },
-      { number: 62, title: 'Done leaf', state: 'CLOSED' },
-    ],
-  })
+  const NODES = [{ number: 63, title: 'a', state: 'CLOSED' }, { number: 64, title: 'b', state: 'CLOSED' }]
+  const parentView = (totalCount = 2) =>
+    JSON.stringify({
+      number: 60,
+      title: 'Parent story',
+      state: 'OPEN',
+      labels: [],
+      body: '',
+      subIssues: { nodes: [{ number: 61, title: 'Open leaf parent', state: 'OPEN' }, { number: 62, title: 'Done leaf', state: 'CLOSED' }], totalCount },
+    })
+  let parentTotal = 2
+  let ownTotal = 2
   const build = (on: any, failOn?: number) => {
+    parentTotal = 2
+    ownTotal = 2
     const w = world(on, {
       files: {
         [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards' }),
@@ -140,7 +143,7 @@ describe('MOD-362: an open parent whose sub-issues are all closed', () => {
         if (argv[0] !== 'gh') return undefined
         if (argv[2] === 'view') {
           const n = Number(argv[3])
-          return { exitCode: 0, stdout: n === 60 ? P60 : JSON.stringify({ number: n, title: 't', state: 'OPEN', labels: [], body: '', subIssues: [{ number: 63, state: 'CLOSED' }, { number: 64, state: 'CLOSED' }] }) }
+          return { exitCode: 0, stdout: n === 60 ? parentView(parentTotal) : JSON.stringify({ number: n, title: 't', state: 'OPEN', labels: [], body: '', subIssues: { nodes: NODES, totalCount: ownTotal } }) }
         }
         if (argv[2] === 'close' && Number(argv[3]) === failOn) return { exitCode: 1, stdout: '', stderr: 'boom' }
         return { exitCode: 0, stdout: '' }
@@ -178,5 +181,21 @@ describe('MOD-362: an open parent whose sub-issues are all closed', () => {
     expect(closes(w).map((a: string[]) => a[3])).toEqual(['61'])
     expect(out).toContain('close #61 failed: boom')
     expect(out).toContain('#60 left open: run again once its sub-issues are closed')
+  })
+  test('a sub-issue whose own list was cut short is no match, and nothing says open, all', async ($, on) => {
+    build(on)
+    ownTotal = 3
+    await $.session.start(sessionStart)
+    const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 60, reconcile: true } as never))
+    expect(out).toContain('#61 Open leaf parent — no match')
+    expect(out).not.toContain('open, all')
+  })
+  test('a parent whose own list was cut short prints no parent row', async ($, on) => {
+    build(on)
+    parentTotal = 3
+    await $.session.start(sessionStart)
+    const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 60, reconcile: true } as never))
+    expect(out).toContain('#61 Open leaf parent — open, all 2 sub-issues closed')
+    expect(out).not.toContain('#60 Parent story')
   })
 })
