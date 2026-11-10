@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.57 to 0.9.58
+
+No action needed. The Work pane gains a detail panel and a Board. A leaf's title opens its detail (its fields and its activity from the ledger) with one action, Dispatch, Review or Unblock: a press starts nothing itself, it puts one line to the session. The List and Board buttons switch to a board with a lane per epic and a column per state. Two rules change. Under `scopeAmends within-parent`, a card with no parent scope no longer holds every amend: a `scope+=` whose every path sits in a folder the card's scope already names is applied, and the rest still wait for you; set `scopeAmends ask` to keep every amend waiting. A new option `issueLink` (off, hint, require; default hint) adds one note to the card tool's reply and to the dispatch dry run for a card with no issue; `require` refuses such a card, release cards and cards with no repo work apart. Detail: [CHANGELOG 0.9.58](../CHANGELOG.md).
+
 ### From 0.9.56 to 0.9.57
 
 No action needed. `/delegation work` is new: it opens the Work pane, a tracker table of the repo's epics, features and leaf issues joined to their cards, with one state per leaf, state chips, search and Show done. A screen that places no panes gets the same listing as text, and `/delegation work text` always prints it. The view makes one new read-only call, `gh issue list` on the repo's own issues, at most once every five minutes; a repo whose origin is not on GitHub shows its cards alone. Detail: [CHANGELOG 0.9.57](../CHANGELOG.md).
