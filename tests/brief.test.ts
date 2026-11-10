@@ -376,7 +376,16 @@ describe('MOD-170: scopeAmends, the folder and glob-prefix rule', () => {
     expect(scopeAmendHeld(amend('hooks/lib/x.ts'), 'within-parent', ['a/**'], none, ['hooks/**'])).toBe(false)
     expect(scopeAmendHeld(amend('docs/x.md'), 'within-parent', ['a/**'], none, ['hooks/**'])).toBe(true)
     expect(scopeAmendHeld(amend('hooks/lib/x.ts', 'docs/x.md'), 'within-parent', ['a/**'], none, ['hooks/**'])).toBe(true)
-    expect(scopeAmendHeld(amend('hooks/lib/x.ts'), 'within-parent', ['a/**'], none)).toBe(true)
+    // MOD-358: with no parent scope the card's own scope folders are the boundary
+    const sc = ['hooks/lib/work.ts', 'tests/*.test.ts']
+    expect(scopeAmendHeld(amend('hooks/lib/x.ts'), 'within-parent', sc, none, [])).toBe(false)
+    expect(scopeAmendHeld(amend('tests/x.test.ts'), 'within-parent', sc, none, [])).toBe(false)
+    expect(scopeAmendHeld(amend('docs/x.md'), 'within-parent', sc, none, [])).toBe(true)
+    expect(scopeAmendHeld(amend('hooks/x.ts'), 'within-parent', sc, none, [])).toBe(true)
+    expect(scopeAmendHeld(amend('hooks/lib/*.ts'), 'within-parent', sc, none, [])).toBe(true)
+    expect(scopeAmendHeld(amend('hooks/lib/x.ts', 'docs/x.md'), 'within-parent', sc, none, [])).toBe(true)
+    expect(scopeAmendHeld(amend('tests/x.test.ts'), 'within-parent', sc, none, ['hooks/**'])).toBe(true)
+    expect(scopeAmendHeld(amend('hooks/lib/x.ts'), 'within-parent', [], none, [])).toBe(true)
     expect(scopeAmendHeld({ ops: ['forbid+=b/**'], reason: 'r' }, 'within-parent', ['a/**'], none)).toBe(false)
     expect(scopeAmendHeld(amend('docs/x.md'), 'apply', ['a/**'], none, ['hooks/**'])).toBe(false)
   })
