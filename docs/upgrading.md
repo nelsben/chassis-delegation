@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.58 to 0.9.59
+
+No action needed for a repo whose cards carry the mod's own status words. Two things change. A card's status is now read by its first word, lower-cased: `Merged` and `merged (PR 27)` read as merged, and `queued (waiting)` reads as queued and can be dispatched. A new option `statusMap` maps a repo's own status words onto queued, merged or parked, for example `{"done": "merged", "held": "parked"}` in `.chassis-delegation.json`; no card file is rewritten, and the Work view says how many cards carry a word the mod does not know. `tree reconcile` gains a fourth list: an open sub-issue whose own sub-issues are all closed, and the named parent once its sub-issues are closed, each with a live close line in place of the commented `not planned` one. `--confirm` now runs those closes too, the named parent last, so read the dry run before you confirm. Detail: [CHANGELOG 0.9.59](../CHANGELOG.md).
+
 ### From 0.9.57 to 0.9.58
 
 No action needed. The Work pane gains a detail panel and a Board. A leaf's title opens its detail (its fields and its activity from the ledger) with one action, Dispatch, Review or Unblock: a press starts nothing itself, it puts one line to the session. The List and Board buttons switch to a board with a lane per epic and a column per state. Two rules change. Under `scopeAmends within-parent`, a card with no parent scope no longer holds every amend: a `scope+=` whose every path sits in a folder the card's scope already names is applied, and the rest still wait for you; set `scopeAmends ask` to keep every amend waiting. A new option `issueLink` (off, hint, require; default hint) adds one note to the card tool's reply and to the dispatch dry run for a card with no issue; `require` refuses such a card, release cards and cards with no repo work apart. Detail: [CHANGELOG 0.9.58](../CHANGELOG.md).
