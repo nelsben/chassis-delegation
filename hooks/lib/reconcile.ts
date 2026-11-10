@@ -8,7 +8,7 @@ export const RECONCILE_USAGE = '/delegation tree reconcile <n>|all [--confirm]'
 /** A merged card: its id, the PR it landed in, the issue it named, and the paths it touched (its scope, else the report's files). */
 export type MergedCard = { id: string; pr?: number; issue?: number; parent?: number; scope: readonly string[] }
 /** One sub-issue as the parent view (and, for an open one, its own view) gives it; `read: false` marks an open one not viewed this run. */
-export type ReconSub = { number: number; title: string; state: string; body?: string; subIssues?: readonly { number: number; state: string }[]; read?: boolean }
+export type ReconSub = { number: number; title: string; state: string; body?: string; subIssues?: readonly { number: number; state: string }[]; read?: boolean; partial?: boolean /* MOD-362: its sub-issue list was cut short */ }
 export type Reconciled = {
   done: { number: number; title: string; card: string; pr?: number }[]
   childrenDone: { number: number; title: string; total: number }[] // MOD-362
@@ -72,7 +72,7 @@ export function reconcileOf(o: {
   inFlight: ReadonlySet<number>
   merged: readonly MergedCard[]
   openParents?: ReadonlySet<number>
-  root?: { number: number; title: string; state: string }
+  root?: { number: number; title: string; state: string; partial?: boolean }
 }): Reconciled {
   const out: Reconciled = { done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [] }
   const openParents = o.openParents ?? new Set<number>()
@@ -89,7 +89,7 @@ export function reconcileOf(o: {
     }
     const m = doneIn(s, o.merged)
     if (m) out.done.push({ number: s.number, title: s.title, card: m.id, ...(m.pr !== undefined ? { pr: m.pr } : {}) })
-    else if ((s.subIssues ?? []).length > 0 && (s.subIssues ?? []).every(c => c.state.toUpperCase() === 'CLOSED') && !openParents.has(s.number)) {
+    else if ((s.subIssues ?? []).length > 0 && (s.subIssues ?? []).every(c => c.state.toUpperCase() === 'CLOSED') && !openParents.has(s.number) && s.partial !== true) {
       out.childrenDone.push({ number: s.number, title: s.title, total: (s.subIssues ?? []).length }) // MOD-362
     } else {
       const overlap = overlapOf(s, o.merged)
@@ -97,7 +97,7 @@ export function reconcileOf(o: {
     }
   }
   const r = o.root
-  if (r && r.state.toUpperCase() !== 'CLOSED' && o.subs.length > 0 && !o.inFlight.has(r.number) && !openParents.has(r.number) && out.closedOpen.length === 0) {
+  if (r && r.partial !== true && r.state.toUpperCase() !== 'CLOSED' && o.subs.length > 0 && !o.inFlight.has(r.number) && !openParents.has(r.number) && out.closedOpen.length === 0) {
     const listed = new Set([...out.done, ...out.childrenDone].map(x => x.number))
     if (o.subs.every(s => s.state.toUpperCase() === 'CLOSED' || listed.has(s.number))) {
       out.root = { number: r.number, title: r.title, total: o.subs.length, after: [...listed].sort((a, b) => a - b) }

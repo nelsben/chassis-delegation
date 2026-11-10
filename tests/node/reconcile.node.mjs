@@ -170,6 +170,11 @@ describe('MOD-362: childrenDone and root', () => {
     expect((await run([], { root })).root).toBeUndefined()
     expect((await run([closed])).root).toBeUndefined()
   })
+  test('a sub-issue with a partial list is noMatch; a partial root gives no root', async () => {
+    const r = await run([sub({ partial: true })])
+    expect(r).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [{ number: 70, title: 'Story' }], notRead: [] })
+    expect((await run([{ number: 69, title: 'C', state: 'CLOSED' }], { root: { ...root, partial: true } })).root).toBeUndefined()
+  })
   test('reconcileText: row order, root row, counts line, close lines', async () => {
     const { reconcileText } = await lib()
     const r = {
