@@ -273,7 +273,7 @@ function checkGhIssue(args: readonly string[], allow: AllowConfig): Check {
   }
   if (verb === 'close') return statusCloseOk(t, allow) ? ok : shape('close <number> --repo <landRepo> --comment <text not starting with ->')
   if (verb === 'comment' && statusCommentOk(t, allow)) return ok
-  if (verb === 'list' && (setupIssueListOk(t, allow) || epicListOk(t, allow))) return ok
+  if (verb === 'list' && (setupIssueListOk(t, allow) || epicListOk(t, allow) || workListOk(t, allow))) return ok
   if (!issueRepoSet) return refuse('gh issue is not on the list: no issueRepo is configured')
   if (verb === 'comment') {
     const exact = t.length === 5 && /^\d{1,9}$/.test(t[0] as string) && t[1] === '--repo' && t[2] === repo && t[3] === '--body-file' && debriefBodyOk(t[4] as string, allow.root)
@@ -299,6 +299,11 @@ const setupIssueListOk = (t: readonly string[], allow: AllowConfig): boolean => 
 const epicListOk = (t: readonly string[], allow: AllowConfig): boolean => {
   const lr = landRepoOf(allow)
   return lr !== '' && t.join(' ') === `--repo ${lr} --state open --label type:epic --limit 100 --json number,title`
+}
+/** MOD-353: the Work view's one read of the issues, on the landRepo only. */
+const workListOk = (t: readonly string[], allow: AllowConfig): boolean => {
+  const lr = landRepoOf(allow)
+  return lr !== '' && t.join(' ') === `--repo ${lr} --state all --limit 300 --json number,title,state,labels,parent`
 }
 
 /** MOD-200: a status body: absolute, under <root>/.delegation/status/, plain segments. */

@@ -66,6 +66,8 @@ Advice (never blocks):
 - uncommitted changes in worktree mode;
 - the debrief spending an agent.
 
+Work view (`/delegation work`, read-only): one `gh issue list --repo <owner/repo> --state all --limit 300 --json number,title,state,labels,parent`, run when the command is first used and kept five minutes (`/delegation work refresh` reads again). Nothing is written.
+
 Tree (advice, never blocks; read-only `gh label list` and `gh issue list` reads of the origin repo, run by `/delegation setup` and the `setup` tool, not by `/delegation init`). When `gh` is not on PATH, origin is not a GitHub remote or a read fails, setup prints `tree checks skipped: <reason>` and nothing else changes:
 
 - the six labels `type:feature`, `type:epic`, `type:story`, `type:task`, `type:bug`, `type:spike` exist; each missing one gets `gh label create type:<x> --repo <owner/repo>`;

@@ -195,6 +195,19 @@ Spend samples every 15 seconds while a worker is live or queued, else every 60 (
 Tokens, cost and by-model bars update from `turn.complete` events, when a run ends.
 A screen with no mod panes (VS Code) gets the blocks as markdown text.
 
+## Work
+
+`/delegation work` prints the repo's work as text: each epic and feature with a `done/leaves` count, and each leaf issue or card with one state:
+
+- **Working**: a worker is running its card.
+- **To review**: a verdict or a review is owed.
+- **Queued**: it has a card and waits for a slot, or its worktree is on disk from an earlier session.
+- **Blocked**: its card waits on other cards (named after `by`).
+- **Backlog**: an issue with no card yet.
+- **Done**: its issue is closed or its card is merged.
+
+The issues come from one read-only `gh issue list` of the origin repo, kept five minutes; a second `/delegation work` inside that time reads nothing, and `/delegation work refresh` reads again. The list holds the newest 300 issues. A card with no issue sits under `No epic`. Without a GitHub origin, or when the read fails, the cards are listed alone with a note saying why.
+
 ## Planning on GitHub
 
 Work can be planned as GitHub issues at six levels, and only the last of them becomes a card. The levels are optional downward: a bug or a spike can stand alone, and a task can hang straight under a feature.
@@ -318,6 +331,7 @@ Nothing else in the mod closes an issue.
 | `/delegation debrief ingest <note.md>` | you | turns the bullets under the `## For the mod owner` heading of your review note (one bullet per finding) into findings that `debrief post` lists (see [The debrief from your review note](configuration.md#the-debrief-from-your-review-note)) |
 | `/delegation config [all \| <group> \| <field> [<value> \| default] \| repo <field> <value>]` | you | shows or sets options (see [/delegation config](configuration.md#delegation-config)) |
 | `/delegation dashboard` | you | opens the pane (see [Dashboard](#dashboard)) |
+| `/delegation work [refresh]` | you | prints the work tree as text: epics, features and issues joined to the cards, with one state per leaf (see [Work](#work)); `refresh` reads the issues again |
 | `/delegation merge <ID> [--review <text> \| --review-file <abs path>]` | you, or the brain after a consistent/accept verdict | rebases, commits the card as merged, runs the gates, writes `.delegation/<ID>/pr.md`, prints the push and PR block (see [Merging a card](review-and-merge.md#merging-a-card)) |
 | `/delegation tree import <file> [--dry-run] [--confirm]` | you | files a multi-level plan file from `.delegation/plans/`; dry run first, resumable (see [Tree import](#tree-import)) |
 | `tree_import` | the brain | the same, with `file`, `dryRun` and `confirm` |

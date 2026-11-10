@@ -612,3 +612,16 @@ describe('MOD-299: the epic list for tree reconcile all', () => {
     no(base, ALLOW)
   })
 })
+
+describe('MOD-353: the issue list for the Work view', () => {
+  const A: AllowConfig = { ...ALLOW, landRepo: 'o/r' }
+  const base = ['gh', 'issue', 'list', '--repo', 'o/r', '--state', 'all', '--limit', '300', '--json', 'number,title,state,labels,parent']
+  test('the exact shape on the landRepo is allowed; another state, limit, field list or repo is refused', () => {
+    ok(base, A)
+    no(base.map(w => (w === 'all' ? 'open' : w)), A)
+    no(base.map(w => (w === '300' ? '200' : w)), A)
+    no(base.map(w => (w === 'number,title,state,labels,parent' ? 'number,title,state,labels' : w)), A)
+    no(base.map(w => (w === 'o/r' ? 'x/y' : w)), A)
+    no(base, ALLOW)
+  })
+})

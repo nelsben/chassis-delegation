@@ -15,6 +15,7 @@ Running without the engine, known issues, the store and ledger, and developing t
 | `hooks/lib/dispatch.ts`, `hooks/lib/crossbrief.ts` | the card, brief and worktree; whether an existing brief is reused. `hooks/templates/brief.md` has conditional sections (`renderSections` and `stageBrief`): the red-test rule and red-evidence block only when `red_test` is not `none` (else the report says `red=none`), the spend line only with a ceiling, the output-folder and scratch lines only with `outdir=` and `scratch=`, the Lessons only when the domain has a file, and one block per mode (worktree, here, none) |
 | `hooks/lib/card.ts` | the card tool's fields and the dry-run warnings (`redTestWarnings`, `forbidCollisions`); `globGapWarnings` (MOD-351) says a scope or forbid entry whose `**/` needs a folder and so misses the files directly in it, with the entry to add; nothing is refused |
 | `hooks/lib/cleanstop.ts`, `hooks/lib/evaltrigger.ts` | decide the debrief; decide the eval |
+| `hooks/lib/work.ts` | the Work view's model (MOD-353): parsed issues and cards joined to one state per leaf; the view rows for a set of filters; the text form of `/delegation work`. `register.ts` keeps `workCache`, the one `gh issue list` of the repo for five minutes, cleared at session start |
 | `hooks/lib/retention.ts` | the store prune plan |
 | `hooks/types/index.d.ts` | declares `$.state` |
 | `bin/chassis-hook.mjs` | the settings.json fallback: plain node, no `$`; reads the pure libraries via `bin/ts-resolve.mjs` |

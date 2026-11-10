@@ -219,6 +219,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan,
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
+import { parseWorkIssues, updatedText, workModel, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkCard, type WorkIssue, type WorkModel } from './lib/work'
 import { doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
@@ -918,6 +919,8 @@ const RECORDS_TTL_MS = 15_000
 let probeTimer: { cancel: () => void } | undefined
 let spawnSeq = 0
 const issueStates: StateCache = new Map() // MOD-350: issue states read for the card match, kept ten minutes; emptied at session start
+/** MOD-353: the Work view's one read of the repo's issues, kept WORK_TTL_MS; cleared at session start. */
+let workCache: { repo: string; at: number; issues: WorkIssue[]; capped: boolean } | undefined
 // Part 2: the main loop's turn state, the idle timers, the scheduler's slots.
 // A (re)load does not know whether a main turn is running, so it assumes one is
 // until the next main-loop turn.complete: nothing runs in the background before.
@@ -4998,6 +5001,60 @@ async function treeWith($: Host, issue: unknown): Promise<string> {
     return 'tree: gh printed something that is not JSON'
   }
   return treeText(treeOf(json, cards.filter(c => c.status !== 'merged' && c.status !== 'parked'), done))
+}
+
+/**
+ * MOD-353: the Work view's read. The cards, the done task ids and the live rows are joined to one `gh issue list` of the repo, kept
+ * WORK_TTL_MS (force reads again). A failed read keeps the list read earlier for this repo, else shows the cards alone, with a note.
+ */
+async function workData($: Host, force: boolean): Promise<{ model: WorkModel; at?: number; notes: string[] }> {
+  await loadRepoConfig($)
+  const root = (await $.session.root()).replace(/\/+$/, '')
+  const origin = gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url')
+  const ownerRepo = ownerRepoOf(origin ?? '')
+  landRepo = ownerRepo ?? ''
+  sessionRoot = root
+  const cards: WorkCard[] = []
+  try {
+    for (const { card: c } of await indexedCards($, cardDirPath(root, cfg.cardDir))) {
+      const ref = issueRef(c.fields.issue, ownerRepo)
+      const parent = issueRef(c.fields.parent, ownerRepo)
+      cards.push({ id: c.id, title: c.title, status: c.status, tier: tierOf(c.tier) ?? 'standard', ...(ref !== undefined ? { issue: ref } : {}), ...(parent !== undefined ? { parent } : {}), ...(c.blockedBy.length > 0 ? { blockedBy: c.blockedBy } : {}) })
+    }
+  } catch {
+    // no card folder: no cards
+  }
+  const done = doneTasks((await ledgerAt($, root)).rows)
+  const live = (await liveModel($)).view.rows
+  const build = (issues: readonly WorkIssue[]): WorkModel => workModel({ issues, cards, done, live })
+  if (!ownerRepo) return { model: build([]), notes: ['origin is not a GitHub remote: cards only'] }
+  const at = await now($)
+  if (workCache !== undefined && workCache.repo === ownerRepo && !force && at - workCache.at >= 0 && at - workCache.at < WORK_TTL_MS) {
+    return { model: build(workCache.issues), at: workCache.at, notes: workCache.capped ? ['the newest 300 issues only'] : [] }
+  }
+  const r = await run($, ['gh', 'issue', 'list', '--repo', ownerRepo, '--state', 'all', '--limit', '300', '--json', 'number,title,state,labels,parent'], { cwd: root, timeoutMs: 60000 })
+  let json: unknown
+  let failure: string | undefined
+  if (!r.ok) failure = `gh did not run: ${r.why.trim()}`
+  else if (r.exitCode !== 0) failure = `gh issue list failed: ${(r.stderr || r.stdout).trim() || '(nothing on stderr)'}`
+  else {
+    try {
+      json = JSON.parse(r.stdout)
+    } catch {
+      failure = 'gh printed something that is not JSON'
+    }
+  }
+  if (failure === undefined) {
+    const issues = parseWorkIssues(json)
+    const capped = Array.isArray(json) && json.length >= WORK_LIST_LIMIT
+    workCache = { repo: ownerRepo, at, issues, capped }
+    return { model: build(issues), at, notes: capped ? ['the newest 300 issues only'] : [] }
+  }
+  const why = failure.slice(0, 200)
+  if (workCache !== undefined && workCache.repo === ownerRepo) {
+    return { model: build(workCache.issues), at: workCache.at, notes: [`could not read the issues (${why}): showing the list read earlier`, ...(workCache.capped ? ['the newest 300 issues only'] : [])] }
+  }
+  return { model: build([]), notes: [`could not read the issues (${why}): cards only`] }
 }
 
 /**
@@ -10996,6 +11053,7 @@ export const register: Register = (on, opts) => {
     // MOD-239: the brain key is read once here; counts held from an earlier start are dropped (the store keeps its own)
     drivePending = undefined
     issueStates.clear() // MOD-350
+    workCache = undefined // MOD-353
     driveFlushedAt = 0
     await refreshBrainKey($)
     // MOD-128: the host status line is retired; this clears a line an earlier version pinned
@@ -11014,7 +11072,7 @@ export const register: Register = (on, opts) => {
       debug($, `/dispatch not registered: ${String(err)}`)
     }
     try {
-      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|land <type> <title> [--dry-run]|tree <n>|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
+      await $.command.register({ name: 'delegation', description: 'Delegation state; "setup" checks this repo and scaffolds it; "init" is the bare scaffold', argumentHint: '[setup [path]|init [path]|update|dashboard|work [refresh]|land <type> <title> [--dry-run]|tree <n>|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish [--discard]]]' })
     } catch (err) {
       debug($, `/delegation not registered: ${String(err)}`)
     }
@@ -11147,6 +11205,10 @@ export const register: Register = (on, opts) => {
     if (arg === 'ration') return { text: await rationReportText($) }
     if (arg === 'accept' || arg.startsWith('accept ')) return { text: await acceptTask($, arg.slice(6)) }
     if (arg === 'merge' || arg.startsWith('merge ')) return { text: await runMerge($, parseMergeArgs(arg.slice('merge'.length))) }
+    if (arg === 'work' || arg === 'work refresh') {
+      const w = await workData($, arg === 'work refresh')
+      return { text: workText(w.model, { ...(w.at !== undefined ? { updated: updatedText(w.at, await now($)) } : {}), notes: w.notes }) }
+    }
     if (arg === 'dashboard') {
       let placed = false
       let why = ''
@@ -11168,7 +11230,7 @@ export const register: Register = (on, opts) => {
       return { text: [`This screen does not show a mod's panes (${why}), so here is the dashboard as text. In Claude Code in a terminal, /delegation dashboard opens it as a live pane.`, '', dashboardText(view), ...driveLines(await readDrive($))].join('\n') }
     }
     if (arg === '' || arg === 'status') return { text: await statusReport($) }
-    return { text: 'usage: /delegation [setup|init|update|debrief|debrief ingest <note.md>|dashboard|ration|land <type> <title>|tree <n>|tree import <file>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
+    return { text: 'usage: /delegation [setup|init|update|debrief|debrief ingest <note.md>|dashboard|work [refresh]|ration|land <type> <title>|tree <n>|tree import <file>|lesson <domain> [text]|config [<field> [<value>]]|accept <id> [note]|merge <id> [--finish]]' }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__card' as never }, async ($, e) => (landSeen($, 'card'), { result: await runCard($, e as unknown as Record<string, unknown>) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__verdict' as never }, async ($, e) => (landSeen($, 'verdict'), { result: await runVerdictSafe($, e as unknown as Record<string, unknown>) }))
