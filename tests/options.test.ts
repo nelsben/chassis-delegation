@@ -325,6 +325,12 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(await say($, 'mergeCheckMap')).toContain('smoke')
   })
 
+  test('statusMap: in the repo file it is read; a bad entry gives its error line and the good entry beside it is kept', async () => {
+    const r = parseRepoConfig('{"statusMap":{"done":"merged","merged":"parked"}}')
+    expect(r.config.statusMap).toEqual({ done: 'merged' })
+    expect(r.errors).toEqual(['statusMap.merged: needs a word of the repo\'s own mapped onto queued, merged or parked (ignored)'])
+  })
+
   test('applyAmends: off leaves the brief alone when a worker asks for more scope', async ($, on) => {
     const AMEND = '[[amend v=1 scope+=c/x.ts reason=the helper lives there]]'
     const w = handBackWorld(on)

@@ -19,6 +19,7 @@ import { DEFAULT_EXPLORE } from './explore'
 import { issueMatchOf, issueLinkOf, type IssueMatchMode, type IssueLinkMode } from './issuematch'
 import { ADAPTIVE_MODES, ADAPTIVE_RESERVED, APPLY_NOT_SHIPPED, DEFAULT_ADAPTIVE, type AdaptiveMode } from './adaptive'
 import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, nudgeCardsFor, type EffortNudge } from './nudge'
+import { statusMapOf } from './statusmap'
 
 export const REPO_CONFIG_FILE = '.chassis-delegation.json'
 
@@ -82,6 +83,8 @@ export type RepoConfig = {
   refusedGates?: Record<string, string>
   /** MOD-143: gate id → the command merge runs in the worktree before it rebases, for a card that names that gate. */
   mergeCheckMap?: Record<string, string>
+  /** MOD-361: the repo's own card status words, each mapped onto queued, merged or parked. */
+  statusMap?: Record<string, string>
   agentTypes?: Record<string, string>
   tierMap?: Partial<Record<Tier, Alias>>
   evalCommand?: string
@@ -146,7 +149,7 @@ export type RepoConfig = {
 export const MERGE_STYLES = ['rebase', 'merge', 'squash'] as const
 export type MergeStyle = (typeof MERGE_STYLES)[number]
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'pauseCap', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch', 'issueLink'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'statusMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'pauseCap', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch', 'issueLink'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -154,6 +157,8 @@ export type Effective = {
   /** MOD-98: gateMap ids a layer wrote that the gate checker refused (and no layer defines validly), id → why. */
   refusedGates: Record<string, string>
   mergeCheckMap: Record<string, string>
+  /** MOD-361: the repo's own card status words, each mapped onto queued, merged or parked. */
+  statusMap: Record<string, string>
   agentTypes: Record<string, string>
   tierMap: Record<Tier, Alias>
   evalCommand: string
@@ -391,6 +396,11 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         if (m) config.mergeCheckMap = m
         break
       }
+      case 'statusMap': {
+        const m = statusMapOf(v, errors, where)
+        if (m !== undefined) config.statusMap = m
+        break
+      }
       case 'gateMap':
       case 'agentTypes': {
         const refused: Record<string, string> = {}
@@ -584,7 +594,7 @@ export function settingsLayer(options: Readonly<Record<string, unknown>>): Parse
   for (const key of REPO_KEYS) {
     const v = options[key]
     if (v === undefined || v === '' || v === 0 || v === false) continue
-    if ((key === 'gateMap' || key === 'mergeCheckMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'maxWorkersByTier' || key === 'effortByTier' || key === 'effortNudge') && typeof v === 'string') {
+    if ((key === 'gateMap' || key === 'mergeCheckMap' || key === 'statusMap' || key === 'agentTypes' || key === 'tierMap' || key === 'spendByTier' || key === 'maxWorkersByTier' || key === 'effortByTier' || key === 'effortNudge') && typeof v === 'string') {
       try {
         obj[key] = JSON.parse(v)
       } catch {
@@ -614,6 +624,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     gateMap,
     refusedGates,
     mergeCheckMap: { ...repo.mergeCheckMap, ...user.mergeCheckMap, ...settings.mergeCheckMap },
+    statusMap: { ...repo.statusMap, ...user.statusMap, ...settings.statusMap },
     agentTypes: { ...DEFAULT_AGENT_TYPES, ...repo.agentTypes, ...user.agentTypes, ...settings.agentTypes },
     tierMap: { ...DEFAULT_TIER_MAP, ...repo.tierMap, ...user.tierMap, ...settings.tierMap },
     evalCommand: pick('evalCommand', ''),

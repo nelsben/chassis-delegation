@@ -665,6 +665,25 @@ describe('/dispatch', () => {
     expect(w.runs).toHaveLength(0)
   })
 
+  test('MOD-361: a card status the repo maps is read as the mod word: todo is refused with no map, dispatches under {"todo":"queued"}', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const f = files()
+    f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', 'status: todo')
+    world(on, { files: f, dirs, run })
+    await $.session.start(sessionStart)
+    const refused = await $.command.run(commandInput('BE-101 --scope app/**'))
+    expect(refused.text).toContain('BE-101 is status todo; /dispatch takes a queued or claimed card')
+  })
+
+  test('MOD-361: under statusMap {"todo":"queued"} the todo card is not refused for its status', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const f = files()
+    f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', 'status: todo')
+    f[`${ROOT}/.chassis-delegation.json`] = JSON.stringify({ statusMap: { todo: 'queued' } })
+    world(on, { files: f, dirs, run })
+    await $.session.start(sessionStart)
+    const out = await $.command.run(commandInput('BE-101 --scope app/**'))
+    expect(out.text).not.toContain('is status todo')
+  })
+
   test('MOD-216: a parked card is refused with how to dispatch it', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const f = files()
     f[`${ROOT}/agents/tasks/${FIXTURE_CARD_NAME}`] = FIXTURE_CARD.replace('status: queued', 'status: parked')

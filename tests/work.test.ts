@@ -72,3 +72,43 @@ describe('MOD-353: /delegation work', () => {
     expect(w.runs.filter((r: { argv: string[] }) => r.argv[0] === 'gh')).toEqual([])
   })
 })
+
+describe('MOD-361: a repo statusMap and the Work view', () => {
+  const FOUR = {
+    [`${CARDS}/MOD-1-a.md`]: card('MOD-1', 'done', 'Done one'),
+    [`${CARDS}/MOD-2-b.md`]: card('MOD-2', 'held', 'Held one'),
+    [`${CARDS}/MOD-3-c.md`]: card('MOD-3', 'open', 'Open one'),
+    [`${CARDS}/MOD-4-d.md`]: card('MOD-4', 'Merged (PR 27)', 'Merged one'),
+  }
+  const mapped = (on: any, statusMap?: Record<string, string>) =>
+    world(on, {
+      files: {
+        [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards', ...(statusMap ? { statusMap } : {}) }),
+        ...FOUR,
+        ...gitCfg('https://github.com/o/r.git'),
+      },
+      dirs: { [CARDS]: ['MOD-1-a.md', 'MOD-2-b.md', 'MOD-3-c.md', 'MOD-4-d.md'] },
+      run: async (argv: string[]) => {
+        if (argv[0] === 'sleep') return { exitCode: 0, stdout: '' }
+        if (argv[0] === 'gh' && argv[1] === 'issue' && argv[2] === 'list') return { exitCode: 0, stdout: '[]' } as never
+        return undefined
+      },
+    })
+
+  test('no statusMap: the merged-looking card counts as done; the note counts the three words the mod does not know', async ($, on) => {
+    mapped(on)
+    await $.session.start(sessionStart)
+    const out = await run($, 'work text')
+    expect(out).toContain('1 done')
+    expect(out).toContain('3 cards carry a status word the mod does not know (done 1, held 1, open 1): they read as queued; map each onto queued, merged or parked with statusMap in .chassis-delegation.json')
+  })
+
+  test('statusMap done -> merged and held -> parked: two done, the held card is not listed, the note counts open 1', async ($, on) => {
+    mapped(on, { done: 'merged', held: 'parked' })
+    await $.session.start(sessionStart)
+    const out = await run($, 'work text')
+    expect(out).toContain('2 done')
+    expect(out).not.toContain('Held one')
+    expect(out).toContain('1 card carries a status word the mod does not know (open 1): it reads as queued; map it onto queued, merged or parked with statusMap in .chassis-delegation.json')
+  })
+})

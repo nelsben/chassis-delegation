@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`statusMap` in the repo file maps the repo's own card status words onto queued, merged or parked (for example `{"done":"merged","held":"parked"}`); the Work view says how many cards carry a word the mod does not know** (MOD-361)
+
+### Changed
+
+- **A card's status is read by its first word, lower-cased, so `Merged` and `merged (PR 27)` read as merged** (MOD-361)
+
 ## 0.9.58 — 2026-11-09
 
 ### Added

@@ -57,6 +57,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['briefLocal', 'Where things go', 'A private, untracked file of rules copied into every worker\'s instructions', 'text', 'repo', ''],
   ['worktreeRoot', 'Where things go', 'The folder where each worker\'s separate copy of the repo is made', 'text', 'repo', ''],
   ['cardDir', 'Where things go', 'The folder, inside the repo, that holds your task cards', 'text', 'repo', ''],
+  ['statusMap', 'Where things go', 'What the repo\'s own card status words mean: each maps onto queued, merged or parked', 'map', 'repo', ''],
   ['autoDebrief', 'Debriefs', 'When you stop for a while, write a short write-up of what went wrong or right', 'bool', 'user', true],
   ['debriefMode', 'Debriefs', 'At a quiet stop: ask for your review note (notes) or run a helper (transcript)', 'choice', 'user', 'notes', ['notes', 'transcript']],
   ['debriefIdleMinutes', 'Debriefs', 'Minutes of quiet before the mod checks whether a write-up is due', 'minutes', 'user', 20],
