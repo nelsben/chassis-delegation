@@ -47,6 +47,8 @@
   "cardDir": "docs/cards",
   "_ignore": "globs a repo=here delta never counts",
   "ignore": [".delegation/**"],
+  "_issueLink": "Every card names its issue, so the Work view places it under its epic or feature; release cards and no-repo cards are exempt.",
+  "issueLink": "require",
   "_explore": "Raised from the shipped default 0.2 for the burn-in month of the adaptive picks (MOD-274, MOD-277), so the ledger gathers explored cards faster.",
   "explore": 0.3,
   "_spendByTier": "dollars one attempt may spend, per tier; 0 = no ceiling",

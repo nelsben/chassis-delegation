@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`issueLink` (off, hint or require; default hint): a card with no `issue:` gets one note from the `card` tool and `/dispatch --dry-run`, or is refused under `require`; release cards, `repo: none` cards and cards whose whole scope is outside the repo are exempt; this repo sets `require`** (MOD-359)
 - **A leaf's title in the Work pane opens its detail (fields, and its activity from the ledger), with Dispatch, Review or Unblock for a queued, to-review or blocked card: a press puts one line to the session and the item reads `Asked · waiting for the session`; Unblock asks first** (MOD-356)
 - **The Work pane has a Board view beside the list: a lane per epic with Backlog, Queued, Working, To review and Done columns of cards (stacked under 100 columns), done cards behind `N done · show`, the same filters, and a card's title opens the detail** (MOD-357)
 

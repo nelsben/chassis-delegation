@@ -225,7 +225,7 @@ import { doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, recon
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
-import { cachedState, rememberState, landedTail, matchPlanned, openCandidates, MATCH_POOL, type StateCache, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned } from './lib/issuematch'
+import { cachedState, rememberState, landedTail, matchPlanned, openCandidates, MATCH_POOL, type StateCache, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned, issueLinkCheck, ISSUE_LINK_HINT, type IssueLinkMode } from './lib/issuematch'
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
 import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
@@ -627,6 +627,8 @@ type Config = {
   autoEscalate: boolean
   /** MOD-287: off, suggest or require: how a card with no issue is matched against the planned tasks. */
   issueMatch: IssueMatchMode
+  /** MOD-359: off, hint or require: what a card with no issue gets. */
+  issueLink: IssueLinkMode
   applyAmends: boolean
   scopeAmends: ScopeAmends
   /** MOD-192: the GitHub Project land adds issues to, `<owner>/<number>` or ''. */
@@ -779,6 +781,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       scopeAmends: eff.scopeAmends,
       project: eff.project,
       issueMatch: eff.issueMatch,
+      issueLink: eff.issueLink,
       defaultBudget: budget,
       probeModels: o.probeModels === true,
       candidateIds: parseCandidateIds(str('candidateIds')),
@@ -8559,6 +8562,9 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   // MOD-287: a card with no issue: require refuses it while a planned task overlaps its scope; a dry run says which to pass
   const plannedHits = issueRef(card.fields.issue) === undefined ? await plannedFor($, root, card.scope, [...new Set([tasksDir, cardDirPath(root, cfg.cardDir)])]) : []
   if (cfg.issueMatch === 'require' && plannedHits.length > 0) return `/dispatch ${id}: refused — ${refusalLine(plannedHits[0] as Planned)}`
+  // MOD-359: a card with no issue under issueLink; not on a replay
+  const linkCheck = replay ? {} : issueLinkCheck(cfg.issueLink, { title: card.title, scope: card.scope, repo: card.repo, hasIssue: issueRef(card.fields.issue) !== undefined, matched: plannedHits.length > 0 })
+  if (linkCheck.refuse !== undefined) return `/dispatch ${id}: refused — ${linkCheck.refuse}`
   const refusal = checkStatus(card) ?? checkDomain(card, target ? target.domains : cfg.domains)
   if (refusal) return `/dispatch ${id}: ${refusal}${replay ? ` (read at ${base})` : ''}`
   // the repo the work is cut from and judged in: the target's, else the session's
@@ -8907,7 +8913,7 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   }
   const heldNames = resourcesOf(shownHeader)
   if (heldNames.length > 0) out.push(`   resources: ${heldNames.join(', ')} (held while the worker runs; another card naming one waits in the queue)`)
-  if (dryRun) return [...out, ...plannedHits.map(p => plannedLine(p)), '', shown].join('\n')
+  if (dryRun) return [...out, ...plannedHits.map(p => plannedLine(p)), ...(linkCheck.hint !== undefined ? [linkCheck.hint] : []), '', shown].join('\n')
   // MOD-13: the card's own effort: (it wins over effortByTier for this task's workers); cleared when the card has none
   await storeSet($, K.effort(id, await cardRepo($, target?.path)), typeof card.fields.effort === 'string' ? card.fields.effort.trim() : '')
   await storeSet($, K.tierReason(id, await cardRepo($, target?.path)), cleanReason(card.fields.tier_reason))
@@ -9545,6 +9551,13 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     const hit = matchesOf.find(m => m.length > 0)
     if (hit !== undefined) return `card refused: ${refusalLine(hit[0] as Planned)}`
   }
+  // MOD-359: a card with no issue is told so (hint) or refused (require); release, no-repo and outside-the-repo cards are exempt
+  let issueLinkHint = false
+  for (const [i, c] of made.entries()) {
+    const chk = issueLinkCheck(cfg.issueLink, { title: c.title, scope: c.scope, repo: c.repo, hasIssue: input.issue !== undefined, lanes: input.lanes !== undefined, matched: (matchesOf[i] ?? []).length > 0 })
+    if (chk.refuse !== undefined) return `card refused: ${chk.refuse}`
+    if (chk.hint !== undefined) issueLinkHint = true
+  }
   // all or none: every lane's file is checked before the first is written
   for (const c of made) {
     const path = `${dir}/${c.file}`
@@ -9563,6 +9576,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
     if (target) await storeSet($, K.taskRepo(c.id, await cardRepo($)), target.path)
   }
   for (const m of matchesOf) wrote.push(...m.map(p => plannedLine(p)))
+  if (issueLinkHint) wrote.push(ISSUE_LINK_HINT)
   for (const c of made) wrote.push(...(c.notes ?? []))
   // MOD-22: dispatch reads the mode from the card (`repo:`); here is passed only when the card says repo: here
   const dispatchArgs = (c: NewCard, dryRun: boolean): DispatchArgs => ({ id: c.id, dryRun, base: 'origin/main', ...(c.repo === 'here' ? { here: true as const } : {}), ...(target ? { repo: target.path } : {}) })

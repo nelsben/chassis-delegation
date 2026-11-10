@@ -16,7 +16,7 @@ import { EMPTY_GATE_KEY } from './gates'
 import { SCOPE_AMENDS_MODES, type ScopeAmends } from './brief'
 import { DEFAULT_EFFORT_BY_TIER, DEFAULT_REVIEW_EFFORT, isEffort, isTier, type Alias, type Effort, type EffortSetting, type Tier } from './tier'
 import { DEFAULT_EXPLORE } from './explore'
-import { issueMatchOf, type IssueMatchMode } from './issuematch'
+import { issueMatchOf, issueLinkOf, type IssueMatchMode, type IssueLinkMode } from './issuematch'
 import { ADAPTIVE_MODES, ADAPTIVE_RESERVED, APPLY_NOT_SHIPPED, DEFAULT_ADAPTIVE, type AdaptiveMode } from './adaptive'
 import { DEFAULT_EFFORT_NUDGE, effortNudgeOf, nudgeCardsFor, type EffortNudge } from './nudge'
 
@@ -134,6 +134,8 @@ export type RepoConfig = {
   adaptive?: AdaptiveMode
   /** MOD-287: whether a card with no issue is matched against the planned tasks: off, suggest or require; unset = suggest. */
   issueMatch?: IssueMatchMode
+  /** MOD-359: what a card with no issue gets: off, hint (a note) or require (refused); unset = hint. */
+  issueLink?: IssueLinkMode
   /** MOD-170: whether a worker's `scope+=` amend applies on its word (apply | new-files | ask); default apply. */
   scopeAmends?: ScopeAmends
   /** MOD-192: the GitHub Project `/delegation land` adds a new issue to, `<owner>/<number>`; unset = none. */
@@ -144,7 +146,7 @@ export type RepoConfig = {
 export const MERGE_STYLES = ['rebase', 'merge', 'squash'] as const
 export type MergeStyle = (typeof MERGE_STYLES)[number]
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'pauseCap', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'pauseCap', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch', 'issueLink'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -189,6 +191,8 @@ export type Effective = {
   adaptive: AdaptiveMode
   /** MOD-287: off, suggest or require. */
   issueMatch: IssueMatchMode
+  /** MOD-359: off, hint or require. */
+  issueLink: IssueLinkMode
   scopeAmends: ScopeAmends
   /** MOD-192: '' = none. */
   project: string
@@ -488,6 +492,13 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         else if (strict || mode !== 'suggest') config.issueMatch = mode
         break
       }
+      case 'issueLink': {
+        // MOD-359: hint is the manifest default, so it is unset and the repo file's value shows through
+        const mode = typeof v === 'string' ? issueLinkOf(v) : undefined
+        if (mode === undefined) errors.push(`issueLink${where}: needs off, hint or require (ignored)`)
+        else if (strict || mode !== 'hint') config.issueLink = mode
+        break
+      }
       case 'reviewEffort':
         if (typeof v !== 'string') errors.push(`reviewEffort${where}: not a string (ignored)`)
         else if (v.trim() !== '') {
@@ -634,6 +645,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     maxFrontierShare: pick('maxFrontierShare', 0),
     adaptive: pick('adaptive', DEFAULT_ADAPTIVE),
     issueMatch: pick('issueMatch', 'suggest'),
+    issueLink: pick('issueLink', 'hint'),
     scopeAmends: pick('scopeAmends', 'apply'),
     project: pick('project', ''),
     sources,

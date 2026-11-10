@@ -128,3 +128,81 @@ describe('MOD-350: an issue state read for the match is remembered', () => {
     expect(views(w, 58)).toBe(1) // the read one is not
   })
 })
+
+// MOD-359: issueLink: a card with no issue gets a note (hint, the default) or is refused (require); release cards are exempt.
+describe('MOD-359: issueLink in the card tool and dispatch', () => {
+  const HINT = 'note: this card names no issue; pass issue: <n> so the Work view lists it under its parent (file one with the land tool, or set issueLink off)'
+  const REFUSAL = 'this card names no issue (issueLink require); file one with the land tool and pass issue: <n>, or set issueLink hint'
+  const DISPATCH = 'mcp__chassis-delegation__dispatch'
+  const FILE = `${CARD_FOLDER}/OPS-1-fix-the-export-row-drop.md`
+  const linkWorld = (on: never, link: string | undefined, files: Record<string, string> = {}) =>
+    world(on, {
+      files: { [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ gateMap: { test: 'npm test' }, ...(link !== undefined ? { issueLink: link } : {}) }), ...files },
+      dirs: { [CARD_FOLDER]: ['README.md', ...Object.keys(files).map(f => f.slice(CARD_FOLDER.length + 1))] },
+      store: { 'delegation.agentTypes': ['general-purpose'] },
+    })
+  const boardCard = (issue: boolean) =>
+    ['---', 'id: OPS-9', 'title: The ninth', 'domain: ops', 'tier: standard', 'status: queued', ...(issue ? ['issue: 12'] : []), 'scope: [src/**]', 'forbid: []', 'red_test: none', 'gate: test', 'budget: 2-attempts', '---', '## Why', '', 'A card.', ''].join('\n')
+  const BOARD = `${CARD_FOLDER}/OPS-9-the-ninth.md`
+  const O = { options: { briefDir: `${SCRATCH}/briefs` } }
+
+  test('under the default a card with no issue is written and the reply carries the note once', O, async ($, on) => {
+    const w = linkWorld(on as never, undefined)
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
+    expect(w.files.has(FILE)).toBe(true)
+    expect(out.split(HINT).length - 1).toBe(1)
+  })
+
+  test('with an issue passed the reply has no note', O, async ($, on) => {
+    const w = linkWorld(on as never, undefined)
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given, issue: 12 } as never))
+    expect(w.files.has(FILE)).toBe(true)
+    expect(out).not.toContain('names no issue')
+  })
+
+  test('under require the card tool refuses a card with no issue and writes nothing', O, async ($, on) => {
+    const w = linkWorld(on as never, 'require')
+    await $.session.start(sessionStart)
+    expect(resultText(await $.tool.call({ tool: TOOL, ...given } as never))).toBe(`card refused: ${REFUSAL}`)
+    expect(w.files.has(FILE)).toBe(false)
+  })
+
+  test('under require a release card is written', O, async ($, on) => {
+    const w = linkWorld(on as never, 'require')
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given, title: 'Release 9.9.9: version bumped' } as never))
+    expect(out).not.toContain('card refused')
+    expect(out).not.toContain('names no issue')
+    expect(w.files.has(`${CARD_FOLDER}/OPS-1-release-9-9-9-version-bumped.md`)).toBe(true)
+  })
+
+  test('under off nothing is said', O, async ($, on) => {
+    const w = linkWorld(on as never, 'off')
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: TOOL, ...given } as never))
+    expect(w.files.has(FILE)).toBe(true)
+    expect(out).not.toContain('names no issue')
+  })
+
+  test('under require /dispatch refuses a board card with no issue and not one with issue: 12', O, async ($, on) => {
+    linkWorld(on as never, 'require', { [BOARD]: boardCard(false) })
+    await $.session.start(sessionStart)
+    expect(resultText(await $.tool.call({ tool: DISPATCH, task: 'OPS-9', dryRun: true } as never))).toBe(`/dispatch OPS-9: refused — ${REFUSAL}`)
+  })
+
+  test('under require /dispatch of a board card with issue: 12 is not refused and has no note', O, async ($, on) => {
+    linkWorld(on as never, 'require', { [BOARD]: boardCard(true) })
+    await $.session.start(sessionStart)
+    const out = resultText(await $.tool.call({ tool: DISPATCH, task: 'OPS-9', dryRun: true } as never))
+    expect(out).not.toContain('refused')
+    expect(out).not.toContain('names no issue')
+  })
+
+  test('under the default the dispatch dry run prints the note for a board card with no issue', O, async ($, on) => {
+    linkWorld(on as never, undefined, { [BOARD]: boardCard(false) })
+    await $.session.start(sessionStart)
+    expect(resultText(await $.tool.call({ tool: DISPATCH, task: 'OPS-9', dryRun: true } as never))).toContain(HINT)
+  })
+})

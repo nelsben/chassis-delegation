@@ -151,3 +151,32 @@ export function refusalLine(p: Planned): string {
 export function landedTail(o: { type: string; parent?: number; number: number; url: string }): string {
   return `type: ${o.type}\n${o.parent !== undefined && o.parent > 0 ? `parent: #${o.parent}\n` : ''}issue: #${o.number} ${o.url}\n`
 }
+
+// MOD-359: issueLink: a card with no issue is told so (hint) or refused (require); release cards and cards with no repo work are exempt.
+export const ISSUE_LINK_MODES = ['off', 'hint', 'require'] as const
+export type IssueLinkMode = (typeof ISSUE_LINK_MODES)[number]
+
+/** The option's value, lower-cased and trimmed; undefined when it is not one of the three. */
+export function issueLinkOf(v: unknown): IssueLinkMode | undefined {
+  const t = typeof v === 'string' ? v.trim().toLowerCase() : ''
+  return (ISSUE_LINK_MODES as readonly string[]).includes(t) ? (t as IssueLinkMode) : undefined
+}
+
+export const ISSUE_LINK_HINT = 'note: this card names no issue; pass issue: <n> so the Work view lists it under its parent (file one with the land tool, or set issueLink off)'
+export const ISSUE_LINK_REFUSAL = 'this card names no issue (issueLink require); file one with the land tool and pass issue: <n>, or set issueLink hint'
+
+/** A card with no issue by nature: no repo work, every output outside the repo, or a release card. */
+export function issueLinkExempt(c: { title: string; scope: readonly string[]; repo?: string }): boolean {
+  if ((c.repo ?? '').trim().toLowerCase() === 'none') return true
+  const entries = c.scope.map(s => s.trim()).filter(s => s !== '')
+  if (entries.length > 0 && entries.every(s => s.startsWith('/') || s.startsWith('~'))) return true
+  return /^release v?\d+(\.\d+)+\b/i.test(c.title.trim())
+}
+
+/** What a card gets under the option: a refusal, a note, or nothing. A lanes call cannot carry an issue, so require gives it the note. */
+export function issueLinkCheck(mode: IssueLinkMode, c: { title: string; scope: readonly string[]; repo?: string; hasIssue: boolean; lanes?: boolean; matched?: boolean }): { refuse?: string; hint?: string } {
+  if (mode === 'off' || c.hasIssue || issueLinkExempt(c)) return {}
+  if (mode === 'require' && c.lanes !== true) return { refuse: ISSUE_LINK_REFUSAL }
+  if (c.matched === true) return {}
+  return { hint: ISSUE_LINK_HINT }
+}
