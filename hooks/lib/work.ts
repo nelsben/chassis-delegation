@@ -212,6 +212,9 @@ export function workModel(i: { issues: readonly WorkIssue[]; cards: readonly Wor
   return { roots, counts, total }
 }
 
+/** The text a query is matched against: `<title> #<number> <card>`, lower-cased. */
+const leafText = (it: WorkItem): string => `${it.title} #${it.number ?? ''} ${it.card ?? ''}`.toLowerCase()
+
 /** The rows of the view for a set of filters: an unfiltered tree with done children folded, or the matches of a filter. */
 export function workRows(m: WorkModel, ui: WorkUi): WorkRow[] {
   const q = ui.query.trim().toLowerCase()
@@ -244,7 +247,7 @@ export function workRows(m: WorkModel, ui: WorkUi): WorkRow[] {
 
   const leafMatches = (it: WorkItem): boolean =>
     (ui.states.size === 0 || ui.states.has(it.state)) &&
-    (q === '' || `${it.title} #${it.number ?? ''} ${it.card ?? ''}`.toLowerCase().includes(q)) &&
+    (q === '' || leafText(it).includes(q)) &&
     (it.state !== 'done' || ui.showDone || ui.states.has('done'))
   const anyMatch = (it: WorkItem): boolean => (it.children.length === 0 ? leafMatches(it) : it.children.some(anyMatch))
   const listFiltered = (it: WorkItem, depth: number): void => {
@@ -474,4 +477,56 @@ export function workActivity(rows: readonly Record<string, unknown>[], card: str
     .sort((a, b) => b.at - a.at || b.i - a.i)
     .slice(0, ACTIVITY_CAP)
     .map(f => ({ text: f.text, ago: agoText(f.at, now) }))
+}
+
+// MOD-357: the board view: one lane per root, five columns of leaves.
+
+export type BoardCol = 'backlog' | 'queued' | 'working' | 'review' | 'done'
+export const BOARD_COLS: readonly BoardCol[] = ['backlog', 'queued', 'working', 'review', 'done']
+export const BOARD_LABEL: Record<BoardCol, string> = { backlog: 'Backlog', queued: 'Queued', working: 'Working', review: 'To review', done: 'Done' }
+export const BOARD_CAP = 10
+export const SURFACE_BG: Record<Scheme, string> = { light: '#f7f8f9', dark: '#22272b' }
+export type BoardLane = { root: WorkItem; open: boolean; cols: Record<BoardCol, WorkItem[]>; more: Record<BoardCol, number>; doneHidden: number }
+
+/** The column of a state: blocked waits in Queued; every other state has the column of its own name. */
+export function boardColOf(state: WorkState): BoardCol {
+  return state === 'blocked' ? 'queued' : state
+}
+
+/** Five columns side by side from 100 cells, each `col` wide; below that the columns stack at the full width. */
+export function boardLayout(columns: number): { mode: 'columns' | 'stack'; col: number } {
+  if (columns >= 100) return { mode: 'columns', col: Math.floor((columns - 8) / 5) }
+  return { mode: 'stack', col: Math.max(16, columns) }
+}
+
+const leavesOf = (it: WorkItem): WorkItem[] => (it.children.length === 0 ? [it] : it.children.flatMap(leavesOf))
+
+/** The lanes of the board for a set of filters, in the model's order. */
+export function workBoard(m: WorkModel, ui: WorkUi): BoardLane[] {
+  const q = ui.query.trim().toLowerCase()
+  const filtered = q !== '' || ui.states.size > 0
+  const roots = ui.root !== undefined && m.roots.some(r => r.key === ui.root) ? m.roots.filter(r => r.key === ui.root) : m.roots
+  const lanes: BoardLane[] = []
+  for (const root of roots) {
+    const listDone = ui.showDone || ui.states.has('done') || ui.shown.has(root.key)
+    const cols = Object.fromEntries(BOARD_COLS.map(c => [c, [] as WorkItem[]])) as Record<BoardCol, WorkItem[]>
+    let doneHidden = 0
+    for (const it of leavesOf(root)) {
+      if (ui.states.size > 0 && !ui.states.has(it.state)) continue
+      if (q !== '' && !leafText(it).includes(q)) continue
+      if (it.state === 'done' && !listDone) doneHidden++
+      else cols[boardColOf(it.state)].push(it)
+    }
+    const more = Object.fromEntries(BOARD_COLS.map(c => [c, 0])) as Record<BoardCol, number>
+    for (const c of BOARD_COLS) {
+      const n = cols[c].length
+      if (n <= BOARD_CAP) continue
+      more[c] = n - BOARD_CAP
+      cols[c] = c === 'done' ? cols[c].slice(-BOARD_CAP) : cols[c].slice(0, BOARD_CAP)
+    }
+    const placed = BOARD_COLS.some(c => cols[c].length > 0)
+    if (filtered ? !placed && doneHidden === 0 : root.state === 'done' && !ui.showDone) continue
+    lanes.push({ root, open: !ui.closed.has(root.key), cols, more, doneHidden })
+  }
+  return lanes
 }

@@ -5,7 +5,7 @@ import type { RenderNode } from 'claude-code'
 
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
-import { ACTION_LABEL, keySlug, leafOfCard, LOZENGE, progressCells, SELECTED_BG, STATE_LABEL, TIER_COLOR, TYPE_MARK, workLayout, WORK_STATES, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
+import { ACTION_LABEL, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, LOZENGE, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
 
 export type WorkView = {
   model: WorkModel
@@ -22,11 +22,17 @@ export type WorkView = {
   reading: boolean
   /** owner/name, for the issue links */
   repo?: string
+  /** MOD-357: the list (the table) or the board */
+  view: 'list' | 'board'
+  /** MOD-357: workBoard(model, ui), given when the view is the board */
+  lanes?: readonly BoardLane[]
   /** MOD-356: the open leaf, its ancestors root first, its action, whether it was asked, the Unblock question and its ledger events */
   detail?: { item: WorkItem; trail: readonly WorkItem[]; action?: WorkAction; asked: boolean; confirming: boolean; activity: readonly WorkEvent[] }
 }
 
 export type WorkHandlers = {
+  /** MOD-357: the List and Board switch */
+  view: (v: 'list' | 'board') => void
   /** open or close a parent */
   toggle: (key: string) => void
   /** show a parent's hidden done children */
@@ -68,6 +74,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
 
   const toolbar = (
     <Box key="work-toolbar" flexDirection="row" flexWrap="wrap" columnGap={2}>
+      <Button key="work-view-list" label="List" {...(v.view === 'list' ? { variant: 'primary' as const } : { plain: true })} onPress={() => hd.view('list')} />
+      <Button key="work-view-board" label="Board" {...(v.view === 'board' ? { variant: 'primary' as const } : { plain: true })} onPress={() => hd.view('board')} />
       {narrowSurface ? null : <Input key="work-search" placeholder="Search work" value={v.ui.query} submitLabel="Search" onSubmit={(text: string) => hd.query(text)} />}
       {narrowSurface || roots.length < 2 ? null : (
         <Select
@@ -248,6 +256,132 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     </Box>
   )
 
+  // MOD-357: the board: a lane per epic, a card per leaf in the column of its state.
+  const board = (): RenderNode => {
+    const B = boardLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
+    const lanes = v.lanes ?? []
+    const stack = B.mode === 'stack'
+    const card = (it: WorkItem): RenderNode => {
+      const k = keySlug(it.key)
+      const mark = TYPE_MARK[it.type]
+      const selected = v.detail !== undefined && v.detail.item.key === it.key
+      const lozenge = LOZENGE[it.state][v.scheme]
+      const by = it.by ?? []
+      const cost = typeof it.usd === 'number' ? ` · $${it.usd.toFixed(2)}` : ''
+      return (
+        <Box key={`work-card-${k}`} flexDirection="column" backgroundColor={selected ? SELECTED_BG[v.scheme] : SURFACE_BG[v.scheme]} paddingLeft={1} paddingRight={1}>
+          <Button key={`work-open-${k}`} plain {...(it.state === 'done' ? { dimColor: true } : {})} label={cut(it.title, Math.max(4, B.col - 2))} onPress={() => hd.select(it.key)} />
+          <Box flexDirection="row">
+            <Text color={mark.color}>{mark.glyph} </Text>
+            {it.number !== undefined ? (
+              v.repo !== undefined ? (
+                <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={`#${it.number}`} />
+              ) : (
+                <Text dimColor>{`#${it.number}`}</Text>
+              )
+            ) : null}
+            {it.number !== undefined ? <Text>{' '}</Text> : null}
+            {it.card !== undefined ? <Text dimColor>{it.card}</Text> : null}
+          </Box>
+          {(it.state === 'working' || it.state === 'review') && it.model !== undefined ? (
+            <Box flexDirection="row">
+              {it.tier !== undefined ? <Text color={TIER_COLOR[it.tier]}>● </Text> : <Text dimColor>● </Text>}
+              <Text wrap="truncate-end">{[it.model, it.attempt].filter((x): x is string => x !== undefined && x !== '').join(' · ') + cost}</Text>
+            </Box>
+          ) : null}
+          {it.state === 'blocked' ? (
+            <Box flexDirection="row">
+              <Text bold color={lozenge.fg} backgroundColor={lozenge.bg}>
+                {` ${STATE_LABEL.blocked.toUpperCase()} `}
+              </Text>
+              {by.length > 0 ? <Text dimColor>{` by ${by.join(', ')}`}</Text> : null}
+            </Box>
+          ) : null}
+          {it.state === 'queued' && it.slot ? <Text dimColor>waiting for a slot</Text> : null}
+          {it.state === 'queued' && it.onDisk ? <Text dimColor>worktree on disk</Text> : null}
+        </Box>
+      )
+    }
+    const lane = (l: BoardLane): RenderNode => {
+      const r = l.root
+      const k = keySlug(r.key)
+      const mark = r.group ? null : TYPE_MARK[r.type]
+      const body = (c: BoardCol): RenderNode[] => {
+        const out: RenderNode[] = l.cols[c].map(card)
+        if (c === 'done' && l.doneHidden > 0) out.push(<Button key={`work-show-${k}`} plain dimColor label={`${l.doneHidden} done · show`} onPress={() => hd.show(r.key)} />)
+        if (l.more[c] > 0) out.push(<Text key={`work-more-${k}-${c}`} dimColor>{`+${l.more[c]} more`}</Text>)
+        return out
+      }
+      return (
+        <Box key={`work-lane-${k}`} flexDirection="column" gap={1}>
+          <Box flexDirection="row">
+            <Button key={`work-toggle-${k}`} plain label={l.open ? '▾' : '▸'} onPress={() => hd.toggle(r.key)} />
+            <Text>{' '}</Text>
+            {mark ? <Text color={mark.color}>{mark.glyph} </Text> : null}
+            {r.number !== undefined ? (
+              v.repo !== undefined ? (
+                <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${r.number}`} label={`#${r.number}`} />
+              ) : (
+                <Text dimColor>{`#${r.number}`}</Text>
+              )
+            ) : null}
+            {r.number !== undefined ? <Text>{' '}</Text> : null}
+            <Text bold wrap="truncate-end">
+              {r.group ? 'No epic' : cut(r.title, Math.max(4, B.col * (stack ? 1 : 2)))}
+            </Text>
+            <Text>{'  '}</Text>
+            <Text color={doneFg(v.scheme)}>{'█'.repeat(progressCells(r.done, r.leaves))}</Text>
+            <Text dimColor>{'░'.repeat(8 - progressCells(r.done, r.leaves))}</Text>
+            <Text>{` ${r.done}/${r.leaves}`}</Text>
+          </Box>
+          {!l.open ? null : stack ? (
+            <Box flexDirection="column" gap={1}>
+              {BOARD_COLS.map(c => {
+                const nodes = body(c)
+                if (nodes.length === 0) return null
+                return (
+                  <Box key={`work-colbox-${k}-${c}`} flexDirection="column">
+                    <Text dimColor>{`${BOARD_LABEL[c].toUpperCase()} · ${l.cols[c].length}`}</Text>
+                    <Box key={`work-col-${k}-${c}`} flexDirection="column" gap={1} width={B.col}>
+                      {nodes}
+                    </Box>
+                  </Box>
+                )
+              })}
+            </Box>
+          ) : (
+            <Box flexDirection="row" columnGap={2}>
+              {BOARD_COLS.map(c => {
+                const nodes = body(c)
+                return (
+                  <Box key={`work-col-${k}-${c}`} flexDirection="column" gap={1} width={B.col}>
+                    {nodes.length > 0 ? nodes : <Text dimColor>—</Text>}
+                  </Box>
+                )
+              })}
+            </Box>
+          )}
+        </Box>
+      )
+    }
+    return (
+      <Box key="work-board" flexDirection="column" gap={1}>
+        {stack || lanes.length === 0 ? null : (
+          <Box key="work-board-header" flexDirection="row" columnGap={2}>
+            {BOARD_COLS.map(c => (
+              <Text key={`work-board-head-${c}`} dimColor>
+                {fit(BOARD_LABEL[c].toUpperCase(), B.col)}
+              </Text>
+            ))}
+          </Box>
+        )}
+        {lanes.map(lane)}
+        {lanes.length === 0 ? empty() : null}
+      </Box>
+    )
+  }
+  const main = (): RenderNode => (v.view === 'board' ? board() : table)
+
   const lozengeOf = (it: WorkItem): RenderNode => {
     const l = LOZENGE[it.state][v.scheme]
     return (
@@ -281,7 +415,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           <Text dimColor wrap="wrap">
             {trailText}
           </Text>
-          <Button key="work-detail-close" label={side ? 'Close' : '← Back to list'} onPress={() => hd.select(undefined)} />
+          <Button key="work-detail-close" label={side ? 'Close' : v.view === 'board' ? '← Back to board' : '← Back to list'} onPress={() => hd.select(undefined)} />
         </Box>
         <Box flexDirection="row">
           {mark ? <Text color={mark.color}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
@@ -396,11 +530,11 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       {summary}
       {v.detail !== undefined ? (
         <Box flexDirection="row" columnGap={2}>
-          {table}
+          {main()}
           {detailNode(v.detail)}
         </Box>
       ) : (
-        table
+        main()
       )}
       {footer}
     </Box>

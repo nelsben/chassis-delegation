@@ -337,3 +337,101 @@ describe('MOD-356: the Work pane detail and actions', () => {
     expect(await ui.find({ key: 'work-detail' })).toBeUndefined()
   })
 })
+
+describe('MOD-357: the Work pane board', () => {
+  const board = async ($: any, columns = 130, surface = 'terminal') => {
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, columns, surface)
+    await ui.press({ key: 'work-view-board' })
+    await ui.redraw()
+    return ui
+  }
+
+  test('the switch draws the board with a header, lanes and cards, and List brings the table back', async ($, on) => {
+    const w = setup(on)
+    const ui = await board($)
+    expect(await ui.find({ key: 'work-board' }), w.debugLogs.join('\n')).toBeDefined()
+    expect(await ui.find({ key: 'work-board-header' })).toBeDefined()
+    expect(await ui.find({ key: 'work-table' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-lane-i10' })).toBeDefined()
+    expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
+    expect(await ui.find({ key: 'work-card-i14' })).toBeDefined()
+    await ui.press({ key: 'work-view-list' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-table' })).toBeDefined()
+    expect(await ui.find({ key: 'work-board' })).toBeUndefined()
+  })
+
+  test('the done column offers N done · show, and pressing it draws the done card', async ($, on) => {
+    setup(on)
+    const ui = await board($)
+    expect(await ui.find({ key: 'work-card-i12' })).toBeUndefined()
+    expect((await ui.find({ key: 'work-show-i10' }))?.props.label).toBe('1 done · show')
+    await ui.press({ key: 'work-show-i10' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-card-i12' })).toBeDefined()
+  })
+
+  test('at 80 columns the columns stack: no header, and a QUEUED · 1 line', async ($, on) => {
+    setup(on)
+    const ui = await board($, 80)
+    expect(await ui.find({ key: 'work-board' })).toBeDefined()
+    expect(await ui.find({ key: 'work-board-header' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'QUEUED · 1' })).toBeDefined()
+  })
+
+  test('the Queued chip keeps the queued card and drops the backlog card and the lane without one', async ($, on) => {
+    setup(on)
+    const ui = await board($)
+    await ui.press({ key: 'work-chip-queued' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
+    expect(await ui.find({ key: 'work-card-i14' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-lane-i30' })).toBeUndefined()
+  })
+
+  test('the lane toggle removes its cards and leaves its header; pressing again brings them back', async ($, on) => {
+    setup(on)
+    const ui = await board($)
+    await ui.press({ key: 'work-toggle-i10' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-card-i13' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-toggle-i10' })).toBeDefined()
+    await ui.press({ key: 'work-toggle-i10' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
+  })
+
+  test('at 80 columns a card title opens the detail with Back to board, which brings the board back', async ($, on) => {
+    setup(on)
+    const ui = await board($, 80)
+    await ui.press({ key: 'work-open-i13' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+    expect((await ui.find({ key: 'work-detail-close' }))?.props.label).toBe('← Back to board')
+    await ui.press({ key: 'work-detail-close' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-board' })).toBeDefined()
+    expect(await ui.find({ key: 'work-detail' })).toBeUndefined()
+  })
+
+  test('the board mounts on desktop, vscode and mobile', async ($, on) => {
+    setup(on)
+    await board($)
+    for (const surface of ['desktop', 'vscode', 'mobile']) {
+      const ui = await mountWork($, 100, surface)
+      expect(await ui.find({ key: 'work-board' })).toBeDefined()
+      expect(await ui.find({ key: 'work-view-board' })).toBeDefined()
+    }
+  })
+
+  test('a new session.start returns the pane to the list', async ($, on) => {
+    setup(on)
+    await board($)
+    await $.session.start(sessionStart)
+    const ui = await mountWork($, 130, 'desktop')
+    expect(await ui.find({ key: 'work-table' })).toBeDefined()
+    expect(await ui.find({ key: 'work-board' })).toBeUndefined()
+  })
+})

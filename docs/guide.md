@@ -203,6 +203,8 @@ A leaf's title opens its detail: beside the table from 116 columns, in the table
 
 The pane has a toolbar (a search box that filters on Enter, an epic select when there is more than one epic, a Show done toggle, Refresh), a row of state chips with their counts (a chip filters the table to that state; Clear filters appears while a filter is set), and the table. The columns follow the width: Work and Status always, Progress and Card from 72 columns, Worker and Cost from 116. A parent's toggle opens or closes its children. Done leaves are folded under their parent, which shows `N done hidden · show`; Show done lists them all.
 
+The List and Board buttons at the start of the toolbar switch the view. The Board draws a lane per epic with five columns (Backlog, Queued, Working, To review, Done): each leaf is a card in the column of its state, and a blocked item sits in Queued with its `BLOCKED` lozenge. From 100 columns the columns sit side by side; below that they stack, each under its own heading. Done cards stay behind `N done · show`, a column shows at most ten cards per lane (`+N more` for the rest; Done keeps the latest ten), and the search, chips, epic select and Show done filter the board as they do the table. A lane's toggle folds it. A card's title opens the same detail, whose back button reads Back to board.
+
 - **Working**: a worker is running its card.
 - **To review**: a verdict or a review is owed.
 - **Queued**: it has a card that has not started (it may be waiting for a slot, or have a worktree on disk from an earlier session).
