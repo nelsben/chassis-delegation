@@ -97,6 +97,8 @@ export type AttemptRecord = {
   /** MOD-366: what the worker's `advisor:` hand-back line said, and the part after it; self-report, counted and never judged. */
   advisorSaid?: 'changed' | 'no-change' | 'other'
   advisorWhat?: string
+  /** MOD-369: how many `tried:` rounds the worker listed on a hand-back; self-report, counted and never judged. */
+  tried?: number
   /** MOD-366: advisor calls above what the brief's rule allowed. */
   advisorOver?: number
   tokens?: number

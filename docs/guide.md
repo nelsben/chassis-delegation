@@ -152,6 +152,10 @@ To let a worker touch a path the card did not name, call `dispatch` with `amend=
 A `budget` that is not `<n>-attempts` falls back to `defaultBudget`; `/dispatch` warns once:
 `warning: budget "frontier-60m" is not <n>-attempts; using the default 3`.
 
+### Stop rule
+
+Every brief carries one fixed stop rule in its Rules: if the gate or the red test still fails after two rounds of fixes, the worker stops, does not try a third, and hands back with `gate=fail` and one `tried: <what you changed> -> <what still fails>` line per round. A `gate=fail` hand-back is what steps the card up a tier; the stop rule adds no tier of its own, and no option turns it off. The mod counts the `tried:` lines and records them as `tried: <count>` on the attempt record and the ledger row, and the verdict says `tried: 2 rounds before handing back`; the count never changes a verdict, a `next=`, an escalation or a budget.
+
 ## One-client resources
 
 A live app that takes one client at a time (a running Blender, a device on a bench) is declared on the card with

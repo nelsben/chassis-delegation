@@ -6,6 +6,7 @@
 
 - **The delegation state tells the brain when to call the advisor: one advisor line by its model family (a brain on the top model is told not to call it, any other only on a cue, a request or a twice-repeated correction), and a cue line is raised on a card's second refuted attempt and on a review that refutes a claim, each cue one `advisor-cue` ledger row; a cue changes no verdict, next step or budget** (MOD-367)
 - **The brief carries one advisor rule line: a frontier card draws `once` (one call before the worker changes any file) or `none` by its id, every other tier is `none`, and the card's `advisor:` field (and the card tool's `advisor` input) overrides it; the spawn and verdict rows record `advisorRule`, the worker's `advisor: changed <what>` / `advisor: no change` hand-back line is kept as `advisorSaid`, and calls over the rule add a verdict line and `advisorOver`** (MOD-366)
+- **Every brief carries a stop rule: a gate or red test that still fails after two rounds of fixes is handed back with `gate=fail` and one `tried:` line per round; the count reaches the verdict and the ledger row and changes no verdict, step or budget** (MOD-369)
 - **`bin/advisor.mjs` reads session transcripts and ledgers and prints one anonymized summary of advisor use, by caller, advisor, day, project, rule and cue (`--text`, `--since`, `--ledger`)** (MOD-368)
 
 ### Fixed

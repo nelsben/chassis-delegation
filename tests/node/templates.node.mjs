@@ -296,3 +296,20 @@ describe('MOD-338: the brief asks for choice lines in every mode', () => {
     expect(t.includes('choice lines go above those.')).toBe(true)
   })
 })
+
+describe('MOD-369: the brief states the stop rule in every mode', () => {
+  test('each mode holds the stop rule once, directly above the advisor line', async () => {
+    const { renderSections } = await import('../../hooks/lib/dispatch.ts')
+    const t = read('hooks/templates/brief.md')
+    const stop = t.split('\n').find(l => l.startsWith('- Stop rule:'))
+    expect(stop).toBeDefined()
+    expect(stop.includes('Hand back with gate=fail and one line per round: `tried: <what you changed> -> <what still fails>`.')).toBe(true)
+    for (const mode of ['worktree', 'here', 'none']) {
+      const out = renderSections(t, mode).split('\n')
+      expect(out.filter(l => l === stop)).toHaveLength(1)
+      const i = out.indexOf(stop)
+      expect(out[i + 1]).toBe('{{advisor}}')
+      expect(out.some(l => l.startsWith('- Gate:') && l.includes('If the gate fails with timeouts'))).toBe(true)
+    }
+  })
+})
