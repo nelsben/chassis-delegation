@@ -2,9 +2,9 @@
 import { test, expect, describe } from './kit.mjs'
 
 const lib = () => import('../../hooks/lib/reconcile.ts')
-const empty = { done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [] }
-const partA = { number: 5, title: 'Export', result: { done: [{ number: 61, title: 'Fix header', card: 'MOD-9', pr: 41 }], childrenDone: [], closedOpen: [], noMatch: [{ number: 63, title: 'Odd', }], notRead: [] } }
-const partB = { number: 9, title: 'Import', result: { done: [{ number: 71, title: 'Parse', card: 'MOD-3' }], childrenDone: [], closedOpen: [], noMatch: [{ number: 73, title: 'Stray' }], notRead: [74] } }
+const empty = { done: [], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [], notRead: [] }
+const partA = { number: 5, title: 'Export', result: { done: [{ number: 61, title: 'Fix header', card: 'MOD-9', pr: 41 }], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [{ number: 63, title: 'Odd', }], notRead: [] } }
+const partB = { number: 9, title: 'Import', result: { done: [{ number: 71, title: 'Parse', card: 'MOD-3' }], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [{ number: 73, title: 'Stray' }], notRead: [74] } }
 
 describe('epicsOf', () => {
   test('orders descending (newest first) and keeps number and title', async () => {
@@ -75,6 +75,6 @@ describe('parseReconcileArgs all', () => {
     expect(parseReconcileArgs('all')).toEqual({ all: true, confirm: false })
     expect(parseReconcileArgs(' all --confirm')).toEqual({ all: true, confirm: true })
     expect(parseReconcileArgs('all 5')).toEqual({ error: `usage: ${RECONCILE_USAGE}` })
-    expect(RECONCILE_USAGE).toBe('/delegation tree reconcile <n>|all [--confirm]')
+    expect(RECONCILE_USAGE).toBe('/delegation tree reconcile <n>|all [--confirm [--only <n,n,…>]]')
   })
 })

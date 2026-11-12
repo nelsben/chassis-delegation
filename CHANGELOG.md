@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`tree reconcile <n> --confirm --only <n,n,…>` (and the `tree` tool's `only: [n, …]` with `reconcile` and `confirm`) closes just the numbers given, each a proposal of the run; a number that is no proposal is named and nothing closes for it** (MOD-364)
+
+### Changed
+
+- **A card's `parent:` no longer makes a sub-issue done elsewhere: a sub-issue that merged cards name only as parent is listed with its cards for a person to judge, closed only by number with `--only`; a sub-issue with an open card under it is never proposed; a bare `--confirm` closes neither** (MOD-364)
+
 ## 0.9.60 — 2026-11-12
 
 ### Added

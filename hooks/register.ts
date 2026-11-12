@@ -223,7 +223,7 @@ import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
 import { actionLine, askedOn, findItem, parseWorkIssues, updatedText, workAction, workActivity, workBoard, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkAsked, type WorkCard, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
 import { workTree, type WorkHandlers, type WorkView } from './lib/workpane'
-import { childrenComment, doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
+import { cardsComment, childrenComment, doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
 import { doneBeforeFiling, withClosedLine, doneTasks, freeName, issueLineOf, issueUrlOf, planKey, planLineOf, subIssuesOf, withoutIssueLine, LAND_PLAN_TOOL, LAND_TOOL, parsePlan, type PlanItem, landedBody, openCards, parentHint, parseLandArgs, parseLandTool, parseProject, type LandArgs, type LandCard } from './lib/land'
 import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib/adaptive'
@@ -5224,6 +5224,10 @@ async function workData($: Host, force: boolean, noRead = false): Promise<{ mode
  * the closes of open sub-issues whose sub-issues are all closed, then the named parent's, which is tried only when every close it waits on ran.
  * MOD-299: `all` walks every open type:epic issue with one report. MOD-304: newest first, the read cap counts per epic (a child past it
  * is `not read` and names its epic), views after the first are paced 250 ms, and with no epic the label list says whether setup is owed.
+ * MOD-364: six lists (the four above, plus open with cards under it and done with merged cards under it, which name a sub-issue that
+ * cards name only as parent). A bare confirm closes done-elsewhere, open-with-every-sub-issue-closed and the named parent, never a
+ * cardsDone entry; it prints `left for you` with the `--only` line for those. `only` (--only <n,n,…>) closes just the numbers given,
+ * among the proposals of the run, and names each number that is no proposal.
  */
 async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>): Promise<string> {
   if ('error' in a) return a.error
@@ -5276,12 +5280,13 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
   }
   const rows = (await ledgerAt($, root)).rows
   const inFlight = new Set<number>()
-  const openParents = new Set<number>() // MOD-362: parents named by a card that is neither merged nor parked
-  for (const c of cardsById.values()) {
+  const openParents = new Map<number, string[]>() // MOD-362: parent -> the ids of the cards that are neither merged nor parked and name it (MOD-364: a map, not a set)
+  for (const [id, c] of cardsById) {
     if (c.status === 'merged' || c.status === 'parked') continue
     if (c.issue !== undefined) inFlight.add(c.issue)
-    if (c.parent !== undefined) openParents.add(c.parent)
+    if (c.parent !== undefined) openParents.set(c.parent, [...(openParents.get(c.parent) ?? []), id])
   }
+  for (const ids of openParents.values()) ids.sort((x, y) => x.localeCompare(y))
   // MOD-340: ledger merged rows newest first, then cards whose status is merged that no row named
   const merged = mergedCards(rows, [...cardsById].map(([id, c]) => ({ id, ...c })))
   const subsOf = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === 'object' && Array.isArray((v as { nodes?: unknown }).nodes) ? (v as { nodes: unknown[] }).nodes : []).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { number?: unknown }).number === 'number')
@@ -5297,7 +5302,7 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
       const number = s.number as number
       const state = typeof s.state === 'string' ? s.state.toUpperCase() : ''
       const sub: ReconSub = { number, title: typeof s.title === 'string' ? s.title : '', state, subIssues: subsOf(s.subIssues).map(c => ({ number: c.number as number, state: typeof c.state === 'string' ? c.state : '' })) }
-      if (state !== 'CLOSED' && !inFlight.has(number)) {
+      if (state !== 'CLOSED' && !inFlight.has(number) && !openParents.has(number)) { // MOD-364: a sub-issue under an open card is not viewed
         if (viewed >= cfg.treeImportBatch) sub.read = false
         else {
           viewed++
@@ -5331,14 +5336,22 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
   }
   let ran = 0
   let stopped = false
+  // MOD-364: with only, the closes are the numbers given; every proposal of the run is recorded so a number that is none is named
+  const only = a.only !== undefined ? new Set(a.only) : undefined
+  const proposed = new Set<number>()
+  for (const part of parts) {
+    for (const n of [...part.result.done.map(d => d.number), ...part.result.childrenDone.map(c => c.number), ...part.result.cardsDone.map(c => c.number), ...(part.result.root ? [part.result.root.number] : [])]) proposed.add(n)
+  }
   for (const part of parts) {
     if ('all' in a) lines.push(`## #${part.number} ${part.title}`)
-    if ('all' in a && part.result.done.length === 0 && part.result.childrenDone.length === 0 && !part.result.root && !stopped) lines.push('nothing to reconcile')
-    // MOD-362: the done entries, then the open parents whose sub-issues are all closed, then the named parent
+    if ('all' in a && part.result.done.length === 0 && part.result.childrenDone.length === 0 && part.result.cardsDone.length === 0 && !part.result.root && !stopped) lines.push('nothing to reconcile')
+    const wanted = (n: number): boolean => only === undefined || only.has(n)
+    // MOD-362: the done entries, then the open parents whose sub-issues are all closed; MOD-364: then the cardsDone entries, closed only with only
     const closes = [
       ...part.result.done.map(d => ({ number: d.number, comment: doneComment(d.card, d.pr) })),
       ...part.result.childrenDone.map(c => ({ number: c.number, comment: childrenComment(c.total) })),
-    ]
+      ...(only !== undefined ? part.result.cardsDone.map(c => ({ number: c.number, comment: cardsComment(c.cards) })) : []),
+    ].filter(c => wanted(c.number))
     const closedHere = new Set<number>()
     const closeOne = async (c: { number: number; comment: string }): Promise<boolean | 'cap'> => {
       if (ran >= cfg.treeImportBatch) {
@@ -5368,11 +5381,17 @@ async function reconcileWith($: Host, a: ReturnType<typeof parseReconcileArgs>):
     }
     for (const c of closes) if ((await closeOne(c)) === 'cap') break
     const rt = part.result.root
-    if (rt) {
+    if (rt && wanted(rt.number)) {
       if (!rt.after.every(n => closedHere.has(n))) lines.push(`#${rt.number} left open: run again once its sub-issues are closed`)
       else await closeOne({ number: rt.number, comment: childrenComment(rt.total) })
     }
+    // MOD-364: a bare confirm names the cardsDone entries it leaves for the person, with the --only line that closes them
+    if (only === undefined && part.result.cardsDone.length > 0) {
+      const nums = part.result.cardsDone.map(c => c.number).sort((x, y) => x - y)
+      lines.push(`${nums.length} with merged cards under it left for you: /delegation tree reconcile ${part.number} --confirm --only ${nums.join(',')}`)
+    }
   }
+  if (only !== undefined) for (const n of [...only].sort((x, y) => x - y)) if (!proposed.has(n)) lines.push(`#${n}: not a proposal of this run, nothing closed`)
   return lines.join('\n')
 }
 
@@ -11539,7 +11558,11 @@ export const register: Register = (on, opts) => {
   on('tool.call', { tool: 'mcp__chassis-delegation__tree_import' as never }, async ($, e) => (landSeen($, 'land_plan'), { result: await treeImportWith($, parseTreeImportTool(e as unknown as Record<string, unknown>)) }))
   on('tool.call', { tool: 'mcp__chassis-delegation__tree' as never }, async ($, e) => {
     const input = e as unknown as Record<string, unknown>
-    if (input.reconcile === true) return { result: await reconcileWith($, parseReconcileArgs(`${input.all === true ? 'all' : String(input.issue ?? '')}${input.confirm === true ? ' --confirm' : ''}`)) }
+    if (input.reconcile === true) {
+      // MOD-364: only: the numbers a confirm run closes; a bad entry reaches the parser and is the usage error
+      const only = Array.isArray(input.only) && input.only.length > 0 ? ` --only ${input.only.map(String).join(',')}` : ''
+      return { result: await reconcileWith($, parseReconcileArgs(`${input.all === true ? 'all' : String(input.issue ?? '')}${input.confirm === true ? ' --confirm' : ''}${only}`)) }
+    }
     return { result: await treeWith($, input.issue) }
   })
   on('tool.call', { tool: 'mcp__chassis-delegation__merge' as never }, async ($, e) => (landSeen($, 'merge'), { result: await runMerge($, parseMergeTool(e as unknown as Record<string, unknown>)) }))

@@ -20,15 +20,18 @@ describe('MOD-303: doneIn names, never overlaps', () => {
     const r = reconcileOf({ subs: [sub], inFlight: new Set(), merged: [{ id: 'X-2', issue: 353, scope: ['x'] }] })
     expect(r.done).toEqual([{ number: 353, title: 'Feed story', card: 'X-2' }])
   })
-  test('a card whose parent is the story marks it done only when its sub-issues are all closed', async () => {
+  test('a card whose parent is the story is cardsDone only with no sub-issue left open; childrenDone when all are closed (MOD-364)', async () => {
     const { reconcileOf } = await lib()
     const merged = [{ id: 'X-3', parent: 353, scope: ['x'] }]
-    expect(reconcileOf({ subs: [sub], inFlight: new Set(), merged }).done.map(d => d.card)).toEqual(['X-3'])
+    const all = reconcileOf({ subs: [sub], inFlight: new Set(), merged })
+    expect(all.done).toEqual([])
+    expect(all.cardsDone).toEqual([])
+    expect(all.childrenDone).toEqual([{ number: 353, title: 'Feed story', total: 1 }])
     const open = { ...sub, subIssues: [{ number: 400, state: 'CLOSED' }, { number: 401, state: 'OPEN' }] }
     const r = reconcileOf({ subs: [open], inFlight: new Set(), merged })
-    expect(r.done).toEqual([])
+    expect(r.cardsDone).toEqual([])
     expect(r.noMatch.length).toBe(1)
-    expect(reconcileOf({ subs: [{ ...sub, subIssues: undefined }], inFlight: new Set(), merged }).done.length).toBe(1)
+    expect(reconcileOf({ subs: [{ ...sub, subIssues: undefined }], inFlight: new Set(), merged }).cardsDone).toEqual([{ number: 353, title: 'Feed story', cards: [{ id: 'X-3' }] }])
   })
   test('an in-flight card for the story keeps it out of every list', async () => {
     const { reconcileOf } = await lib()

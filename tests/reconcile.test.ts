@@ -7,7 +7,7 @@ const CARDS = `${ROOT}/docs/cards`
 const REPO_FILE = `${ROOT}/.chassis-delegation.json`
 const LEDGER = `${ROOT}/.delegation/ledger.jsonl`
 const gitCfg = (url: string) => ({ [`${ROOT}/.git/config`]: `[remote "origin"]\n\turl = ${url}\n` })
-const card = (id: string, status: string, scope: string, issue?: number) => ['---', `id: ${id}`, ...(issue !== undefined ? [`issue: ${issue}`] : []), `title: Card ${id}`, 'domain: mod', 'tier: standard', `status: ${status}`, `scope: [${scope}]`, 'gate: node', '---', '## Done when', '', '- It works.', ''].join('\n')
+const card = (id: string, status: string, scope: string, issue?: number, parent?: number) => ['---', `id: ${id}`, ...(issue !== undefined ? [`issue: ${issue}`] : []), ...(parent !== undefined ? [`parent: ${parent}`] : []), `title: Card ${id}`, 'domain: mod', 'tier: standard', `status: ${status}`, `scope: [${scope}]`, 'gate: node', '---', '## Done when', '', '- It works.', ''].join('\n')
 const PARENT = JSON.stringify({
   number: 50,
   title: 'Export rework',
@@ -197,5 +197,86 @@ describe('MOD-362: an open parent whose sub-issues are all closed', () => {
     const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 60, reconcile: true } as never))
     expect(out).toContain('#61 Open leaf parent — open, all 2 sub-issues closed')
     expect(out).not.toContain('#60 Parent story')
+  })
+})
+
+// MOD-364: sub-issues 71 and 72 are named only as parent. 71 has one merged card under it (MOD-91); 72 has a merged card (MOD-92) and a queued one (MOD-93).
+const PARENT80 = JSON.stringify({
+  number: 80,
+  title: 'Parent story',
+  state: 'OPEN',
+  labels: [],
+  body: '',
+  subIssues: { nodes: [{ number: 71, title: 'First', state: 'OPEN' }, { number: 72, title: 'Second', state: 'OPEN' }], totalCount: 2 },
+})
+const leaf364 = (n: number, title: string) => JSON.stringify({ number: n, title, state: 'OPEN', labels: [], body: '', subIssues: { nodes: [], totalCount: 0 } })
+const run364 = async (argv: string[]) => {
+  if (argv[0] === 'sleep') return { exitCode: 0, stdout: '' }
+  if (argv[0] !== 'gh') return undefined
+  if (argv[2] === 'view') {
+    const n = Number(argv[3])
+    return { exitCode: 0, stdout: n === 80 ? PARENT80 : leaf364(n, n === 71 ? 'First' : 'Second') }
+  }
+  return { exitCode: 0, stdout: '' }
+}
+const setup364 = (on: any) =>
+  world(on, {
+    files: {
+      [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards' }),
+      [`${CARDS}/MOD-91-a.md`]: card('MOD-91', 'merged', 'hooks/x.ts', undefined, 71),
+      [`${CARDS}/MOD-92-a.md`]: card('MOD-92', 'merged', 'hooks/y.ts', undefined, 72),
+      [`${CARDS}/MOD-93-a.md`]: card('MOD-93', 'queued', 'hooks/z.ts', undefined, 72),
+      ...gitCfg('https://github.com/o/r.git'),
+    },
+    dirs: { [CARDS]: ['MOD-91-a.md', 'MOD-92-a.md', 'MOD-93-a.md'] },
+    run: run364,
+  })
+const confirmArgs = (args: string) => ({ command: 'delegation', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+describe('MOD-364: a sub-issue that cards name only as parent', () => {
+  test('the dry run prints the cardsDone row and its commented close, the openCards row, no live close, no parent row, and views no 72', async ($, on) => {
+    const w = setup364(on)
+    await $.session.start(sessionStart)
+    const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 80, reconcile: true } as never))
+    expect(out).toContain('#71 First — 1 merged card under it, none open (MOD-91): check its done-when, then close it by number')
+    expect(out).toContain("# gh issue close 71 --repo o/r --comment 'done in MOD-91'")
+    expect(out).toContain('#72 Second — 1 card under it still open (MOD-93)')
+    expect(out.split('\n').some(l => l.startsWith('gh issue close'))).toBe(false)
+    expect(out.split('\n').some(l => l.startsWith('#80 '))).toBe(false)
+    expect(w.runs.map((r: { argv: string[] }) => r.argv).some((a: string[]) => a[0] === 'gh' && a[2] === 'view' && a[3] === '72')).toBe(false)
+    expect(closes(w)).toEqual([])
+  })
+
+  test('a bare confirm runs no close and prints the left-for-you line with --only 71', async ($, on) => {
+    const w = setup364(on)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(confirmArgs('tree reconcile 80 --confirm') as never)).text)
+    expect(closes(w)).toEqual([])
+    expect(out).toContain('1 with merged cards under it left for you: /delegation tree reconcile 80 --confirm --only 71')
+  })
+
+  test('confirm --only 71 runs one close of 71 with the comment done in MOD-91 and prints closed #71', async ($, on) => {
+    const w = setup364(on)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(confirmArgs('tree reconcile 80 --confirm --only 71') as never)).text)
+    expect(closes(w)).toEqual([['gh', 'issue', 'close', '71', '--repo', 'o/r', '--comment', 'done in MOD-91']])
+    expect(out).toContain('closed #71')
+  })
+
+  test('confirm --only 72,99 runs no close and names both numbers as no proposal', async ($, on) => {
+    const w = setup364(on)
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(confirmArgs('tree reconcile 80 --confirm --only 72,99') as never)).text)
+    expect(closes(w)).toEqual([])
+    expect(out).toContain('#72: not a proposal of this run, nothing closed')
+    expect(out).toContain('#99: not a proposal of this run, nothing closed')
+  })
+
+  test('the tree tool with reconcile, confirm and only [71] runs the same one close', async ($, on) => {
+    const w = setup364(on)
+    await $.session.start(sessionStart)
+    const out = text(await $.tool.call({ tool: 'mcp__chassis-delegation__tree', issue: 80, reconcile: true, confirm: true, only: [71] } as never))
+    expect(closes(w)).toEqual([['gh', 'issue', 'close', '71', '--repo', 'o/r', '--comment', 'done in MOD-91']])
+    expect(out).toContain('closed #71')
   })
 })

@@ -25,7 +25,7 @@ describe('MOD-299: tree reconcile all', () => {
   test('a bad word prints the usage line naming all', async ($, on) => {
     setup(on, '[]')
     await $.session.start(sessionStart)
-    expect(await run($, 'tree reconcile every')).toContain('/delegation tree reconcile <n>|all [--confirm]')
+    expect(await run($, 'tree reconcile every')).toContain('/delegation tree reconcile <n>|all [--confirm [--only <n,n,…>]]')
   })
 
   test('no open type:epic issue prints the name-one line', async ($, on) => {
