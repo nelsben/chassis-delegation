@@ -104,3 +104,50 @@ describe('MOD-366: handbackAdvisor', () => {
     expect(r.what.length).toBe(160)
   })
 })
+
+describe('MOD-369: handbackTried', () => {
+  test('no tried line', async () => {
+    const { handbackTried } = await H()
+    expect(handbackTried(`Done.\n${R}`)).toEqual({ count: 0, lines: [] })
+  })
+  test('one tried line', async () => {
+    const { handbackTried } = await H()
+    expect(handbackTried(`tried: changed a -> b still fails\n${R}`)).toEqual({ count: 1, lines: ['changed a -> b still fails'] })
+  })
+  test('two tried lines', async () => {
+    const { handbackTried } = await H()
+    expect(handbackTried(`tried: r1 -> f1\ntried: r2 -> f2\n${R}`)).toEqual({ count: 2, lines: ['r1 -> f1', 'r2 -> f2'] })
+  })
+  test('a bulleted and a backticked line', async () => {
+    const { handbackTried } = await H()
+    const t = handbackTried(`- tried: a -> b\n* \`tried: c -> d\`\n  tried: e -> f\n${R}`)
+    expect(t.count).toBe(3)
+    expect(t.lines).toEqual(['a -> b', 'c -> d', 'e -> f'])
+  })
+  test('a repeated line counts once', async () => {
+    const { handbackTried } = await H()
+    expect(handbackTried(`tried: a -> b\ntried: a -> b\n${R}`).count).toBe(1)
+  })
+  test('an empty body is not a line', async () => {
+    const { handbackTried } = await H()
+    expect(handbackTried(`tried:\ntried:   \n${R}`)).toEqual({ count: 0, lines: [] })
+  })
+  test('a line below the last report is not read', async () => {
+    const { handbackTried } = await H()
+    expect(handbackTried(`${R}\ntried: late -> x`)).toEqual({ count: 0, lines: [] })
+  })
+  test('eight lines: count 8, six kept', async () => {
+    const { handbackTried } = await H()
+    const body = Array.from({ length: 8 }, (_, i) => `tried: r${i} -> f${i}`).join('\n')
+    const t = handbackTried(`${body}\n${R}`)
+    expect(t.count).toBe(8)
+    expect(t.lines).toHaveLength(6)
+    expect(t.lines[0]).toBe('r0 -> f0')
+  })
+  test('a long line is cut at 160', async () => {
+    const { handbackTried } = await H()
+    const t = handbackTried(`tried: ${'x'.repeat(300)}\n${R}`)
+    expect(t.count).toBe(1)
+    expect(t.lines[0].length).toBe(160)
+  })
+})

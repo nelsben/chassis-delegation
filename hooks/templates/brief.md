@@ -51,6 +51,7 @@ You were started by the brain's own Agent call: the mod recorded this attempt, s
 - Gate: {{gate}} green in this checkout before you report. The verifier re-runs it here on the tree as it stands (uncommitted changes included) and checks files= against `git status`, less the brief's ignore= and the files other in-flight cards claimed. Run it in the foreground (not run_in_background); keep its output outside the repo (under the scratch folder when the brief names one). If the gate fails with timeouts (ETIMEDOUT, a test timing out), run it once more on its own before handing back gate=fail, and say in the report that it was re-run.{{gateNote}}
 - Do not commit unless the card says so; never push, never open a PR, never merge.
 {{/here}}
+- Stop rule: if the gate or the red test still fails after two rounds of fixes (a round is one change you made to turn it green, then one run), stop. Do not try a third. Hand back with gate=fail and one line per round: `tried: <what you changed> -> <what still fails>`. A gate=fail hand-back moves the card to a stronger model; it is the right outcome, not a failure of yours. A gate that fails only on timeouts is not a round: the gate rule above covers it.
 {{advisor}}
 {{#spend}}
 - Spend: about ${{spend}}. Do what the card asks and no more; near it, stop and hand back.

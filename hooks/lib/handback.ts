@@ -120,3 +120,21 @@ export function handbackAdvisor(text: string): HandbackAdvisor | undefined {
   }
   return { said: 'other', what: body.slice(0, 160) }
 }
+
+/** MOD-369: the `tried:` lines a worker lists above the last `[[report`: how many, and the first six, each cut to 160. Counted, never judged. */
+export function handbackTried(text: string): { count: number; lines: string[] } {
+  const at = text.lastIndexOf('[[report')
+  const head = at === -1 ? text : text.slice(0, at)
+  const TRIED_LINE = /^ *(?:[-*] +)?`?tried:(.*)$/i
+  const seen = new Set<string>()
+  const found: string[] = []
+  for (const raw of head.split('\n')) {
+    const m = TRIED_LINE.exec(raw)
+    if (!m) continue
+    const body = m[1].trim().replace(/`$/, '').trim()
+    if (body === '' || seen.has(body)) continue
+    seen.add(body)
+    found.push(body)
+  }
+  return { count: found.length, lines: found.slice(0, 6).map(l => l.slice(0, 160)) }
+}

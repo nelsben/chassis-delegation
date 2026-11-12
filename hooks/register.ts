@@ -214,7 +214,7 @@ import {
 import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, runsEngineSuite, waitedLine, withTrailingLine, type EngineLock } from './lib/gates'
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
-import { handbackAdvisor, handbackChoices, handbackMessages, workerSaid } from './lib/handback'
+import { handbackAdvisor, handbackChoices, handbackMessages, handbackTried, workerSaid } from './lib/handback'
 import { advisorAllowed, advisorCueLine, advisorCueRow, advisorFieldRefusal, advisorOverLine, advisorRuleInBrief, advisorRuleLine, advisorRuleOf, brainAdvisorLine, type AdvisorCue, type AdvisorRule } from './lib/advisor'
 import { AUTO_NOTICE, LATCH_LINE, allRefused, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
@@ -7420,6 +7420,9 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const choiceRead = spawn.adhoc || cardless ? undefined : handbackChoices(text)
   const choiceStated = choiceRead?.stated === true
   if (choiceRead && choiceStated) lines = [...lines, choiceRead.count > 0 ? `choices: ${choiceRead.count} the card left open` : 'choices: none stated']
+  // MOD-369: the `tried:` rounds a worker lists before it hands back on a failing gate, counted and never judged (no verdict, next step or budget reads it)
+  const triedRead = spawn.adhoc || cardless ? undefined : handbackTried(text)
+  if (triedRead && triedRead.count > 0) lines = [...lines, `tried: ${triedRead.count} round${triedRead.count === 1 ? '' : 's'} before handing back`]
   // MOD-279: a worker whose Bash the host refused and whose report has no usable sha was blocked by its environment: that is no
   // failure of the work (not charged, not escalated, not shown as a fabrication). The count is per attempt: read once, then cleared.
   let blocked: string | undefined
@@ -7532,6 +7535,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
         ...(metrics ? { metrics } : {}),
         // MOD-338: how many decisions the card left open, as the worker listed them
         ...(choiceRead && choiceStated ? { choices: choiceRead.count } : {}),
+        // MOD-369: the count of `tried:` rounds, when the worker listed any
+        ...(triedRead && triedRead.count > 0 ? { tried: triedRead.count } : {}),
         ...red,
       },
       lane,
@@ -7651,7 +7656,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
     const verdictBrief = spawn.briefPath !== undefined ? await readText($, spawn.briefPath) : undefined
     const brainAt = await brainStampNow($)
-    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), ...(brainAt ? { brain: brainAt } : {}), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
+    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), ...(brainAt ? { brain: brainAt } : {}), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), ...(triedRead && triedRead.count > 0 ? { tried: triedRead.count } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
   }
   return { full, line }
 }
