@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.60 to 0.9.61
+
+Read the reconcile dry run again before you confirm. `tree reconcile` now proposes a sub-issue as done elsewhere only when a merged card names it in its own `issue:`. A sub-issue that merged cards name only as `parent:` gets its own row, `<k> merged cards under it, none open (<ids>)`, with a commented close line; a bare `--confirm` leaves it open and prints the `--only` line that closes it once you have checked its done-when. A sub-issue with an open card under it is listed as `<k> cards under it still open` and never proposed, and the named parent waits while either row is present. `--confirm --only <n,n,…>` (the `tree` tool's `only`) closes just the numbers given. Detail: [CHANGELOG 0.9.61](../CHANGELOG.md).
+
 ### From 0.9.59 to 0.9.60
 
 No action needed. Every brief now carries two more rules: an advisor line (a frontier card is allowed one advisor call before it changes any file on half its cards, chosen by the card id, and every other card none; a card's `advisor: none|once` overrides it) and a stop rule (after two rounds of fixes on a failing gate the worker hands back `gate=fail` with a `tried:` line per round, which steps the card up a tier). A worker's advisor calls are now counted in its attempt's dollars and shown on the verdict row, with calls over its brief's rule flagged. The brain's delegation state gains one advisor line, and a second refuted attempt or a review that refutes raises an advisor cue, written to the ledger. `node bin/advisor.mjs <transcripts folder> --ledger <repo>/.delegation/ledger.jsonl` reports advisor use across sessions. A brief written before this version is reused as it is and carries neither rule. Detail: [CHANGELOG 0.9.60](../CHANGELOG.md).
