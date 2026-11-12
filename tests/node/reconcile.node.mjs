@@ -58,7 +58,7 @@ describe('MOD-288: reconcileText', () => {
   })
   test('not read rows say run again', async () => {
     const { reconcileText } = await lib()
-    const t = reconcileText({ done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [8, 9] }, 'o/r')
+    const t = reconcileText({ done: [], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [], notRead: [8, 9] }, 'o/r')
     expect(t).toContain('#8 — not read: run again')
   })
 })
@@ -128,26 +128,26 @@ describe('MOD-362: childrenDone and root', () => {
   const sub = (extra = {}) => ({ number: 70, title: 'Story', state: 'OPEN', subIssues: closedKids, ...extra })
   const run = (subs, extra = {}) => lib().then(({ reconcileOf }) => reconcileOf({ subs, inFlight: none, merged: [], ...extra }))
   test('an open sub-issue with two closed sub-issues and no card is childrenDone', async () => {
-    expect(await run([sub()])).toEqual({ done: [], childrenDone: [{ number: 70, title: 'Story', total: 2 }], closedOpen: [], noMatch: [], notRead: [] })
+    expect(await run([sub()])).toEqual({ done: [], childrenDone: [{ number: 70, title: 'Story', total: 2 }], cardsDone: [], openCards: [], closedOpen: [], noMatch: [], notRead: [] })
   })
   test('one sub-issue open, or none: noMatch', async () => {
     const open = await run([sub({ subIssues: [closedKids[0], { number: 81, state: 'OPEN' }] })])
-    expect(open).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [{ number: 70, title: 'Story' }], notRead: [] })
+    expect(open).toEqual({ done: [], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [{ number: 70, title: 'Story' }], notRead: [] })
     const bare = await run([sub({ subIssues: [] })])
     expect(bare.noMatch).toEqual([{ number: 70, title: 'Story' }])
     expect(bare.childrenDone).toEqual([])
   })
-  test('in openParents: noMatch', async () => {
-    const r = await run([sub()], { openParents: new Set([70]) })
-    expect(r).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [{ number: 70, title: 'Story' }], notRead: [] })
+  test('in openParents: openCards with the ids of the open cards under it', async () => {
+    const r = await run([sub()], { openParents: new Map([[70, ['B-2']]]) })
+    expect(r).toEqual({ done: [], childrenDone: [], cardsDone: [], openCards: [{ number: 70, title: 'Story', cards: ['B-2'] }], closedOpen: [], noMatch: [], notRead: [] })
   })
-  test('a merged card naming it as parent wins: done', async () => {
+  test('a merged card naming it as parent, under closed sub-issues: childrenDone, not done (MOD-364)', async () => {
     const r = await run([sub()], { merged: [{ id: 'MOD-1', parent: 70, scope: ['a'] }] })
-    expect(r).toEqual({ done: [{ number: 70, title: 'Story', card: 'MOD-1' }], childrenDone: [], closedOpen: [], noMatch: [], notRead: [] })
+    expect(r).toEqual({ done: [], childrenDone: [{ number: 70, title: 'Story', total: 2 }], cardsDone: [], openCards: [], closedOpen: [], noMatch: [], notRead: [] })
   })
   test('in flight, and read false: as today', async () => {
-    expect(await run([sub()], { inFlight: new Set([70]) })).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [] })
-    expect(await run([sub({ read: false })])).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [70] })
+    expect(await run([sub()], { inFlight: new Set([70]) })).toEqual({ done: [], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [], notRead: [] })
+    expect(await run([sub({ read: false })])).toEqual({ done: [], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [], notRead: [70] })
   })
   const root = { number: 50, title: 'Epic', state: 'OPEN' }
   test('root with every sub-issue closed has after empty', async () => {
@@ -166,13 +166,13 @@ describe('MOD-362: childrenDone and root', () => {
     expect((await run([closed, { number: 72, title: 'X', state: 'CLOSED', subIssues: [{ number: 90, state: 'OPEN' }] }], { root })).root).toBeUndefined()
     expect((await run([closed], { root: { ...root, state: 'CLOSED' } })).root).toBeUndefined()
     expect((await run([closed], { root, inFlight: new Set([50]) })).root).toBeUndefined()
-    expect((await run([closed], { root, openParents: new Set([50]) })).root).toBeUndefined()
+    expect((await run([closed], { root, openParents: new Map([[50, ['B-1']]]) })).root).toBeUndefined()
     expect((await run([], { root })).root).toBeUndefined()
     expect((await run([closed])).root).toBeUndefined()
   })
   test('a sub-issue with a partial list is noMatch; a partial root gives no root', async () => {
     const r = await run([sub({ partial: true })])
-    expect(r).toEqual({ done: [], childrenDone: [], closedOpen: [], noMatch: [{ number: 70, title: 'Story' }], notRead: [] })
+    expect(r).toEqual({ done: [], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [{ number: 70, title: 'Story' }], notRead: [] })
     expect((await run([{ number: 69, title: 'C', state: 'CLOSED' }], { root: { ...root, partial: true } })).root).toBeUndefined()
   })
   test('reconcileText: row order, root row, counts line, close lines', async () => {
@@ -180,6 +180,7 @@ describe('MOD-362: childrenDone and root', () => {
     const r = {
       done: [{ number: 61, title: 'Fix', card: 'MOD-9', pr: 41 }],
       childrenDone: [{ number: 72, title: 'Story', total: 2 }],
+      cardsDone: [], openCards: [],
       closedOpen: [{ number: 62, title: 'Closed story', open: [70] }],
       noMatch: [{ number: 63, title: 'Odd' }],
       notRead: [64],
@@ -199,8 +200,110 @@ describe('MOD-362: childrenDone and root', () => {
       "gh issue close 50 --repo o/r --comment 'all 4 sub-issues done'",
       "# gh issue close 63 --repo o/r --comment 'not planned'",
     ])
-    const plain = reconcileText({ ...r, done: [], childrenDone: [], closedOpen: [], noMatch: [], notRead: [], root: { number: 50, title: 'Epic', total: 1, after: [] } }, 'o/r').split('\n')
+    const plain = reconcileText({ ...r, done: [], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [], notRead: [], root: { number: 50, title: 'Epic', total: 1, after: [] } }, 'o/r').split('\n')
     expect(plain[0]).toBe('#50 Epic — open, all 1 sub-issues closed')
     expect(plain[1]).toBe('0 done elsewhere · 1 open with every sub-issue closed · 0 closed with open children · 0 no match')
+  })
+})
+
+describe('MOD-364: a card that names a sub-issue only as parent', () => {
+  const empty = { done: [], childrenDone: [], cardsDone: [], openCards: [], closedOpen: [], noMatch: [], notRead: [] }
+  const sub = (extra = {}) => ({ number: 70, title: 'Story', state: 'OPEN', ...extra })
+  const run = (subs, extra = {}) => lib().then(({ reconcileOf }) => reconcileOf({ subs, inFlight: new Set(), merged: [], ...extra }))
+  const closedKids = [{ number: 80, state: 'CLOSED' }, { number: 81, state: 'CLOSED' }]
+
+  test('no sub-issues and one merged card naming it as parent: cardsDone with that card, not done', async () => {
+    const r = await run([sub()], { merged: [{ id: 'A-1', parent: 70, scope: ['a'] }] })
+    expect(r).toEqual({ ...empty, cardsDone: [{ number: 70, title: 'Story', cards: [{ id: 'A-1' }] }] })
+  })
+  test('three merged cards naming it as parent: all three in merged order, a pr only where it has one', async () => {
+    const merged = [{ id: 'A-3', parent: 70, scope: ['a'] }, { id: 'A-2', parent: 70, pr: 9, scope: ['b'] }, { id: 'A-1', parent: 70, scope: ['c'] }]
+    expect(await run([sub()], { merged })).toEqual({ ...empty, cardsDone: [{ number: 70, title: 'Story', cards: [{ id: 'A-3' }, { id: 'A-2', pr: 9 }, { id: 'A-1' }] }] })
+  })
+  test('an open card under it (openParents): openCards with its ids, even when not read', async () => {
+    const merged = [{ id: 'A-1', parent: 70, scope: ['a'] }]
+    const openParents = new Map([[70, ['B-2']]])
+    expect(await run([sub()], { merged, openParents })).toEqual({ ...empty, openCards: [{ number: 70, title: 'Story', cards: ['B-2'] }] })
+    expect(await run([sub({ read: false })], { merged, openParents })).toEqual({ ...empty, openCards: [{ number: 70, title: 'Story', cards: ['B-2'] }] })
+  })
+  test('a merged card whose issue is the sub-issue, with an open card naming it as parent: openCards, not done', async () => {
+    const r = await run([sub()], { merged: [{ id: 'MOD-9', issue: 70, scope: ['a'] }], openParents: new Map([[70, ['B-2']]]) })
+    expect(r).toEqual({ ...empty, openCards: [{ number: 70, title: 'Story', cards: ['B-2'] }] })
+  })
+  test('two closed sub-issues and a merged parent card: childrenDone; one open sub-issue: noMatch; partial: noMatch', async () => {
+    const merged = [{ id: 'A-1', parent: 70, scope: ['a'] }]
+    expect(await run([sub({ subIssues: closedKids })], { merged })).toEqual({ ...empty, childrenDone: [{ number: 70, title: 'Story', total: 2 }] })
+    expect(await run([sub({ subIssues: [closedKids[0], { number: 81, state: 'OPEN' }] })], { merged })).toEqual({ ...empty, noMatch: [{ number: 70, title: 'Story' }] })
+    expect(await run([sub({ subIssues: closedKids, partial: true })], { merged })).toEqual({ ...empty, noMatch: [{ number: 70, title: 'Story' }] })
+  })
+  test('the root: a sub-issue in cardsDone or openCards gives no root', async () => {
+    const root = { number: 50, title: 'Epic', state: 'OPEN' }
+    expect((await run([sub()], { root, merged: [{ id: 'A-1', parent: 70, scope: ['a'] }] })).root).toBeUndefined()
+    expect((await run([sub()], { root, openParents: new Map([[70, ['B-2']]]) })).root).toBeUndefined()
+  })
+  test('cardsComment: one card with a pr, one without, five, six', async () => {
+    const { cardsComment } = await lib()
+    expect(cardsComment([{ id: 'A-1', pr: 7 }])).toBe('done in A-1 (#7)')
+    expect(cardsComment([{ id: 'A-1' }])).toBe('done in A-1')
+    expect(cardsComment(['A-1', 'A-2', 'A-3', 'A-4', 'A-5'].map(id => ({ id })))).toBe('done in A-1, A-2, A-3, A-4, A-5')
+    expect(cardsComment(['A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6'].map(id => ({ id })))).toBe('done in A-1, A-2, A-3, A-4, A-5, +1 more')
+  })
+  test('reconcileText: row order, the two new row forms in singular and plural, the id cut at three, the counts segments, the close block order', async () => {
+    const { reconcileText } = await lib()
+    const r = {
+      done: [{ number: 61, title: 'Fix', card: 'MOD-9', pr: 41 }],
+      childrenDone: [{ number: 72, title: 'Story', total: 2 }],
+      cardsDone: [{ number: 71, title: 'Parse', cards: [{ id: 'A-1', pr: 3 }, { id: 'A-2' }] }, { number: 74, title: 'Lone', cards: [{ id: 'A-9' }] }],
+      openCards: [{ number: 73, title: 'Wait', cards: ['B-1', 'B-2', 'B-3', 'B-4'] }, { number: 75, title: 'Soon', cards: ['C-1'] }],
+      closedOpen: [{ number: 62, title: 'Closed story', open: [70] }],
+      noMatch: [{ number: 63, title: 'Odd' }],
+      notRead: [64],
+    }
+    expect(reconcileText(r, 'o/r').split('\n')).toEqual([
+      '#61 Fix — done in MOD-9 (#41)',
+      '#72 Story — open, all 2 sub-issues closed',
+      '#71 Parse — 2 merged cards under it, none open (A-1, A-2): check its done-when, then close it by number',
+      '#74 Lone — 1 merged card under it, none open (A-9): check its done-when, then close it by number',
+      '#73 Wait — 4 cards under it still open (B-1, B-2, B-3, +1 more)',
+      '#75 Soon — 1 card under it still open (C-1)',
+      '#62 Closed story — closed, 1 children open (#70)',
+      '#63 Odd — no match',
+      '#64 — not read: run again',
+      '1 done elsewhere · 1 open with every sub-issue closed · 1 closed with open children · 1 no match · 2 with merged cards under it · 2 with open cards under it',
+      '',
+      "gh issue close 61 --repo o/r --comment 'done in MOD-9 (#41)'",
+      "gh issue close 72 --repo o/r --comment 'all 2 sub-issues done'",
+      "# gh issue close 71 --repo o/r --comment 'done in A-1, A-2'",
+      "# gh issue close 74 --repo o/r --comment 'done in A-9'",
+      "# gh issue close 63 --repo o/r --comment 'not planned'",
+    ])
+  })
+  test('reconcileText counts line with neither new segment, and with only open cards', async () => {
+    const { reconcileText } = await lib()
+    expect(reconcileText(empty, 'o/r')).toBe('0 done elsewhere · 0 open with every sub-issue closed · 0 closed with open children · 0 no match')
+    const open = reconcileText({ ...empty, openCards: [{ number: 75, title: 'Soon', cards: ['C-1'] }] }, 'o/r').split('\n')
+    expect(open).toEqual(['#75 Soon — 1 card under it still open (C-1)', '0 done elsewhere · 0 open with every sub-issue closed · 0 closed with open children · 0 no match · 1 with open cards under it'])
+  })
+})
+
+describe('MOD-364: parseReconcileArgs --only', () => {
+  test('a list: duplicates dropped, order kept, with a number or all', async () => {
+    const { parseReconcileArgs } = await lib()
+    expect(parseReconcileArgs('12 --confirm --only 3,5,3')).toEqual({ issue: 12, confirm: true, only: [3, 5] })
+    expect(parseReconcileArgs('all --confirm --only 7')).toEqual({ all: true, confirm: true, only: [7] })
+    expect(parseReconcileArgs('12 --confirm --only 9,3')).toEqual({ issue: 12, confirm: true, only: [9, 3] })
+  })
+  test('the usage error: --only without confirm, no list, a bad entry, zero, given twice', async () => {
+    const { parseReconcileArgs, RECONCILE_USAGE } = await lib()
+    const usage = { error: `usage: ${RECONCILE_USAGE}` }
+    expect(parseReconcileArgs('12 --only 3')).toEqual(usage)
+    expect(parseReconcileArgs('12 --confirm --only')).toEqual(usage)
+    expect(parseReconcileArgs('12 --confirm --only 3,x')).toEqual(usage)
+    expect(parseReconcileArgs('12 --confirm --only 0')).toEqual(usage)
+    expect(parseReconcileArgs('12 --confirm --only 3 --only 4')).toEqual(usage)
+  })
+  test('the usage line names --only', async () => {
+    const { RECONCILE_USAGE } = await lib()
+    expect(RECONCILE_USAGE).toBe('/delegation tree reconcile <n>|all [--confirm [--only <n,n,…>]]')
   })
 })

@@ -68,14 +68,15 @@ export function treeText(t: Tree): string {
 export const TREE_TOOL = {
   name: 'tree',
   description:
-    "Reads one GitHub issue of this repo and its sub-issues (read-only) and prints what is planned, in flight and done, matched to cards, with the issue's scope and forbid blocks. Use it at the start of a session to pick up the plan, and before cutting a card under a parent to get parentScope. With reconcile: true it instead lists the open sub-issues that merged cards already did, the sub-issues closed by hand with open children, and the ones that match nothing, with the gh issue close lines; it closes nothing unless confirm: true, and confirm runs the closes: sub-issues a merged card already did, and open parents whose sub-issues are all closed, only after the person says yes in their own words.",
+    "Reads one GitHub issue of this repo and its sub-issues (read-only) and prints what is planned, in flight and done, matched to cards, with the issue's scope and forbid blocks. Use it at the start of a session to pick up the plan, and before cutting a card under a parent to get parentScope. With reconcile: true it instead lists the open sub-issues that merged cards already did, the sub-issues closed by hand with open children, and the ones that match nothing, with the gh issue close lines; it closes nothing unless confirm: true, and confirm runs the closes: sub-issues a merged card already did, and open parents whose sub-issues are all closed; a sub-issue that cards name only as parent is closed only when only names it, only after the person says yes in their own words.",
   inputSchema: {
     type: 'object',
     properties: {
       issue: { type: 'integer', minimum: 1, description: 'The issue number, a whole number 1 or more.' },
       reconcile: { type: 'boolean', description: 'true: propose closes for sub-issues that merged cards already did (read-only unless confirm).' },
       all: { type: 'boolean', description: 'With reconcile: true instead of issue: runs the reconcile over every open type:epic issue of the repo, one report, one read cap.' },
-      confirm: { type: 'boolean', description: 'With reconcile: true, only after the person says yes in their own words: runs the closes: sub-issues a merged card already did, and open parents whose sub-issues are all closed.' },
+      confirm: { type: 'boolean', description: 'With reconcile: true, only after the person says yes in their own words: runs the closes: sub-issues a merged card already did, and open parents whose sub-issues are all closed; a sub-issue that cards name only as parent is closed only when only names it.' },
+      only: { type: 'array', items: { type: 'integer', minimum: 1 }, description: 'With reconcile: true and confirm: true: close only these issue numbers, each a proposal of the run. Needed to close a sub-issue that merged cards name only as parent.' },
     },
     anyOf: [{ required: ['issue'] }, { required: ['all'] }],
     additionalProperties: false,
