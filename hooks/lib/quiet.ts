@@ -109,6 +109,8 @@ export type QuietInput = {
   usd?: number
   /** GH-106: `usd` is the session delta, not the worker's own cost: shown `~$x`. */
   usdApprox?: boolean
+  /** MOD-365: the advisor segment (advisorPart), shown after the dollars. */
+  advisor?: string
   /** MOD-126: the brief's allow ids, one `allow <a,b>` clause before `next=`. */
   allow?: readonly string[]
   next: string
@@ -127,6 +129,7 @@ export function quietLine(v: QuietInput): string {
   const parts = [`chassis-delegation: ${v.task} attempt ${v.attempt}/${v.budget} ${v.verdict}${label}${gateNote}${reason ? ` ${reason}` : ''}`]
   if (v.alias) parts.push(`${v.glyph ? `${v.glyph} ` : ''}${aliasLabel(v.alias)}`)
   if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
+  if (v.advisor) parts.push(v.advisor.replace(/^ · /, ''))
   parts.push(...amendClauses(v.lines))
   if (v.allow && v.allow.length > 0) parts.push(`allow ${v.allow.join(',')}`)
   parts.push(`next=${shortNext(v.next)}`)

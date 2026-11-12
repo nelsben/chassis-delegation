@@ -84,6 +84,7 @@ Only the engine has tiering, the queue, `maxWorkers`, the respawn ladder, spend 
 
 **`<root>/.delegation/ledger.jsonl`** gets one line per judged attempt: the attempt fields plus `verdict`, `next` and `sessionId`.
 
+- MOD-365: a worker's cost is its turn usage, which leaves the advisor out. At the verdict the mod reads the worker's transcript, `<home>/.claude/projects/<session root, non-alphanumerics as '-'>/<session id>/subagents/agent-<agentId>.jsonl` (once, no retry), and counts each `advisor_message` entry in the `iterations` of an assistant row's usage as one call, priced at that entry's model. An assistant message is written as one row per content block, each repeating the message's `message.id` and usage, so a message id counts once. Rows stamped before the attempt's `at` are skipped. The result is `advisor` on the attempt and its ledger line, and is added to `usd` only when `usd` came from the worker's own turn usage.
 - A reviewer's line has `kind: review`, `verdict: reviewed` and `review: {confirmed, refuted, unverifiable}`.
 - An older line says `verified` and is never rewritten (see [How a report is verified](contracts.md#how-a-report-is-verified)).
 - A repeat of task, subtask, attempt, sha and verdict is not appended.

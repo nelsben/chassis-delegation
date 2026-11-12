@@ -350,12 +350,15 @@ export function gateNotRerun(lines: readonly string[]): string | undefined {
 export const attemptFraction = (v: { attempt: number; budget: number; kind?: string; counted?: number }): string =>
   v.kind === 'verify' && v.counted !== undefined ? `${v.attempt} (verify, counted ${v.counted}/${v.budget})` : `${v.attempt}/${v.budget}`
 
-export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; kind?: string; counted?: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateNotRerun?: string; explore?: string }): string =>
+export const verdictLine = (v: { verdict: Verdict; task: string; attempt: number; budget: number; kind?: string; counted?: number; next: string; usd?: number; usdApprox?: boolean; model?: string; allow?: readonly string[]; gateNotRerun?: string; explore?: string; advisor?: string }): string =>
   `chassis-delegation: verdict=${v.verdict} task=${v.task} attempt=${attemptFraction(v)}` +
   (v.usd !== undefined && Number.isFinite(v.usd) ? ` usd=${v.usdApprox ? '~' : ''}${v.usd.toFixed(2)}` : '') +
+  // MOD-365: the advisor segment (advisorPart) follows the dollars; a row with no dollars gets it after the other segments
+  (v.advisor && v.usd !== undefined && Number.isFinite(v.usd) ? v.advisor : '') +
   (v.model ? ` model=${v.model}` : '') +
   (v.explore ? ` · ${v.explore}` : '') +
   (v.gateNotRerun ? ` · ${v.gateNotRerun}` : '') +
+  (v.advisor && !(v.usd !== undefined && Number.isFinite(v.usd)) ? v.advisor : '') +
   (v.allow && v.allow.length > 0 ? ` · allow=${v.allow.join(',')} · next=${v.next}` : ` next=${v.next}`)
 
 /** One line per amend the mod appended to the brief before verifying. */

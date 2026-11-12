@@ -135,6 +135,7 @@ import {
 } from './lib/cleanstop'
 import { resolveFindings, notFoundLine, expandHome } from './lib/debriefdir'
 import { ingestRefusal, noteFindings, noteFindingsName, notesPromptRow } from './lib/notes'
+import { advisorUse, advisorPart, workerTranscriptPath, type AdvisorUse } from './lib/advisor'
 import { checkDebrief, windowOf, userMessagesOf, userMessagesFromJsonl, transcriptPath, type DebriefWindow, type UserMessage } from './lib/debriefcheck'
 import { appendInstructions, compactBlock, composeSection, emptySnapshot, isEmptyState, owedRowsFrom, prsFrom, renderState, SECTION_ID, splitOwed, type RecentVerdict, type StateSnapshot } from './lib/compaction'
 import {
@@ -7415,7 +7416,11 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const own = spawn.agentId ? await workerCost($, spawn.agentId, spawn.attempt) : undefined
   const usdNow = own && own.usd !== null ? undefined : await sessionUsd($)
   const usdApprox = !(own && own.usd !== null) && usdNow !== undefined && spawn.usdAtStart !== undefined
-  const usd = own && own.usd !== null ? round4(own.usd) : usdNow !== undefined && spawn.usdAtStart !== undefined ? round4(usdNow - spawn.usdAtStart) : undefined
+  let usd = own && own.usd !== null ? round4(own.usd) : usdNow !== undefined && spawn.usdAtStart !== undefined ? round4(usdNow - spawn.usdAtStart) : undefined
+  // MOD-365: the advisor calls this attempt's worker made, from its transcript file (read once; a call that lags the hand-back is missed)
+  const adv = await workerAdvisorUse($, spawn)
+  if (adv && adv.usd !== null && usd !== undefined && own && own.usd !== null) usd = round4(usd + adv.usd)
+  const advisorField = adv ? { advisor: { calls: adv.calls, usd: adv.usd, in: adv.in, out: adv.out, models: adv.models } } : {}
   const label = taskLabel(spawn.task, spawn.subtask)
   let model = measured.model ?? spawn.resolvedModel
   let advice: Advice
@@ -7488,6 +7493,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
         ...(blocked ? { blocked } : {}),
         ...(usd !== undefined ? { usd } : {}),
       ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
+        ...advisorField,
         ...(tokens !== undefined ? { tokens } : {}),
         ...(model !== undefined ? { resolvedModel: model } : {}),
         // MOD-22: the report's metrics=, recorded on the attempt and never judged
@@ -7586,13 +7592,13 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const workLine = work ? workPresentLine(work) : undefined
   // MOD-124: the exceptions the brief allowed ride on the row
   const allow = spawn.adhoc ? [] : await allowIdsOf($, spawn)
-  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, ...(judged?.kind === 'verify' ? { kind: 'verify', counted: countedAtJudge } : {}), usd, usdApprox, model, next, allow, gateNotRerun: gateNotRerun(lines), ...(judged?.explore && judged.exploreFrom ? { explore: exploreLabel(judged.exploreFrom, judged.alias, judged.effort) } : {}) }) + downClause, workLine ? [workLine, ...lines] : lines)
+  const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, ...(judged?.kind === 'verify' ? { kind: 'verify', counted: countedAtJudge } : {}), usd, usdApprox, model, next, allow, gateNotRerun: gateNotRerun(lines), ...(adv ? { advisor: advisorPart(adv) } : {}), ...(judged?.explore && judged.exploreFrom ? { explore: exploreLabel(judged.exploreFrom, judged.alias, judged.effort) } : {}) }) + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
   const tail = from ? fallbackTail(from) : undefined
   if (from) debug($, fallbackLog(shownLabel, shownAttempt, from))
   const full = withTailIf(spawnText ? `${verdictRows}\n${spawnText}` : verdictRows, tail)
-  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit || blocked ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), next, lines, allow }) + (pauseCharge ? ` · ${pauseCharge}` : '') + downClause
+  const quiet = quietLine({ task: shownLabel, attempt: shownAttempt, budget: spawn.budget, verdict: rateLimit || blocked ? shownVerdict : verdict, ...(noRepo ? { noRepo } : {}), ...(report?.gate ? { reportGate: report.gate } : {}), alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), ...(adv ? { advisor: advisorPart(adv) } : {}), next, lines, allow }) + (pauseCharge ? ` · ${pauseCharge}` : '') + downClause
   const line = withTailIf([quiet, ...(liveNoteLine ? [liveNoteLine] : []), ...(workLine ? [workLine] : []), ...(spawnText ? [spawnText] : [])].join('\n'), tail)
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   const { malformed: _old, pausedAs: _pausedAs, pauseCharged: _pc, ...latestClean } = latest
@@ -7611,6 +7617,34 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), ...(brainAt ? { brain: brainAt } : {}), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
   }
   return { full, line }
+}
+
+/**
+ * MOD-365: the advisor calls the worker of `spawn` made since this attempt began (its attempt record's `at`, else the spawn's),
+ * read once from <home>/.claude/projects/<root>/<session>/subagents/agent-<id>.jsonl. Undefined when there is no agent id, the
+ * attempt is ad hoc, the file cannot be read, or it holds no advisor call: the verdict then goes on exactly as before.
+ */
+async function workerAdvisorUse($: Host, spawn: SpawnRecord): Promise<AdvisorUse | undefined> {
+  if (!spawn.agentId || spawn.adhoc) return undefined
+  try {
+    const sid = await sessionIdOf($)
+    const home = await homeOf($)
+    if (sid === '' || home === '') {
+      debug($, 'no advisor read: no session id or home')
+      return undefined
+    }
+    const text = await readText($, workerTranscriptPath(home, await $.session.root(), sid, spawn.agentId))
+    if (text === undefined) {
+      debug($, `no worker transcript file for ${spawn.agentId}: advisor calls not read`)
+      return undefined
+    }
+    const rec = attemptsFor(await loadAttempts($, spawn), spawn.subtask, laneOf(spawn)).find(r => r.attempt === spawn.attempt)
+    const use = advisorUse(text, rec?.at ?? spawn.at)
+    return use.calls > 0 ? use : undefined
+  } catch (err) {
+    debug($, `no worker transcript for the advisor read: ${String(err)}`)
+    return undefined
+  }
 }
 
 /**
