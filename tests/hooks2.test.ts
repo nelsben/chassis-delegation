@@ -1308,7 +1308,7 @@ describe('MOD-1: one proof of red per task, and --verify at the last attempt\'s 
     expect(rows(w)).toHaveLength(4)
     expect(rows(w)[3]).toContain('verdict=refuted task=T-4 attempt=4/3')
     expect(rows(w)[3]).toContain('next=stop — budget exhausted')
-    expect(ledgerRows(w)).toHaveLength(4)
+    expect(ledgerRows(w).filter(r => r.kind !== 'advisor-cue')).toHaveLength(4) // MOD-367: the refuted attempt 4 also writes one advisor-cue row
   })
 })
 
@@ -1438,7 +1438,7 @@ describe('GH-104: spend guards', () => {
     expect(records(w, 'T-4').at(-1)).toMatchObject({ retired: 'merged' })
     expect(w.runs.some(x => x.argv.includes('--is-ancestor') && x.argv.includes('origin/main') && x.argv.includes(HEAD))).toBe(true)
     const section = (await $.prompt.compose(composeInput(['Agent']))).sections.at(-1)?.text ?? ''
-    expect(section).not.toContain('T-4')
+    expect(section).not.toContain('- owed: T-4') // MOD-367: the section is always present now, with the recent verdict line
   })
 
   test('MOD-4: a sha that is not on origin/main keeps its row, and the check runs once per 15 minutes', { options: { autoEscalate: true, ...GM } }, async ($, on) => {

@@ -550,7 +550,9 @@ describe('2E: compaction and the system prompt', () => {
   test('prompt.compose: a session-scoped Delegation state section only while something runs or is owed, never in a subagent prompt', OFF, async ($, on) => {
     world(on, { listAgents: true })
     const before = await $.prompt.compose(composeInput(['Agent', 'Read']))
-    expect(before.sections.map(s => s.id)).toEqual(['intro'])
+    expect(before.sections.map(s => s.id)).toEqual(['intro', 'chassis-delegation:state']) // MOD-367: the advisor line makes the section present for every brain prompt
+    expect(before.sections.at(-1)?.text).toContain('Advisor: ')
+    expect(before.sections.at(-1)?.text).not.toContain('- running:')
     await $.agent.spawn(spawnInput({ prompt: '[[brief v=1 task=T-1 subtask=main tier=frontier]]\nDo it.' }))
     const during = await $.prompt.compose(composeInput(['Agent', 'Read']))
     expect(during.sections.map(s => s.id)).toEqual(['intro', 'chassis-delegation:state'])

@@ -102,3 +102,32 @@ export function advisorRuleInBrief(text: string): AdvisorRule | undefined {
   for (const rule of ADVISOR_RULES) if (lines.includes(advisorRuleLine(rule))) return rule
   return undefined
 }
+
+// ---- MOD-367: the brain's advisor line and the cues ------------------------------------------------------------------
+export type AdvisorCue = 'refute2' | 'review'
+
+/** MOD-367: the one advisor line of the delegation state, by the brain's model family. */
+export const brainAdvisorLine = (family: string): string =>
+  family === 'fable'
+    ? 'Advisor: do not call the advisor tool. You are on the top model; a call would consult your own model.'
+    : 'Advisor: call it only when the mod prints an advisor cue, when the person asks for it, or when the person has corrected the same thing twice; not for routine dispatch, verdict or merge steps. Each call re-reads the whole session. When you call it, say in your reply what it changed.'
+
+/** MOD-367: the cue line added to what the brain reads, or '' when the brain is on the top model. */
+export const advisorCueLine = (cue: AdvisorCue, family: string): string =>
+  family === 'fable'
+    ? ''
+    : cue === 'refute2'
+      ? "advisor cue: this card's second attempt was refuted. If your advisor is a model above yours, call it once before you choose the next step."
+      : 'advisor cue: the review refuted a claim. If your advisor is a model above yours, call it once before you resume the worker.'
+
+/** MOD-367: the ledger row of one cue raised. It has no verdict, so no reader counts it as a judged attempt. */
+export const advisorCueRow = (v: { cue: AdvisorCue; task: string; subtask: string; attempt: number; at: number; brain: string; sessionId?: string }): Record<string, unknown> => ({
+  kind: 'advisor-cue',
+  cue: v.cue,
+  task: v.task,
+  subtask: v.subtask,
+  attempt: v.attempt,
+  at: v.at,
+  brain: v.brain,
+  ...(v.sessionId ? { sessionId: v.sessionId } : {}),
+})

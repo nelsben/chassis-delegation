@@ -215,7 +215,7 @@ import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta,
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackAdvisor, handbackChoices, handbackMessages, workerSaid } from './lib/handback'
-import { advisorAllowed, advisorFieldRefusal, advisorOverLine, advisorRuleInBrief, advisorRuleLine, advisorRuleOf, type AdvisorRule } from './lib/advisor'
+import { advisorAllowed, advisorCueLine, advisorCueRow, advisorFieldRefusal, advisorOverLine, advisorRuleInBrief, advisorRuleLine, advisorRuleOf, brainAdvisorLine, type AdvisorCue, type AdvisorRule } from './lib/advisor'
 import { AUTO_NOTICE, LATCH_LINE, allRefused, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
@@ -1962,6 +1962,24 @@ async function brainSeat($: Host, fallback?: string): Promise<BrainFamily> {
   } catch {
     return brainFamily(fallback)
   }
+}
+
+/**
+ * MOD-367: raise an advisor cue: the line the brain reads (empty for a brain on the top model, which then writes no row)
+ * and one `advisor-cue` ledger row. A cue changes no verdict, next step, escalation or budget.
+ */
+async function raiseAdvisorCue($: Host, cue: AdvisorCue, spawn: { task: string; subtask: string; attempt: number }): Promise<string> {
+  const family = await brainSeat($)
+  const line = advisorCueLine(cue, family)
+  if (line === '') return ''
+  let brain = ''
+  try {
+    brain = await $.session.model()
+  } catch {
+    // the family stands in for a model the host would not name
+  }
+  await appendLedger($, advisorCueRow({ cue, task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, at: await now($), brain: brain || family, sessionId: await sessionIdOf($) }))
+  return line
 }
 
 /** The brain's split against the workers' this session: its record, the session's worker attempts, the session dollars. */
@@ -7606,6 +7624,11 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const workLine = work ? workPresentLine(work) : undefined
   // MOD-124: the exceptions the brief allowed ride on the row
   const allow = spawn.adhoc ? [] : await allowIdsOf($, spawn)
+  // MOD-367: a second refuted attempt of a card raises the advisor cue, the last line the brain reads for it
+  if (!spawn.adhoc && shownVerdict === 'refuted' && spawn.attempt >= 2) {
+    const cueLine = await raiseAdvisorCue($, 'refute2', spawn)
+    if (cueLine !== '') lines = [...lines, cueLine]
+  }
   const verdictRows = contextBlock(verdictLine({ verdict: shownVerdict as Verdict, task: shownLabel, attempt: shownAttempt, budget: spawn.budget, ...(judged?.kind === 'verify' ? { kind: 'verify', counted: countedAtJudge } : {}), usd, usdApprox, model, next, allow, gateNotRerun: gateNotRerun(lines), ...(adv ? { advisor: advisorPart(adv) } : {}), ...(judged?.explore && judged.exploreFrom ? { explore: exploreLabel(judged.exploreFrom, judged.alias, judged.effort) } : {}) }) + downClause, workLine ? [workLine, ...lines] : lines)
   const spawnText = respawn ?? reviewBlock
   // MOD-94: a verdict reached without the store's record says so on its row, and once in the debug log
@@ -7716,9 +7739,12 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
     }
   }
 
-  const long = [reviewVerdictLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, counts, usd, usdApprox, model, next }), reviewClause(counts), ...shown].join('\n')
+  // MOD-367: a review that refutes a claim raises the advisor cue, the last line the brain reads for it
+  const cueLine = counts && counts.refuted > 0 ? await raiseAdvisorCue($, 'review', spawn) : ''
+  const cueShown = cueLine !== '' ? [...shown, cueLine] : shown
+  const long = [reviewVerdictLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, counts, usd, usdApprox, model, next }), reviewClause(counts), ...cueShown].join('\n')
   const quiet = reviewLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), counts, next })
-  const line = [quiet, ...shown].join('\n')
+  const line = [quiet, ...cueShown].join('\n')
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: long, verdictLine: line })
   await setLastVerdict($, { task: label, attempt: spawn.attempt, verdict: 'reviewed', next, at: t, text: long })
@@ -11636,7 +11662,9 @@ export const register: Register = (on, opts) => {
     if (!(e.tools ?? []).includes('Agent')) return out
     let section: ReturnType<typeof composeSection>
     try {
-      const posture = cfg.delegateOnly !== 'off' && (await brainSeat($, e.model)) === 'fable' ? PREMIUM_POSTURE : []
+      // MOD-367: one brainSeat answer for the premium posture and the advisor line, which closes the posture for every brain
+      const family = await brainSeat($, e.model)
+      const posture = [...(cfg.delegateOnly !== 'off' && family === 'fable' ? PREMIUM_POSTURE : []), brainAdvisorLine(family)]
       section = composeSection(await composeSnapshot($), posture, !cfg.wakeOnVerdict)
     } catch (err) {
       debug($, `delegation state section not built: ${String(err)}`)
