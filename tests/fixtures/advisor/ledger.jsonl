@@ -1,0 +1,15 @@
+{"kind":"advisor-cue","cue":"refute2","task":"T-1","subtask":"main","attempt":2,"at":1794362700000,"sessionId":"sess-aaaa"}
+{"kind":"advisor-cue","cue":"refute2","task":"T-4","subtask":"main","attempt":2,"at":1794363000000,"sessionId":"sess-aaaa"}
+{"kind":"advisor-cue","cue":"refute2","task":"T-2","subtask":"main","attempt":2,"at":1794373200000,"sessionId":"sess-aaaa"}
+{"kind":"advisor-cue","cue":"stuck","task":"T-3","subtask":"main","attempt":1,"at":1794363000000,"sessionId":"sess-unread"}
+{"kind":"accept","task":"T-1","how":"merged","at":1794376800000}
+{"kind":"accept","task":"T-2","how":"merged","at":1794376800000}
+{"kind":"accept","task":"T-4","how":"discarded","at":1794376800000}
+{"kind":"accept","task":"T-9","how":"merged","at":1794290400000}
+{"kind":"verdict","task":"T-1","verdict":"consistent","tier":"frontier","usd":5,"advisor":{"calls":1,"usd":0.5},"advisorRule":"once","advisorRuleSource":"split","advisorSaid":"changed","at":1794286800000}
+{"kind":"verdict","task":"T-2","verdict":"verified","tier":"frontier","usd":4,"advisor":{"calls":2,"usd":1.25},"advisorRule":"once","advisorRuleSource":"split","advisorOver":1,"advisorSaid":"no-change","at":1794290400000}
+{"kind":"verdict","task":"T-3","verdict":"refuted","tier":"frontier","usd":6,"advisorRule":"none","advisorRuleSource":"split","at":1794294000000}
+{"kind":"verdict","task":"T-5","verdict":"consistent","tier":"standard","usd":1,"advisorRule":"none","at":1794358800000}
+{"kind":"verdict","task":"T-6","verdict":"consistent","tier":"standard","usd":2,"advisor":{"calls":1,"usd":0.25},"advisorRule":"once","advisorRuleSource":"card","advisorSaid":"changed","at":1794360600000}
+{"kind":"spawn","task":"T-7","advisorRule":"once","advisorRuleSource":"split","at":1794361200000}
+{"kind":"verdict","task":"T-8","verdict":"consistent","usd":9,"at":1794361800000}

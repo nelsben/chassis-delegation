@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`bin/advisor.mjs` reads session transcripts and ledgers and prints one anonymized summary of advisor use, by caller, advisor, day, project, rule and cue (`--text`, `--since`, `--ledger`)** (MOD-368)
+
 ## 0.9.59 — 2026-11-09
 
 ### Added
