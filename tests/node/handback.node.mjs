@@ -64,3 +64,43 @@ describe('MOD-338: handbackChoices', () => {
     expect(c.count).toBe(1)
   })
 })
+
+describe('MOD-366: handbackAdvisor', () => {
+  test('no line', async () => {
+    const { handbackAdvisor } = await H()
+    expect(handbackAdvisor(`done\n${R}`)).toBe(undefined)
+    expect(handbackAdvisor(`advisor:\n${R}`)).toBe(undefined)
+  })
+  test('no change', async () => {
+    const { handbackAdvisor } = await H()
+    expect(handbackAdvisor(`advisor: no change\n${R}`)).toEqual({ said: 'no-change' })
+    expect(handbackAdvisor(`Advisor: No change.\n${R}`)).toEqual({ said: 'no-change' })
+  })
+  test('changed with a what, and changed alone', async () => {
+    const { handbackAdvisor } = await H()
+    expect(handbackAdvisor(`- advisor: changed moved the gate output out of the worktree\n${R}`)).toEqual({ said: 'changed', what: 'moved the gate output out of the worktree' })
+    expect(handbackAdvisor(`advisor: changed\n${R}`)).toEqual({ said: 'changed' })
+  })
+  test('a backticked line', async () => {
+    const { handbackAdvisor } = await H()
+    expect(handbackAdvisor('`advisor: changed the order`\n' + R)).toEqual({ said: 'changed', what: 'the order' })
+  })
+  test('another wording is other', async () => {
+    const { handbackAdvisor } = await H()
+    expect(handbackAdvisor(`advisor: told me to read more\n${R}`)).toEqual({ said: 'other', what: 'told me to read more' })
+  })
+  test('the last line wins', async () => {
+    const { handbackAdvisor } = await H()
+    expect(handbackAdvisor(`advisor: changed a\nadvisor: no change\n${R}`)).toEqual({ said: 'no-change' })
+  })
+  test('a line below the last report is not read', async () => {
+    const { handbackAdvisor } = await H()
+    expect(handbackAdvisor(`${R}\nadvisor: changed a`)).toBe(undefined)
+  })
+  test('a long what is cut at 160', async () => {
+    const { handbackAdvisor } = await H()
+    const r = handbackAdvisor(`advisor: changed ${'x'.repeat(300)}\n${R}`)
+    expect(r.said).toBe('changed')
+    expect(r.what.length).toBe(160)
+  })
+})

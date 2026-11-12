@@ -4,6 +4,7 @@
 
 ### Added
 
+- **The brief carries one advisor rule line: a frontier card draws `once` (one call before the worker changes any file) or `none` by its id, every other tier is `none`, and the card's `advisor:` field (and the card tool's `advisor` input) overrides it; the spawn and verdict rows record `advisorRule`, the worker's `advisor: changed <what>` / `advisor: no change` hand-back line is kept as `advisorSaid`, and calls over the rule add a verdict line and `advisorOver`** (MOD-366)
 - **`bin/advisor.mjs` reads session transcripts and ledgers and prints one anonymized summary of advisor use, by caller, advisor, day, project, rule and cue (`--text`, `--since`, `--ledger`)** (MOD-368)
 
 ### Fixed

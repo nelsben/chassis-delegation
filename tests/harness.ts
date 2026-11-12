@@ -154,7 +154,7 @@ const RESOLVED: Record<string, string> = {
   opus: 'claude-opus-5-5',
 }
 
-const TEMPLATE = 'Work in {{worktree}} on {{branch}}; card {{cardPath}}.\n\n{{body}}'
+const TEMPLATE = 'Work in {{worktree}} on {{branch}}; card {{cardPath}}.\n\n{{advisor}}\n\n{{body}}'
 /** MOD-21: the reviewer prompt the mod builds from hooks/templates/review.md (a stand-in: an engine test cannot read the file). */
 export const REVIEW_TEMPLATE = [
   'Review {{id}} attempt {{attempt}}/{{budget}}: read the brief {{brief}}, the report and the diff at {{sha}} in {{worktree}} (base {{base}}).',
