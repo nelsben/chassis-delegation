@@ -89,6 +89,8 @@ export type AttemptRecord = {
   usd?: number
   /** True when `usd` is the session delta, not the worker's own cost. */
   usdApprox?: true
+  /** MOD-365: the advisor calls the worker made this attempt, read from its transcript; absent when there were none. */
+  advisor?: { calls: number; usd: number | null; in: number; out: number; models: string[] }
   tokens?: number
   /** MOD-13: the effort the worker's steps were rewritten to (low … max); absent when the engine's default ran. */
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'

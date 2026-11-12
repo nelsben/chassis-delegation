@@ -6,6 +6,10 @@
 
 - **`bin/advisor.mjs` reads session transcripts and ledgers and prints one anonymized summary of advisor use, by caller, advisor, day, project, rule and cue (`--text`, `--since`, `--ledger`)** (MOD-368)
 
+### Fixed
+
+- **A worker's advisor calls are read from its transcript at the verdict: their dollars are added to the attempt's `usd`, and the verdict row and ledger show ` · advisor <n> calls $<x>` and an `advisor` field (a resume counts only its own calls)** (MOD-365)
+
 ## 0.9.59 — 2026-11-09
 
 ### Added
