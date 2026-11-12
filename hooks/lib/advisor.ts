@@ -3,6 +3,7 @@
 // the assistant message's usage, at the advisor model's rate. Pure: no `$`.
 import { priceFor, tokensOf, usdOf, round4 } from './cost'
 import { transcriptPath } from './debriefcheck'
+import { fnv1a32 } from './explore'
 
 export type AdvisorUse = { calls: number; usd: number | null; in: number; out: number; models: string[] }
 
@@ -65,3 +66,39 @@ export const workerTranscriptPath = (home: string, root: string, sessionId: stri
 /** ` · advisor 2 calls $1.84`; '' when calls is 0. */
 export const advisorPart = (u: Pick<AdvisorUse, 'calls' | 'usd'> | undefined): string =>
   !u || u.calls <= 0 ? '' : ` · advisor ${u.calls} call${u.calls === 1 ? '' : 's'} ${typeof u.usd === 'number' ? `$${u.usd.toFixed(2)}` : '$?'}`
+
+// ---- MOD-366: the advisor rule a brief carries ----------------------------------------------------------------------
+export type AdvisorRule = 'none' | 'once'
+export const ADVISOR_RULES: readonly AdvisorRule[] = ['none', 'once']
+
+/** MOD-366: the card's own word when it is one of the two; else a frontier card is split in half by its task id, and every other tier is none. */
+export function advisorRuleOf(tier: string, cardField: unknown, task: string): { rule: AdvisorRule; source: 'card' | 'tier' | 'split' } {
+  if (typeof cardField === 'string') {
+    const word = cardField.trim().toLowerCase()
+    if (word === 'none' || word === 'once') return { rule: word, source: 'card' }
+  }
+  if (tier === 'frontier') return { rule: fnv1a32('advisor:' + task) % 2 === 0 ? 'once' : 'none', source: 'split' }
+  return { rule: 'none', source: 'tier' }
+}
+
+/** MOD-366: the one Rules line of a brief. */
+export const advisorRuleLine = (rule: AdvisorRule): string =>
+  rule === 'once'
+    ? '- Advisor: if you have an advisor tool you may call it once, after you have read the card and the files it names and before you change any file. Do not call it again, and not before you hand back: the verifier and the review check the work. If you called it, put one line in your hand-back: `advisor: changed <what you did differently>` or `advisor: no change`.'
+    : '- Advisor: do not call the advisor tool, if you have one. The card is the plan: decide what it leaves open and list it as a choice, or hand back with the question.'
+
+/** MOD-366: the refusal for a card `advisor:` that is neither word. */
+export const advisorFieldRefusal = (value: string): string => `refused: advisor: ${value} on the card; it takes none or once`
+
+/** MOD-366: the calls a rule allows; undefined for no rule (a brief written before the rule). */
+export const advisorAllowed = (rule: AdvisorRule | undefined): number | undefined => (rule === 'none' ? 0 : rule === 'once' ? 1 : undefined)
+
+/** MOD-366: the verdict line for calls over the rule. */
+export const advisorOverLine = (calls: number, allowed: number): string => `advisor: ${calls} call${calls === 1 ? '' : 's'}, the brief allowed ${allowed}`
+
+/** MOD-366: the rule a brief's text carries, by its exact line; undefined for a brief written before the rule. */
+export function advisorRuleInBrief(text: string): AdvisorRule | undefined {
+  const lines = text.split('\n')
+  for (const rule of ADVISOR_RULES) if (lines.includes(advisorRuleLine(rule))) return rule
+  return undefined
+}

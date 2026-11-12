@@ -72,3 +72,69 @@ describe('MOD-365: workerTranscriptPath and advisorPart', () => {
     expect(advisorPart({ calls: 2, usd: null })).toBe(' · advisor 2 calls $?')
   })
 })
+
+// MOD-366: the advisor rule a brief carries.
+const draw = async (id) => {
+  const { fnv1a32 } = await import('../../hooks/lib/explore.ts')
+  return fnv1a32('advisor:' + id) % 2 === 0 ? 'once' : 'none'
+}
+
+describe('MOD-366: advisorRuleOf', () => {
+  test('economy, standard, premium and an unknown tier with no field are none from the tier', async () => {
+    const { advisorRuleOf } = await A()
+    for (const tier of ['economy', 'standard', 'premium', 'wide']) expect(advisorRuleOf(tier, undefined, 'T-1')).toEqual({ rule: 'none', source: 'tier' })
+  })
+  test('a frontier card is split by its id, the same answer every time', async () => {
+    const { advisorRuleOf } = await A()
+    let once
+    let none
+    for (let i = 1; i <= 200 && (!once || !none); i++) {
+      const id = `T-${i}`
+      if ((await draw(id)) === 'once') once ??= id
+      else none ??= id
+    }
+    expect(advisorRuleOf('frontier', undefined, once)).toEqual({ rule: 'once', source: 'split' })
+    expect(advisorRuleOf('frontier', undefined, once)).toEqual({ rule: 'once', source: 'split' })
+    expect(advisorRuleOf('frontier', undefined, none)).toEqual({ rule: 'none', source: 'split' })
+    expect(advisorRuleOf('frontier', '', none)).toEqual({ rule: 'none', source: 'split' })
+  })
+  test('of T-1 to T-200 on a frontier card, 80 to 120 draw once', async () => {
+    const { advisorRuleOf } = await A()
+    let n = 0
+    for (let i = 1; i <= 200; i++) if (advisorRuleOf('frontier', undefined, `T-${i}`).rule === 'once') n += 1
+    expect(n >= 80 && n <= 120).toBe(true)
+  })
+  test('the card field wins when it is one of the two words', async () => {
+    const { advisorRuleOf } = await A()
+    expect(advisorRuleOf('economy', 'once', 'T-1')).toEqual({ rule: 'once', source: 'card' })
+    expect(advisorRuleOf('frontier', 'none', 'T-1')).toEqual({ rule: 'none', source: 'card' })
+    expect(advisorRuleOf('standard', ' Once ', 'T-1')).toEqual({ rule: 'once', source: 'card' })
+  })
+  test('an empty string, a number or another word falls to the tier', async () => {
+    const { advisorRuleOf } = await A()
+    expect(advisorRuleOf('standard', '', 'T-1')).toEqual({ rule: 'none', source: 'tier' })
+    expect(advisorRuleOf('standard', 1, 'T-1')).toEqual({ rule: 'none', source: 'tier' })
+    expect(advisorRuleOf('standard', 'twice', 'T-1')).toEqual({ rule: 'none', source: 'tier' })
+  })
+})
+
+describe('MOD-366: the advisor lines', () => {
+  test('the two rule lines, exactly', async () => {
+    const { advisorRuleLine, ADVISOR_RULES } = await A()
+    expect(ADVISOR_RULES).toEqual(['none', 'once'])
+    expect(advisorRuleLine('none')).toBe('- Advisor: do not call the advisor tool, if you have one. The card is the plan: decide what it leaves open and list it as a choice, or hand back with the question.')
+    expect(advisorRuleLine('once')).toBe('- Advisor: if you have an advisor tool you may call it once, after you have read the card and the files it names and before you change any file. Do not call it again, and not before you hand back: the verifier and the review check the work. If you called it, put one line in your hand-back: `advisor: changed <what you did differently>` or `advisor: no change`.')
+  })
+  test('the refusal, exactly', async () => {
+    const { advisorFieldRefusal } = await A()
+    expect(advisorFieldRefusal('twice')).toBe('refused: advisor: twice on the card; it takes none or once')
+  })
+  test('advisorAllowed and advisorOverLine', async () => {
+    const { advisorAllowed, advisorOverLine } = await A()
+    expect(advisorAllowed('none')).toBe(0)
+    expect(advisorAllowed('once')).toBe(1)
+    expect(advisorAllowed(undefined)).toBe(undefined)
+    expect(advisorOverLine(1, 0)).toBe('advisor: 1 call, the brief allowed 0')
+    expect(advisorOverLine(3, 1)).toBe('advisor: 3 calls, the brief allowed 1')
+  })
+})

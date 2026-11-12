@@ -214,7 +214,8 @@ import {
 import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, runsEngineSuite, waitedLine, withTrailingLine, type EngineLock } from './lib/gates'
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
-import { handbackChoices, handbackMessages, workerSaid } from './lib/handback'
+import { handbackAdvisor, handbackChoices, handbackMessages, workerSaid } from './lib/handback'
+import { advisorAllowed, advisorFieldRefusal, advisorOverLine, advisorRuleInBrief, advisorRuleLine, advisorRuleOf, type AdvisorRule } from './lib/advisor'
 import { AUTO_NOTICE, LATCH_LINE, allRefused, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
 import { openSiblings, type SiblingCard } from './lib/scopetree'
@@ -584,6 +585,9 @@ type SpawnRecord = {
   /** MOD-279: the parent's permission mode at the spawn (which the worker inherits); `auto` leaves the worker's Bash as typed. */
   permissionMode?: string
   usdAtStart?: number
+  /** MOD-366: the advisor rule the brief carries (read from its line; absent for a brief written before the rule) and the card/split source. */
+  advisorRule?: AdvisorRule
+  advisorRuleSource?: 'card' | 'split'
   /** GH-106: the brief's `spend=` ceiling in dollars (absent: none). */
   spend?: number
   /** MOD-23: the exclusive resources the brief's `resources=` names; the worker holds them while it runs. */
@@ -3142,7 +3146,7 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
 }
 
 /** MOD-274: what /dispatch stores about a card for the spawn: its class, and whether it hand-set an effort or a reason. */
-type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean; fixes?: string[]; linked?: boolean }
+type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean; fixes?: string[]; linked?: boolean; /** MOD-366 */ advisorRuleSource?: 'card' | 'split' }
 
 /**
  * MOD-279: whether a card's attempt explores, and how. One decision for the spawn hook and for /dispatch (which prints it before the
@@ -7421,6 +7425,14 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   const adv = await workerAdvisorUse($, spawn)
   if (adv && adv.usd !== null && usd !== undefined && own && own.usd !== null) usd = round4(usd + adv.usd)
   const advisorField = adv ? { advisor: { calls: adv.calls, usd: adv.usd, in: adv.in, out: adv.out, models: adv.models } } : {}
+  // MOD-366: what the worker said its advisor call changed (self-report, counted and never judged), and calls over the brief's rule (a note, never a refusal)
+  const advisorSay = spawn.adhoc || cardless ? undefined : handbackAdvisor(text)
+  if (advisorSay) lines = [...lines, advisorSay.said === 'changed' ? `advisor: changed${advisorSay.what ? ` ${advisorSay.what}` : ''}` : advisorSay.said === 'no-change' ? 'advisor: no change' : `advisor: ${advisorSay.what ?? ''}`]
+  const advisorCap = advisorAllowed(spawn.advisorRule)
+  const advisorOver = adv && advisorCap !== undefined && adv.calls > advisorCap ? adv.calls - advisorCap : undefined
+  if (adv && advisorOver !== undefined && advisorCap !== undefined) lines = [...lines, advisorOverLine(adv.calls, advisorCap)]
+  const advisorSayField = advisorSay ? { advisorSaid: advisorSay.said, ...(advisorSay.what ? { advisorWhat: advisorSay.what } : {}) } : {}
+  const advisorOverField = advisorOver !== undefined ? { advisorOver } : {}
   const label = taskLabel(spawn.task, spawn.subtask)
   let model = measured.model ?? spawn.resolvedModel
   let advice: Advice
@@ -7494,6 +7506,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
         ...(usd !== undefined ? { usd } : {}),
       ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
         ...advisorField,
+        ...advisorSayField,
+        ...advisorOverField,
         ...(tokens !== undefined ? { tokens } : {}),
         ...(model !== undefined ? { resolvedModel: model } : {}),
         // MOD-22: the report's metrics=, recorded on the attempt and never judged
@@ -8234,6 +8248,7 @@ async function recordResume($: Host, spawn: SpawnRecord, records: readonly Attem
     ...(spawn.here ? { here: spawn.here } : {}),
     ...(lineageBase ? { baseSha: lineageBase } : {}),
     ...(origin ? { effort: origin.effort as Effort, effortSource: 'explore' as const } : {}),
+    ...(spawn.advisorRule ? { advisorRule: spawn.advisorRule, ...(spawn.advisorRuleSource ? { advisorRuleSource: spawn.advisorRuleSource } : {}) } : {}),
     ...(spawn.permissionMode ? { permissionMode: spawn.permissionMode } : {}),
   }
   await saveAttempts($, spawn, [...records, rec])
@@ -8729,6 +8744,10 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   // MOD-276: a frontier or premium card says why; refused before any brief is written, the dry run alike
   const topWhy = topTierNeedsReason(tier, cleanReason(card.fields.tier_reason))
   if (topWhy !== undefined) return `/dispatch ${id}: refused, no brief written: ${topWhy}`
+  // MOD-366: the card's advisor: is none or once; another word stops the dispatch before a brief or a worktree is written. The rule follows the card's tier, not the tier an explore pick or an escalation runs.
+  const advisorWord = card.fields.advisor === undefined || card.fields.advisor === null ? '' : String(card.fields.advisor).trim()
+  if (advisorWord !== '' && advisorWord.toLowerCase() !== 'none' && advisorWord.toLowerCase() !== 'once') return `/dispatch ${id}: ${advisorFieldRefusal(advisorWord)}; no brief written`
+  const advisorPick = advisorRuleOf(tier, card.fields.advisor, id)
   const alias = finalAlias({ tier, source: 'brief' }, cfg.tierMap[tier], { allowFable: cfg.allowFable }).alias
   const budget = budgetAttempts(card.budget, cfg.defaultBudget)
   // GH-106: the card's spend: wins, else the tier's default; 0 is no ceiling
@@ -8838,7 +8857,7 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
       if (missing !== undefined) return { stop: [...out, missingBlockRefusal(id, missing, localPath)].join('\n') }
     }
     const briefExtraText = renderLocal(target ? target.briefExtra : cfg.briefExtra, localText, card.allow)
-    const rendered = renderBriefChecked(template, { card: briefCard, gateNote: gateLine.note, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: briefExtraText, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra })
+    const rendered = renderBriefChecked(template, { card: briefCard, gateNote: gateLine.note, ...(lessons !== undefined ? { lessons } : {}), worktree, branch, cardPath, install: installStep(rootNames), extra: briefExtraText, mode, spend, ...(outdir ? { outdir } : {}), ...(scratch ? { scratch } : {}), reportExtra, advisor: advisorRuleLine(advisorPick.rule) })
     // MOD-28: a brief with a marker left in it never reaches a worker; nothing is written, no worktree is made
     if (rendered.leftover !== undefined) return { stop: [...out, unrenderedRefusal(id, rendered.leftover, templateAt)].join('\n') }
     return { text: `${headerFor(b)}\n\n${rendered.text}` }
@@ -8923,6 +8942,8 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   const className = cardClassName(classKind, cardSize(tierHint({ tier, scope: classScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined))
   const classLedger = await ledgerAt($, root)
   out.push(...choiceLines(classLedger.rows, { classOf: await classOfFor($, root, classLedger.rows), tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason), cls: className }).map(l => `   ${l}`))
+  // MOD-366: the advisor rule is said only when the card set it
+  if (advisorPick.source === 'card') out.push(`   advisor rule ${advisorPick.rule} (card)`)
   // MOD-279: an exploring attempt 1 is said here, above the spawn block (the draw is the spawn hook's own)
   if (!replay) {
     const priorRecords = (await loadAttempts($, { task: id, ...(target ? { repo: target.path } : {}) })).filter(r => (r as HereRecord).adhoc !== true)
@@ -9001,6 +9022,7 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
     // MOD-341: whether the card has an issue link, and the merged cards it repairs
     linked: issueRef(card.fields.issue) !== undefined,
     ...(fixesOf(card.fields.fixes).length > 0 ? { fixes: fixesOf(card.fields.fixes) } : {}),
+    ...(advisorPick.source !== 'tier' ? { advisorRuleSource: advisorPick.source } : {}),
   }
   await storeSet($, K.cardClass(id, await cardRepo($, target?.path)), cardClassRecord)
 
@@ -10343,6 +10365,9 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
 
     const baseShaOf = !adhoc && briefPath ? await storeGet<string>($, K.baseSha(briefPath)) : undefined
     const classifierTier = !adhoc && attempt === 1 ? (await storeGet<{ classifier?: Tier }>($, K.classifier(task, await cardRepo($, other?.path ?? p.repo))))?.classifier : undefined
+    // MOD-366: the rule the brief carries, read from its line (a brief written before the rule has none); the source is the dispatch's, kept only when it matches
+    const briefRule = !adhoc && p.briefText !== undefined ? advisorRuleInBrief(p.briefText) : undefined
+    const advisorFields = briefRule ? { advisorRule: briefRule, ...(cardCls?.advisorRuleSource ? { advisorRuleSource: cardCls.advisorRuleSource } : {}) } : {}
     const rec: HereRecord = {
       ...(await ownerFields($, other?.path)),
       task,
@@ -10369,6 +10394,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(e.permissionMode ? { permissionMode: e.permissionMode } : {}),
       ...(cardCls?.name ? { class: cardCls.name } : {}),
       ...(explored ? { explore: true as const, exploreFrom: explored.from, ...(explored.effort ? { effort: explored.effort } : {}), effortSource: 'explore' as const } : {}),
+      ...advisorFields,
     }
     rateHeld = undefined // MOD-56: the brain dispatched again
     if (adhoc) await storeSet($, K.adhoc, [...((await storeGet<AttemptRecord[]>($, K.adhoc)) ?? []), rec].slice(-200))
@@ -10392,6 +10418,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
       ...(res.agentId ? { agentId: res.agentId } : {}),
       ...(res.model ? { resolvedModel: res.model } : {}),
       ...(e.permissionMode ? { permissionMode: e.permissionMode } : {}),
+      ...advisorFields,
       ...(usdAtStart !== undefined ? { usdAtStart } : {}),
       ...(spend !== undefined && !adhoc ? { spend } : {}),
       ...(p.resources.length > 0 && !adhoc ? { resources: p.resources } : {}),
@@ -10412,7 +10439,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     } else if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
     // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
-    if (!adhoc) await appendLedger($, spawnRow({ ...spawn, ...(await brainStampNow($).then(b => (b ? { brain: b } : {}))), toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(cardCls?.fixes ? { fixes: cardCls.fixes } : {}), ...(typeof cardCls?.linked === 'boolean' ? { linked: cardCls.linked } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)))
+    if (!adhoc) await appendLedger($, { ...spawnRow({ ...spawn, ...(await brainStampNow($).then(b => (b ? { brain: b } : {}))), toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(cardCls?.fixes ? { fixes: cardCls.fixes } : {}), ...(typeof cardCls?.linked === 'boolean' ? { linked: cardCls.linked } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)), ...advisorFields })
     // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
     if (s?.stopped) {
       debug($, `${label}: started; its views skipped (the hook was ${s.stopped === 'abort' ? 'abandoned' : 'near its budget'})`)

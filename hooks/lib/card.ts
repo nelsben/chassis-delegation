@@ -9,6 +9,7 @@
 import { blockersOf, resolveBlockedBy, type BoardCard } from './blocked'
 import { isSpacedPath, RESOURCE_NAME, scopeForbidClashes, scopeForbidClashLine, scopeOverlap } from './brief'
 import { dollars, spendCeiling } from './cost'
+import { advisorFieldRefusal } from './advisor'
 import { cardEffort, cleanReason, type CardEffort } from './choice'
 import { scopeLooksProse, yamlScalar } from './dispatch'
 import { cardKind } from './explore'
@@ -97,6 +98,7 @@ export const CARD_TOOL = {
       tierReason: { type: 'string', description: 'Why this tier, one line (colons and newlines become spaces, cut to 120 characters); written to the card as tier_reason' },
       effort: { type: 'string', description: 'low, medium or high; absent keeps the tier default (economy low, standard medium, frontier high). Raise it one level for an ambiguous or cross-cutting card, or after an attempt refuted for reasoning; lower it one level for mechanical work (releases, renames, docs). Any departure is an experiment, at most one level, and needs a tierReason or effortReason' },
       effortReason: { type: 'string', description: 'Why this effort, one line (cleaned and cut as tierReason); written to the card as effort_reason' },
+      advisor: { type: 'string', enum: ['none', 'once'], description: 'Whether the worker may call the session\'s advisor: none, or once before it changes any file. Absent: a frontier card is split in half by its id (once or none), every other card is none. Set it only to force one of the two.' },
       domain: { type: 'string', description: 'One of the repo domains (default: ops when the repo has it, else the first)' },
       gate: { type: 'string', description: 'Gate id(s) from gateMap, comma-separated (default: the first); for a repo given as a path also one command (words only, no comma), e.g. "npm run build"' },
       mergeCheck: { type: 'string', description: 'One command merge runs in the worktree before it rebases, e.g. "node check.cjs {card} {sha}"; {card}, {sha} (the full head) and {worktree} are filled in, and a non-zero exit refuses the merge. Same rules as a gateMap command. Optional: a mergeCheckMap entry for one of the card\'s gate ids applies when the card names none' },
@@ -314,6 +316,9 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   const topTier = topTierNeedsReason(tier, tierReason)
   if (topTier !== undefined) return { error: topTier }
   const effortReason = cleanReason(input.effortReason)
+  // MOD-366: the card's advisor rule, when given: one of the two words
+  const advisorIn = input.advisor === undefined || input.advisor === null ? '' : String(input.advisor).trim()
+  if (advisorIn !== '' && advisorIn !== 'none' && advisorIn !== 'once') return { error: advisorFieldRefusal(advisorIn) }
 
   const prefix = domainPrefix(domain)
   const id = `${prefix}-${nextNumber(ctx.names, prefix) + at}`
@@ -325,7 +330,7 @@ id: ${id}
 title: ${yamlScalar(title)}
 domain: ${domain}
 tier: ${tier}
-${tierReason !== '' ? `tier_reason: ${tierReason}\n` : ''}${eff.effort ? `effort: ${eff.effort}\n` : ''}${effortReason !== '' ? `effort_reason: ${effortReason}\n` : ''}${blockers.length > 0 ? `status: blocked\nblocked_by: [${blockers.join(', ')}]` : 'status: queued'}
+${tierReason !== '' ? `tier_reason: ${tierReason}\n` : ''}${eff.effort ? `effort: ${eff.effort}\n` : ''}${effortReason !== '' ? `effort_reason: ${effortReason}\n` : ''}${advisorIn !== '' ? `advisor: ${advisorIn}\n` : ''}${blockers.length > 0 ? `status: blocked\nblocked_by: [${blockers.join(', ')}]` : 'status: queued'}
 ${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${fixes !== undefined ? `fixes: [${fixes.join(', ')}]\n` : ''}${parent !== undefined && parentScope.length > 0 ? `parentScope: [${parentScope.map(inList).join(', ')}]\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
 forbid: [${forbid.map(inList).join(', ')}]
 ${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}

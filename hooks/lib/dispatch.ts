@@ -3,6 +3,7 @@
 // worker; the brain makes the Agent call the block names, and the spawn hook
 // shapes and records it like any other. Pure: no `$`.
 import { isBaseRef, isSha, isTaskId } from './allow'
+import { advisorRuleLine } from './advisor'
 import { blockedLine } from './blocked'
 import { isSpacedPath, listForHeader, parseBudget, parseHeader } from './brief'
 import { worktreePath as worktreePathOf } from './paths'
@@ -389,6 +390,8 @@ export type BriefVars = {
   gateNote?: string
   /** MOD-34: the domain's lessons file (its text and the path it was read from); the brief carries it under `## Lessons (<domain>)`, capped. */
   lessons?: { text: string; path: string }
+  /** MOD-366: the brief's one advisor Rules line (advisorRuleLine); absent: the none line. */
+  advisor?: string
 }
 
 /**
@@ -451,6 +454,7 @@ function stageBrief(template: string, v: BriefVars): { staged: string; values: R
     outdir: v.outdir ?? '',
     scratch: v.scratch ?? '',
     reportExtra: v.reportExtra ?? '',
+    advisor: v.advisor ?? advisorRuleLine('none'),
     gateNote: v.gateNote ?? '',
     id: v.card.id,
     title: v.card.title,

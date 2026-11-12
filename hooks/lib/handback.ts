@@ -95,3 +95,28 @@ export function handbackChoices(text: string): HandbackChoices {
   }
   return { stated: none || found.length > 0, count: found.length, lines: found.slice(0, 12).map(l => l.slice(0, 160)) }
 }
+
+/** MOD-366: what the worker said its advisor call changed. */
+export type HandbackAdvisor = { said: 'changed' | 'no-change' | 'other'; what?: string }
+
+const ADVISOR_LINE = /^ *(?:[-*] +)?`?advisor:(.*)$/i
+
+/** MOD-366: the last `advisor:` line above the last `[[report`; undefined when there is none. Self-report: counted, never judged. */
+export function handbackAdvisor(text: string): HandbackAdvisor | undefined {
+  const at = text.lastIndexOf('[[report')
+  const head = at === -1 ? text : text.slice(0, at)
+  let body: string | undefined
+  for (const raw of head.split('\n')) {
+    const m = ADVISOR_LINE.exec(raw)
+    if (!m) continue
+    const b = m[1].trim().replace(/`$/, '').trim()
+    if (b !== '') body = b
+  }
+  if (body === undefined) return undefined
+  if (/^no change/i.test(body)) return { said: 'no-change' }
+  if (/^changed/i.test(body)) {
+    const what = body.slice('changed'.length).trim().slice(0, 160)
+    return what === '' ? { said: 'changed' } : { said: 'changed', what }
+  }
+  return { said: 'other', what: body.slice(0, 160) }
+}
