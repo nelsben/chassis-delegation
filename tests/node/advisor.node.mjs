@@ -138,3 +138,47 @@ describe('MOD-366: the advisor lines', () => {
     expect(advisorOverLine(3, 1)).toBe('advisor: 3 calls, the brief allowed 1')
   })
 })
+
+describe('MOD-367: the brain advisor line and the cues', () => {
+  const TOP = 'Advisor: do not call the advisor tool. You are on the top model; a call would consult your own model.'
+  const OTHER = 'Advisor: call it only when the mod prints an advisor cue, when the person asks for it, or when the person has corrected the same thing twice; not for routine dispatch, verdict or merge steps. Each call re-reads the whole session. When you call it, say in your reply what it changed.'
+  test('the two state lines, exactly', async () => {
+    const { brainAdvisorLine } = await A()
+    expect(brainAdvisorLine('fable')).toBe(TOP)
+    expect(brainAdvisorLine('opus')).toBe(OTHER)
+    expect(brainAdvisorLine('other')).toBe(OTHER)
+  })
+  test('the two cue lines, exactly, and empty for the top model', async () => {
+    const { advisorCueLine } = await A()
+    expect(advisorCueLine('refute2', 'other')).toBe("advisor cue: this card's second attempt was refuted. If your advisor is a model above yours, call it once before you choose the next step.")
+    expect(advisorCueLine('review', 'opus')).toBe('advisor cue: the review refuted a claim. If your advisor is a model above yours, call it once before you resume the worker.')
+    expect(advisorCueLine('refute2', 'fable')).toBe('')
+    expect(advisorCueLine('review', 'fable')).toBe('')
+  })
+  test('advisorCueRow with and without a session id', async () => {
+    const { advisorCueRow } = await A()
+    const v = { cue: 'refute2', task: 'T-1', subtask: 'main', attempt: 2, at: 1700, brain: 'claude-opus-5-5' }
+    expect(advisorCueRow(v)).toEqual({ kind: 'advisor-cue', cue: 'refute2', task: 'T-1', subtask: 'main', attempt: 2, at: 1700, brain: 'claude-opus-5-5' })
+    expect('sessionId' in advisorCueRow(v)).toBe(false)
+    expect(advisorCueRow({ ...v, cue: 'review', sessionId: 's-1' })).toEqual({ kind: 'advisor-cue', cue: 'review', task: 'T-1', subtask: 'main', attempt: 2, at: 1700, brain: 'claude-opus-5-5', sessionId: 's-1' })
+  })
+  test('the scorecard reader answers the same with and without an advisor-cue row', async () => {
+    const { mkdtempSync, writeFileSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { spawnSync } = await import('node:child_process')
+    const { fileURLToPath } = await import('node:url')
+    const here = rel => fileURLToPath(new URL(rel, import.meta.url))
+    const base = readFileSync(here('../fixtures/evidence/ledger-a.jsonl'), 'utf8')
+    const dir = mkdtempSync(join(tmpdir(), 'cue-test-'))
+    const first = JSON.parse(base.split('\n').find(l => l.trim().startsWith('{')))
+    const cue = JSON.stringify({ kind: 'advisor-cue', cue: 'refute2', task: first.task, subtask: 'main', attempt: 2, at: first.at ?? 1759300000000, brain: 'claude-opus-5-5', sessionId: 's-1' })
+    writeFileSync(join(dir, 'with.jsonl'), base.replace(/\n*$/, '\n') + cue + '\n')
+    writeFileSync(join(dir, 'without.jsonl'), base)
+    const run = f => spawnSync(process.execPath, ['--no-warnings', here('../../bin/evidence.mjs'), f], { encoding: 'utf8' })
+    const a = run(join(dir, 'with.jsonl'))
+    const b = run(join(dir, 'without.jsonl'))
+    expect(a.status).toBe(0)
+    expect(JSON.parse(a.stdout)).toEqual(JSON.parse(b.stdout))
+  })
+})

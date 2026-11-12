@@ -18,7 +18,7 @@ const SEND = { tool: 'SendMessage', to: 'agent-4', message: 'fix it' }
 const records = (w: { store: Map<string, unknown> }) => (w.store.get(`delegation.tasks.T-4@${ROOT}`) ?? []) as Record<string, unknown>[]
 const ledger = (w: { files: Map<string, string> }) =>
   (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>).filter(r => r.event !== 'spawn')
-const attemptsOf = (w: { files: Map<string, string> }) => ledger(w).map(r => [r.attempt, r.kind])
+const attemptsOf = (w: { files: Map<string, string> }) => ledger(w).filter(r => r.kind !== 'advisor-cue').map(r => [r.attempt, r.kind]) // MOD-367: a cue row is not an attempt
 /** The spawn decisions the mod's agent.spawn handler made: each briefed one posts a tier notice. */
 const spawnDecisions = (w: { notices: string[] }) => w.notices.filter(n => n.startsWith('tier=')).length
 
