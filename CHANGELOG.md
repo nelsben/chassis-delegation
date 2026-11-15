@@ -7,6 +7,10 @@
 - **Spike cards: `purpose: spike` (by hand or with the card tool's `purpose`, `questions`, `findings`, `sources` and `verdicts`) dispatches with `findings=`, `sources=` and `verdicts=` in its brief header and spike rules in its brief, is refused before any brief when malformed, never explores, and is checked by the built-in `findings` gate against the card's questions** (MOD-372, MOD-373)
 - **A build card's `spike: <ID>` (and the card tool's `spike`) names the spike it was planned from, and its spawn rows carry it; a value that is not a task id is warned about at dispatch and not recorded** (MOD-374)
 
+### Changed
+
+- **A refute on `files=` alone, with the gate reported green, advises a by-hand re-judge (`dispatch verify=<sha>`, no attempt spent) before any resume, since the report was wrong and not the tree** (MOD-376, #516)
+
 ### Fixed
 
 - **A root outside the repo that was listed in full at dispatch is listed in full at hand-back, so one that grew past 10000 files during the run is still judged, not left unchecked** (MOD-375, #514)

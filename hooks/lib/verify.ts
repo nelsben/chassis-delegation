@@ -163,6 +163,11 @@ export function advise(input: AdviseInput): Advice {
     if (path !== undefined && heldScopePaths(input.lines ?? []).includes(path)) {
       return { kind: 'check', next: `approve the amend (append it to ${input.briefPath ?? 'the brief'}), then dispatch verify=${input.sha ?? '<sha>'}; or refuse it; grant it: dispatch task=${input.task} amend="scope+=${path}" then dispatch verify=${input.sha ?? '<sha>'}` }
     }
+    // MOD-376 (#516): a refute on files alone with the gate green means the report was wrong, not the tree: a by-hand re-judge at the same sha spends no attempt
+    if (failedAll.length === 1 && failedAll[0]?.name === 'files' && input.reportGate === 'pass' && input.sha) {
+      const resume = input.agentId && input.attempts < input.budget ? `; else resume agent=${input.agentId} — revert the extras` : ''
+      return { kind: 'check', next: `files= is wrong, not the tree: check the paths named above are the worker's, then dispatch task=${input.task} verify=${input.sha} (re-judges this attempt against the delta; no attempt spent)${resume}` }
+    }
   }
   if (input.attempts >= input.budget) return { kind: 'exhausted', next: `stop — ${budgetDenyMessage(input.task, input.attempts)}` }
   // GH-115: a scope or files refute says the brief's globs are wrong, not that the worker was out of its depth
