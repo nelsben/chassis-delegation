@@ -236,7 +236,7 @@ import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLa
 import { CARD_TOOL, cardsFromFields, fixesOf, spikeLinkOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, globGapWarnings, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
-import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
+import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeilingWith, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, gateDeadlineEnv, outputTail, GATE_TAIL_LINES as GATE_KEEP_LINES, type GateProgress } from './lib/gaterun'
 import { landedSha, predatesSpawn, mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
@@ -1266,7 +1266,7 @@ async function sessionUsd($: Host): Promise<number | undefined> {
   }
 }
 
-type RunOut = { ok: true; exitCode: number; stdout: string; stderr: string } | { ok: false; why: string }
+type RunOut = { ok: true; exitCode: number; stdout: string; stderr: string } | { ok: false; why: string; tail?: string[] }
 
 /** The allowlist before any host command (run and spawnGate): the refusal, or undefined when the argv may run. */
 async function refusal($: Host, argv: string[]): Promise<RunOut | undefined> {
@@ -1321,7 +1321,8 @@ async function spawnGate($: Host, argv: string[], init: { cwd?: string; progress
   let timer: { cancel: () => void } | undefined
   try {
     if (init.progress) gateProgress.set(init.progress.key, { phase: 'gate', id: init.progress.id, since: await now($) })
-    const stream = $.process.spawn({ argv, ...(init.cwd !== undefined ? { cwd: init.cwd } : {}) })
+    // MOD-377 (#513): the gate is told its deadline (whole seconds until the ceiling) in its environment
+    const stream = $.process.spawn({ argv, env: gateDeadlineEnv(minutes), ...(init.cwd !== undefined ? { cwd: init.cwd } : {}) })
     let fire = (): void => undefined
     const ceiling = new Promise<'ceiling'>(resolve => {
       fire = () => resolve('ceiling')
@@ -1338,7 +1339,9 @@ async function spawnGate($: Host, argv: string[], init: { cwd?: string; progress
         } catch {
           // the child ends with the module at the latest
         }
-        return { ok: false, why: pastCeiling(minutes) }
+        // MOD-377 (#513): the last lines the gate printed name it in the verdict; the review brief keeps them too
+        const tail = outputTail(out.stdout(), out.stderr(), GATE_KEEP_LINES)
+        return { ok: false, why: pastCeilingWith(minutes, tail), tail }
       }
       if (got.done) return { ok: true, exitCode: spawnExitCode(got.value), stdout: out.stdout(), stderr: out.stderr() }
       out.add(got.value.stream, got.value.text)
@@ -6945,6 +6948,11 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
             const key = taskLabel(spawn.task, spawn.subtask)
             const tail = `${r.stdout}\n${r.stderr}`.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '').slice(-GATE_TAIL_LINES)
             setBounded(gateTails, key, [...(gateTails.get(key) ?? []), `  [${init.id}] exit ${r.exitCode}`, ...tail.map(l => `  | ${l.trim()}`)], MAP_CAPS.gateTails)
+          } else if (r.tail) {
+            // MOD-377 (#513): a gate stopped at the ceiling keeps its last lines, as a passing one does
+            const key = taskLabel(spawn.task, spawn.subtask)
+            const tail = r.tail.slice(-GATE_TAIL_LINES)
+            setBounded(gateTails, key, [...(gateTails.get(key) ?? []), `  [${init.id}] stopped at the ceiling`, ...tail.map(l => `  | ${l}`)], MAP_CAPS.gateTails)
           }
           return r
         },
