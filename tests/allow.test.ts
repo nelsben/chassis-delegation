@@ -60,6 +60,14 @@ describe('allowlist accepts', () => {
     no(['git', '-C', R, 'show', 'origin/main:docs/other/MOD-4-x.md'], cfg)
     no(['git', '-C', R, 'show', 'HEAD~1:docs/cards/MOD-4-x.md'], cfg)
   })
+  test('MOD-372: the findings file read at a full sha, inside the repo only', () => {
+    const sha = '4aefe9313a4f0c2b9d8e7f6a5b4c3d2e1f0a9b8c'
+    ok(['git', '-C', R, 'show', `${sha}:findings/spike.md`])
+    no(['git', '-C', R, 'show', `${sha}:../spike.md`])
+    no(['git', '-C', R, 'show', `${sha}:/etc/passwd`])
+    no(['git', '-C', R, 'show', `${sha}:-x.md`])
+    no(['git', '-C', R, 'show', `HEAD:findings/spike.md`])
+  })
   test('the default six domains, or the repo own; worktreeRoot moves the path', () => {
     for (const domain of ['frontend', 'backend', 'ops', 'dispatcher', 'cross', 'shared']) {
       ok(['git', '-C', R, 'worktree', 'add', '-q', '-b', `agent/${domain}/OPS-230`, R + '-OPS-230', 'origin/main'])

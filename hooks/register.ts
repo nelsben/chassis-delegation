@@ -211,7 +211,8 @@ import {
   shouldEval,
   type EvalTier,
 } from './lib/evaltrigger'
-import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, runsEngineSuite, waitedLine, withTrailingLine, type EngineLock } from './lib/gates'
+import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta, gateTemplatesOf, isEngineGate, readEngineLock, resolveGateRuns, runsEngineSuite, waitedLine, withTrailingLine, type EngineLock, type GateResolution } from './lib/gates'
+import { findingsCheck, FINDINGS_GATE, spikeQuestions } from './lib/spike'
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
 import { handbackAdvisor, handbackChoices, handbackMessages, handbackTried, workerSaid } from './lib/handback'
@@ -3795,6 +3796,10 @@ async function reusableGates($: Host, wt: string, gateTree: Record<string, strin
   return out
 }
 
+// MOD-372: a card field as text (a YAML list joins with ", ") and as a list (a YAML list, or a comma string; entries trimmed, empties dropped)
+const fieldText = (v: unknown): string => (Array.isArray(v) ? v.join(', ') : typeof v === 'string' ? v : '')
+const fieldList = (v: unknown): string[] => (Array.isArray(v) ? v : fieldText(v).split(',')).map(s => String(s).trim()).filter(s => s !== '')
+
 /** `/delegation merge <ID> [--finish]` and the merge tool: one function, two doors. */
 async function runMerge($: Host, parsed: MergeArgs | { error: string }): Promise<string> {
   if ('error' in parsed) return parsed.error
@@ -4004,8 +4009,11 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
   // MOD-236: a gate the verifier passed on a tree that differs from this one in the card file alone is not run again
   const reusedLines: string[] = []
   const reusable = await reusableGates($, wt.path, row.gateTree, ignored ? undefined : cardRel)
+  // MOD-372: the card's findings= names the file a built-in `findings` gate reads; the id is not a gateMap command
+  const findingsPath = fieldText(card.fields.findings).trim()
   for (const gid of emptyGate.line && emptyGate.gate ? [emptyGate.gate] : card.gate) {
-    const res = resolveGateRuns(gid, cfg.gateMap, allowed, filesPath, wt.path)
+    const builtin = gid === FINDINGS_GATE && findingsPath !== ''
+    const res: GateResolution = builtin ? { runs: [], notRerun: [] } : resolveGateRuns(gid, cfg.gateMap, allowed, filesPath, wt.path)
     const skipped = res.notRerun[0]
     if (skipped) {
       log.push(`## ${gid}: not run (${skipped.why})`)
@@ -4018,6 +4026,30 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
       log.push(said)
       reusedLines.push(said)
       results.push({ id: gid, label: res.runs.map(g => g.label).join(' && ') || gid, ok: true })
+      continue
+    }
+    if (builtin) {
+      const bad = (why: string) => {
+        log.push(`## ${gid}: not run (${why})`)
+        return writeLog().then(() => `${id}: gate findings not run at ${short} (${why}); not pushed`)
+      }
+      if (findingsPath.startsWith('/') || findingsPath.split('/').includes('..')) return bad('findings= must be a path inside the repo')
+      const spike = spikeQuestions(card.body)
+      if ('error' in spike) return bad(spike.error)
+      let text: string | undefined
+      try {
+        text = await $.fs.read(`${wt.path}/${findingsPath}`)
+      } catch {
+        text = undefined
+      }
+      const r = findingsCheck({ text, path: findingsPath, questions: spike.questions, sources: fieldList(card.fields.sources), verdicts: fieldList(card.fields.verdicts) })
+      const problems = r.problems.map(p => `  - ${p}`)
+      log.push('## findings: built-in', ...(r.ok ? [r.summary] : problems))
+      if (!r.ok) {
+        await writeLog()
+        return [`${id}: gate findings failed at ${short}; not pushed`, ...problems].join('\n')
+      }
+      results.push({ id: FINDINGS_GATE, label: 'findings (built-in)', ok: true })
       continue
     }
     for (const g of res.runs) {
