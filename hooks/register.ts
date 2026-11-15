@@ -236,7 +236,7 @@ import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLa
 import { CARD_TOOL, cardsFromFields, fixesOf, spikeLinkOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, globGapWarnings, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
-import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeilingWith, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, gateDeadlineEnv, outputTail, GATE_TAIL_LINES as GATE_KEEP_LINES, type GateProgress } from './lib/gaterun'
+import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeilingWith, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, gateDeadlineEnv, gateQueue, outputTail, GATE_TAIL_LINES as GATE_KEEP_LINES, type GateProgress } from './lib/gaterun'
 import { landedSha, predatesSpawn, mergedVerdict, noVerifierRunning, reopensAfterNoReport, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
@@ -697,6 +697,8 @@ type Config = {
   maxWorkers: number
   /** MOD-155 (#246): whole minutes one gate command may run. */
   gateTimeoutMinutes: number
+  /** MOD-379 (#513): the most gate commands run at once; 0 = no cap. */
+  maxConcurrentGates: number
   /** MOD-131 (#219): the lower ceiling of each capped tier under maxWorkers. */
   maxWorkersByTier: Partial<Record<Tier, number>>
   domains: string[]
@@ -834,6 +836,7 @@ function readConfig(host: Readonly<Record<string, unknown>>, repo: RepoConfig, u
       briefLocal: eff.briefLocal,
       maxWorkers: eff.maxWorkers,
       gateTimeoutMinutes: eff.gateTimeoutMinutes,
+      maxConcurrentGates: eff.maxConcurrentGates,
       maxWorkersByTier: eff.maxWorkersByTier,
       domains: eff.domains,
       worktreeRoot: eff.worktreeRoot,
@@ -1313,9 +1316,14 @@ const gateTails = new Map<string, string[]>()
  * budget is not spent while the gate runs; the ceiling is a `$.clock.after` timer, not a clock wait. Commands other
  * than gates keep run.
  */
+/** MOD-379 (#513): every gate the mod spawns takes its place here, so maxConcurrentGates caps them at once. */
+const gates = gateQueue()
+
 async function spawnGate($: Host, argv: string[], init: { cwd?: string; progress?: { key: string; id: string } } = {}): Promise<RunOut> {
   const refused = await refusal($, argv)
   if (refused) return refused
+  // MOD-379 (#513): the wait in line comes before the ceiling timer, the deadline env and the progress row
+  const release = await gates.acquire(cfg.maxConcurrentGates)
   const minutes = cfg.gateTimeoutMinutes
   const key = init.progress?.key
   let timer: { cancel: () => void } | undefined
@@ -1350,6 +1358,7 @@ async function spawnGate($: Host, argv: string[], init: { cwd?: string; progress
     return { ok: false, why: String(err) }
   } finally {
     timer?.cancel()
+    release()
     if (key !== undefined) gateProgress.delete(key)
   }
 }

@@ -91,6 +91,31 @@ export function pastCeilingWith(minutes: number, tail: readonly string[]): strin
   return `${pastCeiling(minutes)}; last output: ${shown}`
 }
 
+/**
+ * MOD-379 (#513): a first-in-first-out queue that caps how many gate commands run at once. `acquire(max)` resolves
+ * to a release at once when `max <= 0` or fewer than `max` run, and otherwise waits its turn with its own `max` kept.
+ * A caller let in with `max <= 0` still counts as running. The release lowers the count once; a second call does nothing.
+ */
+export function gateQueue(): { acquire(max: number): Promise<() => void>; running(): number; waiting(): number } {
+  let running = 0
+  const line: { max: number; start: (release: () => void) => void }[] = []
+  const admit = (): (() => void) => {
+    running += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      running -= 1
+      while (line.length > 0 && (line[0].max <= 0 || running < line[0].max)) line.shift()?.start(admit())
+    }
+  }
+  return {
+    acquire: max => (max <= 0 || running < max ? Promise.resolve(admit()) : new Promise<() => void>(resolve => line.push({ max, start: resolve }))),
+    running: () => running,
+    waiting: () => line.length,
+  }
+}
+
 /** The gate id of the brief's `gate=` whose gateMap command made the run labelled `label`; the label when none did (a bare command). */
 export function gateIdOf(gate: string | undefined, map: Readonly<Record<string, string>>, label: string): string {
   for (const id of (gate ?? '').split(',').map(s => s.trim()).filter(Boolean)) {

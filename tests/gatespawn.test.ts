@@ -233,3 +233,62 @@ describe('MOD-229 with MOD-230: the load words on a spawned gate', () => {
     expect(plain.lines.join('\n')).not.toContain('machine loaded')
   })
 })
+
+// MOD-379 (#513): maxConcurrentGates. The option's range, and two workers handing back together.
+describe('MOD-379: maxConcurrentGates takes 0 to 16, default 0', () => {
+  test('0, 2 and 16 are taken; unset is 0', () => {
+    for (const v of [0, 2, 16]) expect(parseRepoConfig(JSON.stringify({ maxConcurrentGates: v }))).toEqual({ config: { maxConcurrentGates: v }, errors: [] })
+    expect(mergeConfig({}, {}).maxConcurrentGates).toBe(0)
+    expect(mergeConfig({ maxConcurrentGates: 2 }, {}).maxConcurrentGates).toBe(2)
+  })
+  test('17 and 1.5 are named as errors and 0 is used', () => {
+    for (const v of [17, 1.5, -1]) {
+      const r = parseRepoConfig(JSON.stringify({ maxConcurrentGates: v }))
+      expect(r.config.maxConcurrentGates).toBeUndefined()
+      expect(r.errors).toEqual(['maxConcurrentGates: needs a whole number, 0 to 16 (ignored; no cap is used)'])
+      expect(mergeConfig(r.config, {}).maxConcurrentGates).toBe(0)
+    }
+  })
+})
+
+describe('MOD-379: two gates started together', () => {
+  const BRIEF5 = `${SCRATCH}/briefs/T-5.brief.md`
+  const REPORT5 = REPORT.replaceAll('T-4', 'T-5')
+  /** Two workers hand back at once; returns the minute each gate command started and the two verdicts. */
+  const twoAtOnce = async ($: any, on: unknown, max: number | undefined) => {
+    const starts: number[] = []
+    const slot: { w?: World } = {}
+    const repoFile = { gateMap: { prettier: 'npx prettier --check {files}' }, ...(max !== undefined ? { maxConcurrentGates: max } : {}) }
+    const answer = repo(slot, 3 * MIN)
+    const w = world(on as never, {
+      files: { [BRIEF]: `${header('prettier')}\nbody`, [BRIEF5]: `${header('prettier').replace('T-4', 'T-5')}\nbody`, [REPO_FILE]: JSON.stringify(repoFile) },
+      run: async argv => {
+        if (argv[0] === 'npx') starts.push(Math.round(((slot.w as World).clock.now() - t0) / MIN))
+        return answer(argv)
+      },
+      agentId: 'agent-4',
+      hostCap: true,
+    })
+    slot.w = w
+    const t0 = w.clock.now()
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF5}.`, tool_use_id: 'toolu_02' }))
+    const j4 = $.turn.complete(turnInput('agent-4', `Done.\n${REPORT}`))
+    const j5 = $.turn.complete(turnInput('agent-2', `Done.\n${REPORT5}`))
+    await w.clock.settle()
+    for (let i = 0; i < 12; i++) await w.clock.advance(MIN)
+    await Promise.all([j4, j5])
+    return { starts, w }
+  }
+  test('with maxConcurrentGates 1, the second gate starts only after the first ends', async ($, on) => {
+    const { starts, w } = await twoAtOnce($, on, 1)
+    expect(starts.length).toBe(2)
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(3)
+    expect(delivered(w)).not.toContain('gate ran past')
+  })
+  test('unset, both gates start together', async ($, on) => {
+    const { starts } = await twoAtOnce($, on, undefined)
+    expect(starts.length).toBe(2)
+    expect(starts[1] - starts[0]).toBe(0)
+  })
+})
