@@ -7,7 +7,7 @@ import { cardClassName, cardKind, cardSize } from './explore'
 export function classOfCardText(text: string): string | undefined {
   const card = parseCard(text)
   if ('error' in card) return undefined
-  const kind = cardKind({ kind: card.fields.kind, title: card.title, scope: card.scope })
+  const kind = cardKind({ kind: card.fields.kind, purpose: card.fields.purpose, title: card.title, scope: card.scope })
   const small = tierHint({ tier: card.tier ?? 'standard', scope: card.scope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined
   return cardClassName(kind, cardSize(small))
 }

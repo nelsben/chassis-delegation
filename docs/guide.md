@@ -156,6 +156,35 @@ A `budget` that is not `<n>-attempts` falls back to `defaultBudget`; `/dispatch`
 
 Every brief carries one fixed stop rule in its Rules: if the gate or the red test still fails after two rounds of fixes, the worker stops, does not try a third, and hands back with `gate=fail` and one `tried: <what you changed> -> <what still fails>` line per round. A `gate=fail` hand-back is what steps the card up a tier; the stop rule adds no tier of its own, and no option turns it off. The mod counts the `tried:` lines and records them as `tried: <count>` on the attempt record and the ledger row, and the verdict says `tried: 2 rounds before handing back`; the count never changes a verdict, a `next=`, an escalation or a budget.
 
+### Spike cards
+
+A spike is a card whose deliverable is answers, not code: it asks questions, and the worker hands back a findings file that cites its sources. Write one by hand or with the card tool (`purpose: "spike"`, with `questions`, `findings`, and optionally `sources` and `verdicts`). The card:
+
+```yaml
+purpose: spike
+findings: docs/spikes/MOD-400-findings.md      # repo-relative, inside scope
+sources: [docs.anthropic.com, github.com/anthropics]   # optional; absent = any source
+verdicts: [adopt, adapt, skip]                  # optional; absent = any word
+red_test: none
+gate: findings                                  # may add gateMap ids: findings, validate
+```
+
+and a `## Questions` section in the body, `1. …`, `2. …`; a question that ends `(verdict)` wants a `Verdict:` line. The brief header gains `purpose=spike findings=… sources=… verdicts=…` and the brief gains the spike rules; web search and web fetch are allowed, and the worker changes no source, test or config file. `/dispatch` refuses a malformed spike (no findings path, a path outside the repo or the scope, `repo: none`, a gate without `findings`, a red test other than `none`, no numbered questions) before it writes a brief, the dry run alike.
+
+The findings file has one `## Q<n>` section per question, headed with the card's number. In it: the answer, every claim cited by a URL or a repo `path:line`. A question the sources do not answer gets `Unanswered: <why>`, never a guess. A `(verdict)` question gets a `Verdict: <word>` line. A claim the worker could not confirm is flagged `⚠ Unverified: <what>`, and sources that disagree `⚠ Conflict: <what>`. The file ends with `## Decisions this implies`, one `- ` line per decision (`- none` when there is none).
+
+The built-in `findings` gate checks the file at the worker's sha against the card's questions, one line each:
+
+- the file exists and is not empty;
+- every card question has exactly one `## Q<n>` section, and no section names a question the card lacks;
+- an answered question cites a URL or `path:line`, or is marked `Unanswered:`;
+- a `(verdict)` question has a `Verdict:` line, and its word is one of `verdicts` when the card lists them;
+- every URL is under one of `sources` when the card lists them;
+- every `⚠` flag is `⚠ Unverified:` or `⚠ Conflict:` with text;
+- the `## Decisions this implies` section is there and has an item.
+
+A spike never explores: its card kind is `spike`, and the adaptive picks leave its model and effort alone. The gate makes no network call, so a URL it accepts may still be wrong; at review the brain spot-checks a few of the cited URLs.
+
 ## One-client resources
 
 A live app that takes one client at a time (a running Blender, a device on a bench) is declared on the card with

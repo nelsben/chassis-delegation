@@ -32,6 +32,11 @@ You were started by the brain's own Agent call: the mod recorded this attempt, s
 {{#none}}
 - Test: {{redTest}}. No red evidence file: the mod checks your scope, the files you name and your artefacts, then runs the gate.
 {{/none}}
+{{#spike}}
+- Spike: the card asks questions and your deliverable is the findings file {{findings}}. Write only that file and the other paths the scope names; change no source, test or config file. Web search and web fetch are allowed. Cite only from: {{sources}}.
+- Findings format: one section per card question, headed `## Q<n>` with the card's number; in it the answer, every claim cited by a URL or a repo `path:line`. A question the sources do not answer gets a line `Unanswered: <why>`, never a guess. A question marked (verdict) gets a line `Verdict: <word>`{{verdictWords}}. Flag a claim you could not confirm `⚠ Unverified: <what>` and sources that disagree `⚠ Conflict: <what>`. End with `## Decisions this implies`, one `- ` line per decision (`- none` when there is none).
+- The gate `findings` is built in: the verifier checks the file at your sha against the card's questions, the sources and this format. There is no red test: report red=none.
+{{/spike}}
 - Stay inside the brief's scope= and never touch a forbid= path. A file outside scope: an amend block on its own line, `[[amend v=1 scope+=<path> reason=<one line>]]`. A fix only in a forbid= path: touch nothing, hand back gate=fail with `[[amend v=1 forbid-=<the forbid entry> scope+=<path> reason=<one line>]]`.
 - Choices: where the card leaves a decision to you (a name, a wording, a default, a layout, what an edge case does) and another worker could fairly have decided it differently, decide it and list it in your hand-back, one per line: `choice: <what was open> -> <what you picked>`. With none, write one line: `choice: none`. The mod counts them and never judges them. What the card, the Lessons or the code around your change already settles is not a choice.
 {{#outdir}}

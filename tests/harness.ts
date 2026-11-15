@@ -154,7 +154,15 @@ const RESOLVED: Record<string, string> = {
   opus: 'claude-opus-5-5',
 }
 
-const TEMPLATE = 'Work in {{worktree}} on {{branch}}; card {{cardPath}}.\n\n- Stop rule: if the gate or the red test still fails after two rounds of fixes, stop and hand back with gate=fail and one tried: line per round.\n{{advisor}}\n\n{{body}}'
+// MOD-373 (#512): the spike section the real template carries, so an engine test sees a spike card's rules
+const SPIKE_SECTION = [
+  "{{#spike}}",
+  "- Spike: the card asks questions and your deliverable is the findings file {{findings}}. Write only that file and the other paths the scope names; change no source, test or config file. Web search and web fetch are allowed. Cite only from: {{sources}}.",
+  "- Findings format: one section per card question, headed `## Q<n>` with the card's number; in it the answer, every claim cited by a URL or a repo `path:line`. A question the sources do not answer gets a line `Unanswered: <why>`, never a guess. A question marked (verdict) gets a line `Verdict: <word>`{{verdictWords}}. Flag a claim you could not confirm `⚠ Unverified: <what>` and sources that disagree `⚠ Conflict: <what>`. End with `## Decisions this implies`, one `- ` line per decision (`- none` when there is none).",
+  "- The gate `findings` is built in: the verifier checks the file at your sha against the card's questions, the sources and this format. There is no red test: report red=none.",
+  "{{/spike}}"
+].join('\n') + '\n'
+const TEMPLATE = 'Work in {{worktree}} on {{branch}}; card {{cardPath}}.\n\n' + SPIKE_SECTION + '- Stop rule: if the gate or the red test still fails after two rounds of fixes, stop and hand back with gate=fail and one tried: line per round.\n{{advisor}}\n\n{{body}}'
 /** MOD-21: the reviewer prompt the mod builds from hooks/templates/review.md (a stand-in: an engine test cannot read the file). */
 export const REVIEW_TEMPLATE = [
   'Review {{id}} attempt {{attempt}}/{{budget}}: read the brief {{brief}}, the report and the diff at {{sha}} in {{worktree}} (base {{base}}).',
