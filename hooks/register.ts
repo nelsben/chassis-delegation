@@ -237,7 +237,7 @@ import { CARD_TOOL, cardsFromFields, fixesOf, spikeLinkOf, slugOf, cardSummary, 
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeilingWith, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, gateDeadlineEnv, outputTail, GATE_TAIL_LINES as GATE_KEEP_LINES, type GateProgress } from './lib/gaterun'
-import { landedSha, predatesSpawn, mergedVerdict, noVerifierRunning, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
+import { landedSha, predatesSpawn, mergedVerdict, noVerifierRunning, reopensAfterNoReport, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
 import { SizeEstimate, entryBytes, isPruneRecord, prunedLine, refusedRow, refusedWritesLine, retentionPlan, scanDue, slimSpawns, storeBytes, storeLine, type PruneRecord, type StoreEntry } from './lib/retention'
@@ -8289,6 +8289,16 @@ async function resumedIfNew($: Host, spawn: SpawnRecord, agentId: string, text: 
   const sha = block ? parseReport(block)?.sha : undefined
   if (!sha) return spawn
   const records = await loadAttempts($, spawn)
+  // MOD-380: a report handed back by the same worker after its no-report on this attempt is judged on that attempt, uncharged
+  if (reopensAfterNoReport(attemptsFor(records, spawn.subtask, laneOf(spawn)).at(-1), spawn.attempt, agentId, sha)) {
+    const { verdictAttempt: _va, verdictBlock: _vb, verdictLine: _vl, verdictSummary: _vs, ...open } = spawn
+    const key = await attemptKey($, spawn)
+    posted.delete(key)
+    await storeSet($, K.posted(key), false)
+    await storeSet($, K.postedRow(key), '')
+    await storeSet($, K.spawn(spawn.key), { ...open, lastFailed: false })
+    return { ...open, lastFailed: false }
+  }
   return isResumeAfterJudged(records, spawn.subtask, sha, laneOf(spawn)) ? recordResume($, spawn, records, agentId) : spawn
 }
 
