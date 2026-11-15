@@ -9,6 +9,7 @@
 ### Fixed
 
 - **A report handed back by the same worker after its `no-report` on an attempt is judged on that attempt, uncharged, instead of being dropped** (MOD-380)
+- **A `purpose` in any letter case (`Spike`, `SPIKE`) is read as a spike: its findings path joins scope, and lanes are refused** (MOD-381)
 
 ## 0.9.62 — 2026-11-15
 

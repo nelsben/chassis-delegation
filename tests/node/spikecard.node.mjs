@@ -206,4 +206,12 @@ describe('MOD-373: the card tool', () => {
     const { cardsFromFields } = await K()
     expect(cardsFromFields({ ...base, scope: undefined, lanes: [{ title: 'a', scope: ['docs/a/**'] }] }, ctx)).toEqual({ error: 'a spike is one card; drop lanes' })
   })
+  test('MOD-381: purpose in any letter case adds the findings path to scope', async () => {
+    const r = await make({ purpose: 'Spike', scope: ['hooks/**'], gate: 'validate' })
+    expect(r.scope).toEqual(['docs/spikes/X.md', 'hooks/**'])
+  })
+  test('MOD-381: purpose in any letter case with lanes is refused', async () => {
+    const { cardsFromFields } = await K()
+    expect(cardsFromFields({ ...base, purpose: 'SPIKE', scope: undefined, lanes: [{ title: 'a', scope: ['docs/a/**'] }] }, ctx)).toEqual({ error: 'a spike is one card; drop lanes' })
+  })
 })
