@@ -8,6 +8,8 @@ import { blockedLine } from './blocked'
 import { isSpacedPath, listForHeader, parseBudget, parseHeader } from './brief'
 import { worktreePath as worktreePathOf } from './paths'
 import { DEFAULT_AGENT_TYPES, DEFAULT_DOMAINS } from './repoconfig'
+import { FINDINGS_GATE, spikeQuestions } from './spike'
+import { pathMatchesAny } from './verify-native'
 
 export { DEFAULT_AGENT_TYPES }
 
@@ -162,6 +164,33 @@ function asList(v: FieldValue | undefined): string[] {
   return parts.map(s => s.trim()).filter(Boolean)
 }
 
+/** MOD-373 (#512): a spike card's fields: the findings file, the URL prefixes a citation may come from, the verdict words a (verdict) question may use. */
+export type SpikeFields = { findings: string; sources: string[]; verdicts: string[] }
+
+/** MOD-373 (#512): the spike fields of a card whose `purpose:` reads spike (trimmed, any case); undefined for every other card. */
+export function spikeOf(card: Card): SpikeFields | undefined {
+  if (asText(card.fields.purpose).trim().toLowerCase() !== 'spike') return undefined
+  return { findings: asText(card.fields.findings).trim(), sources: asList(card.fields.sources), verdicts: asList(card.fields.verdicts) }
+}
+
+/** MOD-373 (#512): why a card's purpose and spike fields cannot be dispatched, or undefined. The first rule that applies. */
+export function spikeRefusal(card: Card): string | undefined {
+  const purpose = asText(card.fields.purpose).trim()
+  if (purpose !== '' && purpose.toLowerCase() !== 'build' && purpose.toLowerCase() !== 'spike') return `purpose: ${purpose} is not build or spike`
+  const spike = spikeOf(card)
+  if (spike === undefined) return undefined
+  const f = spike.findings
+  if (f === '') return 'a spike card names its findings file: findings: <repo path>'
+  if (f.startsWith('/') || f.startsWith('~') || f.split('/').includes('..')) return 'findings: must be a path inside the repo'
+  if (card.repo === 'none') return 'a spike card writes its findings in a repo: drop repo: none'
+  if (!pathMatchesAny(f, card.scope)) return `findings: ${f} is not in the card's scope`
+  if (!card.gate.includes(FINDINGS_GATE)) return "a spike card's gate names findings"
+  if (card.redTest.trim().toLowerCase() !== 'none') return "a spike card's red_test is none"
+  const q = spikeQuestions(card.body)
+  if ('error' in q) return q.error
+  return undefined
+}
+
 export function parseCard(text: string): Card | { error: string } {
   const fm = parseFrontmatter(text)
   if (!fm) return { error: 'the card has no YAML frontmatter' }
@@ -247,6 +276,7 @@ export function renderHeader(input: {
   const c = input.card
   const scope = input.scope ?? c.scope
   const forbid = input.forbid ?? c.forbid
+  const spike = spikeOf(c)
   const here =
     (input.repo ? ` repo=${q(input.repo)}` : '') +
     (input.base ? ` base=${input.base}` : '') +
@@ -255,9 +285,11 @@ export function renderHeader(input: {
     (input.scratch ? ` scratch=${q(input.scratch)}` : '') +
     (c.resources.length > 0 ? ` resources=${c.resources.join(',')}` : '') +
     // MOD-124: and `allow=<a,b>` after those
-    (c.allow.length > 0 ? ` allow=${c.allow.join(',')}` : '')
+    (c.allow.length > 0 ? ` allow=${c.allow.join(',')}` : '') +
+    // MOD-373 (#512): a spike's findings file, then its sources and verdicts when it names them
+    (spike ? ` findings=${spike.findings}${spike.sources.length > 0 ? ` sources=${spike.sources.join(',')}` : ''}${spike.verdicts.length > 0 ? ` verdicts=${spike.verdicts.join(',')}` : ''}` : '')
   return (
-    `[[brief v=1 task=${c.id} subtask=main purpose=build tier=${input.tier} model=${input.alias}` +
+    `[[brief v=1 task=${c.id} subtask=main purpose=${spikeOf(c) ? 'spike' : 'build'} tier=${input.tier} model=${input.alias}` +
     ` scope=${listForHeader(scope.map(oneLine))} forbid=${listForHeader(forbid.map(oneLine))}` +
     // MOD-196: the parent's scope, after forbid=, for scopeAmends within-parent
     (c.parentScope.length > 0 ? ` parent_scope=${listForHeader(c.parentScope.map(oneLine))}` : '') +
@@ -447,6 +479,7 @@ const hasRedTest = (redTest: string): boolean => redTest.trim().toLowerCase() !=
  * any value (a card body that quotes `{{#none}}`, say) is put in.
  */
 function stageBrief(template: string, v: BriefVars): { staged: string; values: Record<string, string> } {
+  const spike = spikeOf(v.card)
   const values: Record<string, string> = {
     install: v.install ?? "the repo's own install step, if a lockfile is present",
     extra: v.extra ?? '',
@@ -467,13 +500,17 @@ function stageBrief(template: string, v: BriefVars): { staged: string; values: R
     redField: hasRedTest(v.card.redTest) ? '<path>' : 'none',
     gate: v.card.gateText,
     body: v.card.body,
+    // MOD-373 (#512): the spike rules' values
+    findings: spike?.findings ?? '',
+    sources: spike && spike.sources.length > 0 ? spike.sources.join(', ') : 'any source',
+    verdictWords: spike && spike.verdicts.length > 0 ? ` (one of: ${spike.verdicts.join(', ')})` : '',
     lessons: v.lessons && lessonLineCount(v.lessons.text) > 0 ? lessonsSection(v.card.domain, v.lessons.text, v.lessons.path) : '',
   }
   // GH-106: `{{#spend}}…{{/spend}}` is kept only when the brief carries a ceiling
   const withSpend = template.replace(/\{\{#spend\}\}([\s\S]*?)\{\{\/spend\}\}\n?/g, (_, inner: string) => (v.spend && v.spend > 0 ? inner : ''))
   // MOD-22: `{{#outdir}}…{{/outdir}}` and `{{#scratch}}…{{/scratch}}` are kept only when the brief names the folder
   const keep = (text: string, name: string, on: boolean) => text.replace(new RegExp(`\\{\\{#${name}\\}\\}\\n?([\\s\\S]*?)\\{\\{/${name}\\}\\}\\n?`, 'g'), (_, inner: string) => (on ? inner : ''))
-  const withFolders = keep(keep(keep(keep(withSpend, 'outdir', !!v.outdir), 'scratch', !!v.scratch), 'lessons', values.lessons !== ''), 'red', hasRedTest(v.card.redTest))
+  const withFolders = keep(keep(keep(keep(keep(withSpend, 'outdir', !!v.outdir), 'scratch', !!v.scratch), 'lessons', values.lessons !== ''), 'red', hasRedTest(v.card.redTest)), 'spike', spike !== undefined)
   return { staged: renderSections(withFolders, v.mode ?? (v.here === true ? 'here' : 'worktree')), values }
 }
 

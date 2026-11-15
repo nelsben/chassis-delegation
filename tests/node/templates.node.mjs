@@ -81,7 +81,8 @@ describe('5C: hooks/templates/brief.md is repo-neutral', () => {
 
   test('GH-16: a repo=here section says the checkout is shared, touch only your scope, commit only if the card says, report sha=HEAD', async () => {
     const { renderSections } = await import('../../hooks/lib/dispatch.ts')
-    const t = read('hooks/templates/brief.md')
+    // MOD-373: the spike section is decided by stageBrief, before renderSections
+    const t = read('hooks/templates/brief.md').replace(/\{\{#spike\}\}[\s\S]*?\{\{\/spike\}\}\n?/g, '')
     const here = renderSections(t, true)
     for (const want of ['repo=here: no worktree', 'You share it with the brain and maybe other workers', 'touch only your scope', 'Do not commit unless the card says so', 'never push', 'branch={{branch}} pr=none sha=HEAD', 'else the short sha you committed']) {
       expect(here.includes(want)).toBe(true)

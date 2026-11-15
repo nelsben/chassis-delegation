@@ -14,6 +14,7 @@ import { cardEffort, cleanReason, type CardEffort } from './choice'
 import { scopeLooksProse, yamlScalar } from './dispatch'
 import { cardKind } from './explore'
 import { gateCommandTemplates } from './gates'
+import { FINDINGS_GATE } from './spike'
 import { matchGlob } from './norepo'
 import { mergeCheckRefusal } from './repoconfig'
 import { strayGlob } from './scopetree'
@@ -106,6 +107,11 @@ export const CARD_TOOL = {
       spend: { type: 'number', description: "Dollars one attempt may spend; 0 = no ceiling (default: the tier's)" },
       allow: { type: 'array', items: { type: 'string' }, description: 'Named exceptions to the repo\'s local rules, e.g. ["live-reads"]: one plain word each. Each must have a "### allow: <id>" block in the file the repo config names as briefLocal; the block is copied into the brief and the id shows on the verdict row' },
       resources: { type: 'array', items: { type: 'string' }, description: 'Exclusive resources the worker holds while it runs, e.g. ["blender-live"] (one live app with one open file): one plain word each. A card that names a resource a running worker holds waits in the queue until that worker hands back' },
+      purpose: { type: 'string', enum: ['build', 'spike'], description: 'build (default), or spike: a research card whose hand-back is a cited findings file, checked by the built-in findings gate; needs questions and findings, redTest "none"' },
+      questions: { type: 'array', items: { type: 'string' }, description: 'With purpose spike: the questions, one each, numbered in that order; end one with (verdict) to want a Verdict: line' },
+      findings: { type: 'string', description: 'With purpose spike: the findings file, a repo path; added to scope when no scope entry matches it' },
+      sources: { type: 'array', items: { type: 'string' }, description: 'With purpose spike: the URL prefixes a citation may come from, e.g. ["docs.anthropic.com", "github.com/anthropics"]; absent: any' },
+      verdicts: { type: 'array', items: { type: 'string' }, description: 'With purpose spike: the words a (verdict) question may answer with, e.g. ["adopt", "adapt", "skip"]; absent: any word' },
       lanes: {
         type: 'array',
         description: 'Fan-out: one card per lane, with sequential ids, the shared why, gate, tier, repo, resources and forbid, and each lane its own scope (and so its own output folder). Lanes whose scopes overlap are refused. Give the shared title/doneWhen as the umbrella: every lane carries the shared doneWhen, and each lane\'s own doneWhen is added after it',
@@ -217,6 +223,8 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
 
   const scope = globs('scope', input.scope, true)
   if ('error' in scope) return scope
+  // MOD-373 (#512): a spike's findings file is in its scope; added first when no entry matches it (before the overlap and forbid checks)
+  if (input.purpose === 'spike' && typeof input.findings === 'string' && !text(input.findings).startsWith('/') && !text(input.findings).startsWith('~') && !text(input.findings).split('/').includes('..') && text(input.findings) !== '' && !scope.some(g => globMatches(text(input.findings), g))) scope.unshift(text(input.findings))
   const ownForbid = globs('forbid', input.forbid, false)
   if ('error' in ownForbid) return ownForbid
   const resources = resourceNames(input.resources)
@@ -266,6 +274,29 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   const redTest = text(input.redTest)
   if (redTest === '') return { error: 'redTest is required: the command or test that fails now and passes after, or "none" for docs-only work, or "none (test-only)" for a change that is only tests' }
 
+  // MOD-373 (#512): purpose spike: questions, findings, sources and verdicts
+  const purposeIn = input.purpose === undefined ? 'build' : text(input.purpose).toLowerCase()
+  if (purposeIn !== 'build' && purposeIn !== 'spike') return { error: 'purpose must be build or spike' }
+  const spikeKeys = ['questions', 'findings', 'sources', 'verdicts'] as const
+  const strayKey = spikeKeys.find(k => input[k] !== undefined)
+  if (purposeIn === 'build' && strayKey !== undefined) return { error: `${strayKey} belongs to a spike card (purpose: spike)` }
+  let spikeQs: string[] = []
+  let spikeFindings = ''
+  let spikeSources: string[] = []
+  let spikeVerdicts: string[] = []
+  if (purposeIn === 'spike') {
+    spikeQs = Array.isArray(input.questions) ? (input.questions as unknown[]).map(text).filter(Boolean) : []
+    if (spikeQs.length === 0) return { error: 'a spike card needs questions: one string each' }
+    spikeFindings = text(input.findings)
+    if (spikeFindings === '') return { error: 'a spike card needs findings: the findings file, a repo path' }
+    if (spikeFindings.startsWith('/') || spikeFindings.startsWith('~') || spikeFindings.split('/').includes('..')) return { error: 'findings must be a path inside the repo' }
+    if (redTest.toLowerCase() !== 'none') return { error: 'a spike card\'s redTest is "none": the findings gate checks it' }
+    if (repo === 'none') return { error: 'a spike card writes its findings in a repo' }
+    const words = (v: unknown): string[] => (Array.isArray(v) ? (v as unknown[]).map(text).filter(Boolean) : [])
+    spikeSources = words(input.sources)
+    spikeVerdicts = words(input.verdicts)
+  }
+
   const tierIn = input.tier === undefined ? 'standard' : text(input.tier)
   const tier = tierOf(tierIn)
   if (tier === undefined) return { error: `tier ${tierIn} is not economy, standard, frontier or premium` }
@@ -281,7 +312,7 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
       if (why !== undefined && !ctx.gateIds.includes(g)) return { error: `gate "${g}" refused: ${why}; put the command in a script file and name the script as the gate` }
     }
   }
-  if (ctx.gateIds.length === 0 && !oneOff) {
+  if (ctx.gateIds.length === 0 && !oneOff && purposeIn !== 'spike') {
     return { error: ctx.repoPath !== undefined ? `${ctx.repoPath} has no gate: no gateMap in its .chassis-delegation.json and no test command found (package.json scripts.test, pytest, cargo or go); name one in gate, e.g. "npm run build"` : 'gateMap has no gate; run /delegation setup, or add a gateMap entry in .chassis-delegation.json' }
   }
   let gate: string[]
@@ -292,9 +323,11 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
     if ('reason' in t) return { error: `gate command refused: ${t.reason}` }
     gate = [cmd]
   } else {
-    gate = input.gate === undefined ? [ctx.gateIds[0] as string] : text(input.gate).split(/\s*,\s*/).filter(Boolean)
+    gate = input.gate === undefined ? (purposeIn === 'spike' ? [FINDINGS_GATE] : [ctx.gateIds[0] as string]) : text(input.gate).split(/\s*,\s*/).filter(Boolean)
     if (gate.length === 0) return { error: `gate is empty; the ids are ${ctx.gateIds.join(', ')}` }
-    for (const g of gate) if (!ctx.gateIds.includes(g)) return { error: `gate ${g} is not in gateMap; the ids are ${ctx.gateIds.join(', ')}` }
+    // MOD-373: a spike's gate has findings, the built-in one (no gateMap entry); put first when the card named others without it
+    if (purposeIn === 'spike' && !gate.includes(FINDINGS_GATE)) gate.unshift(FINDINGS_GATE)
+    for (const g of gate) if (g !== FINDINGS_GATE && !ctx.gateIds.includes(g)) return { error: `gate ${g} is not in gateMap; the ids are ${ctx.gateIds.join(', ')}` }
   }
 
   const mergeCheck = input.mergeCheck === undefined ? '' : text(input.mergeCheck)
@@ -333,7 +366,7 @@ tier: ${tier}
 ${tierReason !== '' ? `tier_reason: ${tierReason}\n` : ''}${eff.effort ? `effort: ${eff.effort}\n` : ''}${effortReason !== '' ? `effort_reason: ${effortReason}\n` : ''}${advisorIn !== '' ? `advisor: ${advisorIn}\n` : ''}${blockers.length > 0 ? `status: blocked\nblocked_by: [${blockers.join(', ')}]` : 'status: queued'}
 ${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${fixes !== undefined ? `fixes: [${fixes.join(', ')}]\n` : ''}${parent !== undefined && parentScope.length > 0 ? `parentScope: [${parentScope.map(inList).join(', ')}]\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
 forbid: [${forbid.map(inList).join(', ')}]
-${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}red_test: ${yamlScalar(redTest)}
+${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}${purposeIn === 'spike' ? `purpose: spike\nfindings: ${spikeFindings}\n${spikeSources.length > 0 ? `sources: [${spikeSources.join(', ')}]\n` : ''}${spikeVerdicts.length > 0 ? `verdicts: [${spikeVerdicts.join(', ')}]\n` : ''}` : ''}red_test: ${yamlScalar(redTest)}
 gate: ${gate.join(', ')}
 ${mergeCheck !== '' ? `merge_check: ${yamlScalar(mergeCheck)}\n` : ''}budget: ${budget}-attempts
 spend: ${spend}
@@ -342,7 +375,7 @@ spend: ${spend}
 
 ${why}
 
-## Done when
+${purposeIn === 'spike' ? `## Questions\n\n${spikeQs.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n\n` : ''}## Done when
 
 ${done.map(d => `- ${d}`).join('\n')}
 `
@@ -361,6 +394,7 @@ export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): N
     return 'error' in one ? one : [one]
   }
   const raw = input.lanes
+  if (input.purpose === 'spike') return { error: 'a spike is one card; drop lanes' }
   if (input.fixes !== undefined) return { error: 'fixes belongs to one card; drop it when lanes are given' }
   if (input.issue !== undefined) return { error: 'issue belongs to one card; drop it when lanes are given (one issue per card)' }
   if (!Array.isArray(raw) || raw.length === 0) return { error: 'lanes must be a list of { title, scope, doneWhen? }, one per worker' }

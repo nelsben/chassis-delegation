@@ -188,6 +188,7 @@ import {
   unrenderedRefusal,
   liveBriefRefusal,
   rewriteReasonsOf,
+  spikeRefusal,
   worktreeAddArgv,
   worktreePath,
   type BriefMode,
@@ -8829,6 +8830,9 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   // MOD-366: the card's advisor: is none or once; another word stops the dispatch before a brief or a worktree is written. The rule follows the card's tier, not the tier an explore pick or an escalation runs.
   const advisorWord = card.fields.advisor === undefined || card.fields.advisor === null ? '' : String(card.fields.advisor).trim()
   if (advisorWord !== '' && advisorWord.toLowerCase() !== 'none' && advisorWord.toLowerCase() !== 'once') return `/dispatch ${id}: ${advisorFieldRefusal(advisorWord)}; no brief written`
+  // MOD-373 (#512): a spike card's findings, gate, red test and questions are held before any brief is written, the dry run alike
+  const spikeWhy = spikeRefusal(card)
+  if (spikeWhy !== undefined) return `/dispatch ${id}: refused, no brief written: ${spikeWhy}`
   const advisorPick = advisorRuleOf(tier, card.fields.advisor, id)
   const alias = finalAlias({ tier, source: 'brief' }, cfg.tierMap[tier], { allowFable: cfg.allowFable }).alias
   const budget = budgetAttempts(card.budget, cfg.defaultBudget)
@@ -9020,7 +9024,7 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   const shownHeader = parseHeader(shown)
   // MOD-274: the card's class (kind and size), named first on the history line and written on its attempts
   const classScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
-  const classKind = cardKind({ kind: card.fields.kind, title: card.title, scope: classScope })
+  const classKind = cardKind({ kind: card.fields.kind, purpose: card.fields.purpose, title: card.title, scope: classScope })
   const className = cardClassName(classKind, cardSize(tierHint({ tier, scope: classScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined))
   const classLedger = await ledgerAt($, root)
   out.push(...choiceLines(classLedger.rows, { classOf: await classOfFor($, root, classLedger.rows), tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason), cls: className }).map(l => `   ${l}`))

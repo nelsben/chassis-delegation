@@ -7,7 +7,7 @@ import { cardOutcomes, type ClassOf, type LedgerRowLike } from './choice'
 import { clampEffort, EFFORTS, type Alias, type Effort, type Tier } from './tier'
 
 // ---- the class ---------------------------------------------------------------------------------
-export const CARD_KINDS = ['release', 'docs', 'bug', 'test', 'feature'] as const
+export const CARD_KINDS = ['release', 'docs', 'bug', 'test', 'feature', 'spike'] as const
 export type CardKind = (typeof CARD_KINDS)[number]
 export type CardSize = 'small' | 'large'
 
@@ -19,11 +19,12 @@ const isDocsPath = (p: string): boolean => p === 'CHANGELOG.md' || p === 'docs' 
 const isTestPath = (p: string): boolean => p === 'tests' || p.startsWith('tests/')
 
 /**
- * The card's kind. The card's own `kind:` when it names one; else: a scope of only CHANGELOG, docs/** or version files is `release`
+ * The card's kind. MOD-373: a `purpose: spike` (trimmed, any case) is `spike`, before the card's own `kind:`. Else the card's own `kind:` when it names one; else: a scope of only CHANGELOG, docs/** or version files is `release`
  * when the title starts "Release" or names a version, else `docs`; a title starting "Bug" or "Fix" is `bug`; a scope of only
  * tests/** is `test`; anything else is `feature`.
  */
-export function cardKind(i: { kind?: unknown; title: string; scope: readonly string[] }): CardKind {
+export function cardKind(i: { kind?: unknown; purpose?: unknown; title: string; scope: readonly string[] }): CardKind {
+  if (typeof i.purpose === 'string' && i.purpose.trim().toLowerCase() === 'spike') return 'spike'
   const own = typeof i.kind === 'string' ? i.kind.trim().toLowerCase() : ''
   if (isKind(own)) return own
   const paths = i.scope.map(cleanPath).filter(p => p !== '')
@@ -95,7 +96,7 @@ export type ExplorePlan = {
 }
 
 /**
- * Does this card explore, and how? Eligible: attempt 1, no `effort:`, no reason, tier standard or frontier, kind not release or docs.
+ * Does this card explore, and how? Eligible: attempt 1, no `effort:`, no reason, tier standard or frontier, kind not release, docs or spike (a spike's findings are the point; MOD-373).
  * It explores when its draw is below `explore`. The step is one axis, down: the effort one level down, or (standard only) the tier
  * one down at the same effort; a frontier card never changes tier. A step the maxEffort cap would change is skipped, never clamped.
  * MOD-277: one target at a time. A standard card aims at the tier-down pair (economy at the same effort) until that pair has
@@ -105,7 +106,7 @@ export type ExplorePlan = {
 export function explorePlan(i: ExploreInput): ExplorePlan | undefined {
   if (i.attempt !== 1 || i.hasEffort || i.hasReason) return undefined
   if (i.tier !== 'standard' && i.tier !== 'frontier') return undefined
-  if (i.kind === 'release' || i.kind === 'docs') return undefined
+  if (i.kind === 'release' || i.kind === 'docs' || i.kind === 'spike') return undefined
   if (!(i.explore > 0) || !(exploreDraw(i.task) < i.explore)) return undefined
   const fromAlias = i.aliasOfTier(i.tier)
   const from = `${fromAlias}/${i.baseEffort ?? 'default'}`
