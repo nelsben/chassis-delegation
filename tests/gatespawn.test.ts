@@ -47,7 +47,7 @@ const repo = (slot: { w?: World }, gateMs: number) => {
   }
 }
 
-type Setup = { gateMs: number; minutes?: number; gate?: 'prettier' | 'test'; store?: Record<string, unknown>; noRepoFile?: true; onGate?: (w: World) => void }
+type Setup = { gateMs: number; minutes?: number; gate?: 'prettier' | 'test'; store?: Record<string, unknown>; noRepoFile?: true; onGate?: (w: World) => void; printed?: (argv: string[]) => { stream: 'stdout' | 'stderr'; text: string }[] }
 const setup = (on: unknown, o: Setup): World => {
   const slot: { w?: World } = {}
   const repoFile = { gateMap: { prettier: 'npx prettier --check {files}', test: 'claude plugin test {worktree}' }, ...(o.minutes !== undefined ? { gateTimeoutMinutes: o.minutes } : {}) }
@@ -61,6 +61,7 @@ const setup = (on: unknown, o: Setup): World => {
     agentId: 'agent-4',
     hostCap: true,
     ...(o.store ? { store: o.store } : {}),
+    ...(o.printed ? { printed: o.printed } : {}),
   })
   slot.w = w
   return w
@@ -172,6 +173,28 @@ describe('MOD-229: gateTimeoutMinutes takes 1 to 120, default 30', () => {
 })
 
 // MOD-230 beside MOD-229: the load words still come on a red gate and on a gate stopped at the ceiling, when the gate goes through io.gate
+// MOD-377 (#513): the deadline a gate is told, and the last lines of a gate stopped at the ceiling
+describe('MOD-377 (#513): a spawned gate is told its deadline and keeps its last output at the ceiling', () => {
+  test('every spawned gate runs with CHASSIS_GATE_DEADLINE: whole seconds to the ceiling', async ($, on) => {
+    const w = setup(on, { gateMs: 1 * MIN, minutes: 30 })
+    await handBack($, w, 20)
+    const gate = w.runs.find(r => r.argv[0] === 'npx')
+    expect(gate?.spawned).toBe(true)
+    expect(gate?.env).toEqual({ CHASSIS_GATE_DEADLINE: '1800' })
+  })
+
+  test('a gate past a 2-minute ceiling names its last printed lines in the verdict', async ($, on) => {
+    const printed = (argv: string[]) => (argv[0] === 'npx' ? [{ stream: 'stdout' as const, text: 'one\ntwo\nthree\nfour\n' }] : [])
+    const w = setup(on, { gateMs: 5 * MIN, minutes: 2, printed })
+    await handBack($, w, 20)
+    const text = delivered(w)
+    expect(text).toContain('T-4 attempt 1/3 unverified')
+    expect(text).toContain('gate ran past gateTimeoutMinutes (2 min)')
+    expect(text).toContain('last output: two | three | four')
+    expect(text).not.toContain('one | two')
+  })
+})
+
 describe('MOD-229 with MOD-230: the load words on a spawned gate', () => {
   const brief = '[[brief v=1 task=T-1 subtask=main purpose=build tier=standard model=sonnet scope=a.txt forbid=none gate=test]]\n\n# T-1\n'
   const WORDS = 'machine loaded (load 100 on 10 cores): may be load, not the change; re-run with /dispatch T-1 --verify <sha> once it drops'

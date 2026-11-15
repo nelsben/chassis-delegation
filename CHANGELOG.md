@@ -6,6 +6,7 @@
 
 - **Spike cards: `purpose: spike` (by hand or with the card tool's `purpose`, `questions`, `findings`, `sources` and `verdicts`) dispatches with `findings=`, `sources=` and `verdicts=` in its brief header and spike rules in its brief, is refused before any brief when malformed, never explores, and is checked by the built-in `findings` gate against the card's questions** (MOD-372, MOD-373)
 - **A build card's `spike: <ID>` (and the card tool's `spike`) names the spike it was planned from, and its spawn rows carry it; a value that is not a task id is warned about at dispatch and not recorded** (MOD-374)
+- **Every spawned gate runs with `CHASSIS_GATE_DEADLINE` (whole seconds until the mod's gate ceiling), and a gate stopped at the ceiling names its last output lines in the verdict and the review brief** (MOD-377, #513)
 
 ### Changed
 

@@ -117,6 +117,8 @@ export type WorldOptions = {
   store?: Record<string, unknown>
   /** What a command answers; a promise holds it up (MOD-20: a gate that takes a while, so two verifiers can overlap). */
   run?: (argv: string[]) => RunAnswer | undefined | Promise<RunAnswer | undefined>
+  /** MOD-377 (#513): what a spawned command prints before it ends (a gate stopped at the ceiling keeps its last lines). */
+  printed?: (argv: string[]) => { stream: 'stdout' | 'stderr'; text: string }[]
   classify?: string
   agentId?: string
   skip?: string[]
@@ -316,6 +318,7 @@ export function world(on: On, options: WorldOptions = {}): World {
   // MOD-229: a spawned command (a gate) is answered as a run is: its output as pieces, then { value } how it ended; no timeout
   ;(on as unknown as (n: string, h: unknown) => void)('process.spawn', async function* (_$: unknown, e: { argv: string[]; cwd?: string; env?: Record<string, string>; input?: string }) {
     w.runs.push({ argv: [...e.argv], cwd: e.cwd, env: e.env, stdin: e.input, spawned: true })
+    for (const piece of options.printed?.([...e.argv]) ?? []) yield piece
     const answer = (await options.run?.([...e.argv])) ?? { exitCode: 0, stdout: '' }
     if (answer.stdout) yield { stream: 'stdout', text: answer.stdout }
     if (answer.stderr) yield { stream: 'stderr', text: answer.stderr }

@@ -68,6 +68,29 @@ export const ceilingMs = (minutes: number): number => minutes * MIN_MS
  */
 export const pastCeiling = (minutes: number): string => `gate ran past gateTimeoutMinutes (${minutes} min); timed out after ${ceilingMs(minutes)} ms`
 
+/** MOD-377 (#513): the env var a spawned gate is told its deadline in. */
+export const GATE_DEADLINE_ENV = 'CHASSIS_GATE_DEADLINE'
+
+/** MOD-377 (#513): the env a gate runs with: whole seconds until the ceiling. */
+export const gateDeadlineEnv = (minutes: number): Record<string, string> => ({ [GATE_DEADLINE_ENV]: String(Math.floor(ceilingMs(minutes) / 1000)) })
+
+/** MOD-377 (#513): the last `n` non-blank lines of a gate's output, stdout then stderr, each trimmed at the end. */
+export function outputTail(stdout: string, stderr: string, n: number): string[] {
+  const lines = [...stdout.split('\n'), ...stderr.split('\n')].map(l => l.replace(/\s+$/, '')).filter(l => l.trim() !== '')
+  return lines.slice(Math.max(0, lines.length - n))
+}
+
+/**
+ * MOD-377 (#513): `pastCeiling`, and when the gate printed anything, `; last output: ` and its last 3 lines
+ * (each trimmed, joined with ` | `), cut to 240 characters with a trailing `…` when cut.
+ */
+export function pastCeilingWith(minutes: number, tail: readonly string[]): string {
+  if (tail.length === 0) return pastCeiling(minutes)
+  const joined = tail.slice(-3).map(l => l.trim()).join(' | ')
+  const shown = joined.length > 240 ? `${joined.slice(0, 239)}…` : joined
+  return `${pastCeiling(minutes)}; last output: ${shown}`
+}
+
 /** The gate id of the brief's `gate=` whose gateMap command made the run labelled `label`; the label when none did (a bare command). */
 export function gateIdOf(gate: string | undefined, map: Readonly<Record<string, string>>, label: string): string {
   for (const id of (gate ?? '').split(',').map(s => s.trim()).filter(Boolean)) {
