@@ -779,6 +779,8 @@ describe('MOD-118 (#186): merge targets the configured base', () => {
     if (is(argv, 'git', '-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD')) return { exitCode: 0, stdout: `${branch}\n` }
     const m = /^refs\/remotes\/origin\/(.+)$/.exec(argv[argv.length - 1] ?? '')
     if (argv.includes('--verify') && m) return { exitCode: remote.includes(m[1] as string) ? 0 : 1, stdout: '' }
+    // MOD-382: no local branch of that name unless a test says so
+    if (argv.includes('--verify') && /^refs\/heads\//.test(argv[argv.length - 1] ?? '')) return { exitCode: 1, stdout: '' }
     return undefined
   }
 
@@ -826,6 +828,21 @@ describe('MOD-118 (#186): merge targets the configured base', () => {
     const out = String((await $.command.run(mergeCmd(ID))).text)
     expect(w.runs.map(r => r.argv.join(' '))).toContain(`git -C ${WT} rebase origin/main`)
     expect(out).toContain('is not a branch; merging onto main')
+  })
+
+  test('MOD-382 (#515): a baseRef that is a local branch with no origin copy is refused with the push line, prepare and finish, and nothing is moved', async ($, on) => {
+    const local = (argv: string[]) => {
+      if (argv.includes('--verify') && argv[argv.length - 1] === 'refs/heads/work') return { exitCode: 0, stdout: 'abc\n' }
+      return onBranch('work', ['main'])(argv)
+    }
+    const w = world(on, { files: repoWith('work'), dirs, store, run: happy(local) })
+    await $.session.start(sessionStart)
+    const line = `${ID}: baseRef work is a local branch with no copy on origin; merge lands through a PR on origin, so push it first (git push -u origin work), then merge again`
+    expect(String((await $.command.run(mergeCmd(ID))).text)).toBe(line)
+    expect(String((await $.command.run(mergeCmd(`${ID} --finish`))).text)).toBe(line)
+    const ran = w.runs.map(r => r.argv.join(' '))
+    expect(ran.some(r => / (fetch|rebase|push|checkout|merge|worktree remove) /.test(r))).toBe(false)
+    expect(ran.some(r => r.includes('status --porcelain'))).toBe(false)
   })
 
   test('unset baseRef: unchanged, no branch probe, no note', async ($, on) => {

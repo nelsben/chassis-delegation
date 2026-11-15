@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Merge refuses a `baseRef` that is a local branch with no copy on origin, at once, with a line saying to push it first (`git push -u origin <name>`), instead of quietly merging onto main** (MOD-382, #515)
+
 ### Added
 
 - **A repo option `maxConcurrentGates` (0 to 16, default 0 = no cap) caps how many gate commands the verifier and merge run at once in a session; the rest wait in line, first in first out, and the wait does not count against `gateTimeoutMinutes`** (MOD-379, #513)

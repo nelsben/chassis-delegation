@@ -329,16 +329,20 @@ export const defaultBranchOf = (baseRef: string): string => {
   return b.startsWith('origin/') ? b.slice('origin/'.length) : b
 }
 
+/** MOD-382 (#515): the refusal for a baseRef that is a local branch origin does not have. */
+export const localBaseLine = (name: string): string => `baseRef ${name} is a local branch with no copy on origin; merge lands through a PR on origin, so push it first (git push -u origin ${name}), then merge again`
+
 /**
  * MOD-118 (#186): the branch merge targets. `baseRef` is the repo config's value ('' = unset), `isBranch` says
  * whether origin has a branch of that name. A baseRef that names a branch (with or without `origin/`) is the
  * target; unset, a sha, or a tag keeps the default branch, and `note` says so for the set-but-not-a-branch cases.
  */
-export function mergeTarget(baseRef: string, isBranch: boolean): { baseRef: string; def: string; note?: string } {
+export function mergeTarget(baseRef: string, isBranch: boolean, isLocalOnly = false): { baseRef: string; def: string; note?: string; refuse?: string } {
   const raw = baseRef.trim()
   if (!raw) return { baseRef: 'origin/main', def: 'main' }
   const name = defaultBranchOf(raw)
   if (isBranch) return { baseRef: `origin/${name}`, def: name }
+  if (isLocalOnly) return { baseRef: 'origin/main', def: 'main', refuse: localBaseLine(name) }
   return { baseRef: 'origin/main', def: 'main', note: `baseRef ${raw} is not a branch; merging onto main` }
 }
 

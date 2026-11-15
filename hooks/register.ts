@@ -3832,7 +3832,11 @@ async function mergeCommand($: Host, parsed: MergeArgs): Promise<string> {
   const want = (cfg.baseRef ?? '').trim()
   const wantName = defaultBranchOf(want)
   const probe = want && !isSha(wantName) ? await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${wantName}`], { cwd: root, timeoutMs: 15000 }) : undefined
-  const { baseRef, def, note: targetNote } = mergeTarget(want, !!probe && probe.ok && probe.exitCode === 0)
+  const onOrigin = !!probe && probe.ok && probe.exitCode === 0
+  // MOD-382 (#515): a name origin lacks but the main checkout has is a local-only branch; merge lands through a PR, so it refuses
+  const localProbe = want && !onOrigin && !isSha(wantName) ? await run($, ['git', '-C', root, 'rev-parse', '--verify', '--quiet', `refs/heads/${wantName}`], { cwd: root, timeoutMs: 15000 }) : undefined
+  const { baseRef, def, note: targetNote, refuse: localRefusal } = mergeTarget(want, onOrigin, !!localProbe && localProbe.ok && localProbe.exitCode === 0)
+  if (localRefusal) return `${id}: ${localRefusal}`
   const cardDir = (cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')
   if (!parsed.finish) {
     // PREPARE 1: the latest verdict must be consistent with next=accept (the ledger; the task record when the ledger has no row)
