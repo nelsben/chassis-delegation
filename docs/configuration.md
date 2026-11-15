@@ -71,7 +71,7 @@ Shows the options in force and where each value came from; works in VS Code.
 | `evalCommand` | repo | `""` | what the T1 eval runs; empty = no eval. |
 | `evalLiveCommand` | repo | `""` | what the T2 (live, paid) runner runs. |
 | `autoEval` | repo | `false` | run `evalCommand` once per new `origin/main` sha while idle. Needs `evalCommand`. |
-| `baseRef` | repo | `""` (`origin/main`, `main`, `origin/master`, `master`) | where the delta starts when a brief names no `base=`. |
+| `baseRef` | repo | `""` (`origin/main`, `main`, `origin/master`, `master`) | where the delta starts when a brief names no `base=`. A branch must be on origin, because merge lands through a PR there; a local-only branch is refused with a line saying to push it first. |
 | `ignore` | repo | `[".delegation/**"]` | globs dropped from a `repo=here` delta. `[]` ignores nothing. |
 | `issueRepo` | repo | the manifest's `repository` | `owner/name` where findings are filed. `""` in the repo file turns posting off. |
 | `pauseCap` | repo | `3` | A whole number from 2 to 20: the pauses per attempt before the next is charged as an attempt (a worker may pause the cap minus one times). Any other value is named in the config errors and `3` is used. |
