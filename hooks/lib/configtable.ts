@@ -36,6 +36,7 @@ const ROWS_: readonly (readonly [string, ConfigGroup, string, Render, 'repo' | '
   ['gateMap', 'Checking the work', 'The commands that re-run the checks a task names, so results can be trusted', 'gates', 'repo', ''],
   ['mergeCheckMap', 'Checking the work', 'A command run before a task is merged, for each check name a task lists', 'map', 'repo', ''],
   ['gateTimeoutMinutes', 'Checking the work', 'Minutes the checker and a merge let one check command run before they stop it', 'minutes', 'repo', 30],
+  ['maxConcurrentGates', 'Checking the work', 'Most check commands run at once; more wait in line (0 = no limit)', 'count', 'repo', 0],
   ['applyAmends', 'Checking the work', 'Accept a worker\'s request to add files it may or may not touch; removals ask you', 'bool', 'user', true],
   ['scopeAmends', 'Checking the work', 'When a worker\'s scope widening applies: apply, new-files, ask or within-parent', 'choice', 'repo', 'apply', ['apply', 'new-files', 'ask', 'within-parent']],
   ['review', 'Checking the work', 'Have a second, read-only agent check what a worker says it did', 'choice', 'repo', 'on-frontier', ['off', 'on', 'on-frontier']],

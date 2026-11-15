@@ -1009,6 +1009,15 @@ describe('MOD-73: each option, set with /delegation config, changes what the mod
     expect(delivered(w) + w.debugLogs.join('\n')).toContain('gateTimeoutMinutes')
   })
 
+  // MOD-379 (#513): the cap itself is timed in tests/gatespawn.test.ts; here the option is read and a bad value is named
+  test('maxConcurrentGates: 17 in the repo file is named in the config errors; the gate still runs', async ($, on) => {
+    const w = handBackWorld(on, { files: { [REPO_FILE]: gateRepo({ maxConcurrentGates: 17 }) } })
+    await $.session.start(sessionStart)
+    await handBack($)
+    expect(gateRunOf(w)?.spawned).toBe(true)
+    expect(delivered(w) + w.debugLogs.join('\n')).toContain('maxConcurrentGates: needs a whole number, 0 to 16')
+  })
+
   test('treeImportBatch: 1 makes a tree import create one issue and stop', async ($, on) => {
     let n = 49
     const w = world(on, {

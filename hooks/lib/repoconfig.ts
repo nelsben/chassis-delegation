@@ -40,6 +40,8 @@ export const DEFAULT_TIER_MAP: Readonly<Record<Tier, Alias>> = { economy: 'haiku
 /** MOD-229 (#323): the mod's own ceiling on one gate run (a spawned child, so the host's 10-minute run cap does not apply). */
 export const DEFAULT_GATE_TIMEOUT_MINUTES = 30
 export const MAX_GATE_TIMEOUT_MINUTES = 120
+/** MOD-379 (#513): the top of maxConcurrentGates; the default is 0, no cap. */
+export const MAX_CONCURRENT_GATES = 16
 export const DEFAULT_MAX_WORKERS = 2
 
 /** GH-16: globs always subtracted from a repo=here delta (the brain's own scratch). */
@@ -96,6 +98,8 @@ export type RepoConfig = {
   maxWorkers?: number
   /** MOD-155 (#246), MOD-229 (#323): whole minutes (1 to 120) the verifier and merge let one gate run; unset = 30. */
   gateTimeoutMinutes?: number
+  /** MOD-379 (#513): the most gate commands the verifier and merge run at once (0 to 16); 0 or unset = no cap. */
+  maxConcurrentGates?: number
   /** MOD-131 (#219): a second, lower ceiling under maxWorkers for the briefed workers of a tier (a whole number of 1 or more); a tier the map lacks takes the total alone. */
   maxWorkersByTier?: Partial<Record<Tier, number>>
   domains?: string[]
@@ -149,7 +153,7 @@ export type RepoConfig = {
 export const MERGE_STYLES = ['rebase', 'merge', 'squash'] as const
 export type MergeStyle = (typeof MERGE_STYLES)[number]
 
-export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'statusMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'pauseCap', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch', 'issueLink'] as const
+export const REPO_KEYS = ['gateMap', 'mergeCheckMap', 'statusMap', 'agentTypes', 'tierMap', 'evalCommand', 'evalLiveCommand', 'briefTemplate', 'briefExtra', 'briefLocal', 'maxWorkers', 'gateTimeoutMinutes', 'maxConcurrentGates', 'maxWorkersByTier', 'domains', 'worktreeRoot', 'cardDir', 'autoEval', 'baseRef', 'ignore', 'spendByTier', 'effortByTier', 'effortNudge', 'delegateOnly', 'issueRepo', 'mergeStyle', 'pauseCap', 'finishSkip', 'review', 'reviewTier', 'reviewEffort', 'explore', 'maxFrontierShare', 'adaptive', 'scopeAmends', 'project', 'issueMatch', 'issueLink'] as const
 export type RepoKey = (typeof REPO_KEYS)[number]
 
 export type Effective = {
@@ -168,6 +172,7 @@ export type Effective = {
   briefLocal: string
   maxWorkers: number
   gateTimeoutMinutes: number
+  maxConcurrentGates: number
   maxWorkersByTier: Partial<Record<Tier, number>>
   domains: string[]
   worktreeRoot: string
@@ -439,6 +444,10 @@ function layerOf(obj: Record<string, unknown>, where: string, strict: boolean): 
         if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_GATE_TIMEOUT_MINUTES) config.gateTimeoutMinutes = v
         else if (!(v === 0 && !strict)) errors.push(`gateTimeoutMinutes${where}: needs a whole number of minutes, 1 to ${MAX_GATE_TIMEOUT_MINUTES} (ignored; ${DEFAULT_GATE_TIMEOUT_MINUTES} is used)`)
         break
+      case 'maxConcurrentGates':
+        if (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= MAX_CONCURRENT_GATES) config.maxConcurrentGates = v
+        else errors.push(`maxConcurrentGates${where}: needs a whole number, 0 to ${MAX_CONCURRENT_GATES} (ignored; no cap is used)`)
+        break
       case 'maxWorkersByTier': {
         const m = maxWorkersByTierOf(v, errors, where)
         if (m) config.maxWorkersByTier = m
@@ -634,6 +643,7 @@ export function mergeConfig(repo: RepoConfig, settings: RepoConfig, user: RepoCo
     briefLocal: pick('briefLocal', ''),
     maxWorkers: pick('maxWorkers', DEFAULT_MAX_WORKERS),
     gateTimeoutMinutes: pick('gateTimeoutMinutes', DEFAULT_GATE_TIMEOUT_MINUTES),
+    maxConcurrentGates: pick('maxConcurrentGates', 0),
     maxWorkersByTier: { ...repo.maxWorkersByTier, ...user.maxWorkersByTier, ...settings.maxWorkersByTier },
     domains: [...pick('domains', [...DEFAULT_DOMAINS])],
     worktreeRoot: pick('worktreeRoot', ''),

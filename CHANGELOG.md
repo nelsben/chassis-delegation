@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **A repo option `maxConcurrentGates` (0 to 16, default 0 = no cap) caps how many gate commands the verifier and merge run at once in a session; the rest wait in line, first in first out, and the wait does not count against `gateTimeoutMinutes`** (MOD-379, #513)
+
 ### Fixed
 
 - **A report handed back by the same worker after its `no-report` on an attempt is judged on that attempt, uncharged, instead of being dropped** (MOD-380)
