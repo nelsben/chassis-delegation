@@ -503,6 +503,26 @@ describe('MOD-341: the spawn row records whether the card has an issue link and 
     expect(Object.keys(brain.pairs)).toHaveLength(1)
   })
 
+  test('MOD-374: spike: MOD-1 puts spike on the spawn row', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { ...cardAt(FIXTURE_CARD.replace('status: queued', 'status: queued\nspike: MOD-1')), listAgents: true })
+    await $.session.start(sessionStart)
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    expect(text).not.toContain('is not a task id')
+    await brainSpawn($, text, { tool_use_id: 'toolu_SPK00001' })
+    expect(spawnRowOf(w)).toMatchObject({ task: 'BE-101', spike: 'MOD-1' })
+  })
+
+  test('MOD-374: spike: nope warns and the spawn row has no spike', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
+    const w = world(on, { ...cardAt(FIXTURE_CARD.replace('status: queued', 'status: queued\nspike: nope')), listAgents: true })
+    await $.session.start(sessionStart)
+    const text = resultText(await $.tool.call({ tool: TOOL, task: 'BE-101', scope: 'app/**' } as never))
+    expect(text).toContain('warning: spike: nope is not a task id; not recorded')
+    await brainSpawn($, text, { tool_use_id: 'toolu_SPK00002' })
+    const row = spawnRowOf(w)
+    expect(row).toMatchObject({ task: 'BE-101' })
+    expect('spike' in (row ?? {})).toBe(false)
+  })
+
   test('a card with neither gives linked false and no fixes', { options: { briefDir: `${SCRATCH}/briefs` } }, async ($, on) => {
     const w = world(on, { ...cardAt(FIXTURE_CARD), listAgents: true })
     await $.session.start(sessionStart)

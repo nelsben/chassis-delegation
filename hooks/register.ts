@@ -233,7 +233,7 @@ import { cachedState, rememberState, landedTail, matchPlanned, openCandidates, M
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
 import { classOfCardText } from './lib/classof'
 import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
-import { CARD_TOOL, cardsFromFields, fixesOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, globGapWarnings, redTestWarnings, sayGo, type NewCard } from './lib/card'
+import { CARD_TOOL, cardsFromFields, fixesOf, spikeLinkOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, globGapWarnings, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
 import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeiling, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, type GateProgress } from './lib/gaterun'
@@ -3166,7 +3166,7 @@ async function overSpend($: Host, spawnIn: SpawnRecord, usd: number, ceiling: nu
 }
 
 /** MOD-274: what /dispatch stores about a card for the spawn: its class, and whether it hand-set an effort or a reason. */
-type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean; fixes?: string[]; linked?: boolean; /** MOD-366 */ advisorRuleSource?: 'card' | 'split' }
+type CardClassRecord = { name: string; kind: CardKind; hasEffort: boolean; hasReason: boolean; fixes?: string[]; linked?: boolean; /** MOD-374 */ spike?: string; /** MOD-366 */ advisorRuleSource?: 'card' | 'split' }
 
 /**
  * MOD-279: whether a card's attempt explores, and how. One decision for the spawn hook and for /dispatch (which prints it before the
@@ -9058,6 +9058,8 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   if (mixLine) out.push(`   ${mixLine}`)
   const shareWarn = frontierShareWarning(mixTiers, cfg.maxFrontierShare)
   if (shareWarn) out.push(`   warning: ${shareWarn}`)
+  // MOD-374: a spike: the card writes that is not a task id is said and not recorded
+  if (card.fields.spike !== undefined && spikeLinkOf(card.fields.spike) === undefined) out.push(`   warning: spike: ${String(card.fields.spike).slice(0, 40)} is not a task id; not recorded`)
   const shownForbid = (shownHeader?.fields.forbid ?? '').split(',').filter(Boolean)
   // MOD-227: a forbid from elsewhere (the parent issue, a sibling card) wins as before; the line names where it came from
   for (const c of scopeForbidClashes((shownHeader?.fields.scope ?? '').split(',').filter(Boolean), shownForbid, forbidOrigin)) {
@@ -9108,6 +9110,7 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
     // MOD-341: whether the card has an issue link, and the merged cards it repairs
     linked: issueRef(card.fields.issue) !== undefined,
     ...(fixesOf(card.fields.fixes).length > 0 ? { fixes: fixesOf(card.fields.fixes) } : {}),
+    ...(spikeLinkOf(card.fields.spike) !== undefined ? { spike: spikeLinkOf(card.fields.spike) } : {}),
     ...(advisorPick.source !== 'tier' ? { advisorRuleSource: advisorPick.source } : {}),
   }
   await storeSet($, K.cardClass(id, await cardRepo($, target?.path)), cardClassRecord)
@@ -10525,7 +10528,7 @@ async function decideSpawn($: Host, e: SpawnEvent, start: (alias: string, cwd?: 
     } else if (res.agentId) await storeSet($, K.agent(res.agentId), key)
     if (res.agentId && e.name) await storeSet($, K.name(e.name), res.agentId)
     // MOD-94 (#157): and its spawn row in the ledger is what verifies it after a reload, record or no record
-    if (!adhoc) await appendLedger($, { ...spawnRow({ ...spawn, ...(await brainStampNow($).then(b => (b ? { brain: b } : {}))), toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(cardCls?.fixes ? { fixes: cardCls.fixes } : {}), ...(typeof cardCls?.linked === 'boolean' ? { linked: cardCls.linked } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)), ...advisorFields })
+    if (!adhoc) await appendLedger($, { ...spawnRow({ ...spawn, ...(await brainStampNow($).then(b => (b ? { brain: b } : {}))), toolUseId: key, at: t, ...(rec.briefHash ? { briefHash: rec.briefHash } : {}), ...(cardCls?.name ? { class: cardCls.name } : {}), ...(cardCls?.fixes ? { fixes: cardCls.fixes } : {}), ...(typeof cardCls?.linked === 'boolean' ? { linked: cardCls.linked } : {}), ...(cardCls?.spike ? { spike: cardCls.spike } : {}), ...(explored ? { explore: true as const, exploreFrom: explored.from } : {}) }, await sessionIdOf($)), ...advisorFields })
     // MOD-92: the start is recorded. Stopped since, the views wait for their next refresh: the hook returns now.
     if (s?.stopped) {
       debug($, `${label}: started; its views skipped (the hook was ${s.stopped === 'abort' ? 'abandoned' : 'near its budget'})`)

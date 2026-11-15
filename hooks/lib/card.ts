@@ -130,6 +130,7 @@ export const CARD_TOOL = {
       parent: { type: 'number', description: 'The issue number this task hangs under (a whole number, 1 or more); the card gains the scope globs of its open sibling cards under the same parent as forbid; a sibling whose scope overlaps makes the card blocked instead' },
       parentScope: { type: 'array', items: { type: 'string' }, description: "The parent issue's scope block, repo-relative globs; every scope glob of the card must sit inside it. Needs parent" },
       parentForbid: { type: 'array', items: { type: 'string' }, description: "The parent issue's forbid block, repo-relative globs, added to the card's forbid. Needs parent" },
+      spike: { type: 'string', description: 'A build card: the id of the spike card whose findings it was planned from (e.g. MOD-372); recorded on its ledger rows' },
       fixes: { type: 'array', items: { type: 'string' }, description: "Task ids of merged cards this card repairs (work a verdict passed that later proved wrong). [] says you checked and it repairs none. Not with lanes" },
       blockedBy: { type: 'array', items: { type: ['string', 'number'] }, description: 'task ids or issue numbers this card waits on; the card is written blocked, with no brief or worktree, until they merge' },
       dispatch: { type: 'boolean', description: 'Dispatch right after writing the card, instead of the dry run (default false)' },
@@ -176,6 +177,12 @@ export function fixesOf(v: unknown): string[] {
   const parts = Array.isArray(v) ? v : typeof v === 'string' ? v.replace(/^\s*\[|\]\s*$/g, '').split(',') : []
   return [...new Set(parts.filter((x): x is string => typeof x === 'string').map(x => x.trim()).filter(x => FIX_ID.test(x)))]
 }
+
+/** MOD-374: a card's `spike:` value: the one task id it names (trimmed), or undefined for anything else. */
+export function spikeLinkOf(v: unknown): string | undefined {
+  return typeof v === 'string' && SPIKE_ID.test(v.trim()) ? v.trim() : undefined
+}
+const SPIKE_ID = /^[A-Z][A-Z0-9]*-\d+$/
 
 /** MOD-188: an issue number: absent, or a whole number 1 or more. */
 function issueNumber(key: 'issue' | 'parent', v: unknown): number | undefined | { error: string } {
@@ -241,6 +248,9 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
     if (!Array.isArray(raw) || raw.length > 5 || raw.some(x => typeof x !== 'string' || !FIX_ID.test(x.trim()))) return { error: 'fixes must be a list of task ids (like MOD-12), at most 5' }
     fixes = [...new Set((raw as string[]).map(x => x.trim()))]
   }
+  // MOD-374: the spike this card was planned from
+  if (input.spike !== undefined && spikeLinkOf(input.spike) === undefined) return { error: 'spike must be one task id, e.g. MOD-372' }
+  const spike = spikeLinkOf(input.spike)
   if (parent === undefined && (input.parentScope !== undefined || input.parentForbid !== undefined)) return { error: 'parentScope and parentForbid need parent: the issue number the task hangs under' }
   const parentScope = globs('scope', input.parentScope, false)
   if ('error' in parentScope) return { error: parentScope.error.replace(/^scope/, 'parentScope') }
@@ -364,7 +374,7 @@ title: ${yamlScalar(title)}
 domain: ${domain}
 tier: ${tier}
 ${tierReason !== '' ? `tier_reason: ${tierReason}\n` : ''}${eff.effort ? `effort: ${eff.effort}\n` : ''}${effortReason !== '' ? `effort_reason: ${effortReason}\n` : ''}${advisorIn !== '' ? `advisor: ${advisorIn}\n` : ''}${blockers.length > 0 ? `status: blocked\nblocked_by: [${blockers.join(', ')}]` : 'status: queued'}
-${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${fixes !== undefined ? `fixes: [${fixes.join(', ')}]\n` : ''}${parent !== undefined && parentScope.length > 0 ? `parentScope: [${parentScope.map(inList).join(', ')}]\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
+${issue !== undefined ? `issue: ${issue}\n` : ''}${parent !== undefined ? `parent: ${parent}\n` : ''}${fixes !== undefined ? `fixes: [${fixes.join(', ')}]\n` : ''}${spike !== undefined ? `spike: ${spike}\n` : ''}${parent !== undefined && parentScope.length > 0 ? `parentScope: [${parentScope.map(inList).join(', ')}]\n` : ''}${repo === 'worktree' ? '' : `repo: ${repo}\n`}scope: [${scope.map(inList).join(', ')}]
 forbid: [${forbid.map(inList).join(', ')}]
 ${resources.length > 0 ? `resources: [${resources.join(', ')}]\n` : ''}${allow.length > 0 ? `allow: [${allow.join(', ')}]\n` : ''}${purposeIn === 'spike' ? `purpose: spike\nfindings: ${spikeFindings}\n${spikeSources.length > 0 ? `sources: [${spikeSources.join(', ')}]\n` : ''}${spikeVerdicts.length > 0 ? `verdicts: [${spikeVerdicts.join(', ')}]\n` : ''}` : ''}red_test: ${yamlScalar(redTest)}
 gate: ${gate.join(', ')}
@@ -396,6 +406,7 @@ export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): N
   const raw = input.lanes
   if (input.purpose === 'spike') return { error: 'a spike is one card; drop lanes' }
   if (input.fixes !== undefined) return { error: 'fixes belongs to one card; drop it when lanes are given' }
+  if (input.spike !== undefined) return { error: 'spike belongs to one card; drop it when lanes are given' }
   if (input.issue !== undefined) return { error: 'issue belongs to one card; drop it when lanes are given (one issue per card)' }
   if (!Array.isArray(raw) || raw.length === 0) return { error: 'lanes must be a list of { title, scope, doneWhen? }, one per worker' }
   if (input.scope !== undefined) return { error: 'scope belongs to each lane when lanes are given (lanes: [{ title, scope }]); drop the shared scope' }
