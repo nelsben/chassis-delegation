@@ -6624,8 +6624,9 @@ const isEnoent = (err: unknown): boolean => /ENOENT/.test(String(err))
  * OUTSIDE_MAX_ENTRIES files is recorded as a watermark ({ root, since, files }) and its files are not stored.
  * With `since` (the hand-back walk of a watermark root) the walk has no 10000 cap but a ceiling of
  * OUTSIDE_WALK_CEILING entries, and keeps only the files and folders modified after `since`.
+ * MOD-375 (#514): with `full` (no `since`) every file is kept, up to the same ceiling, and the root is never a watermark: a root listed in full at dispatch is listed in full at hand-back.
  */
-async function listRoot($: Host, root: string, since?: number): Promise<RootListing> {
+async function listRoot($: Host, root: string, since?: number, full?: boolean): Promise<RootListing> {
   const started = await now($)
   let kind: string
   let st: { size: number; mtimeMs: number }
@@ -6659,7 +6660,7 @@ async function listRoot($: Host, root: string, since?: number): Promise<RootList
         if (why !== undefined) return why
       } else if (since !== undefined) {
         if (e.mtimeMs > since) entries.push({ path, size: e.size, mtimeMs: e.mtimeMs })
-      } else if (entries.length <= OUTSIDE_MAX_ENTRIES) entries.push({ path, size: e.size, mtimeMs: e.mtimeMs })
+      } else if (full || entries.length <= OUTSIDE_MAX_ENTRIES) entries.push({ path, size: e.size, mtimeMs: e.mtimeMs })
       else files += 1
     }
     return undefined
@@ -6667,7 +6668,7 @@ async function listRoot($: Host, root: string, since?: number): Promise<RootList
   const why = await walk(root, '')
   if (why !== undefined) return { root, error: why }
   if (since !== undefined) return { root, entries, dirs }
-  return entries.length > OUTSIDE_MAX_ENTRIES ? { root, since: started, files: entries.length + files } : { root, entries }
+  return !full && entries.length > OUTSIDE_MAX_ENTRIES ? { root, since: started, files: entries.length + files } : { root, entries }
 }
 
 /** MOD-233: the listing kept inline in the store (when its file could not be written) holds at most this many entries per root. */
@@ -6696,7 +6697,7 @@ async function outsideFor($: Host, task: string | undefined, repo?: string, watc
   // MOD-97 (#164): the listing is the card's repo's: another repo's task of the same id never lends it one
   // MOD-117 (#185): and a same-id card of another repo the session started in never lends one either
   const saved = await storeGet<{ roots?: RootListing[]; file?: string }>($, K.outside(task, await cardRepo($, repo)))
-  const list = (root: string, since?: number) => listRoot($, root, since)
+  const list = (root: string, since?: number, full?: boolean) => listRoot($, root, since, full)
   if (Array.isArray(saved?.roots)) return { before: saved.roots, list }
   if (typeof saved?.file !== 'string') return undefined
   const file = saved.file

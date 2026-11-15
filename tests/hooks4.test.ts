@@ -966,6 +966,42 @@ describe('MOD-22: research cards (repo=none, an output folder outside the repo)'
     })
   })
 
+  describe('MOD-375 (#514): a root listed in full at dispatch is listed in full at hand-back, so one that grew past 10000 files is still judged', () => {
+    const GROW_CARD = CARD.replace('scope: [/out/hair/**, /out/notes/*.md]', 'scope: [/grow/ok/**]').replace('forbid: []', 'forbid: [/grow/no/**]')
+    const growSetup = (on: Parameters<typeof world>[0]) => {
+      const files: Record<string, string> = { [`${ROOT}/agents/tasks/${NAME}`]: GROW_CARD, '/grow/ok/a.txt': 'x', '/grow/ok/b.txt': 'x', [`${ROOT}/.chassis-delegation.json`]: JSON.stringify({ briefTemplate: '/tpl/brief.md' }), '/tpl/brief.md': TEMPLATE }
+      return world(on, { files, dirs: { [`${ROOT}/agents/tasks`]: [NAME] }, trees: ['/grow'], run, agentId: 'agent-r', store: { 'delegation.agentTypes': ['general-purpose', 'ops'] } })
+    }
+    const growInto = (files: Map<string, string>) => {
+      for (let i = 0; i < 10001; i++) files.set(`/grow/ok/d${i % 50}/f${i}.txt`, 'x')
+      files.set('/grow/ok/model.glb', 'glTF')
+    }
+
+    test('a root of two files at dispatch that holds more than 10000 at hand-back is judged: the in-scope growth holds, not unchecked', { options: OPTIONS }, async ($, on) => {
+      const w = growSetup(on)
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      growInto(w.files)
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      const row = delivered(w)
+      expect(row).toContain('claim scope: held')
+      expect(row).not.toContain('claim scope: unchecked')
+      expect(row).not.toContain('was not listed at hand-back')
+    })
+
+    test('the same growth with a forbidden file added refutes scope, naming the forbidden file', { options: OPTIONS }, async ($, on) => {
+      const w = growSetup(on)
+      await $.session.start(sessionStart)
+      await brainSpawn($, String((await $.command.run(commandInput('OPS-9'))).text))
+      growInto(w.files)
+      w.files.set('/grow/no/x.txt', 'x')
+      await $.turn.complete(turnInput('agent-r', `Done.\n${REPORT('artefacts=model.glb')}`))
+      const row = delivered(w)
+      expect(row).toContain('verdict=refuted (no repo) task=OPS-9')
+      expect(row).toContain('claim scope: failed — touches forbid path: /grow/no/x.txt (outside delta')
+    })
+  })
+
   test('the card tool takes repo none and an absolute scope: the card, the header and the folders', { options: { briefDir: `${SCRATCH}/briefs`, gateMap: '{"check":"checker {outdir}"}' } }, async ($, on) => {
     const w = world(on, { dirs: { [`${ROOT}/agents/tasks`]: ['README.md'] }, trees: ['/out/hair'], store: { 'delegation.agentTypes': ['general-purpose'] } })
     await $.session.start(sessionStart)
