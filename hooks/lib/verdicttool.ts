@@ -98,6 +98,18 @@ export function mergedVerdict(ancestor: boolean, rows: readonly { task: string; 
 /** A hand-back with a report after a pause-cap charge is judged on the same attempt: the cap changes the count, not the outcome. */
 export const reopensAfterPauseCap = (pauseCharged: boolean | undefined, hasReport: boolean): boolean => pauseCharged === true && hasReport
 
+/**
+ * MOD-380: a hand-back with a report, from the same worker, after its no-report on the same attempt, is judged on that attempt:
+ * the no-report row had no sha, so the report's sha is its first. A record that already has a sha was judged (by hand or by a resume).
+ */
+export const reopensAfterNoReport = (
+  last: { verdict: string; sha?: string; agentId?: string; attempt: number } | undefined,
+  spawnAttempt: number,
+  agentId: string,
+  reportSha: string | undefined,
+): boolean =>
+  last !== undefined && last.verdict === 'no-report' && last.sha === undefined && last.attempt === spawnAttempt && last.agentId === agentId && reportSha !== undefined && reportSha !== ''
+
 // ---- MOD-297 (#336): a throw inside the tool comes back as text --------------------------------------------
 /**
  * The line the verdict tool returns when its handler throws: the error's first line, and the band row's verdict and

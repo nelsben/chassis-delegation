@@ -61,6 +61,39 @@ describe('MOD-292: the verdict tool reads the branch before the ledger', () => {
   })
 })
 
+// MOD-380: a report handed back after a no-report on the same attempt is judged on that attempt, uncharged.
+describe('MOD-380: a late report after a no-report is judged on its attempt', () => {
+  const setup = (on: never) => world(on, { files: { [BRIEF]: HEADER + '\nbody' }, dirs: { [WT]: [] }, run: repo, agentId: 'agent-4' })
+  const verdictRows = (w: { files: Map<string, string> }) =>
+    (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>).filter(r => typeof r.verdict === 'string')
+  const storeRecs = (w: { store: Map<string, unknown> }) => (w.store.get(`delegation.tasks.T-4@${ROOT}`) ?? []) as Record<string, unknown>[]
+
+  test('a no-report then a report from the same worker is judged on attempt 1, with no attempt 2 and nothing charged', { options: OPTS }, async ($, on) => {
+    merged.on = false
+    const w = setup(on as never)
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'I ran out of road.', undefined, 'turn-late1'))
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT, undefined, 'turn-late2'))
+    expect(verdictRows(w).filter(r => r.attempt === 1).map(r => r.verdict)).toEqual(['no-report', 'consistent'])
+    expect(verdictRows(w).some(r => r.attempt === 2)).toBe(false)
+    expect(storeRecs(w).map(r => [r.attempt, r.kind])).toEqual([[1, 'spawn']])
+  })
+
+  test('a no-report, a resume, then a report is still attempt 2', { options: OPTS }, async ($, on) => {
+    merged.on = false
+    on('tool.call', { tool: 'SendMessage' }, async () => ({ result: 'queued' }))
+    const w = setup(on as never)
+    await $.session.start(sessionStart)
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
+    await $.turn.complete(turnInput('agent-4', 'I ran out of road.', undefined, 'turn-res1'))
+    expect(await $.tool.call({ tool: 'SendMessage', to: 'agent-4', message: 'fix it' } as never)).toEqual({ result: 'queued' })
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT, undefined, 'turn-res2'))
+    expect(storeRecs(w).map(r => [r.attempt, r.kind])).toEqual([[1, 'spawn'], [2, 'resume']])
+    expect(verdictRows(w).filter(r => r.attempt === 1).map(r => r.verdict)).toEqual(['no-report'])
+  })
+})
+
 // MOD-316: the dispatch base is never landed work. An unbuilt worktree's head equals the base, and the base is an ancestor of origin/main.
 describe('MOD-316: the dispatch base never reads merged', () => {
   const ledgerOf = (w: { files: Map<string, string> }) =>

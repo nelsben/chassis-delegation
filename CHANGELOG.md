@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A report handed back by the same worker after its `no-report` on an attempt is judged on that attempt, uncharged, instead of being dropped** (MOD-380)
+
 ## 0.9.62 — 2026-11-15
 
 ### Added
