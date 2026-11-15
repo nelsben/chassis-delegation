@@ -383,7 +383,8 @@ export function outsideClaim(input: { before: readonly RootListing[]; after: rea
 }
 
 /** What the verifier needs to compare the outside: the listings taken at dispatch, and a way to list a root now. */
-export type OutsideInput = { before: readonly RootListing[]; list: (root: string, since?: number) => Promise<RootListing>; /** MOD-217: the paths the worker's tool calls wrote (its write log). */ writes?: readonly string[]; /** MOD-305: the paths that changed under a watched root during a command that never named it. */ foreign?: readonly string[] }
+/** MOD-375 (#514): `full` asks for every entry under the root, up to OUTSIDE_WALK_CEILING, never a watermark. */
+export type OutsideInput = { before: readonly RootListing[]; list: (root: string, since?: number, full?: boolean) => Promise<RootListing>; /** MOD-217: the paths the worker's tool calls wrote (its write log). */ writes?: readonly string[]; /** MOD-305: the paths that changed under a watched root during a command that never named it. */ foreign?: readonly string[] }
 
 /** MOD-186: the folder (under the session root) that holds a repo=none card's listing files. */
 export const outsideDirOf = (root: string): string => `${root.replace(/\/+$/, '')}/.delegation/outside`
@@ -410,7 +411,9 @@ export async function outsideCheck(scope: readonly string[], forbid: readonly st
   for (const root of roots) {
     try {
       const mark = outside.before.find(l => l.root === root)
-      after.push(await outside.list(root, mark !== undefined && 'since' in mark ? mark.since : undefined))
+      // MOD-375 (#514): a root listed in full at dispatch (not truncated) is listed in full again, however many files it holds now
+      const full = mark !== undefined && 'entries' in mark && !mark.truncated
+      after.push(await outside.list(root, mark !== undefined && 'since' in mark ? mark.since : undefined, full ? true : undefined))
     } catch (err) {
       after.push({ root, error: String(err) })
     }
