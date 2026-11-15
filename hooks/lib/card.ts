@@ -231,7 +231,7 @@ export function cardFromFields(input: Record<string, unknown>, ctx: CardCtx, at 
   const scope = globs('scope', input.scope, true)
   if ('error' in scope) return scope
   // MOD-373 (#512): a spike's findings file is in its scope; added first when no entry matches it (before the overlap and forbid checks)
-  if (input.purpose === 'spike' && typeof input.findings === 'string' && !text(input.findings).startsWith('/') && !text(input.findings).startsWith('~') && !text(input.findings).split('/').includes('..') && text(input.findings) !== '' && !scope.some(g => globMatches(text(input.findings), g))) scope.unshift(text(input.findings))
+  if (text(input.purpose).toLowerCase() === 'spike' && typeof input.findings === 'string' && !text(input.findings).startsWith('/') && !text(input.findings).startsWith('~') && !text(input.findings).split('/').includes('..') && text(input.findings) !== '' && !scope.some(g => globMatches(text(input.findings), g))) scope.unshift(text(input.findings))
   const ownForbid = globs('forbid', input.forbid, false)
   if ('error' in ownForbid) return ownForbid
   const resources = resourceNames(input.resources)
@@ -404,7 +404,7 @@ export function cardsFromFields(input: Record<string, unknown>, ctx: CardCtx): N
     return 'error' in one ? one : [one]
   }
   const raw = input.lanes
-  if (input.purpose === 'spike') return { error: 'a spike is one card; drop lanes' }
+  if (text(input.purpose).toLowerCase() === 'spike') return { error: 'a spike is one card; drop lanes' }
   if (input.fixes !== undefined) return { error: 'fixes belongs to one card; drop it when lanes are given' }
   if (input.spike !== undefined) return { error: 'spike belongs to one card; drop it when lanes are given' }
   if (input.issue !== undefined) return { error: 'issue belongs to one card; drop it when lanes are given (one issue per card)' }
