@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.61 to 0.9.62
+
+No action needed. A card can now be a spike: `purpose: spike` with a `findings:` file in scope, a `## Questions` list, `red_test: none` and `gate: findings`; the worker writes a cited findings file and the built-in `findings` gate checks it at verify and at merge (see Spike cards in the guide). A build card's `spike: <ID>` records the spike it came from on its ledger rows. Every gate command now runs with `CHASSIS_GATE_DEADLINE`, the whole seconds until `gateTimeoutMinutes`, so a long gate can stop its own children and exit before the ceiling; a gate stopped at the ceiling names its last output in the verdict. A refute on `files=` alone with the gate green now advises `dispatch verify=<sha>`, which spends no attempt. A folder outside the repo that grows past 10000 files during a run is now judged at hand-back, not left unchecked. Detail: [CHANGELOG 0.9.62](../CHANGELOG.md).
+
 ### From 0.9.60 to 0.9.61
 
 Read the reconcile dry run again before you confirm. `tree reconcile` now proposes a sub-issue as done elsewhere only when a merged card names it in its own `issue:`. A sub-issue that merged cards name only as `parent:` gets its own row, `<k> merged cards under it, none open (<ids>)`, with a commented close line; a bare `--confirm` leaves it open and prints the `--only` line that closes it once you have checked its done-when. A sub-issue with an open card under it is listed as `<k> cards under it still open` and never proposed, and the named parent waits while either row is present. `--confirm --only <n,n,…>` (the `tree` tool's `only`) closes just the numbers given. Detail: [CHANGELOG 0.9.61](../CHANGELOG.md).
