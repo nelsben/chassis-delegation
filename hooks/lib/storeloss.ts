@@ -41,6 +41,8 @@ export type SpawnRow = {
   /** MOD-341: the merged cards this card repairs, and whether the card has an issue link. */
   fixes?: string[]
   linked?: boolean
+  /** MOD-374 (#512): the spike this card was planned from. */
+  spike?: string
   explore?: true
   exploreFrom?: string
   sessionId?: string
@@ -80,6 +82,7 @@ export function spawnRow(s: SpawnFields, sessionId?: string): SpawnRow {
     ...(s.class ? { class: s.class } : {}),
     ...(s.fixes && s.fixes.length > 0 ? { fixes: [...s.fixes] } : {}),
     ...(typeof s.linked === 'boolean' ? { linked: s.linked } : {}),
+    ...(s.spike ? { spike: s.spike } : {}),
     ...(s.explore ? { explore: true as const, ...(s.exploreFrom ? { exploreFrom: s.exploreFrom } : {}) } : {}),
     ...(s.brain ? { brain: s.brain } : {}),
     ...(sessionId ? { sessionId } : {}),
