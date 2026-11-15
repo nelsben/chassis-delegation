@@ -43,7 +43,9 @@ Owner's words, and the step each one means. One row per phrase; the tool and the
 3. **The worker hands back.** One row; `next=` says what to do:
 
        chassis-delegation: OPS-1 attempt 1/2 consistent · sonnet · $0.41 · next=accept
-       chassis-delegation: OPS-1 attempt 1/2 refuted on files (files= does not match the actual delta …) · sonnet · $0.38 · next=resume agent=agent-7
+       chassis-delegation: OPS-1 attempt 1/2 refuted on files (files= does not match the actual delta …) · sonnet · $0.38 · next=files= is wrong, not the tree: check the paths named above … then dispatch task=OPS-1 verify=<sha> (… no attempt spent); else resume agent=agent-7 — revert the extras
+
+   A refute on files alone means the report was wrong, not the work; check the delta and re-judge with `dispatch verify=<sha>`, which spends no attempt.
 
 4. **`/delegation`** prints what is running, queued and owed, and the last verdicts.
 

@@ -131,6 +131,11 @@ describe('verdict, advice and budgets', () => {
     expect(outside.next).toBe('resume agent=agent-7 — remove /out/notes/scratch.txt, or amend: [[amend v=1 scope+=/out/notes/scratch.txt reason=…]] (the path is outside scope; a scope refute never escalates)')
     const files = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', lines: ['claim files: failed — extra paths: a.ts'] })
     expect(files.next).toBe('resume agent=agent-7 — list the paths named above in files= (or revert the extras)')
+    // MOD-376: gate green and a sha: re-judge at the same sha; the old resume path stays for a gate fail
+    const rejudge = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', reportGate: 'pass', sha: 'abc1234', lines: ['claim files: failed — extra paths: a.ts'] })
+    expect(rejudge).toEqual({ kind: 'check', next: "files= is wrong, not the tree: check the paths named above are the worker's, then dispatch task=FE-1 verify=abc1234 (re-judges this attempt against the delta; no attempt spent); else resume agent=agent-7 — revert the extras" })
+    const gateFail = advise({ ...base, verdict: 'refuted', attempts: 1, budget: 3, lineageResumes: 0, tier: 'standard', reportGate: 'fail', sha: 'abc1234', lines: ['claim files: failed — extra paths: a.ts'] })
+    expect(gateFail.next).toBe('resume agent=agent-7 — list the paths named above in files= (or revert the extras)')
     const gate = advise({ ...base, verdict: 'refuted', attempts: 2, budget: 3, lineageResumes: 1, tier: 'standard', lines: ['claim gate: failed — x'] })
     expect(gate.tier).toBe('frontier')
   })
