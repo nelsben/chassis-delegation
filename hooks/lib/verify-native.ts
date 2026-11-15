@@ -40,6 +40,7 @@
 // Pure apart from `io`: no `$`.
 import { effectiveList, foreignReportFormat, notCheckedLine, parseAmends, parseHeader, type Report } from './brief'
 import { checkGateWords, gateForDelta, isEngineGate, resolveGateRuns, splitCommand, type GateResolution, type GateRun } from './gates'
+import { findingsCheck, spikeQuestions, splitFindingsGate } from './spike'
 import { artefactsCheck, attributeWrites, isAbsolute, isDelegationPath, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
 import { isGitRef } from './repoconfig'
 import { gateIdOf } from './gaterun'
@@ -242,7 +243,7 @@ export function globMatches(path: string, glob: string): boolean {
 export const pathMatchesAny = (path: string, globs: readonly string[]): boolean => globs.some(g => g !== '' && globMatches(path, g))
 
 export type BriefContract =
-  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; /** MOD-196: the brief's parent_scope=, [] when none. */ parentScope: string[]; base?: string; gate?: string; redTest?: string; /** MOD-22: the brief's outdir=. */ outdir?: string; /** MOD-120: the brief's scratch=, the one absolute place a red= may lie outside the tree. */ scratch?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
+  | { ok: true; scope: string[]; scopeProse?: true; forbid: string[]; ignore: string[]; /** MOD-196: the brief's parent_scope=, [] when none. */ parentScope: string[]; base?: string; gate?: string; /** MOD-372: the brief's findings= (a path in the repo), absent when empty; sources= and verdicts= as lists, [] when absent. */ findings?: string; sources: string[]; verdicts: string[]; redTest?: string; /** MOD-22: the brief's outdir=. */ outdir?: string; /** MOD-120: the brief's scratch=, the one absolute place a red= may lie outside the tree. */ scratch?: string; lines: string[]; amendBad?: true; amendWhy?: string; amendments: number }
   | { ok: false; line: string }
 
 /** True when a scope= reads as prose: two or more words and no entry shaped like a path or glob. */
@@ -282,6 +283,10 @@ export function briefContract(briefText: string): BriefContract {
   const outdir = outdirField !== '' ? { outdir: outdirField } : {}
   const scratchField = (f.scratch ?? '').trim()
   const scratch = scratchField !== '' ? { scratch: scratchField } : {}
+  const findingsField = (f.findings ?? '').trim()
+  const findings = findingsField !== '' ? { findings: findingsField } : {}
+  const sources = csv(f.sources)
+  const verdicts = csv(f.verdicts)
   const amends = parseAmends(briefText)
   if (amends.malformed !== undefined) {
     return {
@@ -296,6 +301,9 @@ export function briefContract(briefText: string): BriefContract {
       ...redTest,
       ...outdir,
       ...scratch,
+      ...findings,
+      sources,
+      verdicts,
       amendments: 0,
       amendBad: true,
       amendWhy: amends.malformed,
@@ -314,6 +322,9 @@ export function briefContract(briefText: string): BriefContract {
     ...redTest,
     ...outdir,
     ...scratch,
+    ...findings,
+    sources,
+    verdicts,
     amendments: amends.amends.length,
     lines: amends.amends.map((a, i) => `amendment: #${i + 1} ${a.ops.join(' ')} — reason: ${a.reason}`),
   }
@@ -741,7 +752,7 @@ export function verifyCardless(input: { repo: string; report: Report; baseRef?: 
 
 const abs = (repo: string, rel: string): string => `${repo.replace(/\/+$/, '')}/${rel}`
 
-const CARDLESS_CONTRACT: BriefContract = { ok: true, scope: [], forbid: [], ignore: [], parentScope: [], lines: [], amendments: 0 }
+const CARDLESS_CONTRACT: BriefContract = { ok: true, scope: [], forbid: [], ignore: [], parentScope: [], sources: [], verdicts: [], lines: [], amendments: 0 }
 
 export async function verifyNative(input: NativeInput, io: NativeIo): Promise<NativeResult> {
   const cardless = input.cardless === true
@@ -988,11 +999,56 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   // 5. the gate, re-run in the worker's own worktree at the sha (an honest gate=fail is never punished);
   //    repo=here: in the shared checkout as it stands, uncommitted changes and all
   let gateTree: Record<string, string> | undefined
-  const emptyGate = cardless ? { gate: contract.gate } : gateForDelta(contract.gate, input.gateMap, delta)
+  // MOD-372: with findings= and `findings` in gate=, the findings file is judged by the built-in check first; the other gate ids (if any) run as before
+  const split = cardless ? { builtin: false, rest: contract.gate } : splitFindingsGate(contract.gate, contract.findings)
+  let findingsPassed = false
+  if (split.builtin) {
+    const where = here ? `in the shared checkout ${repo}` : `at ${sha}`
+    const fpath = contract.findings ?? ''
+    const spike = spikeQuestions(input.briefText)
+    const spikeError = 'error' in spike ? spike.error : undefined
+    const questions = 'questions' in spike ? spike.questions : undefined
+    let text: string | undefined
+    let why: string | undefined
+    if (fpath.startsWith('/') || fpath.split('/').includes('..')) why = 'findings= must be a path inside the repo'
+    else if (spikeError !== undefined) why = spikeError
+    else if (!here && full === '') why = 'sha missing'
+    else if (!here) text = await out('show', `${full}:${fpath}`)
+    else if (!io.readRed) why = 'the verifier has no file reader'
+    else {
+      try {
+        const ev = await io.readRed(abs(repo, fpath))
+        text = ev.exists ? ev.text : undefined
+      } catch (err) {
+        why = String(err)
+      }
+    }
+    if (why !== undefined) claim('gate', 'unchecked', `findings gate not run: ${why}`)
+    else if (questions !== undefined) {
+      const r = findingsCheck({ text, path: fpath, questions, sources: contract.sources, verdicts: contract.verdicts })
+      const bullets = r.problems.map(p => `  - ${p}`)
+      const said = (report.gate ?? '').trim()
+      if (said === 'pass') {
+        if (r.ok) {
+          claim('gate', 'held', `findings gate green ${where}: ${r.summary}`)
+          findingsPassed = true
+        } else {
+          claim('gate', 'failed', `gate=pass claimed but the findings gate is RED ${where}: ${r.problems.length} problem(s)`)
+          lines.push(...bullets)
+        }
+      } else if (said === 'fail') {
+        if (!r.ok) {
+          claim('gate', 'held', `gate=fail confirmed (findings gate red ${where}: ${r.problems.length} problem(s)) — an honest terminal state`)
+          lines.push(...bullets)
+        } else claim('gate', 'unchecked', 'gate=fail claimed but the findings gate is green — not a refutation, recorded')
+      } else claim('gate', 'unchecked', `report gate='${said}' is not pass|fail`)
+    }
+  }
+  const emptyGate = cardless ? { gate: split.rest } : gateForDelta(split.rest, input.gateMap, delta)
   if (emptyGate.line) lines.push(emptyGate.line)
   const gates: GateResolution = cardless ? { runs: [], notRerun: [] } : resolveGateRuns(emptyGate.gate, input.gateMap, input.allowed ?? (() => false), input.filesPath, input.repo, contract.outdir)
   if (cardless) claim('gate', 'unchecked', NO_BRIEF_REASON)
-  else if (gates.none) claim('gate', 'unchecked', 'no gate command available (the brief has no gate=)')
+  else if (gates.none && !(split.builtin && split.rest === undefined)) claim('gate', 'unchecked', 'no gate command available (the brief has no gate=)')
   for (const n of gates.notRerun) claim('gate', 'unchecked', `gate not re-run: ${n.id} (${n.why})`)
   if (gates.runs.length > 0) {
     let treeWhy: string | undefined
@@ -1127,6 +1183,12 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         if (words) lines.push(anyRerun ? `re-run: ${words}` : words)
       }
     }
+  }
+
+  // MOD-372: a findings file held under gate=pass is recorded at the tree it was judged on, as the gates are (HEAD still the sha)
+  if (findingsPassed && !here && (firstLine(await out('rev-parse', 'HEAD')) === full)) {
+    const tree = firstLine(await out('rev-parse', 'HEAD^{tree}'))
+    if (/^[0-9a-f]{40,64}$/.test(tree)) gateTree = { ...(gateTree ?? {}), findings: tree }
   }
 
   // 6. the red evidence (GH-20): when the brief has a red test, red= names its failing output in this tree

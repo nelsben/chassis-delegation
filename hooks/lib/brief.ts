@@ -12,7 +12,7 @@ import { sha256Text } from './land'
 
 export const BRIEF_FIELDS = [
   'v', 'task', 'subtask', 'purpose', 'tier', 'model', 'scope', 'forbid', 'parent_scope', 'scope_globs', 'forbid_globs',
-  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'outdir', 'scratch', 'resources', 'allow', 'context', 'note',
+  'red_test', 'gate', 'spend', 'budget', 'report', 'repo', 'base', 'ignore', 'outdir', 'scratch', 'resources', 'allow', 'findings', 'sources', 'verdicts', 'context', 'note',
 ] as const
 
 /**

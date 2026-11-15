@@ -71,6 +71,8 @@ const TASK_ID_SRC = '[A-Z][A-Z0-9]*-\\d+[a-z]?'
 const SHA = /^[0-9a-f]{7,40}$/
 const SHOW_CARD = new RegExp(`^[0-9a-f]{7,40}:agents/tasks/${TASK_ID_SRC}-[A-Za-z0-9._-]+\\.md$`)
 const CARD_FILE = new RegExp(`^${TASK_ID_SRC}-[A-Za-z0-9._-]+\\.md$`)
+// MOD-372 (#512): the verifier reads a spike's findings= file at the sha: `show <full sha>:<repo path>`, read-only, path not starting - or /
+const FINDING_AT_SHA = /^[0-9a-f]{40,64}:[\w.][\w./-]*$/
 /** A relative folder, plain segments only (the configured cardDir). */
 const PLAIN_DIR = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/
 const cardDirOk = (d: string, allow: AllowConfig): boolean => {
@@ -153,7 +155,7 @@ function checkGit(args: readonly string[], allow: AllowConfig): Check {
     const file = spec.slice(colon + 1)
     const slash = file.lastIndexOf('/')
     const cardAtRef = colon > 0 && isBaseRef(ref) && slash > 0 && cardDirOk(file.slice(0, slash), allow) && CARD_FILE.test(file.slice(slash + 1))
-    const exact = dirs.length === 1 && tail.length === 1 && (SHOW_CARD.test(spec) || cardAtRef) && !spec.includes('..')
+    const exact = dirs.length === 1 && tail.length === 1 && (SHOW_CARD.test(spec) || cardAtRef || FINDING_AT_SHA.test(spec)) && !spec.includes('..')
     return exact ? ok : refuse(`git show ${tail.join(' ')} is not the exact shape (-C <root> show <sha>:agents/tasks/<id>-<name>.md)`)
   }
   if (sub === 'fetch') {

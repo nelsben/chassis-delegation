@@ -876,3 +876,32 @@ describe('MOD-75: the merge command\'s pure parts (the allowlist shapes are in t
     expect(labelIsMerged('MOD-10', merged)).toBe(false)
   })
 })
+
+// MOD-372 (#512): a spike card's gate=findings is the built-in findings check, read from the worktree's findings file
+const SPIKE_CARD = CARD.replace('gate: validate, node, test', 'gate: findings\nfindings: findings/spike.md\nverdicts: adopt, defer, reject').replace('## Done when', '## Questions\n\n1. Does X hold? (verdict)\n\n## Done when')
+const FINDINGS_OK = '# Findings\n\n## Q1\nX holds, see src/a.ts:12.\nVerdict: adopt\n\n## Decisions this implies\n- adopt X\n'
+const FINDINGS_RED = '# Findings\n\n## Decisions this implies\n- adopt X\n'
+const spikeFiles = (findings: string) => ({ ...files(), [CARD_PATH]: SPIKE_CARD, [`${WT}/findings/spike.md`]: findings })
+
+describe('MOD-372: the merge of a spike card', () => {
+  test('a green findings file: the built-in check is the gate, the merge pushes', async ($, on) => {
+    const w = world(on, { files: spikeFiles(FINDINGS_OK), dirs, store, run: happy() })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    const ran = w.runs.map(r => r.argv.join(' '))
+    expect(ran).not.toContain(`claude plugin validate ${WT}`)
+    expect(out).toContain(`gates green at ${HEAD.slice(0, 10)} (findings)`)
+    expect(w.files.get(`${ROOT}/.delegation/${ID}/merge-gates.txt`)).toContain('## findings: built-in')
+    expect(blockOf(out)[0]).toBe(`git -C ${WT} push -u origin ${BRANCH}`)
+  })
+
+  test('a red findings file stops the merge before the push', async ($, on) => {
+    const w = world(on, { files: spikeFiles(FINDINGS_RED), dirs, store, run: happy() })
+    await $.session.start(sessionStart)
+    const out = String((await $.command.run(mergeCmd(ID))).text)
+    expect(out).toContain(`${ID}: gate findings failed at ${HEAD.slice(0, 10)}; not pushed`)
+    expect(out).toContain('  - Q1 has no section')
+    expect(blockOf(out)).toEqual([])
+    expect(w.runs.map(r => r.argv.join(' '))).not.toContain(`claude plugin validate ${WT}`)
+  })
+})

@@ -338,3 +338,101 @@ describe('MOD-272: a worker rebased onto a newer main keeps only its own delta',
     }
   })
 })
+
+// MOD-372 (#512): the built-in findings gate, judged by the verifier in a real repository
+const SPIKE_BRIEF = '[[brief v=1 task=T-1 subtask=main purpose=build tier=standard scope=src/**,docs/,findings/ forbid=secrets/** gate=findings findings=findings/spike.md sources=docs.example.com verdicts=adopt,defer,reject budget=2-attempts report=chassis.report.v1]]\n\n## The card\n\n## Questions\n\n1. Does X hold? (verdict)\n2. Where is Y?\n'
+const SPIKE_FILES = 'src/a.ts,docs/x.md,findings/spike.md'
+const GOOD = ['# Findings', '', '## Q1', 'X holds, see src/a.ts:12 and https://docs.example.com/page.', 'Verdict: adopt', '', '## Q2', 'Unanswered: the docs were silent on Y.', '', '## Decisions this implies', '- adopt X', ''].join('\n')
+const MISSING_Q2 = ['# Findings', '', '## Q1', 'Verdict: adopt', 'src/a.ts:12', '', '## Decisions this implies', '- adopt X', ''].join('\n')
+const GOOD_SUMMARY = 'findings/spike.md: 2 questions, 1 answered, 1 unanswered, 2 citations, 0 flags'
+
+/** makeRepo plus one commit on the branch: the findings file (text), or another file when text is undefined. */
+function spikeRepo(text) {
+  const { dir } = makeRepo()
+  if (text !== undefined) write(dir, 'findings/spike.md', text)
+  else write(dir, 'findings/other.txt', 'x\n')
+  sh(dir, 'add', '-A')
+  sh(dir, 'commit', '-q', '-m', 'findings')
+  return { dir, sha: sh(dir, 'rev-parse', '--short', 'HEAD') }
+}
+
+const spikeInput = (repo, f, brief = SPIKE_BRIEF, map = GATE_MAP) => ({ ...input(repo, f), briefText: brief, gateMap: map })
+
+describe('MOD-372: the built-in findings gate on a real repository', () => {
+  test('a clean findings file at the sha under gate=findings: held, and its tree recorded', async () => {
+    const { dir, sha } = spikeRepo(GOOD)
+    try {
+      const t = io()
+      const r = await verifyNative(spikeInput(dir, { sha, files: SPIKE_FILES }), t)
+      expect(t.refused).toEqual([])
+      expect(r.lines).toContain(`claim gate: held — findings gate green at ${sha}: ${GOOD_SUMMARY}`)
+      expect(r.lines.some(l => l.includes('not re-run'))).toBe(false)
+      expect(t.ran.some(c => c.includes('gate.sh'))).toBe(false)
+      expect(r.gateTree?.findings).toBe(sh(dir, 'rev-parse', 'HEAD^{tree}'))
+      expect(r.verdict).toBe('consistent')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a findings file that misses a question under gate=pass: refuted, the problem line shown', async () => {
+    const { dir, sha } = spikeRepo(MISSING_Q2)
+    try {
+      const r = await verifyNative(spikeInput(dir, { sha, files: SPIKE_FILES }), io())
+      expect(r.lines).toContain(`claim gate: failed — gate=pass claimed but the findings gate is RED at ${sha}: 1 problem(s)`)
+      expect(r.lines).toContain('  - Q2 has no section')
+      expect(r.verdict).toBe('refuted')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('the findings file absent at the sha: refuted with not found', async () => {
+    const { dir, sha } = spikeRepo(undefined)
+    try {
+      const r = await verifyNative(spikeInput(dir, { sha, files: 'src/a.ts,docs/x.md,findings/other.txt' }), io())
+      expect(r.lines).toContain(`claim gate: failed — gate=pass claimed but the findings gate is RED at ${sha}: 1 problem(s)`)
+      expect(r.lines).toContain('  - findings file findings/spike.md not found')
+      expect(r.verdict).toBe('refuted')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('gate=findings,check: the built-in check and the gateMap command both claim', async () => {
+    const { dir, sha } = spikeRepo(GOOD)
+    try {
+      const t = io()
+      const r = await verifyNative(spikeInput(dir, { sha, files: SPIKE_FILES }, SPIKE_BRIEF.replace('gate=findings ', 'gate=findings,check ')), t)
+      expect(r.lines).toContain(`claim gate: held — findings gate green at ${sha}: ${GOOD_SUMMARY}`)
+      expect(r.lines).toContain(`claim gate: held — gate green at ${sha} (gate=pass confirmed)`)
+      expect(t.ran).toContain('bash gate.sh')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a gateMap with its own findings id and no findings= in the brief: the map command runs', async () => {
+    const { dir, sha } = makeRepo()
+    try {
+      const t = io()
+      const r = await verifyNative(spikeInput(dir, { sha }, BRIEF.replace(' gate=check', ' gate=findings'), { ...GATE_MAP, findings: 'bash gate.sh' }), t)
+      expect(t.ran).toContain('bash gate.sh')
+      expect(r.lines).toContain(`claim gate: held — gate green at ${sha} (gate=pass confirmed)`)
+      expect(r.lines.some(l => l.includes('findings gate'))).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('findings= outside the repo: the gate is not run and the claim is unchecked', async () => {
+    const { dir, sha } = spikeRepo(GOOD)
+    try {
+      const r = await verifyNative(spikeInput(dir, { sha, files: SPIKE_FILES }, SPIKE_BRIEF.replace('findings=findings/spike.md', 'findings=../spike.md')), io())
+      expect(r.lines).toContain('claim gate: unchecked — findings gate not run: findings= must be a path inside the repo')
+      expect(r.verdict).not.toBe('refuted')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
