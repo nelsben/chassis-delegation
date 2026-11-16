@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The Work pane's titles, toggles, `N done · show`, Clear filters, Show done, the List and Board switch and the detail's back control are links on the desktop, the editor and mobile instead of boxed buttons, and the footer Close is drawn on the terminal and on mobile only** (MOD-392, #547)
+
 ## 0.9.64 — 2026-11-15
 
 ### Fixed
