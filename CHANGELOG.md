@@ -9,6 +9,7 @@
 ### Changed
 
 - **The Work pane draws the model badge (🟢 🔵 🟣) beside the worker in the list, the board card and the detail, in place of the tier dot; `modelGlyphs off` restores the dot** (MOD-387, #537)
+- **The Work pane keeps the List, Board and state-chip buttons the same width when pressed, spaces and wraps the detail's status row, shows `Reading the issues…` once, offers Clear filters beside `No work matches.`, reads Close in its footer, and marks the selected row with a blue bar** (MOD-388, #538)
 
 ## 0.9.63 — 2026-11-15
 
