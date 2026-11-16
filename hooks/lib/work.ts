@@ -370,6 +370,25 @@ export function markColor(type: WorkType, scheme: Scheme): string {
   return TYPE_MARK[type].color
 }
 
+// MOD-397 (#554): on a remote surface the type mark is a 14 px rounded square in the type colour with a white glyph (the design of
+// docs/mockups/work-panel.html), since the desktop's proportional font draws the TYPE_MARK glyphs at uneven sizes; the terminal keeps the glyphs.
+const G = 'fill="#ffffff"'
+const S = 'fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"'
+export const TYPE_GLYPH_SVG: Record<WorkType, string> = {
+  epic: `<path ${G} d="M9 2.5 4.5 9H8l-1 4.5L11.5 7H8z"/>`,
+  feature: `<path ${S} d="M5 3v10"/><path ${G} d="M5.5 3.5h6l-1.6 2.2 1.6 2.2h-6z"/>`,
+  story: `<path ${G} d="M5 3h6v10l-3-2.4L5 13z"/>`,
+  task: `<path ${S} d="M4.5 8.5 7 11l4.5-5.5"/>`,
+  bug: `<circle ${G} cx="8" cy="8" r="3"/>`,
+  spike: `<path ${S} d="M6.2 6.4a1.9 1.9 0 1 1 2.8 1.7c-.7.4-1 .8-1 1.4"/><circle ${G} cx="8" cy="11.7" r=".9"/>`,
+  issue: `<circle ${S} cx="8" cy="8" r="3"/>`,
+}
+
+/** MOD-397 (#554): the type mark as a 16-unit SVG document (drawn at 14 px by the caller): a rounded square in the type colour and its glyph. */
+export function typeIcon(type: WorkType, scheme: Scheme): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="3" fill="${markColor(type, scheme)}"/>${TYPE_GLYPH_SVG[type]}</svg>`
+}
+
 export const TIER_COLOR: Record<Tier, string> = { economy: '#22a06b', standard: '#1d7afc', frontier: '#8270db', premium: '#f38a3f' }
 
 /** `#13` becomes `i13`; any other key unchanged. The part of an element key that names an item. */
