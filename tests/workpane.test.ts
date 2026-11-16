@@ -577,3 +577,51 @@ describe('MOD-388 (#538): the Work pane steady controls, detail row, empty state
     expect(JSON.stringify(await ui.find({ key: 'work-row-i14' }))).not.toContain('▌')
   })
 })
+
+// MOD-389 (#539): two-line board titles, the card id at the right, header counts and a right-aligned Cost.
+describe('MOD-389 (#539): the board card, its header and the list Cost', () => {
+  const LONG = 'Restore a saved cart after the session expires'
+  const LONG_ISSUES = JSON.stringify([
+    issue(10, 'Checkout rework', 'OPEN', 'epic'),
+    issue(11, 'Cart totals', 'OPEN', 'feature', 10),
+    issue(13, LONG, 'OPEN', 'story', 11),
+    issue(14, 'Empty cart banner', 'OPEN', 'bug', 11),
+  ])
+  const RUN = {
+    'delegation.spawn.k-run': { key: 'k-run', task: 'MOD-9', subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 2, purpose: 'build', description: 'MOD-9', subagentType: 'general-purpose', agentId: 'ag-k-run', at: NOW - 60_000 },
+    'delegation.agent.ag-k-run': 'k-run',
+    'delegation.tasks.MOD-9': [{ task: 'MOD-9', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', usd: 0.61, at: NOW - 60_000, toolUseId: 'k-run', agentId: 'ag-k-run', root: ROOT }],
+  }
+  const open = async ($: any, on: any, view?: 'board') => {
+    const w = setup(on, { store: RUN, gh: () => ({ exitCode: 0, stdout: LONG_ISSUES }) })
+    w.agents.push({ id: 'ag-k-run', type: 'general-purpose', description: 'MOD-9', status: 'running' })
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130)
+    if (view === 'board') {
+      await ui.press({ key: 'work-view-board' })
+      await ui.redraw()
+    }
+    return { w, ui }
+  }
+
+  test('on the board at 130 columns a 40-character title draws two lines', async ($, on) => {
+    const { w, ui } = await open($, on, 'board')
+    expect(await ui.find({ key: 'work-card-i13' }), w.debugLogs.join('\n')).toBeDefined()
+    // col is 24, so the title width is 22: the break falls at the last space before it
+    expect((await ui.find({ key: 'work-open-i13' }))?.props.label, 'line 1').toBe('Restore a saved cart')
+    expect(await ui.find({ type: 'Text', text: 'after the session exp…' }), 'line 2').toBeDefined()
+  })
+
+  test('the board header reads QUEUED with the column count', async ($, on) => {
+    const { ui } = await open($, on, 'board')
+    expect(await ui.find({ type: 'Text', text: /^QUEUED \d+ *$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^QUEUED · / })).toBeUndefined()
+  })
+
+  test('in the list at 130 columns the Cost header and a Cost cell end at the column edge', async ($, on) => {
+    const { ui } = await open($, on)
+    expect(await ui.find({ type: 'Text', text: /^ +Cost$/ }), 'header').toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ +\$\d+\.\d\d$/ }), 'cell').toBeDefined()
+  })
+})
