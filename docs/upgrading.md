@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.65 to 0.9.66
+
+No action needed. The Work pane's toolbar starts with a bold Work heading, and its notes fold behind one dim `N notes · show` line. Below 100 columns the board shows one column per lane, picked with a Column select (Working at first); mobile still stacks every column. On the desktop, the editor and mobile, each item type is drawn as a small coloured icon; the terminal keeps its glyphs. Detail: [CHANGELOG 0.9.66](../CHANGELOG.md).
+
 ### From 0.9.64 to 0.9.65
 
 No action needed. On the desktop, the editor and mobile, the Work pane's titles, toggles, show links, Clear filters, Show done, the List/Board switch and the detail's back control are now links instead of boxed buttons, and on the desktop and the editor the pane closes from its own ✕. Progress bars are drawn as coloured boxes, a stacked board heading counts its folded cards, and a state chip with a count of 0 is dim. The terminal draws as before, apart from the bars and counts. Detail: [CHANGELOG 0.9.65](../CHANGELOG.md).
