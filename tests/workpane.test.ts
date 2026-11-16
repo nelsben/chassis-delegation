@@ -902,3 +902,43 @@ describe('MOD-392 (#547): the Work pane controls are links on a remote surface',
     expect(await ui.find({ type: 'Text', text: /after the session/ })).toBeUndefined()
   })
 })
+
+// MOD-397 (#554): on a remote surface the type mark is a 14 px Svg icon, the terminal keeps the glyph Text.
+describe('MOD-397 (#554): the type mark is an Svg icon on a remote surface', () => {
+  const href = (key: string) => `https://work.invalid/${encodeURIComponent(key)}`
+  const pressLink = (ui: any, key: string) => ui.press({ key, link: { href: href(key) } })
+  const iconOf = async (ui: any, alt: string) => (await ui.findAll({ type: 'Svg' })).find((s: any) => s.props.alt === alt)
+
+  test('on desktop a list leaf draws its type as an Svg icon at 14 px and no glyph Text', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    expect(await ui.find({ key: 'work-row-i13' })).toBeDefined()
+    const icon = await iconOf(ui, 'story')
+    expect(icon?.props.width).toBe(14)
+    expect(icon?.props.height).toBe(14)
+    // the state chips draw a ■ in their own colour; the story mark is the ■ in the story colour, and that Text is gone
+    expect((await ui.findAll({ type: 'Text', text: '■ ' })).some((t: any) => t.props.color === '#22a06b')).toBe(false)
+  })
+
+  test('on desktop a board card draws its mark as an Svg icon', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    await pressLink(ui, 'work-view-board')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
+    expect((await iconOf(ui, 'story'))?.props.width).toBe(14)
+  })
+
+  test('on the terminal the list row still draws the glyph Text and no Svg icon', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'terminal')
+    expect((await ui.findAll({ type: 'Text', text: '■ ' })).some((t: any) => t.props.color === '#22a06b')).toBe(true)
+    expect(await iconOf(ui, 'story')).toBeUndefined()
+  })
+})

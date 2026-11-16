@@ -4,6 +4,7 @@
 // MOD-388 (#538): the List and Board switch and the state chips are never plain (secondary off, primary on), so a press keeps their width;
 // the detail status row has a gap and wraps, its trail cut to its own width; `Reading the issues…` shows only once something is loaded;
 // an empty filter result offers Clear filters beside `No work matches.`; the footer reads Close; a selected leaf has a blue marker.
+// MOD-397 (#554): on a remote surface the type mark is a 14 px SVG icon (a rounded square in the type colour with a white glyph), not a text glyph; the terminal keeps the glyphs.
 // MOD-396 (#553): in stack mode (below 100 columns) a Column select picks the one board column each lane shows; mobile keeps stacking every column.
 // MOD-395 (#552): a bold Work heading starts the toolbar, and the notes fold behind one dim `N notes · show` line.
 // MOD-393 (#548): a progress bar is two coloured boxes (no █ or ░, which show gaps on the desktop), a stacked board heading counts the folded
@@ -15,7 +16,7 @@ import type { RenderNode } from 'claude-code'
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
 import { modelGlyph, type GlyphMap } from './glyph'
-import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, linkHref, LOZENGE, laneCount, mdLink, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TRACK_BG, TYPE_MARK, markColor, twoLines, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
+import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, linkHref, LOZENGE, laneCount, mdLink, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TRACK_BG, TYPE_MARK, markColor, twoLines, typeIcon, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkType, type WorkUi } from './work'
 
 export type WorkView = {
   model: WorkModel
@@ -85,7 +86,7 @@ const indentOf = (depth: number): string => '  '.repeat(Math.min(depth, 6))
 const doneFg = (scheme: Scheme): string => LOZENGE.done[scheme].fg
 
 export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNode {
-  const { Box, Text, Button, Input, Select, Link, Markdown } = p.t
+  const { Box, Text, Button, Input, Select, Link, Markdown, Svg } = p.t
   // MOD-392 (#547): a control is a native Button on the terminal; on a remote surface it is a Markdown link, which draws no box
   const remote = p.surface !== 'terminal'
   const press = (key: string, label: string, onPress: () => void, o: { dim?: boolean } = {}): RenderNode =>
@@ -93,6 +94,16 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       <Markdown key={key} text={mdLink(label, linkHref(key))} pressableLinks={[linkHref(key)]} onLinkPress={() => onPress()} dimColor={o.dim} />
     ) : (
       <Button key={key} plain label={label} onPress={onPress} {...(o.dim ? { dimColor: true } : {})} />
+    )
+  // MOD-397 (#554): the type mark: the glyph on the terminal; on a remote surface the 14 px icon, then a space
+  const markNode = (type: WorkType): RenderNode =>
+    remote ? (
+      <Box flexDirection="row">
+        <Svg source={typeIcon(type, v.scheme)} alt={type} width={14} height={14} />
+        <Text> </Text>
+      </Box>
+    ) : (
+      <Text color={markColor(type, v.scheme)}>{TYPE_MARK[type].glyph} </Text>
     )
   const side = v.columns >= 116
   const L = workLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
@@ -211,7 +222,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           <Text>{indent}</Text>
           {parent ? press(`work-toggle-${k}`, open ? '▾' : '▸', () => hd.toggle(it.key)) : selected ? <Text color="#1d7afc">▌ </Text> : <Text>{'  '}</Text>}
           {parent ? <Text>{' '}</Text> : null}
-          {mark ? <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
+          {mark ? markNode(it.type) : <Text>{'  '}</Text>}
           {numText !== '' ? (
             v.repo !== undefined ? (
               <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={numText} />
@@ -345,7 +356,6 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       const k = keySlug(it.key)
       const w = Math.max(4, B.col - 2)
       const [line1, line2] = twoLines(it.title, w)
-      const mark = TYPE_MARK[it.type]
       const selected = v.detail !== undefined && v.detail.item.key === it.key
       const lozenge = LOZENGE[it.state][v.scheme]
       const by = it.by ?? []
@@ -356,7 +366,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           {!remote && line2 !== '' ? <Text dimColor={it.state === 'done'}>{line2}</Text> : null}
           <Box flexDirection="row" justifyContent="space-between">
             <Box flexDirection="row">
-              <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text>
+              {markNode(it.type)}
               {it.number !== undefined ? (
                 v.repo !== undefined ? (
                   <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={`#${it.number}`} />
@@ -401,7 +411,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           <Box flexDirection="row">
             {press(`work-toggle-${k}`, l.open ? '▾' : '▸', () => hd.toggle(r.key))}
             <Text>{' '}</Text>
-            {mark ? <Text color={markColor(r.type, v.scheme)}>{mark.glyph} </Text> : null}
+            {mark ? markNode(r.type) : null}
             {r.number !== undefined ? (
               v.repo !== undefined ? (
                 <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${r.number}`} label={`#${r.number}`} />
@@ -514,7 +524,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           {remote ? press('work-detail-close', closeLabel, () => hd.select(undefined)) : <Button key="work-detail-close" label={closeLabel} onPress={() => hd.select(undefined)} />}
         </Box>
         <Box flexDirection="row">
-          {mark ? <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
+          {mark ? markNode(it.type) : <Text>{'  '}</Text>}
           {it.number !== undefined ? (
             v.repo !== undefined ? (
               <Link key="work-detail-issue" href={`https://github.com/${v.repo}/issues/${it.number}`} label={`#${it.number}`} />
