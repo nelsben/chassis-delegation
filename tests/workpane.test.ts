@@ -75,21 +75,21 @@ describe('MOD-354: the Work pane', () => {
     expect(await ui.find({ type: 'Text', text: /QUEUED/ })).toBeDefined()
   })
 
-  test('at 80 columns the header has Progress and no Worker', async ($, on) => {
+  test('at 80 columns the header has Card and no Worker', async ($, on) => {
     setup(on)
     await $.session.start(sessionStart)
     await command($, 'work')
     const ui = await mountWork($, 80)
-    expect(await ui.find({ type: 'Text', text: /^Progress/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^Worker/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^CARD/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^WORKER/ })).toBeUndefined()
   })
 
-  test('at 50 columns the header has no Progress', async ($, on) => {
+  test('at 50 columns the header has no Card', async ($, on) => {
     setup(on)
     await $.session.start(sessionStart)
     await command($, 'work')
     const ui = await mountWork($, 50)
-    expect(await ui.find({ type: 'Text', text: /^Progress/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^CARD/ })).toBeUndefined()
   })
 
   test('pressing a parent toggle removes its children rows, and pressing it again brings them back', async ($, on) => {
@@ -621,7 +621,63 @@ describe('MOD-389 (#539): the board card, its header and the list Cost', () => {
 
   test('in the list at 130 columns the Cost header and a Cost cell end at the column edge', async ($, on) => {
     const { ui } = await open($, on)
-    expect(await ui.find({ type: 'Text', text: /^ +Cost$/ }), 'header').toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ +COST$/ }), 'header').toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^ +\$\d+\.\d\d$/ }), 'cell').toBeDefined()
+  })
+})
+
+// MOD-390 (#540): one Card column, Worker from 96, the capital header over a rule, only epics bold, the dark grey mark, and the dot status below 28.
+describe('MOD-390 (#540): the Work list columns, header rule, hierarchy and narrow status', () => {
+  const RUNNING = {
+    'delegation.spawn.k-run': { key: 'k-run', task: 'MOD-9', subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 2, purpose: 'build', description: 'MOD-9', subagentType: 'general-purpose', agentId: 'ag-k-run', at: NOW - 60_000 },
+    'delegation.agent.ag-k-run': 'k-run',
+    'delegation.tasks.MOD-9': [{ task: 'MOD-9', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', at: NOW - 60_000, toolUseId: 'k-run', agentId: 'ag-k-run', root: ROOT }],
+  }
+  const open = async ($: any, on: any, columns: number) => {
+    const w = setup(on, { store: RUNNING })
+    w.agents.push({ id: 'ag-k-run', type: 'general-purpose', description: 'MOD-9', status: 'running' })
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, columns)
+    return { w, ui }
+  }
+
+  test('at 100 columns a working leaf draws its Worker cell', async ($, on) => {
+    const { ui } = await open($, on, 100)
+    expect(await ui.find({ type: 'Text', text: /sonnet/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^WORKER/ })).toBeDefined()
+  })
+
+  test('at 90 columns the Worker column is gone', async ($, on) => {
+    const { ui } = await open($, on, 90)
+    expect(await ui.find({ type: 'Text', text: /sonnet/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^WORKER/ })).toBeUndefined()
+  })
+
+  test('the Card cell draws a parent its progress bar and count, and a leaf its card id', async ($, on) => {
+    const { ui } = await open($, on, 130)
+    expect(await ui.find({ type: 'Text', text: /█/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ \d+\/\d+$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^MOD-9$/ })).toBeDefined()
+  })
+
+  test('the header is in capitals and a dim rule is drawn under it', async ($, on) => {
+    const { ui } = await open($, on, 130)
+    expect(await ui.find({ type: 'Text', text: /^WORK\s*$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^STATUS/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^WORKER/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^─+$/ }), 'rule').toBeDefined()
+  })
+
+  test('an epic title is bold and a feature title is not', async ($, on) => {
+    const { ui } = await open($, on, 130)
+    expect((await ui.find({ type: 'Text', text: 'Checkout rework' }))?.props.bold).toBe(true)
+    expect((await ui.find({ type: 'Text', text: 'Cart totals' }))?.props.bold).toBeFalsy()
+  })
+
+  test('at 24 columns a leaf draws a dot in Status and no lozenge', async ($, on) => {
+    const { ui } = await open($, on, 24)
+    expect(await ui.find({ type: 'Text', text: '● ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: / QUEUED / })).toBeUndefined()
   })
 })

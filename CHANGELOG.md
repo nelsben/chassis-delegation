@@ -11,6 +11,7 @@
 - **The Work pane draws the model badge (🟢 🔵 🟣) beside the worker in the list, the board card and the detail, in place of the tier dot; `modelGlyphs off` restores the dot** (MOD-387, #537)
 - **The Work pane keeps the List, Board and state-chip buttons the same width when pressed, spaces and wraps the detail's status row, shows `Reading the issues…` once, offers Clear filters beside `No work matches.`, reads Close in its footer, and marks the selected row with a blue bar** (MOD-388, #538)
 - **The Work board draws a card's title over two lines, puts the card id at the right of its row, shows a count in each column header (`QUEUED 4`), and right-aligns the list's Cost column** (MOD-389, #539)
+- **The Work list merges Progress and Card into one Card column (a parent's bar and count, a leaf's card id) so Worker shows from 96 columns; the header is capitals over a rule; only epic titles are bold; the dark grey spike and issue marks are lighter; below 28 columns the status is a dot** (MOD-390, #540)
 
 ## 0.9.63 — 2026-11-15
 

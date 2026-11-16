@@ -1,43 +1,63 @@
 // MOD-354: the Work pane's pure layout: workLayout, progressCells, keySlug, and the colour tables.
+// MOD-390 (#540): one Card column, workLayout has no progress key; markColor lightens the dark grey marks.
 import { test, expect, describe } from './kit.mjs'
 
 const lib = () => import('../../hooks/lib/work.ts')
 
 describe('MOD-354', () => {
-  test('workLayout: 60 columns is narrow, the work column takes the body less 12', async () => {
+  test('workLayout: 20 columns is narrow, the status is a dot, the work column takes the body less the status', async () => {
     const { workLayout } = await lib()
-    expect(workLayout(60)).toEqual({ mode: 'narrow', work: 48, status: 12, progress: 0, card: 0, worker: 0, cost: 0 })
+    expect(workLayout(20)).toEqual({ mode: 'narrow', work: 18, status: 2, card: 0, worker: 0, cost: 0 })
+  })
+
+  test('workLayout: 27 columns is narrow with the dot status', async () => {
+    const { workLayout } = await lib()
+    expect(workLayout(27)).toEqual({ mode: 'narrow', work: 25, status: 2, card: 0, worker: 0, cost: 0 })
+  })
+
+  test('workLayout: 28 columns is narrow with a full status, and the work column is never below 16', async () => {
+    const { workLayout } = await lib()
+    expect(workLayout(28)).toEqual({ mode: 'narrow', work: 16, status: 12, card: 0, worker: 0, cost: 0 })
   })
 
   test('workLayout: 71 columns is still narrow', async () => {
     const { workLayout } = await lib()
-    expect(workLayout(71)).toEqual({ mode: 'narrow', work: 59, status: 12, progress: 0, card: 0, worker: 0, cost: 0 })
+    expect(workLayout(71)).toEqual({ mode: 'narrow', work: 59, status: 12, card: 0, worker: 0, cost: 0 })
   })
 
-  test('workLayout: 72 columns is medium, with progress and card, and the work column is columns less 38', async () => {
+  test('workLayout: 72 columns is medium with the Card column and no Worker', async () => {
     const { workLayout } = await lib()
-    expect(workLayout(72)).toEqual({ mode: 'medium', work: 34, status: 12, progress: 16, card: 10, worker: 0, cost: 0 })
+    expect(workLayout(72)).toEqual({ mode: 'medium', work: 44, status: 12, card: 16, worker: 0, cost: 0 })
+  })
+
+  test('workLayout: 95 columns is medium with no Worker', async () => {
+    const { workLayout } = await lib()
+    expect(workLayout(95)).toEqual({ mode: 'medium', work: 67, status: 12, card: 16, worker: 0, cost: 0 })
+  })
+
+  test('workLayout: 96 columns is medium and shows the Worker', async () => {
+    const { workLayout } = await lib()
+    expect(workLayout(96)).toEqual({ mode: 'medium', work: 46, status: 12, card: 16, worker: 22, cost: 0 })
   })
 
   test('workLayout: 115 columns is medium', async () => {
     const { workLayout } = await lib()
-    expect(workLayout(115)).toEqual({ mode: 'medium', work: 77, status: 12, progress: 16, card: 10, worker: 0, cost: 0 })
+    expect(workLayout(115)).toEqual({ mode: 'medium', work: 65, status: 12, card: 16, worker: 22, cost: 0 })
   })
 
-  test('workLayout: 116 columns is wide, with worker and cost, and the work column is columns less 68', async () => {
+  test('workLayout: 116 columns is wide, with worker and cost, and the work column is columns less 58', async () => {
     const { workLayout } = await lib()
-    expect(workLayout(116)).toEqual({ mode: 'wide', work: 48, status: 12, progress: 16, card: 10, worker: 22, cost: 8 })
+    expect(workLayout(116)).toEqual({ mode: 'wide', work: 58, status: 12, card: 16, worker: 22, cost: 8 })
   })
 
-  test('workLayout: 160 columns is wide', async () => {
+  test('workLayout: 130 columns is wide', async () => {
     const { workLayout } = await lib()
-    expect(workLayout(160)).toEqual({ mode: 'wide', work: 92, status: 12, progress: 16, card: 10, worker: 22, cost: 8 })
+    expect(workLayout(130)).toEqual({ mode: 'wide', work: 72, status: 12, card: 16, worker: 22, cost: 8 })
   })
 
-  test('workLayout: a narrow work column never goes below 16 cells', async () => {
+  test('workLayout: no layout has a progress column', async () => {
     const { workLayout } = await lib()
-    expect(workLayout(20).work).toBe(16)
-    expect(workLayout(20).mode).toBe('narrow')
+    for (const c of [20, 27, 28, 71, 72, 95, 96, 115, 116, 130]) expect('progress' in workLayout(c)).toBe(false)
   })
 
   test('progressCells: the worked fractions of a nine-leaf parent', async () => {
@@ -88,5 +108,22 @@ describe('MOD-354', () => {
     }
     expect(TYPE_MARK.epic).toEqual({ glyph: '◆', color: '#8270db' })
     for (const t of ['economy', 'standard', 'frontier', 'premium']) expect(typeof TIER_COLOR[t]).toBe('string')
+  })
+})
+
+describe('MOD-390 (#540)', () => {
+  test('markColor: a spike and an issue are lighter grey on the dark scheme only', async () => {
+    const { markColor, TYPE_MARK } = await lib()
+    expect(markColor('spike', 'dark')).toBe('#8c9bab')
+    expect(markColor('issue', 'dark')).toBe('#8c9bab')
+    expect(markColor('spike', 'light')).toBe(TYPE_MARK.spike.color)
+    expect(markColor('issue', 'light')).toBe(TYPE_MARK.issue.color)
+  })
+
+  test('markColor: every other type keeps its TYPE_MARK colour in both schemes', async () => {
+    const { markColor, TYPE_MARK } = await lib()
+    expect(markColor('bug', 'dark')).toBe(TYPE_MARK.bug.color)
+    expect(markColor('bug', 'light')).toBe(TYPE_MARK.bug.color)
+    expect(markColor('epic', 'dark')).toBe(TYPE_MARK.epic.color)
   })
 })

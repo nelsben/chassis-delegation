@@ -9,7 +9,7 @@ import type { RenderNode } from 'claude-code'
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
 import { modelGlyph, type GlyphMap } from './glyph'
-import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, LOZENGE, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, twoLines, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
+import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, LOZENGE, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, markColor, twoLines, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
 
 export type WorkView = {
   model: WorkModel
@@ -117,13 +117,19 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
 
   const header = (
     <Box key="work-header" flexDirection="row">
-      <Text dimColor>{fit('Work', L.work)}</Text>
-      <Text dimColor>{fit('Status', L.status)}</Text>
-      {L.progress ? <Text dimColor>{fit('Progress', L.progress)}</Text> : null}
-      {L.card ? <Text dimColor>{fit('Card', L.card)}</Text> : null}
-      {L.worker ? <Text dimColor>{fit('Worker', L.worker)}</Text> : null}
-      {L.cost ? <Text dimColor>{'Cost'.padStart(L.cost)}</Text> : null}
+      <Text dimColor>{fit('WORK', L.work)}</Text>
+      {/* MOD-390 (#540): at a dot-wide status the label is left out, a cut word reads worse than none */}
+      <Text dimColor>{fit(L.status > 2 ? 'STATUS' : '', L.status)}</Text>
+      {L.card ? <Text dimColor>{fit('CARD', L.card)}</Text> : null}
+      {L.worker ? <Text dimColor>{fit('WORKER', L.worker)}</Text> : null}
+      {L.cost ? <Text dimColor>{'COST'.padStart(L.cost)}</Text> : null}
     </Box>
+  )
+  // MOD-390 (#540): one dim rule under the header, the full width of the cells
+  const headerRule = (
+    <Text key="work-header-rule" dimColor>
+      {'─'.repeat(L.work + L.status + L.card + L.worker + L.cost)}
+    </Text>
   )
 
   const itemRow = (it: WorkItem, depth: number, open: boolean | undefined): RenderNode => {
@@ -137,6 +143,9 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const doneLeaf = !parent && it.state === 'done'
     const mark = it.group ? null : TYPE_MARK[it.type]
     const lozenge = parent ? null : LOZENGE[it.state][v.scheme]
+    // MOD-390 (#540): only an epic and the No epic group are bold; below 28 columns a leaf's status is a dot
+    const bold = it.type === 'epic' || it.group === true
+    const dot = L.status < 12
     const hover = { backgroundColor: v.scheme === 'light' ? '#f1f2f4' : '#2c333a' }
     const selected = !parent && v.detail !== undefined && v.detail.item.key === it.key
     return (
@@ -145,7 +154,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           <Text>{indent}</Text>
           {parent ? <Button key={`work-toggle-${k}`} plain label={open ? '▾' : '▸'} onPress={() => hd.toggle(it.key)} /> : selected ? <Text color="#1d7afc">▌ </Text> : <Text>{'  '}</Text>}
           {parent ? <Text>{' '}</Text> : null}
-          {mark ? <Text color={mark.color}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
+          {mark ? <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
           {numText !== '' ? (
             v.repo !== undefined ? (
               <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={numText} />
@@ -155,7 +164,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           ) : null}
           {numText !== '' ? <Text>{' '}</Text> : null}
           {parent ? (
-            <Text bold wrap="truncate-end">
+            <Text bold={bold} wrap="truncate-end">
               {cut(it.title, titleW)}
             </Text>
           ) : (
@@ -164,15 +173,19 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
         </Box>
         <Box width={L.status}>
           {lozenge ? (
-            <Text bold color={lozenge.fg} backgroundColor={lozenge.bg}>
-              {` ${STATE_LABEL[it.state].toUpperCase()} `}
-            </Text>
-          ) : L.mode === 'narrow' && parent ? (
+            dot ? (
+              <Text color={lozenge.fg}>● </Text>
+            ) : (
+              <Text bold color={lozenge.fg} backgroundColor={lozenge.bg}>
+                {` ${STATE_LABEL[it.state].toUpperCase()} `}
+              </Text>
+            )
+          ) : L.mode === 'narrow' && parent && !dot ? (
             <Text dimColor>{`${it.done}/${it.leaves}`}</Text>
           ) : null}
         </Box>
-        {L.progress ? (
-          <Box width={L.progress} overflow="hidden" flexDirection="row">
+        {L.card ? (
+          <Box width={L.card} overflow="hidden" flexDirection="row">
             {parent ? (
               <Box flexDirection="row">
                 <Text color={doneFg(v.scheme)}>{'█'.repeat(progressCells(it.done, it.leaves))}</Text>
@@ -180,13 +193,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
                 <Text>{` ${it.done}/${it.leaves}`}</Text>
               </Box>
             ) : (
-              <Text>{' '.repeat(L.progress)}</Text>
+              <Text wrap="truncate-end">{it.card ?? ''}</Text>
             )}
-          </Box>
-        ) : null}
-        {L.card ? (
-          <Box width={L.card} overflow="hidden">
-            <Text wrap="truncate-end">{parent ? '' : (it.card ?? '')}</Text>
           </Box>
         ) : null}
         {L.worker ? (
@@ -266,6 +274,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   const table = (
     <Box key="work-table" flexDirection="column">
       {header}
+      {headerRule}
       {v.rows.map((r, i) => rowNode(r, i))}
       {v.rows.length === 0 ? empty() : null}
     </Box>
@@ -291,7 +300,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           {line2 !== '' ? <Text dimColor={it.state === 'done'}>{line2}</Text> : null}
           <Box flexDirection="row" justifyContent="space-between">
             <Box flexDirection="row">
-              <Text color={mark.color}>{mark.glyph} </Text>
+              <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text>
               {it.number !== undefined ? (
                 v.repo !== undefined ? (
                   <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={`#${it.number}`} />
@@ -336,7 +345,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           <Box flexDirection="row">
             <Button key={`work-toggle-${k}`} plain label={l.open ? '▾' : '▸'} onPress={() => hd.toggle(r.key)} />
             <Text>{' '}</Text>
-            {mark ? <Text color={mark.color}>{mark.glyph} </Text> : null}
+            {mark ? <Text color={markColor(r.type, v.scheme)}>{mark.glyph} </Text> : null}
             {r.number !== undefined ? (
               v.repo !== undefined ? (
                 <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${r.number}`} label={`#${r.number}`} />
@@ -437,7 +446,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           <Button key="work-detail-close" label={side ? 'Close' : v.view === 'board' ? '← Back to board' : '← Back to list'} onPress={() => hd.select(undefined)} />
         </Box>
         <Box flexDirection="row">
-          {mark ? <Text color={mark.color}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
+          {mark ? <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
           {it.number !== undefined ? (
             v.repo !== undefined ? (
               <Link key="work-detail-issue" href={`https://github.com/${v.repo}/issues/${it.number}`} label={`#${it.number}`} />
