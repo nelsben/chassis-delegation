@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.64 to 0.9.65
+
+No action needed. On the desktop, the editor and mobile, the Work pane's titles, toggles, show links, Clear filters, Show done, the List/Board switch and the detail's back control are now links instead of boxed buttons, and on the desktop and the editor the pane closes from its own ✕. Progress bars are drawn as coloured boxes, a stacked board heading counts its folded cards, and a state chip with a count of 0 is dim. The terminal draws as before, apart from the bars and counts. Detail: [CHANGELOG 0.9.65](../CHANGELOG.md).
+
 ### From 0.9.63 to 0.9.64
 
 No action needed. The findings gate no longer reads a ⚠ inside backticks as a flag, and a malformed flag's problem line now quotes what it found. The Work pane draws the model badge (🟢 🔵 🟣) beside the worker in the list, the board and the detail; `modelGlyphs off` restores the dot. The list's Progress and Card columns are now one Card column, so Worker shows from 96 columns, and below 28 columns the status is a coloured dot. Board titles take two lines and the column headers carry counts. The chips and the List/Board switch keep their width when pressed, and a selected row has a blue bar. Detail: [CHANGELOG 0.9.64](../CHANGELOG.md).
