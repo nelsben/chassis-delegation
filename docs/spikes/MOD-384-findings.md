@@ -1,6 +1,6 @@
 # MOD-384 findings: a UX review of the Work pane against its mockup
 
-Types file below means `.claude-plugin/types/claude-code/index.d.ts` (git-ignored; read in the main checkout this worktree was cut from). Nobody ran or looked at the pane for this spike. Everything said about how it looks comes from the code, the layout widths and the types, and any claim about the drawn result that no source line backs is flagged `⚠ Unverified`.
+Types file below means `.claude-plugin/types/claude-code/index.d.ts` (git-ignored; read in the main checkout this worktree was cut from). Nobody ran or looked at the pane for this spike. Everything said about how it looks comes from the code, the layout widths and the types, and any claim about the drawn result that no source line backs is flagged Unverified (see the flags below).
 
 Widths used in the examples, from the layout helpers:
 - List (`hooks/lib/work.ts:330-334`): from 116 columns Work is `columns - 68`, Status 12, Progress 16, Card 10, Worker 22 and Cost 8. From 72 columns Work is `columns - 38` with Status, Progress and Card. Below 72, Work is `max(16, columns - 12)` with Status only.
