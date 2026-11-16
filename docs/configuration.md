@@ -99,7 +99,7 @@ Shows the options in force and where each value came from; works in VS Code.
 | `gitGuard` | user | `true` | the git guard on Bash. |
 | `guardBranches` | user | `main,master` | branches the guard holds. |
 | `classifierSecondOpinion` | user | `true` | the card dry run prints the classifier's tier. |
-| `modelGlyphs` | user | `""` (built-in set) | `alias=glyph` pairs, or `off`. |
+| `modelGlyphs` | user | `""` (built-in set) | `alias=glyph` pairs, or `off`. The badge leads the Agent description (the task's label and its completion notice) and the Worker cell of the Work pane. An editor's running-agent row shows the agent's live activity, not its description, so the badge does not show there; open /delegation work to see it. |
 | `dashboardBand` | user | `true` | the band above the prompt. See [Dashboard](guide.md#dashboard). |
 | `driveWarn` | user | `true` | the brain's repeat-command row. See [Spend controls](spend.md#spend-controls). |
 | `driveWarnTokens` | user | `200K` | context past which that row can appear. |

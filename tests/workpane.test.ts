@@ -30,8 +30,9 @@ const LEDGER = [
 ]
   .map(r => JSON.stringify(r))
   .join('\n')
-const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; unplaced?: string; ledger?: boolean } = {}) =>
+const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; unplaced?: string; ledger?: boolean; store?: Record<string, unknown> } = {}) =>
   world(on, {
+    ...(opts.store ? { store: opts.store } : {}),
     files: {
       [`${CARDS}/MOD-7-c.md`]: BLOCKED,
       ...(opts.ledger ? { [`${ROOT}/.delegation/ledger.jsonl`]: `${LEDGER}\n` } : {}),
@@ -433,5 +434,59 @@ describe('MOD-357: the Work pane board', () => {
     const ui = await mountWork($, 130, 'desktop')
     expect(await ui.find({ key: 'work-table' })).toBeDefined()
     expect(await ui.find({ key: 'work-board' })).toBeUndefined()
+  })
+})
+
+// MOD-387 (#537): the model badge: a working leaf on sonnet (MOD-9, issue #13) shows 🔵 beside its model on every surface.
+describe('MOD-387 (#537): the model badge on the Work pane', () => {
+  const RUNNING = {
+    'delegation.spawn.k-run': { key: 'k-run', task: 'MOD-9', subtask: 'main', adhoc: false, attempt: 1, lineage: 1, tier: 'standard', alias: 'sonnet', budget: 2, purpose: 'build', description: 'MOD-9', subagentType: 'general-purpose', agentId: 'ag-k-run', at: NOW - 60_000 },
+    'delegation.agent.ag-k-run': 'k-run',
+    'delegation.tasks.MOD-9': [{ task: 'MOD-9', subtask: 'main', attempt: 1, kind: 'spawn', lineage: 1, tier: 'standard', alias: 'sonnet', at: NOW - 60_000, toolUseId: 'k-run', agentId: 'ag-k-run', root: ROOT }],
+  }
+  const working = async ($: any, on: any, columns = 130, surface = 'terminal', view?: 'board') => {
+    const w = setup(on, { store: RUNNING })
+    w.agents.push({ id: 'ag-k-run', type: 'general-purpose', description: 'MOD-9', status: 'running' })
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, columns, surface)
+    if (view === 'board') {
+      await ui.press({ key: 'work-view-board' })
+      await ui.redraw()
+    }
+    return { w, ui }
+  }
+
+  test('at 130 columns the list draws the badge before sonnet in the Worker cell', async ($, on) => {
+    const { w, ui } = await working($, on)
+    expect(await ui.find({ key: 'work-row-i13' }), w.debugLogs.join('\n')).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '🔵 ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /sonnet/ })).toBeDefined()
+  })
+
+  test('the list draws the same badge on vscode', async ($, on) => {
+    const { ui } = await working($, on, 130, 'vscode')
+    expect(await ui.find({ type: 'Text', text: '🔵 ' })).toBeDefined()
+  })
+
+  test('on the board at 130 columns the card worker line draws the badge', async ($, on) => {
+    const { ui } = await working($, on, 130, 'terminal', 'board')
+    expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '🔵 ' })).toBeDefined()
+  })
+
+  test('with the detail open the Worker field draws the badge', async ($, on) => {
+    const { ui } = await working($, on)
+    await ui.press({ key: 'work-open-i13' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '🔵 ' })).toBeDefined()
+  })
+
+  test('with modelGlyphs off the list draws the plain dot as before', { options: { modelGlyphs: 'off' } }, async ($, on) => {
+    const { ui } = await working($, on)
+    // the bug row of the fixture also draws a `● ` (its type mark), so this checks the badge is absent rather than the dot's colour
+    expect(await ui.find({ type: 'Text', text: '● ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '🔵 ' })).toBeUndefined()
   })
 })
