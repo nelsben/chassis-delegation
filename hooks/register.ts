@@ -945,6 +945,8 @@ let workCache: { repo: string; at: number; issues: WorkIssue[]; capped: boolean 
 let workUi: { closed: Set<string>; shown: Set<string>; query: string; states: Set<WorkState>; root?: string; showDone: boolean } = { closed: new Set(), shown: new Set(), query: '', states: new Set(), showDone: false }
 /** MOD-357: the Work pane's view, the list or the board. Reset to the list at session start. */
 let workView: 'list' | 'board' = 'list'
+/** MOD-395: the Work pane's notes, folded or open. Reset at session start. */
+let workNotesOpen = false
 let workReading = false
 let workTriedAt: number | undefined
 let workFail: { repo: string; why: string } | undefined
@@ -1620,6 +1622,10 @@ function landSeen($: Host, tool: 'land' | 'land_plan' | 'card' | 'dispatch' | 'v
 function workHandlers($: Host): WorkHandlers {
   const toggleIn = (set: Set<string>, v: string) => (set.has(v) ? set.delete(v) : set.add(v))
   return {
+    notes: () => {
+      workNotesOpen = !workNotesOpen
+      redraw($)
+    },
     view: v => {
       workView = v
       redraw($)
@@ -11414,6 +11420,7 @@ export const register: Register = (on, opts) => {
     workCache = undefined // MOD-353
     workUi = { closed: new Set(), shown: new Set(), query: '', states: new Set(), showDone: false } // MOD-354
     workView = 'list' // MOD-357
+    workNotesOpen = false // MOD-395
     workReading = false
     workTriedAt = undefined
     workFail = undefined
@@ -11723,7 +11730,7 @@ export const register: Register = (on, opts) => {
         }
       }
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, view: workView, glyphs: cfg.glyphs, ...(workView === 'board' ? { lanes: workBoard(d.model, workUi) } : {}), columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
+      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, view: workView, glyphs: cfg.glyphs, ...(workView === 'board' ? { lanes: workBoard(d.model, workUi) } : {}), columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, notesOpen: workNotesOpen, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
     } catch (err) {
       debug($, `work pane not drawn: ${String(err)}`)
       return next(e)

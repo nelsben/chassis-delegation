@@ -30,11 +30,12 @@ const LEDGER = [
 ]
   .map(r => JSON.stringify(r))
   .join('\n')
-const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; unplaced?: string; ledger?: boolean; cards?: boolean; store?: Record<string, unknown> } = {}) =>
+const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; unplaced?: string; ledger?: boolean; cards?: boolean; weird?: boolean; store?: Record<string, unknown> } = {}) =>
   world(on, {
     ...(opts.store ? { store: opts.store } : {}),
     files: {
       ...(opts.cards === false ? {} : { [`${CARDS}/MOD-7-c.md`]: BLOCKED }),
+      ...(opts.weird ? { [`${CARDS}/MOD-6-w.md`]: card('MOD-6', 'zonked', 'Odd status') } : {}),
       ...(opts.ledger ? { [`${ROOT}/.delegation/ledger.jsonl`]: `${LEDGER}\n` } : {}),
       [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards' }),
       ...(opts.cards === false
@@ -45,7 +46,7 @@ const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; 
           }),
       ...gitCfg(opts.url ?? 'https://github.com/o/r.git'),
     },
-    dirs: { [CARDS]: opts.cards === false ? [] : ['MOD-9-a.md', 'MOD-8-b.md', 'MOD-7-c.md'] },
+    dirs: { [CARDS]: opts.cards === false ? [] : ['MOD-9-a.md', 'MOD-8-b.md', 'MOD-7-c.md', ...(opts.weird ? ['MOD-6-w.md'] : [])] },
     ...(opts.unplaced !== undefined ? { panesUnplaced: opts.unplaced } : {}),
     run: async (argv: string[]) => {
       if (argv[0] === 'sleep') return { exitCode: 0, stdout: '' }
@@ -58,6 +59,70 @@ const PANE = (bodyColumns: number) => ({ title: 'Work', isFocused: false, bodyCo
 const mountWork = ($: any, bodyColumns = 130, surface = 'terminal') => $.ui.mount({ plugin: 'chassis-delegation', surface, component: 'Pane', requestId: 'delegation-work', props: PANE(bodyColumns) })
 const listCalls = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh' && a[1] === 'issue' && a[2] === 'list')
 const settle = () => new Promise(resolve => setTimeout(resolve, 150))
+
+const FAIL = () => ({ exitCode: 1, stdout: '', stderr: 'boom' })
+
+describe('MOD-395: the Work heading and the folded notes', () => {
+  const href = (key: string) => `https://work.invalid/${encodeURIComponent(key)}`
+  // the label of the work-notes control: a Button's label on the terminal, a Markdown link's text on a remote surface
+  const notesLabel = async (ui: any, surface: string): Promise<string | undefined> => {
+    const n = await ui.find({ key: 'work-notes' })
+    return n === undefined ? undefined : String(surface === 'terminal' ? n.props.label : n.props.text)
+  }
+  const pressNotes = async (ui: any, surface: string) => {
+    await ui.press(surface === 'terminal' ? { key: 'work-notes' } : { key: 'work-notes', link: { href: href('work-notes') } })
+    await ui.redraw()
+  }
+
+  test('the toolbar starts with the bold Work heading on the terminal and on desktop', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    for (const surface of ['terminal', 'desktop']) {
+      const ui = await mountWork($, 130, surface)
+      const title = await ui.find({ type: 'Text', text: /^Work$/ })
+      expect(title?.props.bold).toBe(true)
+      const bar = await ui.find({ key: 'work-toolbar' })
+      const kids = (bar as any)?.children ?? (bar as any)?.props?.children
+      if (Array.isArray(kids)) expect(kids[0]?.props?.bold).toBe(true)
+    }
+  })
+
+  test('two notes fold behind `2 notes · show`; a press opens them and `hide notes`, another folds them', async ($, on) => {
+    setup(on, { gh: FAIL, weird: true })
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    for (const surface of ['terminal', 'desktop']) {
+      const ui = await mountWork($, 130, surface)
+      expect(await notesLabel(ui, surface)).toContain('2 notes · show')
+      expect(await ui.find({ type: 'Text', text: /could not read the issues/ })).toBeUndefined()
+      await pressNotes(ui, surface)
+      expect(await ui.find({ type: 'Text', text: /could not read the issues/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /zonked/ })).toBeDefined()
+      expect(await notesLabel(ui, surface)).toContain('hide notes')
+      await pressNotes(ui, surface)
+      expect(await ui.find({ type: 'Text', text: /could not read the issues/ })).toBeUndefined()
+      expect(await notesLabel(ui, surface)).toContain('2 notes · show')
+    }
+  })
+
+  test('one note reads `1 note · show`', async ($, on) => {
+    setup(on, { gh: FAIL })
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130)
+    expect(await notesLabel(ui, 'terminal')).toContain('1 note · show')
+  })
+
+  test('with no notes there is no work-notes line', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130)
+    expect(await ui.find({ key: 'work-row-i10' })).toBeDefined()
+    expect(await ui.find({ key: 'work-notes' })).toBeUndefined()
+  })
+})
 
 describe('MOD-354: the Work pane', () => {
   test('/delegation work opens the pane and answers so; the drawing carries its toolbar, summary, table and the rows', async ($, on) => {
@@ -203,6 +268,8 @@ describe('MOD-354: the Work pane', () => {
     const again = await mountWork($, 130, 'desktop')
     await settle()
     expect(listCalls(w)).toHaveLength(1)
+    await again.press({ key: 'work-notes', link: { href: 'https://work.invalid/work-notes' } })
+    await again.redraw()
     expect(await again.find({ type: 'Text', text: /could not read the issues \(gh issue list failed: boom\): cards only/ })).toBeDefined()
   })
 

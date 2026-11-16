@@ -4,6 +4,7 @@
 // MOD-388 (#538): the List and Board switch and the state chips are never plain (secondary off, primary on), so a press keeps their width;
 // the detail status row has a gap and wraps, its trail cut to its own width; `Reading the issues…` shows only once something is loaded;
 // an empty filter result offers Clear filters beside `No work matches.`; the footer reads Close; a selected leaf has a blue marker.
+// MOD-395 (#552): a bold Work heading starts the toolbar, and the notes fold behind one dim `N notes · show` line.
 // MOD-393 (#548): a progress bar is two coloured boxes (no █ or ░, which show gaps on the desktop), a stacked board heading counts the folded
 // cards too (`laneCount`), and a chip that is off with a count of 0 is dim.
 // MOD-392 (#547): on a remote surface the controls that were plain Buttons are Markdown links (`press`), so the desktop draws no box around
@@ -26,6 +27,8 @@ export type WorkView = {
   /** 'Updated 4 min ago' */
   updated?: string
   notes: readonly string[]
+  /** MOD-395: the notes are drawn open */
+  notesOpen: boolean
   /** a read of the issues is running */
   reading: boolean
   /** owner/name, for the issue links */
@@ -54,6 +57,8 @@ export type WorkHandlers = {
   root: (value: string) => void
   showDone: () => void
   clear: () => void
+  /** MOD-395: fold or unfold the notes */
+  notes: () => void
   refresh: () => void
   close: () => void
   /** MOD-356: open a leaf's detail, or close it with undefined */
@@ -106,6 +111,9 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
 
   const toolbar = (
     <Box key="work-toolbar" flexDirection="row" flexWrap="wrap" columnGap={2}>
+      <Text key="work-title" bold>
+        Work
+      </Text>
       {viewSwitch('list', 'List')}
       {viewSwitch('board', 'Board')}
       {narrowSurface ? null : <Input key="work-search" placeholder="Search work" value={v.ui.query} submitLabel="Search" onSubmit={(text: string) => hd.query(text)} />}
@@ -590,11 +598,14 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       {toolbar}
       {v.notes.length > 0 ? (
         <Box flexDirection="column">
-          {v.notes.map((n, i) => (
-            <Text key={`work-note-${i}`} dimColor wrap="wrap">
-              {n}
-            </Text>
-          ))}
+          {press('work-notes', v.notesOpen ? 'hide notes' : `${v.notes.length} note${v.notes.length === 1 ? '' : 's'} · show`, hd.notes, { dim: true })}
+          {v.notesOpen
+            ? v.notes.map((n, i) => (
+                <Text key={`work-note-${i}`} dimColor wrap="wrap">
+                  {n}
+                </Text>
+              ))
+            : null}
         </Box>
       ) : null}
       {summary}
