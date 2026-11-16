@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The Work pane's toolbar starts with a bold `Work` heading, and the notes fold behind one dim `N notes · show` line (`hide notes` when open)** (MOD-395, #552)
+
 ## 0.9.65 — 2026-11-16
 
 ### Changed
