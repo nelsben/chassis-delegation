@@ -183,13 +183,18 @@ export function findingsCheck(i: FindingsInput): FindingsCheck {
 
   let flags = 0
   lines.forEach((line, idx) => {
-    if (!line.includes('⚠')) return
-    let malformed = false
-    for (const part of line.split('⚠').slice(1)) {
+    // MOD-386 (#536): a ⚠ inside an inline code span is a mention, not a flag.
+    const bare = line.replace(/`[^`]*`/g, '')
+    if (!bare.includes('⚠')) return
+    let firstBad: string | null = null
+    for (const part of bare.split('⚠').slice(1)) {
       if (FLAG_OK.test(part)) flags++
-      else malformed = true
+      else if (firstBad === null) firstBad = part
     }
-    if (malformed) problems.push(`line ${idx + 1}: a ⚠ flag reads ⚠ Unverified: <text> or ⚠ Conflict: <text>`)
+    if (firstBad !== null) {
+      const t = firstBad.trim().slice(0, 30)
+      problems.push(`line ${idx + 1}: a ⚠ flag reads ⚠ Unverified: <text> or ⚠ Conflict: <text> (found "${t ? `⚠ ${t}` : '⚠'}")`)
+    }
   })
 
   if (decisionBodies.length === 0) problems.push('no ## Decisions this implies section')
