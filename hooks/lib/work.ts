@@ -324,13 +324,18 @@ export function workText(m: WorkModel, o: { updated?: string; notes?: readonly s
 
 // MOD-354: the list view's layout, colours and key helpers. The pane draws these in character cells.
 
-export type WorkLayout = { mode: 'wide' | 'medium' | 'narrow'; work: number; status: number; progress: number; card: number; worker: number; cost: number }
+export type WorkLayout = { mode: 'wide' | 'medium' | 'narrow'; work: number; status: number; card: number; worker: number; cost: number }
 
 /** Cells per column for a body `columns` cells wide; 0 means the column is not drawn. */
+// MOD-390 (#540): one Card column (a parent's bar and count, a leaf's card id); Worker from 96; below 28 columns the status is a dot.
 export function workLayout(columns: number): WorkLayout {
-  if (columns >= 116) return { mode: 'wide', work: columns - 68, status: 12, progress: 16, card: 10, worker: 22, cost: 8 }
-  if (columns >= 72) return { mode: 'medium', work: columns - 38, status: 12, progress: 16, card: 10, worker: 0, cost: 0 }
-  return { mode: 'narrow', work: Math.max(16, columns - 12), status: 12, progress: 0, card: 0, worker: 0, cost: 0 }
+  if (columns >= 116) return { mode: 'wide', work: columns - 58, status: 12, card: 16, worker: 22, cost: 8 }
+  if (columns >= 72) {
+    const worker = columns >= 96 ? 22 : 0
+    return { mode: 'medium', work: columns - 28 - worker, status: 12, card: 16, worker, cost: 0 }
+  }
+  const status = columns < 28 ? 2 : 12
+  return { mode: 'narrow', work: Math.max(16, columns - status), status, card: 0, worker: 0, cost: 0 }
 }
 
 /** Filled cells of a parent's progress bar. */
@@ -357,6 +362,12 @@ export const TYPE_MARK: Record<WorkType, { glyph: string; color: string }> = {
   bug: { glyph: '●', color: '#e2483d' },
   spike: { glyph: '?', color: '#626f86' },
   issue: { glyph: '○', color: '#626f86' },
+}
+
+// MOD-390 (#540): the spike and issue grey is faint on the dark background, so the dark scheme draws it lighter; TYPE_MARK is unchanged.
+export function markColor(type: WorkType, scheme: Scheme): string {
+  if (scheme === 'dark' && (type === 'spike' || type === 'issue')) return '#8c9bab'
+  return TYPE_MARK[type].color
 }
 
 export const TIER_COLOR: Record<Tier, string> = { economy: '#22a06b', standard: '#1d7afc', frontier: '#8270db', premium: '#f38a3f' }
