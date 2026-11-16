@@ -4,6 +4,8 @@
 // MOD-388 (#538): the List and Board switch and the state chips are never plain (secondary off, primary on), so a press keeps their width;
 // the detail status row has a gap and wraps, its trail cut to its own width; `Reading the issues…` shows only once something is loaded;
 // an empty filter result offers Clear filters beside `No work matches.`; the footer reads Close; a selected leaf has a blue marker.
+// MOD-393 (#548): a progress bar is two coloured boxes (no █ or ░, which show gaps on the desktop), a stacked board heading counts the folded
+// cards too (`laneCount`), and a chip that is off with a count of 0 is dim.
 // MOD-392 (#547): on a remote surface the controls that were plain Buttons are Markdown links (`press`), so the desktop draws no box around
 // a title or a toggle; the footer Close is drawn on the terminal and on mobile only, the desktop and vscode panes have their own close.
 import type { RenderNode } from 'claude-code'
@@ -11,7 +13,7 @@ import type { RenderNode } from 'claude-code'
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
 import { modelGlyph, type GlyphMap } from './glyph'
-import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, linkHref, LOZENGE, mdLink, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, markColor, twoLines, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
+import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, linkHref, LOZENGE, laneCount, mdLink, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TRACK_BG, TYPE_MARK, markColor, twoLines, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
 
 export type WorkView = {
   model: WorkModel
@@ -122,6 +124,26 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     </Box>
   )
 
+  // MOD-393 (#548): 8 cells, the done part in the done colour and the rest in the track colour, then the count
+  const bar = (done: number, leaves: number): RenderNode => {
+    const n = progressCells(done, leaves)
+    return (
+      <Box flexDirection="row">
+        {n > 0 ? (
+          <Box key="work-bar-done" width={n} backgroundColor={doneFg(v.scheme)}>
+            <Text>{' '.repeat(n)}</Text>
+          </Box>
+        ) : null}
+        {8 - n > 0 ? (
+          <Box key="work-bar-track" width={8 - n} backgroundColor={TRACK_BG[v.scheme]}>
+            <Text>{' '.repeat(8 - n)}</Text>
+          </Box>
+        ) : null}
+        <Text>{` ${done}/${leaves}`}</Text>
+      </Box>
+    )
+  }
+
   const summary = (
     <Box key="work-summary" flexDirection="row" flexWrap="wrap" columnGap={2}>
       {WORK_STATES.map(s => {
@@ -129,7 +151,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
         return (
           <Box key={`work-state-${s}`} flexDirection="row">
             <Text color={LOZENGE[s][v.scheme].fg}>■ </Text>
-            <Button key={`work-chip-${s}`} label={`${STATE_LABEL[s]} ${v.model.counts[s]}`} variant={on ? 'primary' : 'secondary'} onPress={() => hd.chip(s)} />
+            <Button key={`work-chip-${s}`} label={`${STATE_LABEL[s]} ${v.model.counts[s]}`} variant={on ? 'primary' : 'secondary'} {...(!on && v.model.counts[s] === 0 ? { dimColor: true } : {})} onPress={() => hd.chip(s)} />
           </Box>
         )
       })}
@@ -209,11 +231,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
         {L.card ? (
           <Box width={L.card} overflow="hidden" flexDirection="row">
             {parent ? (
-              <Box flexDirection="row">
-                <Text color={doneFg(v.scheme)}>{'█'.repeat(progressCells(it.done, it.leaves))}</Text>
-                <Text dimColor>{'░'.repeat(8 - progressCells(it.done, it.leaves))}</Text>
-                <Text>{` ${it.done}/${it.leaves}`}</Text>
-              </Box>
+              bar(it.done, it.leaves)
             ) : (
               <Text wrap="truncate-end">{it.card ?? ''}</Text>
             )}
@@ -381,9 +399,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
               {r.group ? 'No epic' : cut(r.title, Math.max(4, B.col * (stack ? 1 : 2)))}
             </Text>
             <Text>{'  '}</Text>
-            <Text color={doneFg(v.scheme)}>{'█'.repeat(progressCells(r.done, r.leaves))}</Text>
-            <Text dimColor>{'░'.repeat(8 - progressCells(r.done, r.leaves))}</Text>
-            <Text>{` ${r.done}/${r.leaves}`}</Text>
+            {bar(r.done, r.leaves)}
           </Box>
           {!l.open ? null : stack ? (
             <Box flexDirection="column" gap={1}>
@@ -392,7 +408,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
                 if (nodes.length === 0) return null
                 return (
                   <Box key={`work-colbox-${k}-${c}`} flexDirection="column">
-                    <Text dimColor>{`${BOARD_LABEL[c].toUpperCase()} · ${l.cols[c].length}`}</Text>
+                    <Text dimColor>{`${BOARD_LABEL[c].toUpperCase()} · ${laneCount(l, c)}`}</Text>
                     <Box key={`work-col-${k}-${c}`} flexDirection="column" gap={1} width={B.col}>
                       {nodes}
                     </Box>

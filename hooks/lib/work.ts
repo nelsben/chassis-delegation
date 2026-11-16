@@ -540,10 +540,18 @@ export function twoLines(title: string, w: number): [string, string] {
   return [first.join(''), second]
 }
 
-/** MOD-389 (#539): the cards in each column over every lane, folded or not: shown, `more`, and for done the hidden ones. */
+/** MOD-393 (#548): the cards of one lane in one column, folded or not: shown, `more`, and for done the hidden ones. */
+export function laneCount(l: BoardLane, c: BoardCol): number {
+  return l.cols[c].length + l.more[c] + (c === 'done' ? l.doneHidden : 0)
+}
+
+/** MOD-393 (#548): the empty part of a progress bar. */
+export const TRACK_BG: Record<Scheme, string> = { light: '#dcdfe4', dark: '#38414a' }
+
+/** MOD-389 (#539): the cards in each column over every lane, folded or not. */
 export function boardCounts(lanes: readonly BoardLane[]): Record<BoardCol, number> {
   const out = Object.fromEntries(BOARD_COLS.map(c => [c, 0])) as Record<BoardCol, number>
-  for (const l of lanes) for (const c of BOARD_COLS) out[c] += l.cols[c].length + l.more[c] + (c === 'done' ? l.doneHidden : 0)
+  for (const l of lanes) for (const c of BOARD_COLS) out[c] += laneCount(l, c)
   return out
 }
 

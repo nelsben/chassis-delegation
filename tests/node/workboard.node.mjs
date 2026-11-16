@@ -162,4 +162,25 @@ describe('MOD-389 (#539): two-line titles and header counts, pure', () => {
     expect(boardCounts([lane(['a', 'b'], 3, 2), lane(['c'], 0, 1)])).toEqual({ backlog: 0, queued: 6, working: 0, review: 0, done: 3 })
     expect(boardCounts([])).toEqual({ backlog: 0, queued: 0, working: 0, review: 0, done: 0 })
   })
+  test('MOD-393 (#548): laneCount adds shown, more and, for done, the hidden cards; boardCounts is its sum; TRACK_BG holds both schemes', async () => {
+    const { laneCount, boardCounts, TRACK_BG } = await lib()
+    const lane = (shown, more, doneHidden) => ({
+      root: leaf('r'),
+      open: true,
+      cols: { backlog: [], queued: shown.map(k => leaf(k)), working: [], review: [], done: shown.map(k => leaf(k)) },
+      more: { backlog: 0, queued: more, working: 0, review: 0, done: more },
+      doneHidden,
+    })
+    const a = lane(['a', 'b'], 3, 2)
+    const b = lane(['c'], 0, 1)
+    expect(laneCount(a, 'queued')).toBe(5)
+    expect(laneCount(a, 'done')).toBe(7)
+    expect(laneCount(a, 'working')).toBe(0)
+    const sum = c => laneCount(a, c) + laneCount(b, c)
+    const got = boardCounts([a, b])
+    for (const c of ['backlog', 'queued', 'working', 'review', 'done']) expect(got[c]).toBe(sum(c))
+    expect(Object.keys(TRACK_BG).sort()).toEqual(['dark', 'light'])
+    expect(TRACK_BG.light).toBe('#dcdfe4')
+    expect(TRACK_BG.dark).toBe('#38414a')
+  })
 })

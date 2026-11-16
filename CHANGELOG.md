@@ -5,6 +5,7 @@
 ### Changed
 
 - **The Work pane's titles, toggles, `N done · show`, Clear filters, Show done, the List and Board switch and the detail's back control are links on the desktop, the editor and mobile instead of boxed buttons, and the footer Close is drawn on the terminal and on mobile only** (MOD-392, #547)
+- **The Work pane's progress bars are two coloured boxes instead of `█` and `░` characters, a stacked board column heading counts the folded cards (`DONE · 462`), and a state chip with a count of 0 is dim until pressed** (MOD-393, #548)
 
 ## 0.9.64 — 2026-11-15
 
