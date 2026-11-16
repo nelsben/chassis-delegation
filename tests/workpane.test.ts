@@ -30,18 +30,22 @@ const LEDGER = [
 ]
   .map(r => JSON.stringify(r))
   .join('\n')
-const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; unplaced?: string; ledger?: boolean; store?: Record<string, unknown> } = {}) =>
+const setup = (on: any, opts: { url?: string; gh?: (argv: string[]) => unknown; unplaced?: string; ledger?: boolean; cards?: boolean; store?: Record<string, unknown> } = {}) =>
   world(on, {
     ...(opts.store ? { store: opts.store } : {}),
     files: {
-      [`${CARDS}/MOD-7-c.md`]: BLOCKED,
+      ...(opts.cards === false ? {} : { [`${CARDS}/MOD-7-c.md`]: BLOCKED }),
       ...(opts.ledger ? { [`${ROOT}/.delegation/ledger.jsonl`]: `${LEDGER}\n` } : {}),
       [REPO_FILE]: JSON.stringify({ gateMap: { node: 'node t.mjs' }, domains: ['mod'], cardDir: 'docs/cards' }),
-      [`${CARDS}/MOD-9-a.md`]: card('MOD-9', 'queued', 'Restore cart', 13),
-      [`${CARDS}/MOD-8-b.md`]: card('MOD-8', 'queued', 'Lint config'),
+      ...(opts.cards === false
+        ? {}
+        : {
+            [`${CARDS}/MOD-9-a.md`]: card('MOD-9', 'queued', 'Restore cart', 13),
+            [`${CARDS}/MOD-8-b.md`]: card('MOD-8', 'queued', 'Lint config'),
+          }),
       ...gitCfg(opts.url ?? 'https://github.com/o/r.git'),
     },
-    dirs: { [CARDS]: ['MOD-9-a.md', 'MOD-8-b.md', 'MOD-7-c.md'] },
+    dirs: { [CARDS]: opts.cards === false ? [] : ['MOD-9-a.md', 'MOD-8-b.md', 'MOD-7-c.md'] },
     ...(opts.unplaced !== undefined ? { panesUnplaced: opts.unplaced } : {}),
     run: async (argv: string[]) => {
       if (argv[0] === 'sleep') return { exitCode: 0, stdout: '' }
@@ -488,5 +492,88 @@ describe('MOD-387 (#537): the model badge on the Work pane', () => {
     // the bug row of the fixture also draws a `● ` (its type mark), so this checks the badge is absent rather than the dot's colour
     expect(await ui.find({ type: 'Text', text: '● ' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '🔵 ' })).toBeUndefined()
+  })
+})
+
+// MOD-388 (#538): the steady controls, the detail status row, the loading line, the empty state, the footer and the selected marker.
+describe('MOD-388 (#538): the Work pane steady controls, detail row, empty state, footer and marker', () => {
+  const look = (el: any) => ({ variant: el?.props.variant, plain: el?.props.plain })
+
+  test('a state chip and the List and Board switch are never plain: secondary when off, primary when on', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($)
+    expect(look(await ui.find({ key: 'work-chip-queued' }))).toEqual({ variant: 'secondary', plain: undefined })
+    expect(look(await ui.find({ key: 'work-view-list' }))).toEqual({ variant: 'primary', plain: undefined })
+    expect(look(await ui.find({ key: 'work-view-board' }))).toEqual({ variant: 'secondary', plain: undefined })
+    await ui.press({ key: 'work-chip-queued' })
+    await ui.redraw()
+    expect(look(await ui.find({ key: 'work-chip-queued' }))).toEqual({ variant: 'primary', plain: undefined })
+    await ui.press({ key: 'work-view-board' })
+    await ui.redraw()
+    expect(look(await ui.find({ key: 'work-view-board' }))).toEqual({ variant: 'primary', plain: undefined })
+    expect(look(await ui.find({ key: 'work-view-list' }))).toEqual({ variant: 'secondary', plain: undefined })
+  })
+
+  test('the detail status row has a one-column gap and wraps', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130)
+    await ui.press({ key: 'work-open-i13' })
+    await ui.redraw()
+    const row = await ui.find({ key: 'work-detail-status' })
+    expect(row?.props.columnGap).toBe(1)
+    expect(row?.props.flexWrap).toBe('wrap')
+  })
+
+  test('with nothing loaded and a read running, Reading the issues… is drawn once, in the empty state', async ($, on) => {
+    let release: (r: unknown) => void = () => undefined
+    setup(on, { cards: false, gh: () => new Promise(r => (release = r)) })
+    await $.session.start(sessionStart)
+    const ui = await mountWork($)
+    await settle()
+    await ui.redraw()
+    expect(JSON.stringify(await ui.find({ key: 'work-toolbar' }))).not.toContain('Reading the issues')
+    expect(JSON.stringify(await ui.find({ key: 'work-table' }))).toContain('Reading the issues…')
+    release({ exitCode: 0, stdout: '[]' })
+    await settle()
+  })
+
+  test('a filter that matches nothing draws Clear filters after No work matches., and pressing it clears the filters', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($)
+    await ui.input({ key: 'work-search', text: 'zzzz' })
+    await ui.redraw()
+    expect(await ui.find({ type: 'Text', text: 'No work matches.' })).toBeDefined()
+    expect((await ui.find({ key: 'work-clear-empty' }))?.props.label).toBe('Clear filters')
+    expect((await ui.find({ key: 'work-clear-empty' }))?.props.plain).toBe(true)
+    await ui.press({ key: 'work-clear-empty' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-clear-empty' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-row-i14' })).toBeDefined()
+  })
+
+  test('the footer button reads Close', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($)
+    expect((await ui.find({ key: 'work-close' }))?.props.label).toBe('Close')
+  })
+
+  test('a selected leaf row draws the blue marker, and an unselected leaf row does not', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130)
+    await ui.press({ key: 'work-open-i13' })
+    await ui.redraw()
+    expect(JSON.stringify(await ui.find({ key: 'work-row-i13' }))).toContain('▌ ')
+    expect(JSON.stringify(await ui.find({ key: 'work-row-i13' }))).toContain('#1d7afc')
+    expect(JSON.stringify(await ui.find({ key: 'work-row-i14' }))).not.toContain('▌')
   })
 })
