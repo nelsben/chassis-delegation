@@ -11723,7 +11723,7 @@ export const register: Register = (on, opts) => {
         }
       }
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, view: workView, ...(workView === 'board' ? { lanes: workBoard(d.model, workUi) } : {}), columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
+      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, view: workView, glyphs: cfg.glyphs, ...(workView === 'board' ? { lanes: workBoard(d.model, workUi) } : {}), columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
     } catch (err) {
       debug($, `work pane not drawn: ${String(err)}`)
       return next(e)

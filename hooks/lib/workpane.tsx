@@ -5,6 +5,7 @@ import type { RenderNode } from 'claude-code'
 
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
+import { modelGlyph, type GlyphMap } from './glyph'
 import { ACTION_LABEL, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, LOZENGE, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
 
 export type WorkView = {
@@ -24,6 +25,8 @@ export type WorkView = {
   repo?: string
   /** MOD-357: the list (the table) or the board */
   view: 'list' | 'board'
+  /** MOD-387 (#537): the modelGlyphs map, or 'off'; the badge beside the worker is drawn only with a map */
+  glyphs?: GlyphMap | 'off'
   /** MOD-357: workBoard(model, ui), given when the view is the board */
   lanes?: readonly BoardLane[]
   /** MOD-356: the open leaf, its ancestors root first, its action, whether it was asked, the Unblock question and its ledger events */
@@ -71,6 +74,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   const filtered = v.ui.query.trim() !== '' || v.ui.states.size > 0 || v.ui.root !== undefined
   const narrowSurface = p.surface === 'mobile'
   const roots = v.model.roots
+  // MOD-387 (#537): the model's badge beside the worker in the list, the board card and the detail; '' when there is none to draw
+  const badge = (it: WorkItem): string => (it.model === undefined || it.model === '–' || v.glyphs === undefined || v.glyphs === 'off' ? '' : modelGlyph(it.model, v.glyphs))
 
   const toolbar = (
     <Box key="work-toolbar" flexDirection="row" flexWrap="wrap" columnGap={2}>
@@ -199,9 +204,10 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     if (it.model !== undefined) {
       const dot = it.tier !== undefined ? TIER_COLOR[it.tier] : undefined
       const text = [it.model, it.attempt].filter((x): x is string => x !== undefined && x !== '').join(' · ') + (it.state === 'working' && it.running !== undefined ? ` · ${it.running}` : '')
+      const glyph = badge(it)
       return (
         <Box flexDirection="row">
-          {dot ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
+          {glyph !== '' ? <Text>{`${glyph} `}</Text> : dot ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
           <Text wrap="truncate-end">{text}</Text>
         </Box>
       )
@@ -285,7 +291,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           </Box>
           {(it.state === 'working' || it.state === 'review') && it.model !== undefined ? (
             <Box flexDirection="row">
-              {it.tier !== undefined ? <Text color={TIER_COLOR[it.tier]}>● </Text> : <Text dimColor>● </Text>}
+              {badge(it) !== '' ? <Text>{`${badge(it)} `}</Text> : it.tier !== undefined ? <Text color={TIER_COLOR[it.tier]}>● </Text> : <Text dimColor>● </Text>}
               <Text wrap="truncate-end">{[it.model, it.attempt].filter((x): x is string => x !== undefined && x !== '').join(' · ') + cost}</Text>
             </Box>
           ) : null}
@@ -455,7 +461,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
             'Worker',
             it.model !== undefined ? (
               <Box flexDirection="row">
-                {it.tier !== undefined ? <Text color={TIER_COLOR[it.tier]}>● </Text> : <Text dimColor>● </Text>}
+                {badge(it) !== '' ? <Text>{`${badge(it)} `}</Text> : it.tier !== undefined ? <Text color={TIER_COLOR[it.tier]}>● </Text> : <Text dimColor>● </Text>}
                 <Text>{it.model}</Text>
               </Box>
             ) : (
