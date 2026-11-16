@@ -384,6 +384,21 @@ describe('MOD-357: the Work pane board', () => {
     expect(await ui.find({ key: 'work-board' })).toBeDefined()
     expect(await ui.find({ key: 'work-board-header' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: 'QUEUED · 1' })).toBeDefined()
+    // MOD-393 (#548): the heading counts the folded done card, not only the ones on screen
+    expect(await ui.find({ type: 'Text', text: 'DONE · 1' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'DONE · 0' })).toBeUndefined()
+  })
+
+  test('MOD-393 (#548): a chip with a count of 0 is dim while off, and full strength once pressed', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($)
+    expect((await ui.find({ key: 'work-chip-working' }))?.props.dimColor).toBe(true)
+    expect((await ui.find({ key: 'work-chip-queued' }))?.props.dimColor).toBeFalsy()
+    await ui.press({ key: 'work-chip-working' })
+    await ui.redraw()
+    expect((await ui.find({ key: 'work-chip-working' }))?.props.dimColor).toBeFalsy()
   })
 
   test('the Queued chip keeps the queued card and drops the backlog card and the lane without one', async ($, on) => {
@@ -656,7 +671,9 @@ describe('MOD-390 (#540): the Work list columns, header rule, hierarchy and narr
 
   test('the Card cell draws a parent its progress bar and count, and a leaf its card id', async ($, on) => {
     const { ui } = await open($, on, 130)
-    expect(await ui.find({ type: 'Text', text: /█/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /[█░]/ })).toBeUndefined()
+    expect((await ui.find({ type: 'Box', key: 'work-bar-done' }))?.props.backgroundColor).toMatch(/^#(216e4e|7ee2b8)$/)
+    expect((await ui.find({ type: 'Box', key: 'work-bar-track' }))?.props.backgroundColor).toMatch(/^#(dcdfe4|38414a)$/)
     expect(await ui.find({ type: 'Text', text: /^ \d+\/\d+$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^MOD-9$/ })).toBeDefined()
   })
