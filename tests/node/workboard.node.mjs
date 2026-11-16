@@ -116,3 +116,50 @@ describe('MOD-357: the Work board, pure', () => {
     expect(keys(l.cols.backlog)).toEqual(['#14'])
   })
 })
+
+describe('MOD-389 (#539): two-line titles and header counts, pure', () => {
+  test('twoLines: a short title stays on one line', async () => {
+    const { twoLines } = await lib()
+    expect(twoLines('Filter chips', 20)).toEqual(['Filter chips', ''])
+    expect(twoLines('12345', 5)).toEqual(['12345', ''])
+  })
+
+  test('twoLines: a long title breaks at the last space at or before w, dropping the space', async () => {
+    const { twoLines } = await lib()
+    expect(twoLines('Add a filter chip row', 10)).toEqual(['Add a', 'filter chip row'.slice(0, 9) + '…'])
+    expect(twoLines('aaaa bbbb cccc', 9)).toEqual(['aaaa bbbb', 'cccc'])
+    expect(twoLines('aaaa bbbb cc', 8)).toEqual(['aaaa', 'bbbb cc'])
+  })
+
+  test('twoLines: with no space it hard-splits at w', async () => {
+    const { twoLines } = await lib()
+    expect(twoLines('abcdefghijkl', 8)).toEqual(['abcdefgh', 'ijkl'])
+  })
+
+  test('twoLines: a long rest is cut to w with an ellipsis', async () => {
+    const { twoLines } = await lib()
+    const [a, b] = twoLines('one two three four five six seven eight', 12)
+    expect(a).toBe('one two')
+    expect([...b].length).toBe(12)
+    expect(b.endsWith('…')).toBe(true)
+  })
+
+  test('twoLines: w of 4 and code points', async () => {
+    const { twoLines } = await lib()
+    expect(twoLines('abcdefghij', 4)).toEqual(['abcd', 'efgh'.slice(0, 3) + '…'])
+    expect(twoLines('ééééé', 4)).toEqual(['éééé', 'é'])
+  })
+
+  test('boardCounts sums shown, more and doneHidden over every lane', async () => {
+    const { boardCounts } = await lib()
+    const lane = (shown, more, doneHidden) => ({
+      root: leaf('r'),
+      open: true,
+      cols: { backlog: [], queued: shown.map(k => leaf(k)), working: [], review: [], done: [] },
+      more: { backlog: 0, queued: more, working: 0, review: 0, done: 0 },
+      doneHidden,
+    })
+    expect(boardCounts([lane(['a', 'b'], 3, 2), lane(['c'], 0, 1)])).toEqual({ backlog: 0, queued: 6, working: 0, review: 0, done: 3 })
+    expect(boardCounts([])).toEqual({ backlog: 0, queued: 0, working: 0, review: 0, done: 0 })
+  })
+})

@@ -499,7 +499,32 @@ export function boardLayout(columns: number): { mode: 'columns' | 'stack'; col: 
   return { mode: 'stack', col: Math.max(16, columns) }
 }
 
-const leavesOf = (it: WorkItem): WorkItem[] => (it.children.length === 0 ? [it] : it.children.flatMap(leavesOf))
+/** MOD-389 (#539): a board card's title over two lines of at most `w` code points: line 1 breaks at the last space at or before `w` (the space is dropped; with none after position 0 it is the first `w`), line 2 is the rest, trimmed on the left and cut with `…`. */
+export function twoLines(title: string, w: number): [string, string] {
+  const cp = [...title]
+  if (cp.length <= w) return [title, '']
+  let at = -1
+  for (let i = Math.min(w, cp.length - 1); i > 0; i--) {
+    if (cp[i] === ' ') {
+      at = i
+      break
+    }
+  }
+  const first = at > 0 ? cp.slice(0, at) : cp.slice(0, w)
+  let rest = cp.slice(at > 0 ? at + 1 : w)
+  while (rest[0] === ' ') rest = rest.slice(1)
+  const second = rest.length > w ? `${rest.slice(0, Math.max(0, w - 1)).join('')}…` : rest.join('')
+  return [first.join(''), second]
+}
+
+/** MOD-389 (#539): the cards in each column over every lane, folded or not: shown, `more`, and for done the hidden ones. */
+export function boardCounts(lanes: readonly BoardLane[]): Record<BoardCol, number> {
+  const out = Object.fromEntries(BOARD_COLS.map(c => [c, 0])) as Record<BoardCol, number>
+  for (const l of lanes) for (const c of BOARD_COLS) out[c] += l.cols[c].length + l.more[c] + (c === 'done' ? l.doneHidden : 0)
+  return out
+}
+
+const leavesOf =(it: WorkItem): WorkItem[] => (it.children.length === 0 ? [it] : it.children.flatMap(leavesOf))
 
 /** The lanes of the board for a set of filters, in the model's order. */
 export function workBoard(m: WorkModel, ui: WorkUi): BoardLane[] {

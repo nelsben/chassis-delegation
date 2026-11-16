@@ -9,7 +9,7 @@ import type { RenderNode } from 'claude-code'
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
 import { modelGlyph, type GlyphMap } from './glyph'
-import { ACTION_LABEL, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, LOZENGE, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
+import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, LOZENGE, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, twoLines, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
 
 export type WorkView = {
   model: WorkModel
@@ -122,7 +122,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       {L.progress ? <Text dimColor>{fit('Progress', L.progress)}</Text> : null}
       {L.card ? <Text dimColor>{fit('Card', L.card)}</Text> : null}
       {L.worker ? <Text dimColor>{fit('Worker', L.worker)}</Text> : null}
-      {L.cost ? <Text dimColor>{fit('Cost', L.cost)}</Text> : null}
+      {L.cost ? <Text dimColor>{'Cost'.padStart(L.cost)}</Text> : null}
     </Box>
   )
 
@@ -196,7 +196,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
         ) : null}
         {L.cost ? (
           <Box width={L.cost} overflow="hidden">
-            <Text>{!parent && typeof it.usd === 'number' ? `$${it.usd.toFixed(2)}` : ''}</Text>
+            <Text>{(!parent && typeof it.usd === 'number' ? `$${it.usd.toFixed(2)}` : '').padStart(L.cost)}</Text>
           </Box>
         ) : null}
       </Box>
@@ -276,8 +276,10 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const B = boardLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
     const lanes = v.lanes ?? []
     const stack = B.mode === 'stack'
+    const counts = boardCounts(lanes) // MOD-389 (#539)
     const card = (it: WorkItem): RenderNode => {
       const k = keySlug(it.key)
+      const [line1, line2] = twoLines(it.title, Math.max(4, B.col - 2))
       const mark = TYPE_MARK[it.type]
       const selected = v.detail !== undefined && v.detail.item.key === it.key
       const lozenge = LOZENGE[it.state][v.scheme]
@@ -285,17 +287,19 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       const cost = typeof it.usd === 'number' ? ` · $${it.usd.toFixed(2)}` : ''
       return (
         <Box key={`work-card-${k}`} flexDirection="column" backgroundColor={selected ? SELECTED_BG[v.scheme] : SURFACE_BG[v.scheme]} paddingLeft={1} paddingRight={1}>
-          <Button key={`work-open-${k}`} plain {...(it.state === 'done' ? { dimColor: true } : {})} label={cut(it.title, Math.max(4, B.col - 2))} onPress={() => hd.select(it.key)} />
-          <Box flexDirection="row">
-            <Text color={mark.color}>{mark.glyph} </Text>
-            {it.number !== undefined ? (
-              v.repo !== undefined ? (
-                <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={`#${it.number}`} />
-              ) : (
-                <Text dimColor>{`#${it.number}`}</Text>
-              )
-            ) : null}
-            {it.number !== undefined ? <Text>{' '}</Text> : null}
+          <Button key={`work-open-${k}`} plain {...(it.state === 'done' ? { dimColor: true } : {})} label={line1} onPress={() => hd.select(it.key)} />
+          {line2 !== '' ? <Text dimColor={it.state === 'done'}>{line2}</Text> : null}
+          <Box flexDirection="row" justifyContent="space-between">
+            <Box flexDirection="row">
+              <Text color={mark.color}>{mark.glyph} </Text>
+              {it.number !== undefined ? (
+                v.repo !== undefined ? (
+                  <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={`#${it.number}`} />
+                ) : (
+                  <Text dimColor>{`#${it.number}`}</Text>
+                )
+              ) : null}
+            </Box>
             {it.card !== undefined ? <Text dimColor>{it.card}</Text> : null}
           </Box>
           {(it.state === 'working' || it.state === 'review') && it.model !== undefined ? (
@@ -385,7 +389,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           <Box key="work-board-header" flexDirection="row" columnGap={2}>
             {BOARD_COLS.map(c => (
               <Text key={`work-board-head-${c}`} dimColor>
-                {fit(BOARD_LABEL[c].toUpperCase(), B.col)}
+                {fit(`${BOARD_LABEL[c].toUpperCase()} ${counts[c]}`, B.col)}
               </Text>
             ))}
           </Box>
