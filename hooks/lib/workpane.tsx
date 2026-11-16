@@ -4,6 +4,7 @@
 // MOD-388 (#538): the List and Board switch and the state chips are never plain (secondary off, primary on), so a press keeps their width;
 // the detail status row has a gap and wraps, its trail cut to its own width; `Reading the issues…` shows only once something is loaded;
 // an empty filter result offers Clear filters beside `No work matches.`; the footer reads Close; a selected leaf has a blue marker.
+// MOD-396 (#553): in stack mode (below 100 columns) a Column select picks the one board column each lane shows; mobile keeps stacking every column.
 // MOD-395 (#552): a bold Work heading starts the toolbar, and the notes fold behind one dim `N notes · show` line.
 // MOD-393 (#548): a progress bar is two coloured boxes (no █ or ░, which show gaps on the desktop), a stacked board heading counts the folded
 // cards too (`laneCount`), and a chip that is off with a count of 0 is dim.
@@ -37,6 +38,8 @@ export type WorkView = {
   view: 'list' | 'board'
   /** MOD-387 (#537): the modelGlyphs map, or 'off'; the badge beside the worker is drawn only with a map */
   glyphs?: GlyphMap | 'off'
+  /** MOD-396: the board column each lane shows in stack mode, Working when absent */
+  stackCol?: BoardCol
   /** MOD-357: workBoard(model, ui), given when the view is the board */
   lanes?: readonly BoardLane[]
   /** MOD-356: the open leaf, its ancestors root first, its action, whether it was asked, the Unblock question and its ledger events */
@@ -59,6 +62,8 @@ export type WorkHandlers = {
   clear: () => void
   /** MOD-395: fold or unfold the notes */
   notes: () => void
+  /** MOD-396: pick the column a stacked lane shows */
+  col: (c: BoardCol) => void
   refresh: () => void
   close: () => void
   /** MOD-356: open a leaf's detail, or close it with undefined */
@@ -333,6 +338,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const B = boardLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
     const lanes = v.lanes ?? []
     const stack = B.mode === 'stack'
+    const pick: BoardCol = v.stackCol ?? 'working'
+    const picking = stack && p.surface !== 'mobile'
     const counts = boardCounts(lanes) // MOD-389 (#539)
     const card = (it: WorkItem): RenderNode => {
       const k = keySlug(it.key)
@@ -409,7 +416,11 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
             <Text>{'  '}</Text>
             {bar(r.done, r.leaves)}
           </Box>
-          {!l.open ? null : stack ? (
+          {!l.open ? null : picking ? (
+            <Box key={`work-col-${k}-${pick}`} flexDirection="column" gap={1} width={B.col}>
+              {body(pick).length > 0 ? body(pick) : <Text dimColor>—</Text>}
+            </Box>
+          ) : stack ? (
             <Box flexDirection="column" gap={1}>
               {BOARD_COLS.map(c => {
                 const nodes = body(c)
@@ -441,6 +452,15 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     }
     return (
       <Box key="work-board" flexDirection="column" gap={1}>
+        {picking && lanes.length > 0 ? (
+          <Select
+            key="work-board-col"
+            label="Column"
+            options={BOARD_COLS.map(c => ({ value: c, label: `${BOARD_LABEL[c]} · ${counts[c]}` }))}
+            value={pick}
+            onSelect={(value: string) => hd.col(value as BoardCol)}
+          />
+        ) : null}
         {stack || lanes.length === 0 ? null : (
           <Box key="work-board-header" flexDirection="row" columnGap={2}>
             {BOARD_COLS.map(c => (

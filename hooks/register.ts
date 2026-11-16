@@ -223,7 +223,7 @@ import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan,
 import { openSiblings, type SiblingCard } from './lib/scopetree'
 import { releasePlan, rewriteBlocked } from './lib/blocked'
 import { TREE_TOOL, treeOf, treeText, type TreeCard } from './lib/tree'
-import { actionLine, askedOn, findItem, parseWorkIssues, updatedText, workAction, workActivity, workBoard, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkAsked, type WorkCard, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
+import { actionLine, askedOn, findItem, parseWorkIssues, updatedText, workAction, workActivity, workBoard, workModel, workRows, workText, WORK_LIST_LIMIT, WORK_TTL_MS, type WorkAsked, type WorkCard, type BoardCol, type WorkIssue, type WorkModel, type WorkState } from './lib/work'
 import { workTree, type WorkHandlers, type WorkView } from './lib/workpane'
 import { cardsComment, childrenComment, doneComment, epicsOf, landedFor, mergedCards, parseReconcileArgs, reconcileAllText, reconcileOf, reconcileText, type MergedCard, type ReconSub, type Reconciled } from './lib/reconcile'
 import { TREE_IMPORT_TOOL, countsLine, parseTreeImportArgs, parseTreeImportTool, parseTreePlan, planFileOf, rateLimited, setIssueAt, treeBatch, treeCounts, treeLines, type TreeNode } from './lib/landtree'
@@ -947,6 +947,8 @@ let workUi: { closed: Set<string>; shown: Set<string>; query: string; states: Se
 let workView: 'list' | 'board' = 'list'
 /** MOD-395: the Work pane's notes, folded or open. Reset at session start. */
 let workNotesOpen = false
+/** MOD-396: the board column each lane shows in stack mode. Reset at session start. */
+let workStackCol: BoardCol = 'working'
 let workReading = false
 let workTriedAt: number | undefined
 let workFail: { repo: string; why: string } | undefined
@@ -1622,6 +1624,10 @@ function landSeen($: Host, tool: 'land' | 'land_plan' | 'card' | 'dispatch' | 'v
 function workHandlers($: Host): WorkHandlers {
   const toggleIn = (set: Set<string>, v: string) => (set.has(v) ? set.delete(v) : set.add(v))
   return {
+    col: c => {
+      workStackCol = c
+      redraw($)
+    },
     notes: () => {
       workNotesOpen = !workNotesOpen
       redraw($)
@@ -11421,6 +11427,7 @@ export const register: Register = (on, opts) => {
     workUi = { closed: new Set(), shown: new Set(), query: '', states: new Set(), showDone: false } // MOD-354
     workView = 'list' // MOD-357
     workNotesOpen = false // MOD-395
+    workStackCol = 'working' // MOD-396
     workReading = false
     workTriedAt = undefined
     workFail = undefined
@@ -11730,7 +11737,7 @@ export const register: Register = (on, opts) => {
         }
       }
       const p = { surface: e.surface, t: $.ui.resolve(e) } as PaneTable
-      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, view: workView, glyphs: cfg.glyphs, ...(workView === 'board' ? { lanes: workBoard(d.model, workUi) } : {}), columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, notesOpen: workNotesOpen, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
+      return workTree(p, { model: d.model, rows: workRows(d.model, workUi), ui: workUi, view: workView, stackCol: workStackCol, glyphs: cfg.glyphs, ...(workView === 'board' ? { lanes: workBoard(d.model, workUi) } : {}), columns: e.props.bodyColumns, scheme: pickScheme(e), ...(d.at !== undefined ? { updated: updatedText(d.at, at) } : {}), notes: d.notes, notesOpen: workNotesOpen, reading: workReading, ...(d.repo !== undefined ? { repo: d.repo } : {}), ...(detail !== undefined ? { detail } : {}) }, workHandlers($)) as never
     } catch (err) {
       debug($, `work pane not drawn: ${String(err)}`)
       return next(e)

@@ -420,6 +420,12 @@ describe('MOD-357: the Work pane board', () => {
     return ui
   }
 
+  // the board is switched on at the terminal (the desktop switch is a link), then the pane is mounted on the surface
+  const boardOn = async ($: any, columns: number, surface: string) => {
+    await board($, 130)
+    return mountWork($, columns, surface)
+  }
+
   test('the switch draws the board with a header, lanes and cards, and List brings the table back', async ($, on) => {
     const w = setup(on)
     const ui = await board($)
@@ -445,15 +451,57 @@ describe('MOD-357: the Work pane board', () => {
     expect(await ui.find({ key: 'work-card-i12' })).toBeDefined()
   })
 
-  test('at 80 columns the columns stack: no header, and a QUEUED · 1 line', async ($, on) => {
+  test('on mobile at 40 columns the columns stack under their headings and there is no Column select', async ($, on) => {
     setup(on)
-    const ui = await board($, 80)
+    await board($, 130)
+    const ui = await mountWork($, 40, 'mobile')
     expect(await ui.find({ key: 'work-board' })).toBeDefined()
     expect(await ui.find({ key: 'work-board-header' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-board-col' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: 'QUEUED · 1' })).toBeDefined()
     // MOD-393 (#548): the heading counts the folded done card, not only the ones on screen
     expect(await ui.find({ type: 'Text', text: 'DONE · 1' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'DONE · 0' })).toBeUndefined()
+  })
+
+  test('MOD-396 (#553): at 80 columns on desktop a Column select shows Working, and a lane draws only that column', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 80, 'desktop')
+    const sel = await ui.find({ key: 'work-board-col' })
+    expect(sel).toBeDefined()
+    expect(sel?.props.value).toBe('working')
+    expect(sel?.props.options).toHaveLength(5)
+    for (const o of sel?.props.options ?? []) expect(o.label).toMatch(/ · \d+$/)
+    expect(await ui.find({ key: 'work-board-header' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-col-i10-working' })).toBeDefined()
+    for (const c of ['backlog', 'queued', 'review', 'done']) expect(await ui.find({ key: `work-col-i10-${c}` })).toBeUndefined()
+  })
+
+  test('MOD-396 (#553): selecting done draws the done column with its N done · show line', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 80, 'desktop')
+    await ui.select({ key: 'work-board-col', value: 'done' })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-col-i10-done' })).toBeDefined()
+    expect(await ui.find({ key: 'work-col-i10-working' })).toBeUndefined()
+    expect((await ui.find({ key: 'work-show-i10' }))?.props.text).toContain('1 done · show')
+  })
+
+  test('MOD-396 (#553): a lane with no card in the picked column draws a dash', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 80, 'desktop')
+    await ui.select({ key: 'work-board-col', value: 'review' })
+    await ui.redraw()
+    const col = await ui.find({ key: 'work-col-i10-review' })
+    expect(col).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '—' })).toBeDefined()
+  })
+
+  test('MOD-396 (#553): at 130 columns there is no Column select', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 130, 'desktop')
+    expect(await ui.find({ key: 'work-board-col' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-board-header' })).toBeDefined()
   })
 
   test('MOD-393 (#548): a chip with a count of 0 is dim while off, and full strength once pressed', async ($, on) => {
@@ -493,6 +541,8 @@ describe('MOD-357: the Work pane board', () => {
   test('at 80 columns a card title opens the detail with Back to board, which brings the board back', async ($, on) => {
     setup(on)
     const ui = await board($, 80)
+    await ui.select({ key: 'work-board-col', value: 'queued' })
+    await ui.redraw()
     await ui.press({ key: 'work-open-i13' })
     await ui.redraw()
     expect(await ui.find({ key: 'work-detail' })).toBeDefined()

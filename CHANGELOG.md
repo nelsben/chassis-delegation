@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Below 100 columns the Work board draws a Column select (Working at first), and each lane shows only that column; mobile still stacks every column** (MOD-396, #553)
 - **The Work pane's toolbar starts with a bold `Work` heading, and the notes fold behind one dim `N notes · show` line (`hide notes` when open)** (MOD-395, #552)
 
 ## 0.9.65 — 2026-11-16
