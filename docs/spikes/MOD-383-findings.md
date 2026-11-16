@@ -31,7 +31,7 @@ Surfaces where the badge shows today.
 Engine API candidates for changing the text of a running agent's row.
 
 - `ui.render` for `ToolUse`: draws the Agent call's transcript row; "Raised on every surface" (Types file:9186, props at Types file:9160-9225 include `tool`, `input`, `isRunning`). Reaches the editor surface for the transcript row. It does not name the live progress row under the group, so ⚠ Unverified: whether the editor's "Agent: Running ..." line is this row.
-- `ui.render` for `ToolGroup`: "Raised on every surface" (Types file:9290, at 9292). Same caveat: the group is the container the docs say live progress rows sit under, but the types do not say the progress rows are part of its drawing. ⚠ Unverified.
+- `ui.render` for `ToolGroup`: "Raised on every surface" (Types file:9290, at 9292). Same caveat: the group is the container the docs say live progress rows sit under, but the types do not say the progress rows are part of its drawing. ⚠ Unverified: whether the editor's progress rows are drawn as part of ToolGroup
 - `ui.render` for `ToolProgress`: "Raised on the terminal surface only" (Types file:9372), and its only kind is the `background_hint` pill (Types file:9365-9385). It does not reach the editor and does not carry agent progress.
 - `ui.render` for `Spinner`: terminal and desktop only (Types file:9403); not the editor.
 - `ui.render` for `AbovePrompt` (the band): "Raised on the terminal and desktop surfaces only" (Types file:9545). Not the editor.
