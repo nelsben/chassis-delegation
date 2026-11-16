@@ -378,6 +378,18 @@ export function keySlug(key: string): string {
   return m ? `i${m[1]}` : key
 }
 
+// MOD-392 (#547): a control on a remote surface is a Markdown link; its href names the element key, and onLinkPress answers it.
+/** The href a control's link carries: the element key, encoded, under a host that never resolves. */
+export function linkHref(key: string): string {
+  return `https://work.invalid/${encodeURIComponent(key)}`
+}
+
+/** A Markdown link whose label is escaped: each newline is a space, and each Markdown metacharacter gets a backslash. */
+export function mdLink(label: string, href: string): string {
+  const text = label.replace(/\n/g, ' ').replace(/[\\`*_[\]<>~|#]/g, c => `\\${c}`)
+  return `[${text}](${href})`
+}
+
 // MOD-356: the detail panel's pure half: finding a leaf, its action and the line that action puts to the session, its activity from the ledger.
 
 export type WorkAction = 'dispatch' | 'review' | 'unblock'

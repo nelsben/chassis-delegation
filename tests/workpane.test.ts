@@ -681,3 +681,90 @@ describe('MOD-390 (#540): the Work list columns, header rule, hierarchy and narr
     expect(await ui.find({ type: 'Text', text: / QUEUED / })).toBeUndefined()
   })
 })
+
+// MOD-392 (#547): on a remote surface the controls are Markdown links, so the desktop draws no box; the terminal keeps its Buttons.
+describe('MOD-392 (#547): the Work pane controls are links on a remote surface', () => {
+  const href = (key: string) => `https://work.invalid/${encodeURIComponent(key)}`
+  const pressLink = (ui: any, key: string) => ui.press({ key, link: { href: href(key) } })
+  const LONG = 'Restore a saved cart after the session expires'
+  const LONG_ISSUES = JSON.stringify([issue(10, 'Checkout rework', 'OPEN', 'epic'), issue(11, 'Cart totals', 'OPEN', 'feature', 10), issue(13, LONG, 'OPEN', 'story', 11)])
+
+  test('on desktop at 130 columns a leaf title is a Markdown link to its key, and pressing the link opens the detail', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    const title = await ui.find({ type: 'Markdown', key: 'work-open-i13' })
+    expect(String(title?.props.text).endsWith('](https://work.invalid/work-open-i13)')).toBe(true)
+    expect(await ui.find({ type: 'Button', key: 'work-open-i13' })).toBeUndefined()
+    await pressLink(ui, 'work-open-i13')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+  })
+
+  test('on desktop pressing a parent toggle link closes it', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    expect(await ui.find({ type: 'Markdown', key: 'work-toggle-i10' })).toBeDefined()
+    expect(await ui.find({ key: 'work-row-i11' })).toBeDefined()
+    await pressLink(ui, 'work-toggle-i10')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-row-i11' })).toBeUndefined()
+  })
+
+  test('on desktop a state chip and Refresh are still Buttons, and Show done is a link', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    expect(await ui.find({ type: 'Button', key: 'work-chip-queued' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'work-refresh' })).toBeDefined()
+    expect(await ui.find({ type: 'Markdown', key: 'work-done' })).toBeDefined()
+  })
+
+  test('on desktop the List and Board switch shows the current view as bold text and the other as a link', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    expect(await ui.find({ type: 'Text', text: 'List' })).toBeDefined()
+    expect(await ui.find({ type: 'Markdown', key: 'work-view-board' })).toBeDefined()
+    await pressLink(ui, 'work-view-board')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-board' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Board' })).toBeDefined()
+    expect(await ui.find({ type: 'Markdown', key: 'work-view-list' })).toBeDefined()
+  })
+
+  test('the footer Close is drawn on the terminal and on mobile, and not on desktop or vscode', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    for (const surface of ['desktop', 'vscode']) expect(await (await mountWork($, 130, surface)).find({ key: 'work-close' }), surface).toBeUndefined()
+    for (const surface of ['terminal', 'mobile']) expect(await (await mountWork($, 100, surface)).find({ key: 'work-close' }), surface).toBeDefined()
+  })
+
+  test('on the terminal a leaf title is still a plain Button', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'terminal')
+    expect((await ui.find({ type: 'Button', key: 'work-open-i13' }))?.props.plain).toBe(true)
+    expect(await ui.find({ type: 'Markdown', key: 'work-open-i13' })).toBeUndefined()
+  })
+
+  test('on the desktop board a long card title is one Markdown and draws no second line', async ($, on) => {
+    setup(on, { gh: () => ({ exitCode: 0, stdout: LONG_ISSUES }) })
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    await pressLink(ui, 'work-view-board')
+    await ui.redraw()
+    const title = await ui.find({ type: 'Markdown', key: 'work-open-i13' })
+    expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
+    expect(String(title?.props.text)).toContain('Restore a saved cart after the session expi…')
+    expect(await ui.find({ type: 'Text', text: /after the session/ })).toBeUndefined()
+  })
+})

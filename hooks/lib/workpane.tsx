@@ -4,12 +4,14 @@
 // MOD-388 (#538): the List and Board switch and the state chips are never plain (secondary off, primary on), so a press keeps their width;
 // the detail status row has a gap and wraps, its trail cut to its own width; `Reading the issues…` shows only once something is loaded;
 // an empty filter result offers Clear filters beside `No work matches.`; the footer reads Close; a selected leaf has a blue marker.
+// MOD-392 (#547): on a remote surface the controls that were plain Buttons are Markdown links (`press`), so the desktop draws no box around
+// a title or a toggle; the footer Close is drawn on the terminal and on mobile only, the desktop and vscode panes have their own close.
 import type { RenderNode } from 'claude-code'
 
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
 import { modelGlyph, type GlyphMap } from './glyph'
-import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, LOZENGE, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, markColor, twoLines, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
+import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, linkHref, LOZENGE, mdLink, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TYPE_MARK, markColor, twoLines, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkUi } from './work'
 
 export type WorkView = {
   model: WorkModel
@@ -71,7 +73,15 @@ const indentOf = (depth: number): string => '  '.repeat(Math.min(depth, 6))
 const doneFg = (scheme: Scheme): string => LOZENGE.done[scheme].fg
 
 export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNode {
-  const { Box, Text, Button, Input, Select, Link } = p.t
+  const { Box, Text, Button, Input, Select, Link, Markdown } = p.t
+  // MOD-392 (#547): a control is a native Button on the terminal; on a remote surface it is a Markdown link, which draws no box
+  const remote = p.surface !== 'terminal'
+  const press = (key: string, label: string, onPress: () => void, o: { dim?: boolean } = {}): RenderNode =>
+    remote ? (
+      <Markdown key={key} text={mdLink(label, linkHref(key))} pressableLinks={[linkHref(key)]} onLinkPress={() => onPress()} dimColor={o.dim} />
+    ) : (
+      <Button key={key} plain label={label} onPress={onPress} {...(o.dim ? { dimColor: true } : {})} />
+    )
   const side = v.columns >= 116
   const L = workLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
   const filtered = v.ui.query.trim() !== '' || v.ui.states.size > 0 || v.ui.root !== undefined
@@ -80,10 +90,22 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   // MOD-387 (#537): the model's badge beside the worker in the list, the board card and the detail; '' when there is none to draw
   const badge = (it: WorkItem): string => (it.model === undefined || it.model === '–' || v.glyphs === undefined || v.glyphs === 'off' ? '' : modelGlyph(it.model, v.glyphs))
 
+  // MOD-392 (#547): on a remote surface the current view is bold text and the other a link; the terminal keeps both Buttons (MOD-388)
+  const viewSwitch = (view: 'list' | 'board', label: string): RenderNode => {
+    if (!remote) return <Button key={`work-view-${view}`} label={label} variant={v.view === view ? 'primary' : 'secondary'} onPress={() => hd.view(view)} />
+    return v.view === view ? (
+      <Box key={`work-view-${view}`}>
+        <Text bold>{label}</Text>
+      </Box>
+    ) : (
+      press(`work-view-${view}`, label, () => hd.view(view))
+    )
+  }
+
   const toolbar = (
     <Box key="work-toolbar" flexDirection="row" flexWrap="wrap" columnGap={2}>
-      <Button key="work-view-list" label="List" variant={v.view === 'list' ? 'primary' : 'secondary'} onPress={() => hd.view('list')} />
-      <Button key="work-view-board" label="Board" variant={v.view === 'board' ? 'primary' : 'secondary'} onPress={() => hd.view('board')} />
+      {viewSwitch('list', 'List')}
+      {viewSwitch('board', 'Board')}
       {narrowSurface ? null : <Input key="work-search" placeholder="Search work" value={v.ui.query} submitLabel="Search" onSubmit={(text: string) => hd.query(text)} />}
       {narrowSurface || roots.length < 2 ? null : (
         <Select
@@ -94,7 +116,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           onSelect={(value: string) => hd.root(value)}
         />
       )}
-      <Button key="work-done" plain label={v.ui.showDone ? '☑ Show done' : '☐ Show done'} onPress={hd.showDone} />
+      {press('work-done', v.ui.showDone ? '☑ Show done' : '☐ Show done', hd.showDone)}
       {v.reading && v.model.total > 0 ? <Text dimColor>Reading the issues…</Text> : v.updated ? <Text dimColor>{v.updated}</Text> : null}
       <Button key="work-refresh" label="Refresh" onPress={hd.refresh} />
     </Box>
@@ -111,7 +133,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           </Box>
         )
       })}
-      {filtered ? <Button key="work-clear" plain label="Clear filters" onPress={hd.clear} /> : null}
+      {filtered ? press('work-clear', 'Clear filters', hd.clear) : null}
     </Box>
   )
 
@@ -152,7 +174,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       <Box key={`work-row-${k}`} flexDirection="row" hover={hover} {...(selected ? { backgroundColor: SELECTED_BG[v.scheme] } : {})}>
         <Box width={L.work} overflow="hidden" flexDirection="row">
           <Text>{indent}</Text>
-          {parent ? <Button key={`work-toggle-${k}`} plain label={open ? '▾' : '▸'} onPress={() => hd.toggle(it.key)} /> : selected ? <Text color="#1d7afc">▌ </Text> : <Text>{'  '}</Text>}
+          {parent ? press(`work-toggle-${k}`, open ? '▾' : '▸', () => hd.toggle(it.key)) : selected ? <Text color="#1d7afc">▌ </Text> : <Text>{'  '}</Text>}
           {parent ? <Text>{' '}</Text> : null}
           {mark ? <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
           {numText !== '' ? (
@@ -168,7 +190,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
               {cut(it.title, titleW)}
             </Text>
           ) : (
-            <Button key={`work-open-${k}`} plain {...(doneLeaf ? { dimColor: true } : {})} label={cut(it.title, titleW)} onPress={() => hd.select(it.key)} />
+            press(`work-open-${k}`, cut(it.title, titleW), () => hd.select(it.key), { dim: doneLeaf })
           )}
         </Box>
         <Box width={L.status}>
@@ -234,7 +256,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       return (
         <Box key={`work-hidden-${k}`} flexDirection="row">
           <Text>{`${indentOf(r.depth)}  `}</Text>
-          <Button key={`work-show-${k}`} plain dimColor label={`${r.n} done hidden · show`} onPress={() => hd.show(r.parent)} />
+          {press(`work-show-${k}`, `${r.n} done hidden · show`, () => hd.show(r.parent), { dim: true })}
         </Box>
       )
     }
@@ -266,7 +288,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     return (
       <Box flexDirection="row" columnGap={2}>
         <Text>No work matches.</Text>
-        <Button key="work-clear-empty" plain label="Clear filters" onPress={hd.clear} />
+        {press('work-clear-empty', 'Clear filters', hd.clear)}
       </Box>
     )
   }
@@ -288,7 +310,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const counts = boardCounts(lanes) // MOD-389 (#539)
     const card = (it: WorkItem): RenderNode => {
       const k = keySlug(it.key)
-      const [line1, line2] = twoLines(it.title, Math.max(4, B.col - 2))
+      const w = Math.max(4, B.col - 2)
+      const [line1, line2] = twoLines(it.title, w)
       const mark = TYPE_MARK[it.type]
       const selected = v.detail !== undefined && v.detail.item.key === it.key
       const lozenge = LOZENGE[it.state][v.scheme]
@@ -296,8 +319,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       const cost = typeof it.usd === 'number' ? ` · $${it.usd.toFixed(2)}` : ''
       return (
         <Box key={`work-card-${k}`} flexDirection="column" backgroundColor={selected ? SELECTED_BG[v.scheme] : SURFACE_BG[v.scheme]} paddingLeft={1} paddingRight={1}>
-          <Button key={`work-open-${k}`} plain {...(it.state === 'done' ? { dimColor: true } : {})} label={line1} onPress={() => hd.select(it.key)} />
-          {line2 !== '' ? <Text dimColor={it.state === 'done'}>{line2}</Text> : null}
+          {remote ? press(`work-open-${k}`, cut(it.title, 2 * w), () => hd.select(it.key), { dim: it.state === 'done' }) : <Button key={`work-open-${k}`} plain {...(it.state === 'done' ? { dimColor: true } : {})} label={line1} onPress={() => hd.select(it.key)} />}
+          {!remote && line2 !== '' ? <Text dimColor={it.state === 'done'}>{line2}</Text> : null}
           <Box flexDirection="row" justifyContent="space-between">
             <Box flexDirection="row">
               <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text>
@@ -336,14 +359,14 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       const mark = r.group ? null : TYPE_MARK[r.type]
       const body = (c: BoardCol): RenderNode[] => {
         const out: RenderNode[] = l.cols[c].map(card)
-        if (c === 'done' && l.doneHidden > 0) out.push(<Button key={`work-show-${k}`} plain dimColor label={`${l.doneHidden} done · show`} onPress={() => hd.show(r.key)} />)
+        if (c === 'done' && l.doneHidden > 0) out.push(press(`work-show-${k}`, `${l.doneHidden} done · show`, () => hd.show(r.key), { dim: true }))
         if (l.more[c] > 0) out.push(<Text key={`work-more-${k}-${c}`} dimColor>{`+${l.more[c]} more`}</Text>)
         return out
       }
       return (
         <Box key={`work-lane-${k}`} flexDirection="column" gap={1}>
           <Box flexDirection="row">
-            <Button key={`work-toggle-${k}`} plain label={l.open ? '▾' : '▸'} onPress={() => hd.toggle(r.key)} />
+            {press(`work-toggle-${k}`, l.open ? '▾' : '▸', () => hd.toggle(r.key))}
             <Text>{' '}</Text>
             {mark ? <Text color={markColor(r.type, v.scheme)}>{mark.glyph} </Text> : null}
             {r.number !== undefined ? (
@@ -436,6 +459,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const dash = <Text>—</Text>
     const typeName = it.number === undefined ? 'Card' : it.type.charAt(0).toUpperCase() + it.type.slice(1)
     const by = it.by ?? []
+    const closeLabel = side ? 'Close' : v.view === 'board' ? '← Back to board' : '← Back to list'
     const queuedNote = it.state === 'queued' && it.slot ? ' waiting for a slot' : it.state === 'queued' && it.onDisk ? ' worktree on disk' : ''
     return (
       <Box key="work-detail" flexDirection="column" gap={1} width={width}>
@@ -443,7 +467,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           <Text dimColor wrap="wrap">
             {trailText}
           </Text>
-          <Button key="work-detail-close" label={side ? 'Close' : v.view === 'board' ? '← Back to board' : '← Back to list'} onPress={() => hd.select(undefined)} />
+          {remote ? press('work-detail-close', closeLabel, () => hd.select(undefined)) : <Button key="work-detail-close" label={closeLabel} onPress={() => hd.select(undefined)} />}
         </Box>
         <Box flexDirection="row">
           {mark ? <Text color={markColor(it.type, v.scheme)}>{mark.glyph} </Text> : <Text>{'  '}</Text>}
@@ -500,7 +524,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
                   <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
                     {by.map(id => {
                       const target = leafOfCard(v.model, id)
-                      return target !== undefined ? <Button key={`work-by-${keySlug(id)}`} plain label={id} onPress={() => hd.select(target.key)} /> : <Text key={`work-by-${keySlug(id)}`}>{id}</Text>
+                      return target !== undefined ? press(`work-by-${keySlug(id)}`, id, () => hd.select(target.key)) : <Text key={`work-by-${keySlug(id)}`}>{id}</Text>
                     })}
                   </Box>
                 ) : (
@@ -528,11 +552,13 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     )
   }
 
-  const footer = (
-    <Box key="work-footer" flexDirection="row">
-      <Button key="work-close" label="Close" role="dismiss" onPress={hd.close} />
-    </Box>
-  )
+  // MOD-392 (#547): the desktop and vscode panes have their own close, so the footer is drawn on the terminal and on mobile only
+  const footer =
+    p.surface === 'desktop' || p.surface === 'vscode' ? null : (
+      <Box key="work-footer" flexDirection="row">
+        <Button key="work-close" label="Close" role="dismiss" onPress={hd.close} />
+      </Box>
+    )
 
   if (v.detail !== undefined && !side) {
     return (
