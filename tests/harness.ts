@@ -160,7 +160,7 @@ const RESOLVED: Record<string, string> = {
 const SPIKE_SECTION = [
   "{{#spike}}",
   "- Spike: the card asks questions and your deliverable is the findings file {{findings}}. Write only that file and the other paths the scope names; change no source, test or config file. Web search and web fetch are allowed. Cite only from: {{sources}}.",
-  "- Findings format: one section per card question, headed `## Q<n>` with the card's number; in it the answer, every claim cited by a URL or a repo `path:line`. A question the sources do not answer gets a line `Unanswered: <why>`, never a guess. A question marked (verdict) gets a line `Verdict: <word>`{{verdictWords}}. Flag a claim you could not confirm `⚠ Unverified: <what>` and sources that disagree `⚠ Conflict: <what>`. End with `## Decisions this implies`, one `- ` line per decision (`- none` when there is none).",
+  "- Findings format: one section per card question, headed `## Q<n>` with the card's number; in it the answer, every claim cited by a URL or a repo `path:line`. A question the sources do not answer gets a line `Unanswered: <why>`, never a guess. A question marked (verdict) gets a line `Verdict: <word>`{{verdictWords}}. Flag a claim you could not confirm `⚠ Unverified: <what>` and sources that disagree `⚠ Conflict: <what>`. Write the ⚠ character only to open such a flag, followed by the label, a colon and the text; to mention a flag in prose, write the word Unverified alone. End with `## Decisions this implies`, one `- ` line per decision (`- none` when there is none).",
   "- The gate `findings` is built in: the verifier checks the file at your sha against the card's questions, the sources and this format. There is no red test: report red=none.",
   "{{/spike}}"
 ].join('\n') + '\n'

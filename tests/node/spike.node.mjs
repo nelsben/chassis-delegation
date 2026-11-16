@@ -160,12 +160,37 @@ describe('findingsCheck', () => {
     const text = findings(['Verdict: adopt', 'src/a.ts:1', '⚠ Unverified: fine'], ['Unanswered: no.', '⚠ Conflict:   '])
     const lines = text.split('\n')
     const r = check(text)
-    expect(r.problems).toEqual([`line ${lines.indexOf('⚠ Conflict:   ') + 1}: a ⚠ flag reads ⚠ Unverified: <text> or ⚠ Conflict: <text>`])
+    expect(r.problems).toEqual([`line ${lines.indexOf('⚠ Conflict:   ') + 1}: a ⚠ flag reads ⚠ Unverified: <text> or ⚠ Conflict: <text> (found "⚠ Conflict:")`])
   })
 
   test('a ⚠ with no Unverified or Conflict label is a malformed flag too', () => {
     const text = findings(['Verdict: adopt', 'src/a.ts:1 ⚠ Guess: maybe'], ['Unanswered: no.'])
-    expect(check(text).problems).toEqual([`line ${text.split('\n').indexOf('src/a.ts:1 ⚠ Guess: maybe') + 1}: a ⚠ flag reads ⚠ Unverified: <text> or ⚠ Conflict: <text>`])
+    expect(check(text).problems).toEqual([`line ${text.split('\n').indexOf('src/a.ts:1 ⚠ Guess: maybe') + 1}: a ⚠ flag reads ⚠ Unverified: <text> or ⚠ Conflict: <text> (found "⚠ Guess: maybe")`])
+  })
+
+  // MOD-386 (#536)
+  test('a bare ⚠ Unverified. problem line quotes what it found', () => {
+    const text = findings(['Verdict: adopt', 'src/a.ts:1', '⚠ Unverified.'], ['Unanswered: no.'])
+    expect(check(text).problems).toEqual([`line ${text.split('\n').indexOf('⚠ Unverified.') + 1}: a ⚠ flag reads ⚠ Unverified: <text> or ⚠ Conflict: <text> (found "⚠ Unverified.")`])
+  })
+
+  test('a lone ⚠ shows (found "⚠"), and a long part is cut to 30 characters', () => {
+    const lone = findings(['Verdict: adopt', 'src/a.ts:1 ⚠'], ['Unanswered: no.'])
+    expect(check(lone).problems[0].endsWith('(found "⚠")')).toBe(true)
+    const long = findings(['Verdict: adopt', 'src/a.ts:1 ⚠ ' + 'x'.repeat(50)], ['Unanswered: no.'])
+    expect(check(long).problems[0].endsWith(`(found "⚠ ${'x'.repeat(30)}")`)).toBe(true)
+  })
+
+  test('a ⚠ only inside backticks is neither a problem nor a flag', () => {
+    const r = check(findings(['Verdict: adopt', 'src/a.ts:1', 'flagged `⚠ Unverified` below'], ['Unanswered: no.']))
+    expect(r.ok).toBe(true)
+    expect(r.summary.endsWith('0 flags')).toBe(true)
+  })
+
+  test('a good flag beside a backticked mention counts one flag and no problem', () => {
+    const r = check(findings(['Verdict: adopt', 'src/a.ts:1', '⚠ Unverified: timing, see `⚠ Unverified` rule'], ['Unanswered: no.']))
+    expect(r.ok).toBe(true)
+    expect(r.summary.endsWith('1 flag')).toBe(true)
   })
 
   test('a well-formed flag passes and is counted in the summary', () => {

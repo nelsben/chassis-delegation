@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The findings gate no longer reads a ⚠ inside backticks as a flag, its malformed-flag line now quotes what it found, and the spike brief says to write ⚠ only to open a flag** (MOD-386, #536)
+
 ## 0.9.63 — 2026-11-15
 
 ### Changed
