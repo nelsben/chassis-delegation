@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.63 to 0.9.64
+
+No action needed. The findings gate no longer reads a ⚠ inside backticks as a flag, and a malformed flag's problem line now quotes what it found. The Work pane draws the model badge (🟢 🔵 🟣) beside the worker in the list, the board and the detail; `modelGlyphs off` restores the dot. The list's Progress and Card columns are now one Card column, so Worker shows from 96 columns, and below 28 columns the status is a coloured dot. Board titles take two lines and the column headers carry counts. The chips and the List/Board switch keep their width when pressed, and a selected row has a blue bar. Detail: [CHANGELOG 0.9.64](../CHANGELOG.md).
+
 ### From 0.9.62 to 0.9.63
 
 No action needed. A new repo option, `maxConcurrentGates` (0 to 16, default 0, no cap), caps how many gate commands the verifier and merge run at once in a session; the rest wait in line and the wait does not count against `gateTimeoutMinutes`. Set it to 1 or 2 in a repo whose gate slows down when several run together. A worker that hands back a report after a `no-report` on the same attempt is now judged on that attempt, uncharged. Merge now refuses a `baseRef` that is a local branch with no copy on origin and says to push it first, where before it went on toward main. Detail: [CHANGELOG 0.9.63](../CHANGELOG.md).
