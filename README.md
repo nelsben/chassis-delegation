@@ -65,6 +65,7 @@ To load it in VS Code, in the desktop app, or in every session, see [docs/instal
 - [Contracts and verification](docs/contracts.md): the brief and report lines, and how a report is checked against git.
 - [Review and merge](docs/review-and-merge.md): reviewing a hand-back and landing it.
 - [Configuration](docs/configuration.md): every option, the debrief, and the host-command allowlist.
+- [Worktrees](docs/worktrees.md): Claude Code's built-in worktrees beside the mod's, and why the mod cuts its own.
 - [Spend](docs/spend.md): what the brain and each worker cost, the spend ceiling and effort by tier.
 - [Internals](docs/internals.md): running without the engine, known issues, the store and ledger, and developing the mod.
 - [Upgrading](docs/upgrading.md): `/delegation update`, and what to do at each version.
