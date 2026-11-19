@@ -4,6 +4,9 @@
 // MOD-388 (#538): the List and Board switch and the state chips are never plain (secondary off, primary on), so a press keeps their width;
 // the detail status row has a gap and wraps, its trail cut to its own width; `Reading the issues…` shows only once something is loaded;
 // an empty filter result offers Clear filters beside `No work matches.`; the footer reads Close; a selected leaf has a blue marker.
+// MOD-402 (#564): on a remote surface each line of controls is one Markdown with its links: the toolbar (Filter opens the search and the epic
+// select on their own line), the state chips, the stacked board's column line, and each lane head (toggle and title, then the bar); the stacked
+// board opens on the first column with cards, and the terminal keeps its Buttons, Input and Select.
 // MOD-397 (#554): on a remote surface the type mark is a 14 px SVG icon (a rounded square in the type colour with a white glyph), not a text glyph; the terminal keeps the glyphs.
 // MOD-396 (#553): in stack mode (below 100 columns) a Column select picks the one board column each lane shows; mobile keeps stacking every column.
 // MOD-395 (#552): a bold Work heading starts the toolbar, and the notes fold behind one dim `N notes · show` line.
@@ -16,7 +19,7 @@ import type { RenderNode } from 'claude-code'
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
 import { modelGlyph, type GlyphMap } from './glyph'
-import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, keySlug, leafOfCard, linkHref, LOZENGE, laneCount, mdLink, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TRACK_BG, TYPE_MARK, markColor, twoLines, typeIcon, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkType, type WorkUi } from './work'
+import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, firstCol, keySlug, leafOfCard, linkHref, LOZENGE, laneCount, mdEscape, mdLink, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TRACK_BG, TYPE_MARK, markColor, twoLines, typeIcon, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkType, type WorkUi } from './work'
 
 export type WorkView = {
   model: WorkModel
@@ -31,6 +34,8 @@ export type WorkView = {
   notes: readonly string[]
   /** MOD-395: the notes are drawn open */
   notesOpen: boolean
+  /** MOD-402 (#564): on a remote surface the search and the epic select show under the toolbar's Filter link */
+  filterOpen: boolean
   /** a read of the issues is running */
   reading: boolean
   /** owner/name, for the issue links */
@@ -63,6 +68,8 @@ export type WorkHandlers = {
   clear: () => void
   /** MOD-395: fold or unfold the notes */
   notes: () => void
+  /** MOD-402 (#564): show or hide the search and the epic select on a remote surface */
+  filter: () => void
   /** MOD-396: pick the column a stacked lane shows */
   col: (c: BoardCol) => void
   refresh: () => void
@@ -85,6 +92,9 @@ const fit = (text: string, w: number): string => {
 const indentOf = (depth: number): string => '  '.repeat(Math.min(depth, 6))
 const doneFg = (scheme: Scheme): string => LOZENGE.done[scheme].fg
 
+/** MOD-402 (#564): one control of a line on a remote surface: a link when onPress is set, else plain text; bold wraps it. */
+type LinePart = { id: string; label: string; onPress?: () => void; bold?: boolean }
+
 export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNode {
   const { Box, Text, Button, Input, Select, Link, Markdown } = p.t
   // MOD-392 (#547): a control is a native Button on the terminal; on a remote surface it is a Markdown link, which draws no box
@@ -97,6 +107,26 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     ) : (
       <Button key={key} plain label={label} onPress={onPress} {...(o.dim ? { dimColor: true } : {})} />
     )
+  // MOD-402 (#564): one Markdown holds a whole line of controls; each part with onPress is a link answered by onLinkPress
+  const pressLine = (key: string, parts: LinePart[], o: { sep?: string; dim?: boolean } = {}): RenderNode => {
+    const hrefOf = (part: LinePart): string => linkHref(`${key}-${part.id}`)
+    const text = parts
+      .map(part => {
+        const label = part.onPress ? mdLink(part.label, hrefOf(part)) : mdEscape(part.label)
+        return part.bold ? `**${label}**` : label
+      })
+      .join(o.sep ?? ' · ')
+    const pressable = parts.filter(part => part.onPress !== undefined)
+    return (
+      <Markdown
+        key={key}
+        text={text}
+        pressableLinks={pressable.map(hrefOf)}
+        onLinkPress={(link: { href: string }) => pressable.find(part => hrefOf(part) === link.href)?.onPress?.()}
+        dimColor={o.dim}
+      />
+    )
+  }
   // MOD-397 (#554): the type mark: the glyph on the terminal; on a remote surface the 14 px icon, then a space
   const markNode = (type: WorkType): RenderNode =>
     Svg ? (
@@ -109,46 +139,68 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     )
   const side = v.columns >= 116
   const L = workLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
+  // MOD-402 (#564): the board's layout is read here too: a remote stacked board that picks its column hides the chips line
+  const B = boardLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
+  const picking = v.view === 'board' && B.mode === 'stack' && p.surface !== 'mobile'
   const filtered = v.ui.query.trim() !== '' || v.ui.states.size > 0 || v.ui.root !== undefined
   const narrowSurface = p.surface === 'mobile'
   const roots = v.model.roots
   // MOD-387 (#537): the model's badge beside the worker in the list, the board card and the detail; '' when there is none to draw
   const badge = (it: WorkItem): string => (it.model === undefined || it.model === '–' || v.glyphs === undefined || v.glyphs === 'off' ? '' : modelGlyph(it.model, v.glyphs))
 
-  // MOD-392 (#547): on a remote surface the current view is bold text and the other a link; the terminal keeps both Buttons (MOD-388)
-  const viewSwitch = (view: 'list' | 'board', label: string): RenderNode => {
-    if (!remote) return <Button key={`work-view-${view}`} label={label} variant={v.view === view ? 'primary' : 'secondary'} onPress={() => hd.view(view)} />
-    return v.view === view ? (
-      <Box key={`work-view-${view}`}>
-        <Text bold>{label}</Text>
-      </Box>
-    ) : (
-      press(`work-view-${view}`, label, () => hd.view(view))
-    )
-  }
-
-  const toolbar = (
+  // the terminal's List and Board switch: two Buttons, the current one primary (MOD-388)
+  const viewSwitch = (view: 'list' | 'board', label: string): RenderNode => (
+    <Button key={`work-view-${view}`} label={label} variant={v.view === view ? 'primary' : 'secondary'} onPress={() => hd.view(view)} />
+  )
+  // the search box and the epic select: the terminal toolbar holds them; a remote surface shows them under Filter (MOD-402)
+  const searchInput = <Input key="work-search" placeholder="Search work" value={v.ui.query} submitLabel="Search" onSubmit={(text: string) => hd.query(text)} />
+  const epicSelect = (
+    <Select
+      key="work-epic"
+      label="Epic"
+      options={[{ value: 'all', label: 'All' }, ...roots.map(r => ({ value: r.key, label: r.group ? 'No epic' : `#${r.number} ${r.title}` }))]}
+      value={v.ui.root ?? 'all'}
+      onSelect={(value: string) => hd.root(value)}
+    />
+  )
+  const terminalToolbar = (
     <Box key="work-toolbar" flexDirection="row" flexWrap="wrap" columnGap={2}>
       <Text key="work-title" bold>
         Work
       </Text>
       {viewSwitch('list', 'List')}
       {viewSwitch('board', 'Board')}
-      {narrowSurface ? null : <Input key="work-search" placeholder="Search work" value={v.ui.query} submitLabel="Search" onSubmit={(text: string) => hd.query(text)} />}
-      {narrowSurface || roots.length < 2 ? null : (
-        <Select
-          key="work-epic"
-          label="Epic"
-          options={[{ value: 'all', label: 'All' }, ...roots.map(r => ({ value: r.key, label: r.group ? 'No epic' : `#${r.number} ${r.title}` }))]}
-          value={v.ui.root ?? 'all'}
-          onSelect={(value: string) => hd.root(value)}
-        />
-      )}
+      {narrowSurface ? null : searchInput}
+      {narrowSurface || roots.length < 2 ? null : epicSelect}
       {press('work-done', v.ui.showDone ? '☑ Show done' : '☐ Show done', hd.showDone)}
       {v.reading && v.model.total > 0 ? <Text dimColor>Reading the issues…</Text> : v.updated ? <Text dimColor>{v.updated}</Text> : null}
       <Button key="work-refresh" label="Refresh" onPress={hd.refresh} />
     </Box>
   )
+  // MOD-402 (#564): on a remote surface the toolbar is one line of links (Work, the views, Filter, Show done, Refresh, the status);
+  // Filter opens a second line with the search and the epic select; a phone has no Filter
+  const filterOn = v.ui.query.trim() !== '' || v.ui.root !== undefined
+  const status = v.reading && v.model.total > 0 ? 'Reading the issues…' : v.updated
+  const remoteToolbar = (
+    <Box key="work-toolbar" flexDirection="column" gap={1}>
+      {pressLine('work-bar', [
+        { id: 'title', label: 'Work', bold: true },
+        v.view === 'list' ? { id: 'list', label: 'List', bold: true } : { id: 'list', label: 'List', onPress: () => hd.view('list') },
+        v.view === 'board' ? { id: 'board', label: 'Board', bold: true } : { id: 'board', label: 'Board', onPress: () => hd.view('board') },
+        ...(narrowSurface ? [] : [{ id: 'filter', label: filterOn ? 'Filter (on)' : 'Filter', onPress: hd.filter }]),
+        { id: 'done', label: v.ui.showDone ? '☑ Show done' : '☐ Show done', onPress: hd.showDone },
+        { id: 'refresh', label: 'Refresh', onPress: hd.refresh },
+        ...(status !== undefined ? [{ id: 'status', label: status }] : []),
+      ])}
+      {v.filterOpen && !narrowSurface ? (
+        <Box key="work-filters" flexDirection="column" gap={1}>
+          {searchInput}
+          {roots.length < 2 ? null : epicSelect}
+        </Box>
+      ) : null}
+    </Box>
+  )
+  const toolbar = remote ? remoteToolbar : terminalToolbar
 
   // MOD-393 (#548): 8 cells, the done part in the done colour and the rest in the track colour, then the count
   const bar = (done: number, leaves: number): RenderNode => {
@@ -170,18 +222,30 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     )
   }
 
+  // MOD-402 (#564): on a remote surface the chips are one line of links; a chip that is off with a count of 0 is plain text
+  const chipLine = (): RenderNode =>
+    pressLine('work-chips', [
+      ...WORK_STATES.map((s): LinePart => {
+        const on = v.ui.states.has(s)
+        const count = v.model.counts[s]
+        return { id: s, label: `${STATE_LABEL[s]} ${count}`, bold: on, ...(on || count > 0 ? { onPress: () => hd.chip(s) } : {}) }
+      }),
+      ...(filtered ? [{ id: 'clear', label: 'Clear filters', onPress: hd.clear }] : []),
+    ])
   const summary = (
     <Box key="work-summary" flexDirection="row" flexWrap="wrap" columnGap={2}>
-      {WORK_STATES.map(s => {
-        const on = v.ui.states.has(s)
-        return (
-          <Box key={`work-state-${s}`} flexDirection="row">
-            <Text color={LOZENGE[s][v.scheme].fg}>■ </Text>
-            <Button key={`work-chip-${s}`} label={`${STATE_LABEL[s]} ${v.model.counts[s]}`} variant={on ? 'primary' : 'secondary'} {...(!on && v.model.counts[s] === 0 ? { dimColor: true } : {})} onPress={() => hd.chip(s)} />
-          </Box>
-        )
-      })}
-      {filtered ? press('work-clear', 'Clear filters', hd.clear) : null}
+      {remote
+        ? chipLine()
+        : WORK_STATES.map(s => {
+            const on = v.ui.states.has(s)
+            return (
+              <Box key={`work-state-${s}`} flexDirection="row">
+                <Text color={LOZENGE[s][v.scheme].fg}>■ </Text>
+                <Button key={`work-chip-${s}`} label={`${STATE_LABEL[s]} ${v.model.counts[s]}`} variant={on ? 'primary' : 'secondary'} {...(!on && v.model.counts[s] === 0 ? { dimColor: true } : {})} onPress={() => hd.chip(s)} />
+              </Box>
+            )
+          })}
+      {!remote && filtered ? press('work-clear', 'Clear filters', hd.clear) : null}
     </Box>
   )
 
@@ -348,12 +412,10 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
 
   // MOD-357: the board: a lane per epic, a card per leaf in the column of its state.
   const board = (): RenderNode => {
-    const B = boardLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
     const lanes = v.lanes ?? []
     const stack = B.mode === 'stack'
-    const pick: BoardCol = v.stackCol ?? 'working'
-    const picking = stack && p.surface !== 'mobile'
     const counts = boardCounts(lanes) // MOD-389 (#539)
+    const pick: BoardCol = v.stackCol ?? firstCol(counts) // MOD-402 (#564): the first column with cards, until one is picked
     const card = (it: WorkItem): RenderNode => {
       const k = keySlug(it.key)
       const w = Math.max(4, B.col - 2)
@@ -408,29 +470,49 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
         if (l.more[c] > 0) out.push(<Text key={`work-more-${k}-${c}`} dimColor>{`+${l.more[c]} more`}</Text>)
         return out
       }
+      const title = r.group ? 'No epic' : cut(r.title, Math.max(4, B.col * (stack ? 1 : 2)))
       return (
         <Box key={`work-lane-${k}`} flexDirection="column" gap={1}>
-          <Box flexDirection="row">
-            {press(`work-toggle-${k}`, l.open ? '▾' : '▸', () => hd.toggle(r.key))}
-            <Text>{' '}</Text>
-            {mark ? markNode(r.type) : null}
-            {r.number !== undefined ? (
-              v.repo !== undefined ? (
-                <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${r.number}`} label={`#${r.number}`} />
-              ) : (
-                <Text dimColor>{`#${r.number}`}</Text>
-              )
-            ) : null}
-            {r.number !== undefined ? <Text>{' '}</Text> : null}
-            <Text bold wrap="truncate-end">
-              {r.group ? 'No epic' : cut(r.title, Math.max(4, B.col * (stack ? 1 : 2)))}
-            </Text>
-            <Text>{'  '}</Text>
-            {bar(r.done, r.leaves)}
-          </Box>
+          {remote ? (
+            // MOD-402 (#564): the toggle, the number and the title share one line; the mark and the bar sit on the next
+            pressLine(
+              `work-lane-head-${k}`,
+              [
+                { id: 'toggle', label: l.open ? '▾' : '▸', onPress: () => hd.toggle(r.key) },
+                ...(r.number !== undefined ? [{ id: 'number', label: `#${r.number}` }] : []),
+                { id: 'title', label: title, bold: true },
+              ],
+              { sep: ' ' },
+            )
+          ) : (
+            <Box flexDirection="row">
+              {press(`work-toggle-${k}`, l.open ? '▾' : '▸', () => hd.toggle(r.key))}
+              <Text>{' '}</Text>
+              {mark ? markNode(r.type) : null}
+              {r.number !== undefined ? (
+                v.repo !== undefined ? (
+                  <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${r.number}`} label={`#${r.number}`} />
+                ) : (
+                  <Text dimColor>{`#${r.number}`}</Text>
+                )
+              ) : null}
+              {r.number !== undefined ? <Text>{' '}</Text> : null}
+              <Text bold wrap="truncate-end">
+                {title}
+              </Text>
+              <Text>{'  '}</Text>
+              {bar(r.done, r.leaves)}
+            </Box>
+          )}
+          {remote ? (
+            <Box key={`work-lane-bar-${k}`} flexDirection="row">
+              {mark ? markNode(r.type) : null}
+              {bar(r.done, r.leaves)}
+            </Box>
+          ) : null}
           {!l.open ? null : picking ? (
             <Box key={`work-col-${k}-${pick}`} flexDirection="column" gap={1} width={B.col}>
-              {body(pick).length > 0 ? body(pick) : <Text dimColor>—</Text>}
+              {body(pick).length > 0 ? body(pick) : <Text dimColor>{`None in ${BOARD_LABEL[pick]}`}</Text>}
             </Box>
           ) : stack ? (
             <Box flexDirection="column" gap={1}>
@@ -465,13 +547,21 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     return (
       <Box key="work-board" flexDirection="column" gap={1}>
         {picking && lanes.length > 0 ? (
-          <Select
-            key="work-board-col"
-            label="Column"
-            options={BOARD_COLS.map(c => ({ value: c, label: `${BOARD_LABEL[c]} · ${counts[c]}` }))}
-            value={pick}
-            onSelect={(value: string) => hd.col(value as BoardCol)}
-          />
+          remote ? (
+            // MOD-402 (#564): the columns are a line of links; the picked one is bold text with no link
+            pressLine(
+              'work-board-col',
+              BOARD_COLS.map((c): LinePart => ({ id: c, label: `${BOARD_LABEL[c]} ${counts[c]}`, bold: c === pick, onPress: c === pick ? undefined : () => hd.col(c) })),
+            )
+          ) : (
+            <Select
+              key="work-board-col"
+              label="Column"
+              options={BOARD_COLS.map(c => ({ value: c, label: `${BOARD_LABEL[c]} · ${counts[c]}` }))}
+              value={pick}
+              onSelect={(value: string) => hd.col(value as BoardCol)}
+            />
+          )
         ) : null}
         {stack || lanes.length === 0 ? null : (
           <Box key="work-board-header" flexDirection="row" columnGap={2}>
@@ -640,7 +730,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
             : null}
         </Box>
       ) : null}
-      {summary}
+      {remote && picking ? null : summary}
       {v.detail !== undefined ? (
         <Box flexDirection="row" columnGap={2}>
           {main()}

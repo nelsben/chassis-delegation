@@ -403,10 +403,14 @@ export function linkHref(key: string): string {
   return `https://work.invalid/${encodeURIComponent(key)}`
 }
 
+/** MOD-402 (#564): a label as Markdown text: each newline is a space, and each Markdown metacharacter gets a backslash. */
+export function mdEscape(s: string): string {
+  return s.replace(/\n/g, ' ').replace(/[\\`*_[\]<>~|#]/g, c => `\\${c}`)
+}
+
 /** A Markdown link whose label is escaped: each newline is a space, and each Markdown metacharacter gets a backslash. */
 export function mdLink(label: string, href: string): string {
-  const text = label.replace(/\n/g, ' ').replace(/[\\`*_[\]<>~|#]/g, c => `\\${c}`)
-  return `[${text}](${href})`
+  return `[${mdEscape(label)}](${href})`
 }
 
 // MOD-356: the detail panel's pure half: finding a leaf, its action and the line that action puts to the session, its activity from the ledger.
@@ -526,6 +530,10 @@ export function workActivity(rows: readonly Record<string, unknown>[], card: str
 export type BoardCol = 'backlog' | 'queued' | 'working' | 'review' | 'done'
 export const BOARD_COLS: readonly BoardCol[] = ['backlog', 'queued', 'working', 'review', 'done']
 export const BOARD_LABEL: Record<BoardCol, string> = { backlog: 'Backlog', queued: 'Queued', working: 'Working', review: 'To review', done: 'Done' }
+/** MOD-402 (#564): the column a stacked board opens on: the first of Working, To review, Queued and Backlog with a card, else Done. */
+export function firstCol(counts: Record<BoardCol, number>): BoardCol {
+  return (['working', 'review', 'queued', 'backlog'] as const).find(c => counts[c] > 0) ?? 'done'
+}
 export const BOARD_CAP = 10
 export const SURFACE_BG: Record<Scheme, string> = { light: '#f7f8f9', dark: '#22272b' }
 export type BoardLane = { root: WorkItem; open: boolean; cols: Record<BoardCol, WorkItem[]>; more: Record<BoardCol, number>; doneHidden: number }
