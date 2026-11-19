@@ -5,6 +5,7 @@
 ### Fixed
 
 - **On the desktop, the editor and the phone the Work pane's controls sit on one line of links: the toolbar (Work, List, Board, Filter, Show done, Refresh), the state chips, the stacked board's column line and each lane's toggle and title; Filter opens the search and the epic select on a line of their own, and a stacked board opens on the first column with cards** (MOD-402, #564)
+- **On the desktop, the editor and the phone the Work pane's rows stay on one line: a list row's toggle, mark, number and title no longer wrap onto two or three lines, the header labels and the detail field names line up with the cells under them, and the gaps between cards are half a line** (MOD-403, #566)
 
 ## 0.9.67 — 2026-11-18
 

@@ -180,6 +180,16 @@ No arguments: usage on stderr, exit 2. A missing file: an error naming its posit
 
 The text form has a title, a header, one line per week oldest first, then one line per model, then (when `brains` is not empty) a blank line, a header and one line per pair, most cards first (`reqs` is `steps`, `ctx/req` is `ctxPerStep` in thousands, `$/req` is `usdPerStep`), then (when `contexts` is not empty) a blank line, a header and one line per bucket; the week and model lines have a `repaired` column after `escaped`; `1st try` reads `firstTry/cards` and a percent, `linked` reads `linked/linkedKnown`, and a `-` means no value. With no judged row at all it prints `no judged attempts`.
 
+## Drawing on the editor and the desktop
+
+These rules were read from the editor's own renderer (engine 2.1.327). They apply wherever `remote` is true in `hooks/lib/workpane.tsx`; the terminal draws as before. Keep them when you change the Work pane.
+
+- **Rows say `nowrap`.** A Box draws as a CSS flex row, and a row's default `flex-wrap` is `wrap`, so a row that does not fit drops onto the next line. Every row Box sets `flexWrap="nowrap"` unless wrapping is the point (the terminal toolbar, the summary, the detail status).
+- **A Markdown sits alone or in a fixed-width box.** A Markdown is `width: 100%`, so beside a sibling in a row it takes the whole line and pushes the sibling down. Put it alone in its Box, or in a Box with a numeric `width`.
+- **Widths count in cells, but text is proportional.** A space is narrower than a cell, so padding with spaces drifts. Align labels and cells with boxes of a width, not with `fit()` or `padStart`.
+- **Gaps count in lines.** `gap={1}` is one full line height, not one cell; use `0.5` for the space the terminal draws as one row.
+- **Some props are not drawn.** Text `size`, `weight` and `mono`, Button `variant` and `plain`, and Box `hover` have no effect in the editor.
+
 ## Developing
 
     claude plugin validate <this folder>     # the gate: manifest + what the module hooks and calls
