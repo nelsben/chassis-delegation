@@ -4,6 +4,7 @@
 // MOD-388 (#538): the List and Board switch and the state chips are never plain (secondary off, primary on), so a press keeps their width;
 // the detail status row has a gap and wraps, its trail cut to its own width; `Reading the issues…` shows only once something is loaded;
 // an empty filter result offers Clear filters beside `No work matches.`; the footer reads Close; a selected leaf has a blue marker.
+// MOD-404 (#567): on a remote surface a status is a pill Svg, a progress bar is a thin Svg bar and a board card has a rounded border; one drawing holds at most 240 Svgs, then each element draws its terminal form.
 // MOD-403 (#566): on a remote surface a row never wraps (nowrap), a Markdown sits alone or in a fixed-width box, labels align in boxes not spaces, and gaps are half a line.
 // MOD-402 (#564): on a remote surface each line of controls is one Markdown with its links: the toolbar (Filter opens the search and the epic
 // select on their own line), the state chips, the stacked board's column line, and each lane head (toggle and title, then the bar); the stacked
@@ -20,7 +21,7 @@ import type { RenderNode } from 'claude-code'
 import type { Scheme } from './live'
 import type { PaneTable } from './pane'
 import { modelGlyph, type GlyphMap } from './glyph'
-import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, firstCol, keySlug, leafOfCard, linkHref, LOZENGE, laneCount, mdEscape, mdLink, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TRACK_BG, TYPE_MARK, markColor, twoLines, typeIcon, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkType, type WorkUi } from './work'
+import { ACTION_LABEL, boardCounts, boardLayout, BOARD_COLS, BOARD_LABEL, firstCol, keySlug, leafOfCard, linkHref, LOZENGE, laneCount, mdEscape, mdLink, barSvg, pillSvg, progressCells, SELECTED_BG, STATE_LABEL, SURFACE_BG, TIER_COLOR, TRACK_BG, TYPE_MARK, markColor, twoLines, typeIcon, workLayout, WORK_STATES, type BoardCol, type BoardLane, type WorkAction, type WorkEvent, type WorkItem, type WorkModel, type WorkRow, type WorkState, type WorkType, type WorkUi } from './work'
 
 export type WorkView = {
   model: WorkModel
@@ -102,6 +103,9 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   const remote = p.surface !== 'terminal'
   // only remote surfaces have an Svg element; the terminal's table has none
   const Svg = remote ? p.t.Svg : undefined
+  // MOD-404 (#567): one drawing holds at most 250 pictures, then an Svg draws as its alt text; each Svg asks first and draws its terminal form when told no
+  let pictures = 0
+  const picture = (): boolean => Svg !== undefined && pictures++ < 240
   const press = (key: string, label: string, onPress: () => void, o: { dim?: boolean } = {}): RenderNode =>
     remote ? (
       <Markdown key={key} text={mdLink(label, linkHref(key))} pressableLinks={[linkHref(key)]} onLinkPress={() => onPress()} dimColor={o.dim} />
@@ -130,7 +134,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   }
   // MOD-397 (#554): the type mark: the glyph on the terminal; on a remote surface the 14 px icon, then a space
   const markNode = (type: WorkType): RenderNode =>
-    Svg ? (
+    Svg && picture() ? (
       <Box flexDirection="row" flexWrap="nowrap">
         <Svg source={typeIcon(type, v.scheme)} alt={type} width={14} height={14} />
         <Text> </Text>
@@ -138,6 +142,11 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     ) : (
       <Text color={markColor(type, v.scheme)}>{TYPE_MARK[type].glyph} </Text>
     )
+  // MOD-404 (#567): the status lozenge as a pill Svg (the caller has asked picture())
+  const pillNode = (state: WorkState): RenderNode => {
+    const pill = pillSvg(state, v.scheme)
+    return Svg ? <Svg source={pill.source} alt={STATE_LABEL[state]} width={pill.width} height={18} /> : null
+  }
   const side = v.columns >= 116
   // MOD-403 (#566): a gap counts in lines in the editor, so a remote column gap is half a line
   const gap = remote ? 0.5 : 1
@@ -207,6 +216,15 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
 
   // MOD-393 (#548): 8 cells, the done part in the done colour and the rest in the track colour, then the count
   const bar = (done: number, leaves: number): RenderNode => {
+    // MOD-404 (#567): on a remote surface the bar is a 64 x 6 Svg, then the count
+    if (Svg && picture()) {
+      return (
+        <Box flexDirection="row" flexWrap="nowrap" alignItems="center">
+          <Svg source={barSvg(done, leaves, v.scheme)} alt={`${done} of ${leaves} done`} width={64} height={6} />
+          <Text>{` ${done}/${leaves}`}</Text>
+        </Box>
+      )
+    }
     const n = progressCells(done, leaves)
     return (
       <Box flexDirection="row" flexWrap="nowrap">
@@ -349,6 +367,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           {lozenge ? (
             dot ? (
               <Text color={lozenge.fg}>● </Text>
+            ) : Svg && picture() ? (
+              pillNode(it.state)
             ) : (
               <Text bold color={lozenge.fg} backgroundColor={lozenge.bg}>
                 {` ${STATE_LABEL[it.state].toUpperCase()} `}
@@ -479,7 +499,14 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       const by = it.by ?? []
       const cost = typeof it.usd === 'number' ? ` · $${it.usd.toFixed(2)}` : ''
       return (
-        <Box key={`work-card-${k}`} flexDirection="column" backgroundColor={selected ? SELECTED_BG[v.scheme] : SURFACE_BG[v.scheme]} paddingLeft={1} paddingRight={1}>
+        <Box
+          key={`work-card-${k}`}
+          flexDirection="column"
+          backgroundColor={selected ? SELECTED_BG[v.scheme] : SURFACE_BG[v.scheme]}
+          paddingLeft={1}
+          paddingRight={1}
+          {...(remote ? { borderStyle: 'round' as const, borderColor: selected ? '#1d7afc' : TRACK_BG[v.scheme] } : {})}
+        >
           {remote ? press(`work-open-${k}`, cut(it.title, 2 * w), () => hd.select(it.key), { dim: it.state === 'done' }) : <Button key={`work-open-${k}`} plain {...(it.state === 'done' ? { dimColor: true } : {})} label={line1} onPress={() => hd.select(it.key)} />}
           {!remote && line2 !== '' ? <Text dimColor={it.state === 'done'}>{line2}</Text> : null}
           <Box flexDirection="row" flexWrap="nowrap" justifyContent="space-between">
@@ -503,9 +530,13 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           ) : null}
           {it.state === 'blocked' ? (
             <Box flexDirection="row" flexWrap="nowrap">
-              <Text bold color={lozenge.fg} backgroundColor={lozenge.bg}>
-                {` ${STATE_LABEL.blocked.toUpperCase()} `}
-              </Text>
+              {Svg && picture() ? (
+                pillNode('blocked')
+              ) : (
+                <Text bold color={lozenge.fg} backgroundColor={lozenge.bg}>
+                  {` ${STATE_LABEL.blocked.toUpperCase()} `}
+                </Text>
+              )}
               {by.length > 0 ? <Text dimColor>{` by ${by.join(', ')}`}</Text> : null}
             </Box>
           ) : null}
@@ -644,6 +675,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
 
   const lozengeOf = (it: WorkItem): RenderNode => {
     const l = LOZENGE[it.state][v.scheme]
+    if (Svg && picture()) return pillNode(it.state)
     return (
       <Text bold color={l.fg} backgroundColor={l.bg}>
         {` ${STATE_LABEL[it.state].toUpperCase()} `}

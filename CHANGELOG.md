@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **On the desktop, the editor and the phone the Work pane draws a status as a rounded pill, a parent's progress as a thin bar, and a board card with a rounded border; past 240 pictures in one drawing the rest fall back to the text forms, and the terminal is unchanged** (MOD-404, #567)
+
 ### Fixed
 
 - **On the desktop, the editor and the phone the Work pane's controls sit on one line of links: the toolbar (Work, List, Board, Filter, Show done, Refresh), the state chips, the stacked board's column line and each lane's toggle and title; Filter opens the search and the epic select on a line of their own, and a stacked board opens on the first column with cards** (MOD-402, #564)
