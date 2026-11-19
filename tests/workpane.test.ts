@@ -1247,3 +1247,103 @@ describe('MOD-403 (#566): the Work pane drawn for the editor', () => {
     expect((await (await mountWork($, 130, 'terminal')).find({ key: 'work-pane' }))?.props.gap).toBe(1)
   })
 })
+
+// MOD-404 (#567): on a remote surface a status is a pill Svg, a progress bar a thin Svg bar, a board card has a rounded border, and one drawing holds at most 240 Svgs.
+describe('MOD-404 (#567): pills, thin bars and rounded cards on a remote surface', () => {
+  const kids = (n: any): any[] => {
+    const k = n?.children ?? n?.props?.children
+    return (Array.isArray(k) ? k : k === undefined ? [] : [k]).filter((c: any) => c !== null && typeof c === 'object')
+  }
+  // every node of one type under a node, the node itself included
+  const under = (n: any, type: string): any[] => [...(n?.type === type ? [n] : []), ...kids(n).flatMap((c: any) => under(c, type))]
+  const svgsOf = async (ui: any, key = 'work-pane') => under(await ui.find({ key }), 'Svg')
+  const textsOf = async (ui: any, key = 'work-pane') => under(await ui.find({ key }), 'Text')
+  const listOn = async ($: any, surface: string) => {
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    return mountWork($, 130, surface)
+  }
+  const boardOn = async ($: any, surface: string) => {
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const term = await mountWork($, 130, 'terminal')
+    await term.press({ key: 'work-view-board' })
+    await term.redraw()
+    return surface === 'terminal' ? term : mountWork($, 130, surface)
+  }
+
+  test('on vscode a list leaf draws its status as an Svg named for its state and no Text in its row has a background', async ($, on) => {
+    setup(on)
+    const ui = await listOn($, 'vscode')
+    const pill = (await svgsOf(ui, 'work-row-i13')).find((s: any) => s.props.alt === 'Queued')
+    expect(pill?.props.height).toBe(18)
+    expect(String(pill?.props.source)).toContain('QUEUED')
+    expect((await textsOf(ui, 'work-row-i13')).some((t: any) => t.props?.backgroundColor !== undefined)).toBe(false)
+  })
+
+  test('on vscode a parent draws its bar as a 64 by 6 Svg and its count as Text', async ($, on) => {
+    setup(on)
+    const ui = await listOn($, 'vscode')
+    const bar = (await svgsOf(ui, 'work-row-i11')).find((s: any) => s.props.width === 64)
+    expect(bar?.props.height).toBe(6)
+    expect(bar?.props.alt).toBe('1 of 3 done')
+    expect((await textsOf(ui, 'work-row-i11')).some((t: any) => String(t.children ?? t.props.children).includes('1/3'))).toBe(true)
+  })
+
+  test('on vscode a board card has a round border, and a blocked card draws its pill', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 'vscode')
+    const card = await ui.find({ key: 'work-card-i13' })
+    expect(card?.props.borderStyle).toBe('round')
+    expect(card?.props.borderColor).toBe('#38414a')
+    expect((await svgsOf(ui, 'work-card-MOD-7')).some((s: any) => s.props.alt === 'Blocked')).toBe(true)
+  })
+
+  test('the board card of the open leaf has a blue border', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 'vscode')
+    await ui.press({ key: 'work-open-i13', link: { href: `https://work.invalid/${encodeURIComponent('work-open-i13')}` } })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+    expect((await ui.find({ key: 'work-card-i13' }))?.props.borderColor).toBe('#1d7afc')
+  })
+
+  test('the detail of a leaf draws its status as an Svg pill on vscode', async ($, on) => {
+    setup(on)
+    const ui = await listOn($, 'vscode')
+    await ui.press({ key: 'work-row-head-i13', link: { href: `https://work.invalid/${encodeURIComponent('work-row-head-i13-open')}` } })
+    await ui.redraw()
+    expect((await svgsOf(ui, 'work-detail')).some((s: any) => s.props.alt === 'Queued')).toBe(true)
+  })
+
+  test('the terminal list draws no Svg, a lozenge Text with a background and the cell bar', async ($, on) => {
+    setup(on)
+    const ui = await listOn($, 'terminal')
+    expect(await svgsOf(ui)).toEqual([])
+    expect((await textsOf(ui)).some((t: any) => t.props?.backgroundColor !== undefined)).toBe(true)
+    expect(await ui.find({ key: 'work-bar-track' })).toBeDefined()
+  })
+
+  test('the terminal board draws no Svg and a flat card', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 'terminal')
+    expect((await ui.find({ key: 'work-card-i13' }))?.props.borderStyle).toBeUndefined()
+    expect(await svgsOf(ui)).toEqual([])
+  })
+
+  test('with 260 leaves on vscode at most 240 Svgs are drawn and the rows after the budget draw the Text lozenge', async ($, on) => {
+    const many = [issue(10, 'Big epic', 'OPEN', 'epic'), ...Array.from({ length: 260 }, (_, i) => issue(100 + i, `Leaf ${i}`, 'OPEN', 'story', 10))]
+    const w = setup(on, { cards: false, gh: () => ({ exitCode: 0, stdout: JSON.stringify(many) }) })
+    const ui = await listOn($, 'vscode')
+    expect(await ui.find({ key: 'work-row-i100' }), w.debugLogs.join('\n')).toBeDefined()
+    const count = (await svgsOf(ui)).length
+    expect(count).toBeGreaterThan(200)
+    expect(count).toBeLessThanOrEqual(240)
+    const rows = under(await ui.find({ key: 'work-pane' }), 'Box').filter((n: any) => String(n.key ?? n.props?.key).startsWith('work-row-i'))
+    expect(rows.length, `${rows.length} rows`).toBeGreaterThan(130)
+    const last = rows[rows.length - 1]
+    // an issue with no card is Backlog, whose Text lozenge has no background
+    expect(under(last, 'Svg'), String(last.key ?? last.props?.key)).toEqual([])
+    expect(under(last, 'Text').some((t: any) => JSON.stringify(t).includes('BACKLOG'))).toBe(true)
+  })
+})

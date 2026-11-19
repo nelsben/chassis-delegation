@@ -389,6 +389,16 @@ export function typeIcon(type: WorkType, scheme: Scheme): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="3" fill="${markColor(type, scheme)}"/>${TYPE_GLYPH_SVG[type]}</svg>`
 }
 
+/** MOD-404 (#567): a status lozenge as a pill SVG on a remote surface: the state label in capitals on a rounded fill (backlog: an outline). */
+export function pillSvg(state: WorkState, scheme: Scheme): { source: string; width: number } {
+  const label = STATE_LABEL[state].toUpperCase()
+  const width = Math.round(12 + 6.6 * [...label].length)
+  const { bg, fg } = LOZENGE[state][scheme]
+  const back = bg !== undefined ? `<rect width="${width}" height="18" rx="4" fill="${bg}"/>` : `<rect x="0.5" y="0.5" width="${width - 1}" height="17" rx="4" fill="none" stroke="${fg}"/>`
+  const text = `<text x="${width / 2}" y="12.5" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="10" font-weight="600" letter-spacing="0.3" fill="${fg}">${label}</text>`
+  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="18" viewBox="0 0 ${width} 18">${back}${text}</svg>`, width }
+}
+
 export const TIER_COLOR: Record<Tier, string> = { economy: '#22a06b', standard: '#1d7afc', frontier: '#8270db', premium: '#f38a3f' }
 
 /** `#13` becomes `i13`; any other key unchanged. The part of an element key that names an item. */
@@ -574,6 +584,14 @@ export function laneCount(l: BoardLane, c: BoardCol): number {
 
 /** MOD-393 (#548): the empty part of a progress bar. */
 export const TRACK_BG: Record<Scheme, string> = { light: '#dcdfe4', dark: '#38414a' }
+
+/** MOD-404 (#567): a progress bar as a 64 x 6 SVG on a remote surface: the track, then the done part in the done colour. */
+export function barSvg(done: number, leaves: number, scheme: Scheme): string {
+  const d = leaves <= 0 ? 0 : Math.min(64, Math.max(0, Math.round((64 * done) / leaves)))
+  const track = `<rect width="64" height="6" rx="3" fill="${TRACK_BG[scheme]}"/>`
+  const fill = d > 0 ? `<rect width="${d}" height="6" rx="3" fill="${LOZENGE.done[scheme].fg}"/>` : ''
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="6" viewBox="0 0 64 6">${track}${fill}</svg>`
+}
 
 /** MOD-389 (#539): the cards in each column over every lane, folded or not. */
 export function boardCounts(lanes: readonly BoardLane[]): Record<BoardCol, number> {
