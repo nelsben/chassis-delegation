@@ -51,7 +51,7 @@ describe('MOD-117: a card id reused in a second repo is that repo\'s own', () =>
     expect(w.notices.at(-1)).toContain('attempt 1/2')
     // a session in repo B dispatches B's OPS-4 against the same store
     w.root = B
-    await $.session.start({ ...sessionStart, cwd: B } as never)
+    await $.session.start({ ...(sessionStart as object), cwd: B } as never)
     await brainSpawn($, resultText(await $.tool.call({ tool: DISPATCH, task: 'OPS-4' } as never)), { tool_use_id: 'toolu_second' })
     expect(w.spawns).toHaveLength(2)
     expect(w.notices.at(-1)).toContain('attempt 1/2')

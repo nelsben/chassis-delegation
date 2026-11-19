@@ -14,7 +14,7 @@ describe('MOD-279: auto mode - a worker Bash runs as typed', () => {
   const PREFIX = (task: string) => `export CHASSIS_SESSION_ID=${task}-a1 CHASSIS_TASK=${task} CHASSIS_ATTEMPT=1; `
   type Seen = { tool: string; command?: string }
   type Bottom = (e: Seen) => unknown
-  const bottom = (on: Parameters<Parameters<typeof test>[2]>[1], answer?: Bottom): Seen[] => {
+  const bottom = (on: Parameters<NonNullable<Parameters<typeof test>[2]>>[1], answer?: Bottom): Seen[] => {
     const seen: Seen[] = []
     ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async (_$: unknown, e: Seen) => {
       seen.push({ tool: e.tool, ...(e.command !== undefined ? { command: e.command } : {}) })
@@ -22,7 +22,7 @@ describe('MOD-279: auto mode - a worker Bash runs as typed', () => {
     })
     return seen
   }
-  type Dollar = Parameters<Parameters<typeof test>[2]>[0]
+  type Dollar = Parameters<NonNullable<Parameters<typeof test>[2]>>[0]
   const spawnBrief = ($: Dollar, task: string, id: string, mode?: string) =>
     $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${briefOf(task)}.`, tool_use_id: id, ...(mode ? { permissionMode: mode } : {}) }))
 
@@ -79,7 +79,7 @@ describe('MOD-279: auto mode - a worker Bash runs as typed', () => {
 
   // MOD-321: the live mode, read off the classic hook events.
   const classic = ($: Dollar) => $ as unknown as { classic: Record<string, (f: Record<string, unknown>) => Promise<unknown>> }
-  const answerClassic = (on: Parameters<Parameters<typeof test>[2]>[1]) => {
+  const answerClassic = (on: Parameters<NonNullable<Parameters<typeof test>[2]>>[1]) => {
     for (const n of ['classic.PostToolUse', 'classic.PostToolUseFailure', 'classic.UserPromptSubmit']) (on as unknown as (n: string, h: unknown) => void)(n, async () => ({}))
   }
   const READ = { tool_name: 'Read', tool_input: {}, tool_response: '', tool_use_id: 't1' }

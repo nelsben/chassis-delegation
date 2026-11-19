@@ -106,7 +106,7 @@ export function gateQueue(): { acquire(max: number): Promise<() => void>; runnin
       if (released) return
       released = true
       running -= 1
-      while (line.length > 0 && (line[0].max <= 0 || running < line[0].max)) line.shift()?.start(admit())
+      while (line.length > 0 && (line[0]!.max <= 0 || running < line[0]!.max)) line.shift()?.start(admit())
     }
   }
   return {
@@ -165,7 +165,7 @@ export function passedGateLines(stdout: string, stderr: string): string[] {
 /** The whole-file shape for an old merge-gates.txt: its first line, `(older file) <n> lines elided`, its last 40 lines. Undefined when the file is already in that shape. */
 export function shapeOldGates(text: string): string | undefined {
   const lines = linesOf(text)
-  if (lines.length > 1 && lines[1].startsWith('(older file) ')) return undefined
+  if (lines.length > 1 && lines[1]!.startsWith('(older file) ')) return undefined
   const first = lines.slice(0, 1)
   const rest = lines.slice(1)
   const kept = rest.slice(-GATE_TAIL_LINES)

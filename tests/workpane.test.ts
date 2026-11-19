@@ -1,7 +1,7 @@
 // MOD-354: /delegation work opens the Work pane (the list view); the drawing's keys, toggles, chips, filters and background read.
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, sessionStart, ROOT, NOW } from './harness'
+import { world, sleepMs, sessionStart, ROOT, NOW } from './harness'
 
 const CARDS = `${ROOT}/docs/cards`
 const REPO_FILE = `${ROOT}/.chassis-delegation.json`
@@ -58,7 +58,7 @@ const command = ($: any, args: string) => $.command.run({ command: 'delegation',
 const PANE = (bodyColumns: number) => ({ title: 'Work', isFocused: false, bodyColumns, placement: 'dock', scroll: { bodyRows: 30 }, view: {} }) as never
 const mountWork = ($: any, bodyColumns = 130, surface = 'terminal') => $.ui.mount({ plugin: 'chassis-delegation', surface, component: 'Pane', requestId: 'delegation-work', props: PANE(bodyColumns) })
 const listCalls = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filter((a: string[]) => a[0] === 'gh' && a[1] === 'issue' && a[2] === 'list')
-const settle = () => new Promise(resolve => setTimeout(resolve, 150))
+const settle = () => sleepMs(150)
 
 const FAIL = () => ({ exitCode: 1, stdout: '', stderr: 'boom' })
 

@@ -59,7 +59,7 @@ const setup = (on: Parameters<typeof world>[0], gate: Gate) => {
   return w
 }
 
-type Ctx = Parameters<Parameters<typeof test>[2]>[0]
+type Ctx = Parameters<NonNullable<Parameters<typeof test>[2]>>[0]
 /** Spawn, a refuted hand-back, a refuted by-hand verify, then the brain's SendMessage resume: attempt 3 is pending. */
 const untilResumed = async ($: Ctx, gate: Gate) => {
   await $.session.start(sessionStart)

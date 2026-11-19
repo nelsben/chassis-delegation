@@ -1,6 +1,6 @@
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, spawnInput, turnInput, sessionStart, delegationCommand, ROOT, NOW as WNOW, SCRATCH } from './harness'
+import { world, sleepMs, spawnInput, turnInput, sessionStart, delegationCommand, ROOT, NOW as WNOW, SCRATCH } from './harness'
 import { MOD_VERSION } from '../hooks/lib/version'
 import { FULL_SCAN_MS, SizeEstimate, entryBytes, scanDue, MIB, PRESSURE_BYTES, RATION_RETAIN_MS, RETAIN_MS, TARGET_BYTES, prunedLine, refusedRow, refusedWritesLine, retentionPlan, slimSpawns, storeBytes, storeLine, type StoreEntry } from '../hooks/lib/retention'
 
@@ -206,7 +206,7 @@ const VPROMPT = `Your brief is the file ${VBRIEF}. Read it whole, then follow it
 const VREPORT = '[[report v=1 task=T-5 subtask=main branch=agent/frontend/T-5 pr=none sha=1111111 gate=pass files=a/x.ts]]'
 const flush = async () => {
   for (let i = 0; i < 300; i++) await Promise.resolve()
-  await new Promise(r => setTimeout(r, 20))
+  await sleepMs(20)
   for (let i = 0; i < 300; i++) await Promise.resolve()
 }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The hooks and the tests now type-check clean under the engine's validate** (`claude plugin validate` printed 57 type warnings; none now). No behaviour change. (MOD-400, #561)
+
 ## 0.9.66 — 2026-11-16
 
 ### Changed

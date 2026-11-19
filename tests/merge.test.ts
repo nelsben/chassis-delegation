@@ -3,7 +3,7 @@
 // cleans up after the PR lands. Every git call here is answered by the harness; nothing real runs.
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, sessionStart, usage, ROOT, NOW, type RunAnswer } from './harness'
+import { world, sessionStart, usage, sleepMs, ROOT, NOW, type RunAnswer } from './harness'
 import { isRemoteArgv } from '../hooks/lib/allow'
 import { cardDiff, labelIsMerged, markMerged, parseMergeArgs, prBody, readsMerged } from '../hooks/lib/mergecmd'
 
@@ -333,7 +333,7 @@ describe('MOD-75: /delegation merge <id>', () => {
       dirs: { [DEL]: ['ledger.jsonl', 'A-1', 'A-2', 'A-3', 'A-4'] },
     })
     await $.session.start(sessionStart)
-    await new Promise(r => setTimeout(r, 50))
+    await sleepMs(50)
     const cut = w.files.get(`${DEL}/A-1/merge-gates.txt`) ?? ''
     const lines = cut.trimEnd().split('\n')
     expect(lines[0]).toBe('## node: a')

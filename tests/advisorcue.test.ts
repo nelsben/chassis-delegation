@@ -29,8 +29,9 @@ const BRIEF = `${SCRATCH}/briefs/T-7.brief.md`
 const HEADER = '[[brief v=1 task=T-7 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
 const REPORT = (sha: string) => `[[report v=1 task=T-7 subtask=main branch=agent/frontend/T-7 pr=none sha=${sha} gate=pass files=a/x.ts]]`
 const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
-const OPTIONS = { verdictVerbosity: 'full', wakeOnVerdict: true, ...GM } as never
-const ON = { ...OPTIONS, review: 'on' } as never
+const OPTION_FIELDS = { verdictVerbosity: 'full', wakeOnVerdict: true, ...GM }
+const OPTIONS = OPTION_FIELDS as never
+const ON = { ...OPTION_FIELDS, review: 'on' } as never
 const TOP = 'Advisor: do not call the advisor tool. You are on the top model; a call would consult your own model.'
 const ONLY_WHEN = 'Advisor: call it only when the mod prints an advisor cue'
 const REFUTE2 = "advisor cue: this card's second attempt was refuted."
@@ -40,7 +41,7 @@ const ledgerOf = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.d
 const cuesOf = (w: { files: Map<string, string> }) => ledgerOf(w).filter(r => r.kind === 'advisor-cue')
 const delivered = (w: { appended: { text: string }[]; logs: string[]; submitted: { text: string }[] }) => [...w.appended.map(a => a.text), ...w.logs, ...w.submitted.map(s => s.text)].join('\n')
 const count = (text: string, part: string) => text.split(part).length - 1
-const stateOf = async ($: { prompt: { compose: (e: never) => Promise<{ sections: { id: string; text: string }[] }> } }) =>
+const stateOf = async ($: { prompt: { compose: (e: never) => Promise<{ sections: readonly { id: string; text: string }[] }> } }) =>
   (await $.prompt.compose(composeInput(['Agent']))).sections.find(s => s.id === 'chassis-delegation:state')?.text ?? ''
 
 describe('MOD-367: the advisor line of the delegation state', () => {
@@ -67,7 +68,7 @@ describe('MOD-367: the advisor line of the delegation state', () => {
 })
 
 describe('MOD-367: the second refute cue', () => {
-  const hand = async ($: Parameters<Parameters<typeof test>[2]>[0], w: ReturnType<typeof world>, id: string, toolUse: string, sha: string) => {
+  const hand = async ($: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], w: ReturnType<typeof world>, id: string, toolUse: string, sha: string) => {
     const before = [w.appended.length, w.logs.length, w.submitted.length]
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: toolUse }))
     await $.turn.complete(turnInput(id, REPORT(sha)))
@@ -111,7 +112,7 @@ describe('MOD-367: the second refute cue', () => {
 })
 
 describe('MOD-367: the review cue', () => {
-  const reviewRefuted = async ($: Parameters<Parameters<typeof test>[2]>[0], on: Parameters<Parameters<typeof test>[2]>[1], model: string) => {
+  const reviewRefuted = async ($: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], on: Parameters<NonNullable<Parameters<typeof test>[2]>>[1], model: string) => {
     const w = world(on, { model, files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun(0), agentId: 'agent-7' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-7', 'Added the parser.\n' + REPORT('1234abcd')))
@@ -141,7 +142,7 @@ describe('MOD-367: the readers skip the advisor-cue row', () => {
   const OPTS = { briefDir: `${SCRATCH}/briefs`, verdictVerbosity: 'line' as const, gateMap: '{"check":"checker {outdir}"}' }
   const tasksDir = `${ROOT}/agents/tasks`
   const CARD_TOOL = 'mcp__chassis-delegation__card'
-  const historyLine = async ($: Parameters<Parameters<typeof test>[2]>[0], on: Parameters<Parameters<typeof test>[2]>[1], extra: string) => {
+  const historyLine = async ($: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], on: Parameters<NonNullable<Parameters<typeof test>[2]>>[1], extra: string) => {
     const rows = ['T-1', 'T-2'].map(task => JSON.stringify({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', verdict: 'consistent', usd: 0.5 }))
     world(on, {
       files: { [`${tasksDir}/README.md`]: '', [`${ROOT}/.delegation/ledger.jsonl`]: rows.join('\n') + '\n' + extra },

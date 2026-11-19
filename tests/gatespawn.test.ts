@@ -283,12 +283,12 @@ describe('MOD-379: two gates started together', () => {
   test('with maxConcurrentGates 1, the second gate starts only after the first ends', async ($, on) => {
     const { starts, w } = await twoAtOnce($, on, 1)
     expect(starts.length).toBe(2)
-    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(3)
+    expect(starts[1]! - starts[0]!).toBeGreaterThanOrEqual(3)
     expect(delivered(w)).not.toContain('gate ran past')
   })
   test('unset, both gates start together', async ($, on) => {
     const { starts } = await twoAtOnce($, on, undefined)
     expect(starts.length).toBe(2)
-    expect(starts[1] - starts[0]).toBe(0)
+    expect(starts[1]! - starts[0]!).toBe(0)
   })
 })

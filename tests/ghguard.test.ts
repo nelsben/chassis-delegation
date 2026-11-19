@@ -8,7 +8,7 @@ describe('MOD-197: the gh guard on Bash', () => {
   const HEAD = (task: string) => `[[brief v=1 task=${task} subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier spend=2 budget=3-attempts report=chassis.report.v1]]`
   const briefOf = (task: string) => `${SCRATCH}/briefs/${task}.brief.md`
   const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
-  const boot = async ($: Parameters<Parameters<typeof test>[2]>[0], on: Parameters<Parameters<typeof test>[2]>[1], task: string, agentId: string) => {
+  const boot = async ($: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], on: Parameters<NonNullable<Parameters<typeof test>[2]>>[1], task: string, agentId: string) => {
     const w = world(on, { files: { [briefOf(task)]: HEAD(task) + '\nbody' }, run: () => undefined, agentId })
     ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async () => ({ result: 'ok' }))
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${briefOf(task)}.` }))

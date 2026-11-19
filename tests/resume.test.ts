@@ -31,7 +31,7 @@ const setup = (on: Parameters<typeof world>[0]) =>
   })
 
 /** Spawn, then a refuted first hand-back. */
-const firstRound = async ($: Parameters<Parameters<typeof test>[2]>[0], w: ReturnType<typeof world>) => {
+const firstRound = async ($: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], w: ReturnType<typeof world>) => {
   await $.session.start(sessionStart)
   await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, cwd: WT }))
   await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT('1111111')))
