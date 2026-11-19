@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **On the desktop, the editor and the phone the Work pane's controls sit on one line of links: the toolbar (Work, List, Board, Filter, Show done, Refresh), the state chips, the stacked board's column line and each lane's toggle and title; Filter opens the search and the epic select on a line of their own, and a stacked board opens on the first column with cards** (MOD-402, #564)
+
 ## 0.9.67 — 2026-11-18
 
 ### Changed

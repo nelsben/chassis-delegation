@@ -61,6 +61,8 @@ const listCalls = (w: any) => w.runs.map((r: { argv: string[] }) => r.argv).filt
 const settle = () => sleepMs(150)
 
 const FAIL = () => ({ exitCode: 1, stdout: '', stderr: 'boom' })
+// MOD-402 (#564): a part of a remote line is a link whose href is the line's key and the part's id
+const pressPart = (ui: any, line: string, part: string) => ui.press({ key: line, link: { href: `https://work.invalid/${encodeURIComponent(`${line}-${part}`)}` } })
 
 describe('MOD-395: the Work heading and the folded notes', () => {
   const href = (key: string) => `https://work.invalid/${encodeURIComponent(key)}`
@@ -78,14 +80,15 @@ describe('MOD-395: the Work heading and the folded notes', () => {
     setup(on)
     await $.session.start(sessionStart)
     await command($, 'work')
-    for (const surface of ['terminal', 'desktop']) {
-      const ui = await mountWork($, 130, surface)
-      const title = await ui.find({ type: 'Text', text: /^Work$/ })
-      expect(title?.props.bold).toBe(true)
-      const bar = await ui.find({ key: 'work-toolbar' })
-      const kids = (bar as any)?.children ?? (bar as any)?.props?.children
-      if (Array.isArray(kids)) expect(kids[0]?.props?.bold).toBe(true)
-    }
+    const ui = await mountWork($, 130, 'terminal')
+    const title = await ui.find({ type: 'Text', text: /^Work$/ })
+    expect(title?.props.bold).toBe(true)
+    const bar = await ui.find({ key: 'work-toolbar' })
+    const kids = (bar as any)?.children ?? (bar as any)?.props?.children
+    if (Array.isArray(kids)) expect(kids[0]?.props?.bold).toBe(true)
+    // MOD-402 (#564): on the desktop the heading is the first part of the toolbar's one line
+    const desk = await mountWork($, 130, 'desktop')
+    expect(String((await desk.find({ key: 'work-bar' }))?.props.text)).toMatch(/^\*\*Work\*\*/)
   })
 
   test('two notes fold behind `2 notes · show`; a press opens them and `hide notes`, another folds them', async ($, on) => {
@@ -464,37 +467,36 @@ describe('MOD-357: the Work pane board', () => {
     expect(await ui.find({ type: 'Text', text: 'DONE · 0' })).toBeUndefined()
   })
 
-  test('MOD-396 (#553): at 80 columns on desktop a Column select shows Working, and a lane draws only that column', async ($, on) => {
+  test('MOD-396 (#553): at 80 columns on desktop the column line opens on the first column with cards, and a lane draws only that column', async ($, on) => {
     setup(on)
     const ui = await boardOn($, 80, 'desktop')
-    const sel = await ui.find({ key: 'work-board-col' })
-    expect(sel).toBeDefined()
-    expect(sel?.props.value).toBe('working')
-    expect(sel?.props.options).toHaveLength(5)
-    for (const o of sel?.props.options ?? []) expect(o.label).toMatch(/ · \d+$/)
+    // MOD-402 (#564): the fixture has queued cards and none working or in review, so Queued is the first with cards
+    const line = await ui.find({ type: 'Markdown', key: 'work-board-col' })
+    expect(line).toBeDefined()
+    expect(String(line?.props.text)).toMatch(/\*\*Queued \d+\*\*/)
+    expect(String(line?.props.text)).toContain('](https://work.invalid/work-board-col-working)')
     expect(await ui.find({ key: 'work-board-header' })).toBeUndefined()
-    expect(await ui.find({ key: 'work-col-i10-working' })).toBeDefined()
-    for (const c of ['backlog', 'queued', 'review', 'done']) expect(await ui.find({ key: `work-col-i10-${c}` })).toBeUndefined()
+    expect(await ui.find({ key: 'work-col-i10-queued' })).toBeDefined()
+    for (const c of ['backlog', 'working', 'review', 'done']) expect(await ui.find({ key: `work-col-i10-${c}` })).toBeUndefined()
   })
 
-  test('MOD-396 (#553): selecting done draws the done column with its N done · show line', async ($, on) => {
+  test('MOD-396 (#553): pressing Done on the desktop draws the done column with its N done · show line', async ($, on) => {
     setup(on)
     const ui = await boardOn($, 80, 'desktop')
-    await ui.select({ key: 'work-board-col', value: 'done' })
+    await pressPart(ui, 'work-board-col', 'done')
     await ui.redraw()
     expect(await ui.find({ key: 'work-col-i10-done' })).toBeDefined()
-    expect(await ui.find({ key: 'work-col-i10-working' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-col-i10-queued' })).toBeUndefined()
     expect((await ui.find({ key: 'work-show-i10' }))?.props.text).toContain('1 done · show')
   })
 
-  test('MOD-396 (#553): a lane with no card in the picked column draws a dash', async ($, on) => {
+  test('MOD-402 (#564): a lane with no card in the picked column reads None in that column', async ($, on) => {
     setup(on)
     const ui = await boardOn($, 80, 'desktop')
-    await ui.select({ key: 'work-board-col', value: 'review' })
+    await pressPart(ui, 'work-board-col', 'review')
     await ui.redraw()
-    const col = await ui.find({ key: 'work-col-i10-review' })
-    expect(col).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '—' })).toBeDefined()
+    expect(await ui.find({ key: 'work-col-i10-review' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'None in To review' })).toBeDefined()
   })
 
   test('MOD-396 (#553): at 130 columns there is no Column select', async ($, on) => {
@@ -559,7 +561,7 @@ describe('MOD-357: the Work pane board', () => {
     for (const surface of ['desktop', 'vscode', 'mobile']) {
       const ui = await mountWork($, 100, surface)
       expect(await ui.find({ key: 'work-board' })).toBeDefined()
-      expect(await ui.find({ key: 'work-view-board' })).toBeDefined()
+      expect(await ui.find({ key: 'work-bar' })).toBeDefined()
     }
   })
 
@@ -848,14 +850,16 @@ describe('MOD-392 (#547): the Work pane controls are links on a remote surface',
     expect(await ui.find({ key: 'work-row-i11' })).toBeUndefined()
   })
 
-  test('on desktop a state chip and Refresh are still Buttons, and Show done is a link', async ($, on) => {
+  test('on desktop the chips, Refresh and Show done are links on their lines, and no control is a Button', async ($, on) => {
     setup(on)
     await $.session.start(sessionStart)
     await command($, 'work')
     const ui = await mountWork($, 130, 'desktop')
-    expect(await ui.find({ type: 'Button', key: 'work-chip-queued' })).toBeDefined()
-    expect(await ui.find({ type: 'Button', key: 'work-refresh' })).toBeDefined()
-    expect(await ui.find({ type: 'Markdown', key: 'work-done' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'work-chip-queued' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'work-refresh' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'work-done' })).toBeUndefined()
+    expect(String((await ui.find({ type: 'Markdown', key: 'work-bar' }))?.props.text)).toContain('](https://work.invalid/work-bar-refresh)')
+    expect(String((await ui.find({ type: 'Markdown', key: 'work-chips' }))?.props.text)).toContain('](https://work.invalid/work-chips-queued)')
   })
 
   test('on desktop the List and Board switch shows the current view as bold text and the other as a link', async ($, on) => {
@@ -863,13 +867,12 @@ describe('MOD-392 (#547): the Work pane controls are links on a remote surface',
     await $.session.start(sessionStart)
     await command($, 'work')
     const ui = await mountWork($, 130, 'desktop')
-    expect(await ui.find({ type: 'Text', text: 'List' })).toBeDefined()
-    expect(await ui.find({ type: 'Markdown', key: 'work-view-board' })).toBeDefined()
-    await pressLink(ui, 'work-view-board')
+    expect(String((await ui.find({ key: 'work-bar' }))?.props.text)).toContain('**List**')
+    await pressPart(ui, 'work-bar', 'board')
     await ui.redraw()
     expect(await ui.find({ key: 'work-board' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'Board' })).toBeDefined()
-    expect(await ui.find({ type: 'Markdown', key: 'work-view-list' })).toBeDefined()
+    expect(String((await ui.find({ key: 'work-bar' }))?.props.text)).toContain('**Board**')
+    expect(String((await ui.find({ key: 'work-bar' }))?.props.text)).toContain('](https://work.invalid/work-bar-list)')
   })
 
   test('the footer Close is drawn on the terminal and on mobile, and not on desktop or vscode', async ($, on) => {
@@ -894,7 +897,7 @@ describe('MOD-392 (#547): the Work pane controls are links on a remote surface',
     await $.session.start(sessionStart)
     await command($, 'work')
     const ui = await mountWork($, 130, 'desktop')
-    await pressLink(ui, 'work-view-board')
+    await pressPart(ui, 'work-bar', 'board')
     await ui.redraw()
     const title = await ui.find({ type: 'Markdown', key: 'work-open-i13' })
     expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
@@ -927,7 +930,7 @@ describe('MOD-397 (#554): the type mark is an Svg icon on a remote surface', () 
     await $.session.start(sessionStart)
     await command($, 'work')
     const ui = await mountWork($, 130, 'desktop')
-    await pressLink(ui, 'work-view-board')
+    await pressPart(ui, 'work-bar', 'board')
     await ui.redraw()
     expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
     expect((await iconOf(ui, 'story'))?.props.width).toBe(14)
@@ -940,5 +943,124 @@ describe('MOD-397 (#554): the type mark is an Svg icon on a remote surface', () 
     const ui = await mountWork($, 130, 'terminal')
     expect((await ui.findAll({ type: 'Text', text: '■ ' })).some((t: any) => t.props.color === '#22a06b')).toBe(true)
     expect(await iconOf(ui, 'story')).toBeUndefined()
+  })
+})
+
+// MOD-402 (#564): on a remote surface each line of controls is one Markdown: the toolbar, the chips, the board's column line and each lane head.
+describe('MOD-402 (#564): the Work pane lines of controls on a remote surface', () => {
+  // the board is switched on at the terminal, then the pane is mounted on the surface
+  const boardOn = async ($: any, columns: number, surface: string) => {
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const term = await mountWork($, 130, 'terminal')
+    await term.press({ key: 'work-view-board' })
+    await term.redraw()
+    return surface === 'terminal' ? term : mountWork($, columns, surface)
+  }
+
+  test('the desktop toolbar is one Markdown line; Filter draws the search and the epic select, and a query reads Filter (on)', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    const bar = String((await ui.find({ type: 'Markdown', key: 'work-bar' }))?.props.text)
+    expect(bar).toContain('**Work**')
+    expect(bar).toContain('](https://work.invalid/work-bar-filter)')
+    expect(bar).toContain('Show done')
+    expect(bar).toContain('](https://work.invalid/work-bar-refresh)')
+    expect(await ui.find({ key: 'work-search' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-epic' })).toBeUndefined()
+    await pressPart(ui, 'work-bar', 'filter')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-search' })).toBeDefined()
+    expect(await ui.find({ key: 'work-epic' })).toBeDefined()
+    await ui.input({ key: 'work-search', text: 'banner' })
+    await ui.redraw()
+    expect(String((await ui.find({ type: 'Markdown', key: 'work-bar' }))?.props.text)).toContain('Filter (on)')
+    await pressPart(ui, 'work-bar', 'filter')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-search' })).toBeUndefined()
+  })
+
+  test('on desktop Show done, Refresh and the other view are links that run their handlers', async ($, on) => {
+    const w = setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    await pressPart(ui, 'work-bar', 'done')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-row-i12' })).toBeDefined()
+    expect(listCalls(w)).toHaveLength(1)
+    await pressPart(ui, 'work-bar', 'refresh')
+    await ui.redraw()
+    await settle()
+    expect(listCalls(w)).toHaveLength(2)
+    await pressPart(ui, 'work-bar', 'board')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-board' })).toBeDefined()
+  })
+
+  test('on desktop in the list the chips are one line of links, and an off chip with no cards is plain text', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const ui = await mountWork($, 130, 'desktop')
+    const chips = String((await ui.find({ type: 'Markdown', key: 'work-chips' }))?.props.text)
+    expect(chips).toContain('](https://work.invalid/work-chips-queued)')
+    expect(chips).not.toContain('work-chips-review')
+    expect(chips).toContain('To review 0')
+    await pressPart(ui, 'work-chips', 'queued')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-row-i14' })).toBeUndefined()
+    expect(String((await ui.find({ type: 'Markdown', key: 'work-chips' }))?.props.text)).toContain('**[Queued')
+    await pressPart(ui, 'work-chips', 'clear')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-row-i14' })).toBeDefined()
+  })
+
+  test('at 80 columns with cards only in Backlog and Done, the desktop board opens on Backlog and draws no chips line', async ($, on) => {
+    setup(on, { cards: false })
+    const ui = await boardOn($, 80, 'desktop')
+    expect(String((await ui.find({ type: 'Markdown', key: 'work-board-col' }))?.props.text)).toMatch(/\*\*Backlog \d+\*\*/)
+    expect(await ui.find({ key: 'work-col-i10-backlog' })).toBeDefined()
+    expect(await ui.find({ key: 'work-chips' })).toBeUndefined()
+    await pressPart(ui, 'work-board-col', 'done')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-col-i10-done' })).toBeDefined()
+    expect(await ui.find({ key: 'work-col-i10-backlog' })).toBeUndefined()
+  })
+
+  test('on desktop the lane head holds the toggle link and the bold title on one line; pressing the toggle folds the lane', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 130, 'desktop')
+    const head = String((await ui.find({ type: 'Markdown', key: 'work-lane-head-i10' }))?.props.text)
+    expect(head).toContain('](https://work.invalid/work-lane-head-i10-toggle)')
+    expect(head).toContain('**Checkout rework**')
+    expect(await ui.find({ key: 'work-card-i13' })).toBeDefined()
+    await pressPart(ui, 'work-lane-head-i10', 'toggle')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-card-i13' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-lane-head-i10' })).toBeDefined()
+  })
+
+  test('on the terminal the toolbar, the chips and the lane head keep their Buttons and no line of links is drawn', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 130, 'terminal')
+    expect(await ui.find({ key: 'work-bar' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-chips' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-lane-head-i10' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'work-toggle-i10' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'work-refresh' })).toBeDefined()
+    expect(await ui.find({ key: 'work-search' })).toBeDefined()
+  })
+
+  test('on mobile at 40 columns the toolbar has no Filter link and the board still stacks every column', async ($, on) => {
+    setup(on)
+    await boardOn($, 130, 'terminal')
+    const ui = await mountWork($, 40, 'mobile')
+    expect(String((await ui.find({ key: 'work-bar' }))?.props.text)).not.toContain('work-bar-filter')
+    expect(await ui.find({ key: 'work-search' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-board-col' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-colbox-i10-queued' })).toBeDefined()
   })
 })
