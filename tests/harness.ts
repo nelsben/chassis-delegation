@@ -20,6 +20,10 @@ export const NOW = 1_000_000
 
 /** MOD-229: `spawned` marks a command started with `$.process.spawn` (a gate), which has no host timeout. */
 export type Run = { argv: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number; spawned?: true }
+/** A real timer: the test types carry no Node globals. */
+declare function setTimeout(handler: () => void, ms: number): unknown
+export const sleepMs = (ms: number): Promise<void> => new Promise<void>(r => setTimeout(r, ms))
+
 export type RunAnswer = { exitCode: number; stdout: string; stderr?: string }
 
 export type World = {
@@ -307,7 +311,7 @@ export function world(on: On, options: WorldOptions = {}): World {
     // MOD-35: an unanswered "is this sha on origin/main" reads as not merged (MOD-4's retire check, and the wake's skip rule); every other unanswered command exits 0
     const unmerged = e.argv[3] === 'merge-base' && e.argv[4] === '--is-ancestor' && e.argv[e.argv.length - 1] === 'origin/main'
     // MOD-72: a `sleep` process (the mod's budget-free wait) takes its seconds on the test clock unless the test answers it
-    const sleeps = e.argv[0] === 'sleep' ? async () => (await w.clock.sleep(Number(e.argv[1]) * 1000), { exitCode: 0, stdout: '' }) : undefined
+    const sleeps: (() => Promise<RunAnswer>) | undefined = e.argv[0] === 'sleep' ? async () => (await w.clock.sleep(Number(e.argv[1]) * 1000), { exitCode: 0, stdout: '' }) : undefined
     const answering = (async () => (await options.run?.([...e.argv])) ?? (sleeps ? await sleeps() : { exitCode: unmerged ? 1 : 0, stdout: '' }))()
     // MOD-229: the host kills a run still going at its timeoutMs (600000 at most) and the call rejects
     const capMs = options.hostCap && e.init?.timeoutMs !== undefined ? Math.min(e.init.timeoutMs, 600_000) : undefined

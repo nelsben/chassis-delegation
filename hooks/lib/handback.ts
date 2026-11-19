@@ -83,7 +83,7 @@ export function handbackChoices(text: string): HandbackChoices {
   for (const raw of head.split('\n')) {
     const m = CHOICE_LINE.exec(raw)
     if (!m) continue
-    const body = m[1].trim().replace(/`$/, '').trim()
+    const body = m[1]!.trim().replace(/`$/, '').trim()
     if (body === '') continue
     if (/^none\.?$/i.test(body)) {
       none = true
@@ -109,7 +109,7 @@ export function handbackAdvisor(text: string): HandbackAdvisor | undefined {
   for (const raw of head.split('\n')) {
     const m = ADVISOR_LINE.exec(raw)
     if (!m) continue
-    const b = m[1].trim().replace(/`$/, '').trim()
+    const b = m[1]!.trim().replace(/`$/, '').trim()
     if (b !== '') body = b
   }
   if (body === undefined) return undefined
@@ -131,7 +131,7 @@ export function handbackTried(text: string): { count: number; lines: string[] } 
   for (const raw of head.split('\n')) {
     const m = TRIED_LINE.exec(raw)
     if (!m) continue
-    const body = m[1].trim().replace(/`$/, '').trim()
+    const body = m[1]!.trim().replace(/`$/, '').trim()
     if (body === '' || seen.has(body)) continue
     seen.add(body)
     found.push(body)

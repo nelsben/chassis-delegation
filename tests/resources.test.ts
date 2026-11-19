@@ -257,7 +257,7 @@ describe('MOD-23: the card tool takes resources and lanes', () => {
   })
 
   test('the tool schema takes resources and lanes; scope is no longer required of every call; the old description lines stay', () => {
-    const props = card.CARD_TOOL.inputSchema.properties as Record<string, { type?: string; items?: { type?: string; properties?: Record<string, unknown> } }>
+    const props = card.CARD_TOOL.inputSchema.properties as Record<string, { type?: unknown; items?: { type?: unknown; properties?: Record<string, unknown> } }>
     expect(props.resources?.type).toBe('array')
     expect(props.lanes?.type).toBe('array')
     expect(Object.keys(props.lanes?.items?.properties ?? {}).sort()).toEqual(['doneWhen', 'scope', 'title'])
@@ -334,7 +334,7 @@ describe('MOD-23: the dashboard shows the resource a worker holds', () => {
     lineage: 1,
     tier: 'standard' as const,
     alias: 'sonnet',
-    verdict: 'pending',
+    verdict: 'pending' as const,
     at: NOW - 600_000,
     ...over,
   })

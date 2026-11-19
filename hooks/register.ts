@@ -578,6 +578,7 @@ type SpawnRecord = {
   pauseCharged?: boolean
   // MOD-89: no `prompt`: nothing read it back, and at about 1.4 KB a record it was most of the store (#157).
   // A record written before keeps it; the brief path, the key (the tool_use_id) and the description are what is read.
+  prompt?: string
   description: string
   subagentType: string
   cwd?: string
@@ -2099,7 +2100,7 @@ async function flushDrive($: Host, brainFn?: (r: BrainRecord | undefined) => Bra
 async function brainContextTokens($: Host): Promise<number> {
   try {
     const c = (await $.session.usage()).context
-    return c ? Math.round((c.window * c.percent) / 100) : 0
+    return c ? Math.round((c.window * (c.percent ?? 0)) / 100) : 0
   } catch {
     return 0
   }
@@ -8210,7 +8211,8 @@ async function postStarted($: Host, i: { label: string; task: string; repo?: str
   const why = reasonsCut((await storeGet<string>($, K.tierReason(i.task, startRepo))) || '', (await storeGet<string>($, K.effortReason(i.task, startRepo))) || '')
   // a resume of a nudged task is not the end of its judgment: no down nudge on it
   const nudge = i.kind === 'resumed' ? undefined : nudgeDownNow()
-  await appendRow($, startedRow({ ...i, glyph: glyphOf(i.alias), ...(effort ? { effort } : {}), ...(i.explore ? { explore: i.explore.label } : {}), ...(why ? { why } : {}), ...(nudge ? { nudge } : {}) }))
+  const { explore: _explore, ...startedFields } = i
+  await appendRow($, startedRow({ ...startedFields, glyph: glyphOf(i.alias), ...(effort ? { effort } : {}), ...(i.explore ? { explore: i.explore.label } : {}), ...(why ? { why } : {}), ...(nudge ? { nudge } : {}) }))
 }
 
 /** MOD-74: a worker's spend this attempt as the verdict row computes it (its own turns, else the session's growth), undefined while unknown. */
@@ -10185,7 +10187,7 @@ async function runUpdate($: Host): Promise<string> {
 
 // ---- the spawn decision: tier, budget, slot, record, drift ------------------------------
 /** What the spawn decision reads of an `agent.spawn` input (the hook's own, or one the mod builds). */
-type SpawnEvent = { tool_use_id: string; prompt: string; description: string; subagentType: string; model?: string; cwd?: string; name?: string; /** MOD-15: the mod's own fallback spawn of a ready row: its record says so. */ fallback?: true }
+type SpawnEvent = { tool_use_id: string; prompt: string; description: string; subagentType: string; model?: string; permissionMode?: string; cwd?: string; name?: string; /** MOD-15: the mod's own fallback spawn of a ready row: its record says so. */ fallback?: true }
 
 /**
  * What a spawn's prompt says of its task, read once: the brief named (or the
@@ -10982,7 +10984,7 @@ export const register: Register = (on, opts) => {
     if (e.agentId && out.deny === undefined) await noteWrites($, e, snap ? await chargedDelta($, snap, await bashDelta($, snap)) : [], snap ? { ...(snap.here ? { here: snap.here.dir } : {}), roots: [...snap.roots.keys()] } : undefined)
     else if (snap?.win) snap.win.end = ++deltaSeq
     // MOD-119: a Bash call's output tells a command that repeats from one that makes progress
-    if (!e.agentId && String(e.tool) === 'Bash' && out.deny === undefined && typeof e.command === 'string') {
+    if (!e.agentId && String(e.tool) === 'Bash' && out.deny === undefined && 'command' in e && typeof e.command === 'string') {
       const r = out.result as { stdout?: unknown; stderr?: unknown } | undefined
       if (cfg.driveWarn && r && typeof r.stdout === 'string') driveWatch = driveOutput(driveWatch, e.command, `${r.stdout}\n${typeof r.stderr === 'string' ? r.stderr : ''}`)
     }

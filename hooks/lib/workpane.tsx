@@ -86,9 +86,11 @@ const indentOf = (depth: number): string => '  '.repeat(Math.min(depth, 6))
 const doneFg = (scheme: Scheme): string => LOZENGE.done[scheme].fg
 
 export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNode {
-  const { Box, Text, Button, Input, Select, Link, Markdown, Svg } = p.t
+  const { Box, Text, Button, Input, Select, Link, Markdown } = p.t
   // MOD-392 (#547): a control is a native Button on the terminal; on a remote surface it is a Markdown link, which draws no box
   const remote = p.surface !== 'terminal'
+  // only remote surfaces have an Svg element; the terminal's table has none
+  const Svg = remote ? p.t.Svg : undefined
   const press = (key: string, label: string, onPress: () => void, o: { dim?: boolean } = {}): RenderNode =>
     remote ? (
       <Markdown key={key} text={mdLink(label, linkHref(key))} pressableLinks={[linkHref(key)]} onLinkPress={() => onPress()} dimColor={o.dim} />
@@ -97,7 +99,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     )
   // MOD-397 (#554): the type mark: the glyph on the terminal; on a remote surface the 14 px icon, then a space
   const markNode = (type: WorkType): RenderNode =>
-    remote ? (
+    Svg ? (
       <Box flexDirection="row">
         <Svg source={typeIcon(type, v.scheme)} alt={type} width={14} height={14} />
         <Text> </Text>

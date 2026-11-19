@@ -364,7 +364,7 @@ describe('MOD-258: orphanReview through the hooks (MOD-224)', () => {
   const delivered = (w: { appended: { text: string }[]; logs: string[] }) => [...w.appended.map(a => a.text), ...w.logs].join('\n')
   const recs = (w: { store: Map<string, unknown> }) => (w.store.get(`delegation.tasks.T-4@${ROOT}`) ?? []) as Record<string, unknown>[]
   const ledger = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
-  const handedBack = async ($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<typeof world>[0]) => {
+  const handedBack = async ($: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], on: Parameters<typeof world>[0]) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run, agentId: 'agent-4' })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
     await $.turn.complete(turnInput('agent-4', 'Added the parser.\n' + REPORT))

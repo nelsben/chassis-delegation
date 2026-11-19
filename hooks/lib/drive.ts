@@ -94,7 +94,7 @@ const boundedText = (text: string): boolean => {
  * MOD-318: the loops of a cut command and the sleeps and while/until words in it. A loop's body runs from its `do`
  * to its `done`; a `for` loop is always bounded, a while or until one when its text is `boundedText`.
  */
-const loopsOf = (c: string): { loops: { kind: string; bounded: boolean; body?: number; end: number }[]; sleeps: number[]; words: { kind: string; at: number }[] } => {
+const loopsOf = (c: string): { loops: { kind: string; bounded: boolean; body?: number; end: number; start: number }[]; sleeps: number[]; words: { kind: string; at: number }[] } => {
   const loops: { kind: string; bounded: boolean; body?: number; end: number; start: number }[] = []
   const open: { kind: string; start: number; body?: number }[] = []
   const sleeps: number[] = []
@@ -141,14 +141,14 @@ export const isPoll = (command: string): boolean => {
 const firstWord = (command: string): string => {
   const words = command.trim().split(/\s+/)
   const i = words.findIndex(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w))
-  return (i >= 0 ? words[i] : '').replace(/^.*\//, '')
+  return (i >= 0 ? words[i]! : '').replace(/^.*\//, '')
 }
 
 /**
  * The kind of a main-loop call, or undefined when it is none of the four.
  * `writes`: a Bash command that writes into the root; `repeat`: the command already ran this turn.
  */
-export function callKind(tool: string, input: { command?: unknown; run_in_background?: unknown }, writes = false, repeat = false): DriveKind | undefined {
+export function callKind(tool: string, input: { command?: unknown; run_in_background?: unknown; file_path?: unknown }, writes = false, repeat = false): DriveKind | undefined {
   if (EDIT_TOOLS.includes(tool)) return 'edit'
   if (SPAWN_TOOLS.includes(tool)) return 'spawn'
   if (tool === 'Read') return 'read'

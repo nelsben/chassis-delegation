@@ -1630,7 +1630,7 @@ describe('MOD-13: workers under the mod hooks', () => {
   const briefOf = (task: string) => `${SCRATCH}/briefs/${task}.brief.md`
   const GM = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
   const onMain = (argv: string[]): RunAnswer | undefined => (argv[3] === 'rev-parse' && argv[4] === '--abbrev-ref' ? { exitCode: 0, stdout: 'main\n' } : undefined)
-  const boot = async ($: Parameters<Parameters<typeof test>[2]>[0], on: Parameters<Parameters<typeof test>[2]>[1], task: string, header: string, agentId: string, run = onMain) => {
+  const boot = async ($: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], on: Parameters<NonNullable<Parameters<typeof test>[2]>>[1], task: string, header: string, agentId: string, run = onMain) => {
     const w = world(on, { files: { [briefOf(task)]: header + '\nbody' }, run, agentId })
     ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async () => ({ result: 'ok' })) // the engine's tool, at the bottom
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${briefOf(task)}.` }))
@@ -1726,7 +1726,7 @@ describe('MOD-16: each worker gets its own identity in its Bash environment', ()
   const PREFIX = (session: string, task: string, attempt: number) => `export CHASSIS_SESSION_ID=${session} CHASSIS_TASK=${task} CHASSIS_ATTEMPT=${attempt}; `
   type Seen = { tool: string; command?: string; file_path?: string }
   /** The engine's own tool, at the bottom: it records what reaches it, which is what would run. */
-  const bottom = (on: Parameters<Parameters<typeof test>[2]>[1]): Seen[] => {
+  const bottom = (on: Parameters<NonNullable<Parameters<typeof test>[2]>>[1]): Seen[] => {
     const seen: Seen[] = []
     ;(on as unknown as (n: string, h: unknown) => void)('tool.call', async (_$: unknown, e: Seen) => {
       seen.push({ tool: e.tool, ...(e.command !== undefined ? { command: e.command } : {}), ...(e.file_path !== undefined ? { file_path: e.file_path } : {}) })
@@ -1734,7 +1734,7 @@ describe('MOD-16: each worker gets its own identity in its Bash environment', ()
     })
     return seen
   }
-  const spawnBrief = ($: Parameters<Parameters<typeof test>[2]>[0], path: string, id: string) => $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${path}.`, tool_use_id: id }))
+  const spawnBrief = ($: Parameters<NonNullable<Parameters<typeof test>[2]>>[0], path: string, id: string) => $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${path}.`, tool_use_id: id }))
 
   test('a recorded worker\'s Bash command reaches the tool behind the export prefix, typed text whole; its other tools are untouched', { options: { ...GM } }, async ($, on) => {
     const w = world(on, { files: { [briefOf('T-6')]: HEAD('T-6') + '\nbody' }, run: branchRun('agent/mod/T-6'), agentId: 'agent-6' })

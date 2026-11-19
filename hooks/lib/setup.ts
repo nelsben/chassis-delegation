@@ -58,7 +58,7 @@ export const packageManager = (p: SetupProbe): string => (has(p, 'pnpm-lock.yaml
 export function gateMapFirst(p: SetupProbe): { id: string; command: string; more: number } | undefined {
   const entries = Object.entries(p.gateMap ?? {})
   if (entries.length === 0) return undefined
-  const [id, command] = entries[0]
+  const [id, command] = entries[0]!
   return { id, command, more: entries.length - 1 }
 }
 
