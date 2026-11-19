@@ -830,10 +830,11 @@ describe('MOD-392 (#547): the Work pane controls are links on a remote surface',
     await $.session.start(sessionStart)
     await command($, 'work')
     const ui = await mountWork($, 130, 'desktop')
-    const title = await ui.find({ type: 'Markdown', key: 'work-open-i13' })
-    expect(String(title?.props.text).endsWith('](https://work.invalid/work-open-i13)')).toBe(true)
+    // MOD-403 (#566): the leaf title is a link of the row's head line
+    const title = await ui.find({ type: 'Markdown', key: 'work-row-head-i13' })
+    expect(String(title?.props.text)).toContain('](https://work.invalid/work-row-head-i13-open)')
     expect(await ui.find({ type: 'Button', key: 'work-open-i13' })).toBeUndefined()
-    await pressLink(ui, 'work-open-i13')
+    await pressPart(ui, 'work-row-head-i13', 'open')
     await ui.redraw()
     expect(await ui.find({ key: 'work-detail' })).toBeDefined()
   })
@@ -1062,5 +1063,187 @@ describe('MOD-402 (#564): the Work pane lines of controls on a remote surface', 
     expect(await ui.find({ key: 'work-search' })).toBeUndefined()
     expect(await ui.find({ key: 'work-board-col' })).toBeUndefined()
     expect(await ui.find({ key: 'work-colbox-i10-queued' })).toBeDefined()
+  })
+})
+
+// MOD-403 (#566): on a remote surface a row never wraps, a Markdown sits alone or in a fixed-width box, labels align in boxes, gaps are half a line.
+describe('MOD-403 (#566): the Work pane drawn for the editor', () => {
+  const kidsOf = (n: any): any[] => {
+    const k = n?.children ?? n?.props?.children
+    return (Array.isArray(k) ? k : k === undefined ? [] : [k]).filter((c: any) => c !== null && typeof c === 'object')
+  }
+  const textOf = (n: any): string => (Array.isArray(n.children) ? n.children.filter((c: any) => typeof c === 'string').join('') : '')
+  const walk = (n: any, f: (n: any, parent: any) => void, parent: any = undefined): void => {
+    f(n, parent)
+    for (const c of kidsOf(n)) walk(c, f, n)
+  }
+  // a Box is a row when its flexDirection is row or absent; the nodes the walk found are counted so an empty walk is no pass
+  const checkTree = async (ui: any, label: string): Promise<number> => {
+    const root = await ui.find({ key: 'work-pane' })
+    expect(root, label).toBeDefined()
+    let boxes = 0
+    walk(root, (n, parent) => {
+      if (n.type === 'Box') {
+        boxes++
+        const dir = n.props.flexDirection
+        const kids = kidsOf(n)
+        if ((dir === 'row' || dir === undefined) && kids.length > 1) {
+          const ok = n.props.flexWrap === 'nowrap' || n.key === 'work-summary' || n.key === 'work-detail-status' || n.props.key === 'work-summary' || n.props.key === 'work-detail-status'
+          expect(ok, `${label}: a row Box of ${kids.length} children wraps (${n.key ?? n.props.key ?? '?'})`).toBe(true)
+        }
+      }
+      if (n.type === 'Markdown' && parent !== undefined) {
+        const alone = kidsOf(parent).length === 1
+        const fixed = typeof parent.props.width === 'number'
+        // a column Box stacks its children, so a Markdown beside a sibling there is on its own line
+        const column = parent.props.flexDirection === 'column'
+        expect(alone || fixed || column, `${label}: Markdown ${n.key ?? n.props.key} shares a row`).toBe(true)
+      }
+    })
+    expect(boxes, label).toBeGreaterThan(3)
+    return boxes
+  }
+  const boardOn = async ($: any, columns: number, surface = 'vscode') => {
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const term = await mountWork($, 130, 'terminal')
+    await term.press({ key: 'work-view-board' })
+    await term.redraw()
+    return mountWork($, columns, surface)
+  }
+  const listOn = async ($: any, surface = 'vscode', columns = 130) => {
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    return mountWork($, columns, surface)
+  }
+
+  test('the list on vscode: no row Box wraps and every Markdown sits alone or in a fixed-width box', async ($, on) => {
+    setup(on)
+    const ui = await listOn($)
+    expect(await ui.find({ key: 'work-show-i11' })).toBeDefined()
+    await checkTree(ui, 'list')
+  })
+
+  test('the board at 80 and at 130 columns on vscode: no row Box wraps and every Markdown sits alone or in a fixed-width box', async ($, on) => {
+    setup(on)
+    await checkTree(await boardOn($, 80), 'board 80')
+    await checkTree(await mountWork($, 130, 'desktop'), 'board 130')
+  })
+
+  test('the detail of a blocked leaf at 80 columns on vscode: no row Box wraps and every Markdown sits alone or in a fixed-width box', async ($, on) => {
+    setup(on, { ledger: true })
+    const ui = await listOn($, 'vscode', 80)
+    await pressPart(ui, 'work-row-head-MOD-7', 'open')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+    await checkTree(ui, 'detail 80')
+  })
+
+  test('a parent row head holds #n and the bold title; its toggle folds it; the #n link is the GitHub issue and is not pressable', async ($, on) => {
+    setup(on)
+    const ui = await listOn($)
+    const head = await ui.find({ type: 'Markdown', key: 'work-row-head-i10' })
+    const text = String(head?.props.text)
+    expect(text).toContain('[\\#10](https://github.com/o/r/issues/10)')
+    expect(text).toContain('**Checkout rework**')
+    expect(JSON.stringify(head?.props.pressableLinks ?? [])).not.toContain('github.com')
+    expect(await ui.find({ key: 'work-row-head-i11' })).toBeDefined()
+    await ui.press({ key: 'work-toggle-i10', link: { href: 'https://work.invalid/work-toggle-i10' } })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-row-head-i11' })).toBeUndefined()
+    await ui.press({ key: 'work-toggle-i10', link: { href: 'https://work.invalid/work-toggle-i10' } })
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-row-head-i11' })).toBeDefined()
+  })
+
+  test('a leaf row head holds a link that selects the leaf', async ($, on) => {
+    setup(on)
+    const ui = await listOn($)
+    const head = await ui.find({ type: 'Markdown', key: 'work-row-head-i13' })
+    expect(JSON.stringify(head?.props.pressableLinks)).toContain('work-row-head-i13-open')
+    await pressPart(ui, 'work-row-head-i13', 'open')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-detail' })).toBeDefined()
+  })
+
+  test('the toggle box is 2 wide, the head box is the work cell less the indent and 4, and the hidden row is a padded column', async ($, on) => {
+    setup(on)
+    const ui = await listOn($)
+    const widths = (await ui.findAll({ type: 'Box' })).map((b: any) => b.props.width)
+    expect(widths).toContain(2)
+    const hidden = await ui.find({ key: 'work-hidden-i11' })
+    expect(hidden?.props.flexDirection).toBe('column')
+    expect(hidden?.props.paddingLeft).toBe(4 + 2)
+    expect(await ui.find({ type: 'Markdown', key: 'work-show-i11' })).toBeDefined()
+  })
+
+  test('on remote the header labels are bare Text in width boxes, and the header rule is not drawn; the terminal still draws it', async ($, on) => {
+    setup(on)
+    const ui = await listOn($)
+    const header = await ui.find({ key: 'work-header' })
+    const labels: string[] = []
+    walk(header, n => {
+      if (n.type === 'Text') labels.push(textOf(n))
+    })
+    expect(labels).toContain('WORK')
+    expect(labels).toContain('STATUS')
+    for (const l of labels) expect(l.endsWith(' '), l).toBe(false)
+    expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeUndefined()
+    const term = await mountWork($, 130, 'terminal')
+    expect(await term.find({ type: 'Text', text: /^─+$/ })).toBeDefined()
+  })
+
+  test('the board header labels are bare Text in boxes the width of a column', async ($, on) => {
+    setup(on)
+    const ui = await boardOn($, 130)
+    const head = await ui.find({ key: 'work-board-header' })
+    let seen = 0
+    walk(head, n => {
+      if (n.type === 'Text') {
+        seen++
+        expect(textOf(n).endsWith(' ')).toBe(false)
+      }
+    })
+    expect(seen).toBe(5)
+    expect((await ui.find({ key: 'work-board-head-queued' }))?.props.width).toBeGreaterThan(10)
+  })
+
+  test('the detail head is one Markdown: pressing close closes the detail; the Blocked by ids are one work-by Markdown', async ($, on) => {
+    setup(on, { ledger: true })
+    const ui = await listOn($, 'vscode', 80)
+    await pressPart(ui, 'work-row-head-MOD-7', 'open')
+    await ui.redraw()
+    expect(await ui.find({ type: 'Markdown', key: 'work-detail-head' })).toBeDefined()
+    const by = await ui.find({ type: 'Markdown', key: 'work-by' })
+    expect(String(by?.props.text)).toContain('MOD-9')
+    expect(await ui.find({ key: 'work-by-MOD-9' })).toBeUndefined()
+    await pressPart(ui, 'work-detail-head', 'close')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-detail' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-table' })).toBeDefined()
+  })
+
+  test('a filter that matches nothing offers Clear filters in one Markdown on vscode, and pressing it clears the filters', async ($, on) => {
+    setup(on)
+    await $.session.start(sessionStart)
+    await command($, 'work')
+    const term = await mountWork($, 130, 'terminal')
+    await term.input({ key: 'work-search', text: 'zzzz' })
+    await term.redraw()
+    const ui = await mountWork($, 130, 'vscode')
+    const empty = await ui.find({ type: 'Markdown', key: 'work-clear-empty' })
+    expect(String(empty?.props.text)).toContain('No work matches.')
+    await pressPart(ui, 'work-clear-empty', 'clear')
+    await ui.redraw()
+    expect(await ui.find({ key: 'work-clear-empty' })).toBeUndefined()
+    expect(await ui.find({ key: 'work-row-head-i14' })).toBeDefined()
+  })
+
+  test('the gap of the pane is 0.5 on vscode and desktop, and 1 on the terminal', async ($, on) => {
+    setup(on)
+    const ui = await listOn($)
+    expect((await ui.find({ key: 'work-pane' }))?.props.gap).toBe(0.5)
+    expect((await (await mountWork($, 130, 'desktop')).find({ key: 'work-pane' }))?.props.gap).toBe(0.5)
+    expect((await (await mountWork($, 130, 'terminal')).find({ key: 'work-pane' }))?.props.gap).toBe(1)
   })
 })

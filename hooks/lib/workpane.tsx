@@ -4,6 +4,7 @@
 // MOD-388 (#538): the List and Board switch and the state chips are never plain (secondary off, primary on), so a press keeps their width;
 // the detail status row has a gap and wraps, its trail cut to its own width; `Reading the issues…` shows only once something is loaded;
 // an empty filter result offers Clear filters beside `No work matches.`; the footer reads Close; a selected leaf has a blue marker.
+// MOD-403 (#566): on a remote surface a row never wraps (nowrap), a Markdown sits alone or in a fixed-width box, labels align in boxes not spaces, and gaps are half a line.
 // MOD-402 (#564): on a remote surface each line of controls is one Markdown with its links: the toolbar (Filter opens the search and the epic
 // select on their own line), the state chips, the stacked board's column line, and each lane head (toggle and title, then the bar); the stacked
 // board opens on the first column with cards, and the terminal keeps its Buttons, Input and Select.
@@ -93,7 +94,7 @@ const indentOf = (depth: number): string => '  '.repeat(Math.min(depth, 6))
 const doneFg = (scheme: Scheme): string => LOZENGE.done[scheme].fg
 
 /** MOD-402 (#564): one control of a line on a remote surface: a link when onPress is set, else plain text; bold wraps it. */
-type LinePart = { id: string; label: string; onPress?: () => void; bold?: boolean }
+type LinePart = { id: string; label: string; onPress?: () => void; bold?: boolean; /** MOD-403: a link the surface opens itself, not pressable here */ href?: string }
 
 export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNode {
   const { Box, Text, Button, Input, Select, Link, Markdown } = p.t
@@ -112,7 +113,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const hrefOf = (part: LinePart): string => linkHref(`${key}-${part.id}`)
     const text = parts
       .map(part => {
-        const label = part.onPress ? mdLink(part.label, hrefOf(part)) : mdEscape(part.label)
+        const label = part.onPress ? mdLink(part.label, hrefOf(part)) : part.href !== undefined ? mdLink(part.label, part.href) : mdEscape(part.label)
         return part.bold ? `**${label}**` : label
       })
       .join(o.sep ?? ' · ')
@@ -130,7 +131,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   // MOD-397 (#554): the type mark: the glyph on the terminal; on a remote surface the 14 px icon, then a space
   const markNode = (type: WorkType): RenderNode =>
     Svg ? (
-      <Box flexDirection="row">
+      <Box flexDirection="row" flexWrap="nowrap">
         <Svg source={typeIcon(type, v.scheme)} alt={type} width={14} height={14} />
         <Text> </Text>
       </Box>
@@ -138,6 +139,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       <Text color={markColor(type, v.scheme)}>{TYPE_MARK[type].glyph} </Text>
     )
   const side = v.columns >= 116
+  // MOD-403 (#566): a gap counts in lines in the editor, so a remote column gap is half a line
+  const gap = remote ? 0.5 : 1
   const L = workLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
   // MOD-402 (#564): the board's layout is read here too: a remote stacked board that picks its column hides the chips line
   const B = boardLayout(v.detail !== undefined && side ? v.columns - 42 : v.columns)
@@ -182,7 +185,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   const filterOn = v.ui.query.trim() !== '' || v.ui.root !== undefined
   const status = v.reading && v.model.total > 0 ? 'Reading the issues…' : v.updated
   const remoteToolbar = (
-    <Box key="work-toolbar" flexDirection="column" gap={1}>
+    <Box key="work-toolbar" flexDirection="column" gap={gap}>
       {pressLine('work-bar', [
         { id: 'title', label: 'Work', bold: true },
         v.view === 'list' ? { id: 'list', label: 'List', bold: true } : { id: 'list', label: 'List', onPress: () => hd.view('list') },
@@ -193,7 +196,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
         ...(status !== undefined ? [{ id: 'status', label: status }] : []),
       ])}
       {v.filterOpen && !narrowSurface ? (
-        <Box key="work-filters" flexDirection="column" gap={1}>
+        <Box key="work-filters" flexDirection="column" gap={gap}>
           {searchInput}
           {roots.length < 2 ? null : epicSelect}
         </Box>
@@ -206,7 +209,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   const bar = (done: number, leaves: number): RenderNode => {
     const n = progressCells(done, leaves)
     return (
-      <Box flexDirection="row">
+      <Box flexDirection="row" flexWrap="nowrap">
         {n > 0 ? (
           <Box key="work-bar-done" width={n} backgroundColor={doneFg(v.scheme)}>
             <Text>{' '.repeat(n)}</Text>
@@ -239,7 +242,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
         : WORK_STATES.map(s => {
             const on = v.ui.states.has(s)
             return (
-              <Box key={`work-state-${s}`} flexDirection="row">
+              <Box key={`work-state-${s}`} flexDirection="row" flexWrap="nowrap">
                 <Text color={LOZENGE[s][v.scheme].fg}>■ </Text>
                 <Button key={`work-chip-${s}`} label={`${STATE_LABEL[s]} ${v.model.counts[s]}`} variant={on ? 'primary' : 'secondary'} {...(!on && v.model.counts[s] === 0 ? { dimColor: true } : {})} onPress={() => hd.chip(s)} />
               </Box>
@@ -249,8 +252,26 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     </Box>
   )
 
-  const header = (
-    <Box key="work-header" flexDirection="row">
+  // MOD-403 (#566): on a remote surface each label sits in a box of its cell's width, since padding drifts in a proportional font
+  const label = (text: string, w: number, o: { end?: boolean } = {}): RenderNode => (
+    <Box width={w} {...(o.end ? { justifyContent: 'flex-end' as const } : {})}>
+      {text !== '' ? (
+        <Text dimColor bold>
+          {cut(text, w)}
+        </Text>
+      ) : null}
+    </Box>
+  )
+  const header = remote ? (
+    <Box key="work-header" flexDirection="row" flexWrap="nowrap">
+      {label('WORK', L.work)}
+      {label(L.status > 2 ? 'STATUS' : '', L.status)}
+      {L.card ? label('CARD', L.card) : null}
+      {L.worker ? label('WORKER', L.worker) : null}
+      {L.cost ? label('COST', L.cost, { end: true }) : null}
+    </Box>
+  ) : (
+    <Box key="work-header" flexDirection="row" flexWrap="nowrap">
       <Text dimColor>{fit('WORK', L.work)}</Text>
       {/* MOD-390 (#540): at a dot-wide status the label is left out, a cut word reads worse than none */}
       <Text dimColor>{fit(L.status > 2 ? 'STATUS' : '', L.status)}</Text>
@@ -259,7 +280,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       {L.cost ? <Text dimColor>{'COST'.padStart(L.cost)}</Text> : null}
     </Box>
   )
-  // MOD-390 (#540): one dim rule under the header, the full width of the cells
+  // MOD-390 (#540): one dim rule under the header, the full width of the cells; not drawn on a remote surface (MOD-403)
   const headerRule = (
     <Text key="work-header-rule" dimColor>
       {'─'.repeat(L.work + L.status + L.card + L.worker + L.cost)}
@@ -283,28 +304,47 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const hover = { backgroundColor: v.scheme === 'light' ? '#f1f2f4' : '#2c333a' }
     const selected = !parent && v.detail !== undefined && v.detail.item.key === it.key
     return (
-      <Box key={`work-row-${k}`} flexDirection="row" hover={hover} {...(selected ? { backgroundColor: SELECTED_BG[v.scheme] } : {})}>
-        <Box width={L.work} overflow="hidden" flexDirection="row">
-          <Text>{indent}</Text>
-          {parent ? press(`work-toggle-${k}`, open ? '▾' : '▸', () => hd.toggle(it.key)) : selected ? <Text color="#1d7afc">▌ </Text> : <Text>{'  '}</Text>}
-          {parent ? <Text>{' '}</Text> : null}
-          {mark ? markNode(it.type) : <Text>{'  '}</Text>}
-          {numText !== '' ? (
-            v.repo !== undefined ? (
-              <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={numText} />
+      <Box key={`work-row-${k}`} flexDirection="row" flexWrap="nowrap" hover={hover} {...(selected ? { backgroundColor: SELECTED_BG[v.scheme] } : {})}>
+        {remote ? (
+          // MOD-403 (#566): the toggle, the mark and the head are boxes of fixed widths; the head is one Markdown with the number and the title
+          <Box width={L.work} overflow="hidden" flexDirection="row" flexWrap="nowrap">
+            {indent.length > 0 ? <Box width={indent.length} /> : null}
+            <Box width={2}>{parent ? press(`work-toggle-${k}`, open ? '▾' : '▸', () => hd.toggle(it.key)) : selected ? <Text color="#1d7afc">▌</Text> : null}</Box>
+            {mark ? markNode(it.type) : <Box width={2} />}
+            <Box width={Math.max(4, L.work - indent.length - 4)} overflow="hidden">
+              {pressLine(
+                `work-row-head-${k}`,
+                [
+                  ...(numText !== '' ? [{ id: 'number', label: numText, ...(v.repo !== undefined ? { href: `https://github.com/${v.repo}/issues/${it.number}` } : {}) }] : []),
+                  parent ? { id: 'title', label: cut(it.title, titleW), bold } : { id: 'open', label: cut(it.title, titleW), onPress: () => hd.select(it.key) },
+                ],
+                { sep: ' ', dim: doneLeaf },
+              )}
+            </Box>
+          </Box>
+        ) : (
+          <Box width={L.work} overflow="hidden" flexDirection="row" flexWrap="nowrap">
+            <Text>{indent}</Text>
+            {parent ? press(`work-toggle-${k}`, open ? '▾' : '▸', () => hd.toggle(it.key)) : selected ? <Text color="#1d7afc">▌ </Text> : <Text>{'  '}</Text>}
+            {parent ? <Text>{' '}</Text> : null}
+            {mark ? markNode(it.type) : <Text>{'  '}</Text>}
+            {numText !== '' ? (
+              v.repo !== undefined ? (
+                <Link key={`work-issue-${k}`} href={`https://github.com/${v.repo}/issues/${it.number}`} label={numText} />
+              ) : (
+                <Text dimColor>{numText}</Text>
+              )
+            ) : null}
+            {numText !== '' ? <Text>{' '}</Text> : null}
+            {parent ? (
+              <Text bold={bold} wrap="truncate-end">
+                {cut(it.title, titleW)}
+              </Text>
             ) : (
-              <Text dimColor>{numText}</Text>
-            )
-          ) : null}
-          {numText !== '' ? <Text>{' '}</Text> : null}
-          {parent ? (
-            <Text bold={bold} wrap="truncate-end">
-              {cut(it.title, titleW)}
-            </Text>
-          ) : (
-            press(`work-open-${k}`, cut(it.title, titleW), () => hd.select(it.key), { dim: doneLeaf })
-          )}
-        </Box>
+              press(`work-open-${k}`, cut(it.title, titleW), () => hd.select(it.key), { dim: doneLeaf })
+            )}
+          </Box>
+        )}
         <Box width={L.status}>
           {lozenge ? (
             dot ? (
@@ -319,7 +359,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           ) : null}
         </Box>
         {L.card ? (
-          <Box width={L.card} overflow="hidden" flexDirection="row">
+          <Box width={L.card} overflow="hidden" flexDirection="row" flexWrap="nowrap">
             {parent ? (
               bar(it.done, it.leaves)
             ) : (
@@ -328,7 +368,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           </Box>
         ) : null}
         {L.worker ? (
-          <Box width={L.worker} overflow="hidden" flexDirection="row">
+          <Box width={L.worker} overflow="hidden" flexDirection="row" flexWrap="nowrap">
             {!parent ? workerCell(it) : null}
           </Box>
         ) : null}
@@ -347,7 +387,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       const text = [it.model, it.attempt].filter((x): x is string => x !== undefined && x !== '').join(' · ') + (it.state === 'working' && it.running !== undefined ? ` · ${it.running}` : '')
       const glyph = badge(it)
       return (
-        <Box flexDirection="row">
+        <Box flexDirection="row" flexWrap="nowrap">
           {glyph !== '' ? <Text>{`${glyph} `}</Text> : dot ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
           <Text wrap="truncate-end">{text}</Text>
         </Box>
@@ -361,8 +401,16 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     if (r.kind === 'item') return itemRow(r.item, r.depth, r.open)
     if (r.kind === 'hidden') {
       const k = keySlug(r.parent)
+      if (remote) {
+        // MOD-403 (#566): the link sits alone, pushed in by a padding, not by spaces
+        return (
+          <Box key={`work-hidden-${k}`} flexDirection="column" paddingLeft={indentOf(r.depth).length + 2}>
+            {press(`work-show-${k}`, `${r.n} done hidden · show`, () => hd.show(r.parent), { dim: true })}
+          </Box>
+        )
+      }
       return (
-        <Box key={`work-hidden-${k}`} flexDirection="row">
+        <Box key={`work-hidden-${k}`} flexDirection="row" flexWrap="nowrap">
           <Text>{`${indentOf(r.depth)}  `}</Text>
           {press(`work-show-${k}`, `${r.n} done hidden · show`, () => hd.show(r.parent), { dim: true })}
         </Box>
@@ -370,13 +418,13 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     }
     if (r.kind === 'older') {
       return (
-        <Box key={`work-older-${keySlug(r.parent)}`} flexDirection="row">
+        <Box key={`work-older-${keySlug(r.parent)}`} flexDirection="row" flexWrap="nowrap">
           <Text dimColor>{`${indentOf(r.depth)}  ${r.n} older done not shown`}</Text>
         </Box>
       )
     }
     return (
-      <Box key={`work-more-${i}`} flexDirection="row">
+      <Box key={`work-more-${i}`} flexDirection="row" flexWrap="nowrap">
         <Text dimColor>{`… ${r.n} more rows: narrow the list with search or a filter`}</Text>
       </Box>
     )
@@ -393,8 +441,14 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       )
     }
     if (!filtered) return <Text>Everything here is done.</Text>
+    if (remote) {
+      return pressLine('work-clear-empty', [
+        { id: 'text', label: 'No work matches.' },
+        { id: 'clear', label: 'Clear filters', onPress: hd.clear },
+      ])
+    }
     return (
-      <Box flexDirection="row" columnGap={2}>
+      <Box flexDirection="row" flexWrap="nowrap" columnGap={2}>
         <Text>No work matches.</Text>
         {press('work-clear-empty', 'Clear filters', hd.clear)}
       </Box>
@@ -404,7 +458,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   const table = (
     <Box key="work-table" flexDirection="column">
       {header}
-      {headerRule}
+      {remote ? null : headerRule}
       {v.rows.map((r, i) => rowNode(r, i))}
       {v.rows.length === 0 ? empty() : null}
     </Box>
@@ -428,8 +482,8 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
         <Box key={`work-card-${k}`} flexDirection="column" backgroundColor={selected ? SELECTED_BG[v.scheme] : SURFACE_BG[v.scheme]} paddingLeft={1} paddingRight={1}>
           {remote ? press(`work-open-${k}`, cut(it.title, 2 * w), () => hd.select(it.key), { dim: it.state === 'done' }) : <Button key={`work-open-${k}`} plain {...(it.state === 'done' ? { dimColor: true } : {})} label={line1} onPress={() => hd.select(it.key)} />}
           {!remote && line2 !== '' ? <Text dimColor={it.state === 'done'}>{line2}</Text> : null}
-          <Box flexDirection="row" justifyContent="space-between">
-            <Box flexDirection="row">
+          <Box flexDirection="row" flexWrap="nowrap" justifyContent="space-between">
+            <Box flexDirection="row" flexWrap="nowrap">
               {markNode(it.type)}
               {it.number !== undefined ? (
                 v.repo !== undefined ? (
@@ -442,13 +496,13 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
             {it.card !== undefined ? <Text dimColor>{it.card}</Text> : null}
           </Box>
           {(it.state === 'working' || it.state === 'review') && it.model !== undefined ? (
-            <Box flexDirection="row">
+            <Box flexDirection="row" flexWrap="nowrap">
               {badge(it) !== '' ? <Text>{`${badge(it)} `}</Text> : it.tier !== undefined ? <Text color={TIER_COLOR[it.tier]}>● </Text> : <Text dimColor>● </Text>}
               <Text wrap="truncate-end">{[it.model, it.attempt].filter((x): x is string => x !== undefined && x !== '').join(' · ') + cost}</Text>
             </Box>
           ) : null}
           {it.state === 'blocked' ? (
-            <Box flexDirection="row">
+            <Box flexDirection="row" flexWrap="nowrap">
               <Text bold color={lozenge.fg} backgroundColor={lozenge.bg}>
                 {` ${STATE_LABEL.blocked.toUpperCase()} `}
               </Text>
@@ -472,20 +526,26 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       }
       const title = r.group ? 'No epic' : cut(r.title, Math.max(4, B.col * (stack ? 1 : 2)))
       return (
-        <Box key={`work-lane-${k}`} flexDirection="column" gap={1}>
+        <Box key={`work-lane-${k}`} flexDirection="column" gap={gap}>
           {remote ? (
-            // MOD-402 (#564): the toggle, the number and the title share one line; the mark and the bar sit on the next
-            pressLine(
-              `work-lane-head-${k}`,
-              [
-                { id: 'toggle', label: l.open ? '▾' : '▸', onPress: () => hd.toggle(r.key) },
-                ...(r.number !== undefined ? [{ id: 'number', label: `#${r.number}` }] : []),
-                { id: 'title', label: title, bold: true },
-              ],
-              { sep: ' ' },
-            )
+            // MOD-403 (#566): one row: the mark, the head (the toggle, the number and the title) in a box of fixed width, then the bar
+            <Box key={`work-lane-top-${k}`} flexDirection="row" flexWrap="nowrap">
+              {mark ? markNode(r.type) : null}
+              <Box width={Math.max(8, (stack ? B.col : 2 * B.col) - 16)} overflow="hidden">
+                {pressLine(
+                  `work-lane-head-${k}`,
+                  [
+                    { id: 'toggle', label: l.open ? '▾' : '▸', onPress: () => hd.toggle(r.key) },
+                    ...(r.number !== undefined ? [{ id: 'number', label: `#${r.number}` }] : []),
+                    { id: 'title', label: title, bold: true },
+                  ],
+                  { sep: ' ' },
+                )}
+              </Box>
+              {bar(r.done, r.leaves)}
+            </Box>
           ) : (
-            <Box flexDirection="row">
+            <Box flexDirection="row" flexWrap="nowrap">
               {press(`work-toggle-${k}`, l.open ? '▾' : '▸', () => hd.toggle(r.key))}
               <Text>{' '}</Text>
               {mark ? markNode(r.type) : null}
@@ -504,25 +564,19 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
               {bar(r.done, r.leaves)}
             </Box>
           )}
-          {remote ? (
-            <Box key={`work-lane-bar-${k}`} flexDirection="row">
-              {mark ? markNode(r.type) : null}
-              {bar(r.done, r.leaves)}
-            </Box>
-          ) : null}
           {!l.open ? null : picking ? (
-            <Box key={`work-col-${k}-${pick}`} flexDirection="column" gap={1} width={B.col}>
+            <Box key={`work-col-${k}-${pick}`} flexDirection="column" gap={gap} width={B.col}>
               {body(pick).length > 0 ? body(pick) : <Text dimColor>{`None in ${BOARD_LABEL[pick]}`}</Text>}
             </Box>
           ) : stack ? (
-            <Box flexDirection="column" gap={1}>
+            <Box flexDirection="column" gap={gap}>
               {BOARD_COLS.map(c => {
                 const nodes = body(c)
                 if (nodes.length === 0) return null
                 return (
                   <Box key={`work-colbox-${k}-${c}`} flexDirection="column">
                     <Text dimColor>{`${BOARD_LABEL[c].toUpperCase()} · ${laneCount(l, c)}`}</Text>
-                    <Box key={`work-col-${k}-${c}`} flexDirection="column" gap={1} width={B.col}>
+                    <Box key={`work-col-${k}-${c}`} flexDirection="column" gap={gap} width={B.col}>
                       {nodes}
                     </Box>
                   </Box>
@@ -530,11 +584,11 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
               })}
             </Box>
           ) : (
-            <Box flexDirection="row" columnGap={2}>
+            <Box flexDirection="row" flexWrap="nowrap" columnGap={2}>
               {BOARD_COLS.map(c => {
                 const nodes = body(c)
                 return (
-                  <Box key={`work-col-${k}-${c}`} flexDirection="column" gap={1} width={B.col}>
+                  <Box key={`work-col-${k}-${c}`} flexDirection="column" gap={gap} width={B.col}>
                     {nodes.length > 0 ? nodes : <Text dimColor>—</Text>}
                   </Box>
                 )
@@ -545,7 +599,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       )
     }
     return (
-      <Box key="work-board" flexDirection="column" gap={1}>
+      <Box key="work-board" flexDirection="column" gap={gap}>
         {picking && lanes.length > 0 ? (
           remote ? (
             // MOD-402 (#564): the columns are a line of links; the picked one is bold text with no link
@@ -564,12 +618,21 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           )
         ) : null}
         {stack || lanes.length === 0 ? null : (
-          <Box key="work-board-header" flexDirection="row" columnGap={2}>
-            {BOARD_COLS.map(c => (
-              <Text key={`work-board-head-${c}`} dimColor>
-                {fit(`${BOARD_LABEL[c].toUpperCase()} ${counts[c]}`, B.col)}
-              </Text>
-            ))}
+          <Box key="work-board-header" flexDirection="row" flexWrap="nowrap" columnGap={2}>
+            {BOARD_COLS.map(c =>
+              remote ? (
+                // MOD-403 (#566): the label sits in a box of the column's width, not padded with spaces
+                <Box key={`work-board-head-${c}`} width={B.col}>
+                  <Text dimColor bold>
+                    {cut(`${BOARD_LABEL[c].toUpperCase()} ${counts[c]}`, B.col)}
+                  </Text>
+                </Box>
+              ) : (
+                <Text key={`work-board-head-${c}`} dimColor>
+                  {fit(`${BOARD_LABEL[c].toUpperCase()} ${counts[c]}`, B.col)}
+                </Text>
+              ),
+            )}
           </Box>
         )}
         {lanes.map(lane)}
@@ -597,8 +660,14 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const trailText = cut(d.trail.map(t => (t.group ? 'No epic' : t.title)).join(' / '), Math.max(4, width - 10))
     const parentItem = d.trail[d.trail.length - 1]
     const field = (name: string, value: RenderNode): RenderNode => (
-      <Box key={`work-field-${name.toLowerCase().replace(/ /g, '-')}`} flexDirection="row">
-        <Text dimColor>{fit(name, 12)}</Text>
+      <Box key={`work-field-${name.toLowerCase().replace(/ /g, '-')}`} flexDirection="row" flexWrap="nowrap">
+        {remote ? (
+          <Box width={12}>
+            <Text dimColor>{name}</Text>
+          </Box>
+        ) : (
+          <Text dimColor>{fit(name, 12)}</Text>
+        )}
         {value}
       </Box>
     )
@@ -608,14 +677,22 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
     const closeLabel = side ? 'Close' : v.view === 'board' ? '← Back to board' : '← Back to list'
     const queuedNote = it.state === 'queued' && it.slot ? ' waiting for a slot' : it.state === 'queued' && it.onDisk ? ' worktree on disk' : ''
     return (
-      <Box key="work-detail" flexDirection="column" gap={1} width={width}>
-        <Box flexDirection="row" columnGap={1}>
-          <Text dimColor wrap="wrap">
-            {trailText}
-          </Text>
-          {remote ? press('work-detail-close', closeLabel, () => hd.select(undefined)) : <Button key="work-detail-close" label={closeLabel} onPress={() => hd.select(undefined)} />}
-        </Box>
-        <Box flexDirection="row">
+      <Box key="work-detail" flexDirection="column" gap={gap} width={width}>
+        {remote ? (
+          // MOD-403 (#566): the Close link and the trail are one Markdown, alone on its line
+          pressLine('work-detail-head', [
+            { id: 'close', label: closeLabel, onPress: () => hd.select(undefined) },
+            { id: 'trail', label: trailText },
+          ])
+        ) : (
+          <Box flexDirection="row" flexWrap="nowrap" columnGap={1}>
+            <Text dimColor wrap="wrap">
+              {trailText}
+            </Text>
+            <Button key="work-detail-close" label={closeLabel} onPress={() => hd.select(undefined)} />
+          </Box>
+        )}
+        <Box flexDirection="row" flexWrap="nowrap">
           {mark ? markNode(it.type) : <Text>{'  '}</Text>}
           {it.number !== undefined ? (
             v.repo !== undefined ? (
@@ -637,7 +714,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
               Asked · waiting for the session
             </Text>
           ) : d.confirming ? (
-            <Box key={`work-confirm-${k}`} flexDirection="row" columnGap={1}>
+            <Box key={`work-confirm-${k}`} flexDirection="row" flexWrap="nowrap" columnGap={1}>
               <Text>{by.length > 0 ? `Still waiting on ${by.join(', ')}. Unblock anyway?` : 'Unblock anyway?'}</Text>
               <Button key={`work-confirm-yes-${k}`} variant="primary" label="Unblock" onPress={() => hd.confirm(it.key, true)} />
               <Button key={`work-confirm-no-${k}`} label="Cancel" onPress={() => hd.confirm(it.key, false)} />
@@ -652,7 +729,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
           {field(
             'Worker',
             it.model !== undefined ? (
-              <Box flexDirection="row">
+              <Box flexDirection="row" flexWrap="nowrap">
                 {badge(it) !== '' ? <Text>{`${badge(it)} `}</Text> : it.tier !== undefined ? <Text color={TIER_COLOR[it.tier]}>● </Text> : <Text dimColor>● </Text>}
                 <Text>{it.model}</Text>
               </Box>
@@ -667,12 +744,26 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
             ? field(
                 'Blocked by',
                 by.length > 0 ? (
-                  <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-                    {by.map(id => {
-                      const target = leafOfCard(v.model, id)
-                      return target !== undefined ? press(`work-by-${keySlug(id)}`, id, () => hd.select(target.key)) : <Text key={`work-by-${keySlug(id)}`}>{id}</Text>
-                    })}
-                  </Box>
+                  remote ? (
+                    // MOD-403 (#566): the ids are one Markdown in a box of fixed width
+                    <Box width={Math.max(8, width - 12)}>
+                      {pressLine(
+                        'work-by',
+                        by.map((id): LinePart => {
+                          const target = leafOfCard(v.model, id)
+                          return target !== undefined ? { id: keySlug(id), label: id, onPress: () => hd.select(target.key) } : { id: keySlug(id), label: id }
+                        }),
+                        { sep: ', ' },
+                      )}
+                    </Box>
+                  ) : (
+                    <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+                      {by.map(id => {
+                        const target = leafOfCard(v.model, id)
+                        return target !== undefined ? press(`work-by-${keySlug(id)}`, id, () => hd.select(target.key)) : <Text key={`work-by-${keySlug(id)}`}>{id}</Text>
+                      })}
+                    </Box>
+                  )
                 ) : (
                   dash
                 ),
@@ -686,7 +777,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
             <Text dimColor>{it.card !== undefined ? 'No activity recorded for this item.' : 'No card yet.'}</Text>
           ) : (
             d.activity.map((e, i) => (
-              <Box key={`work-event-${i}`} flexDirection="row">
+              <Box key={`work-event-${i}`} flexDirection="row" flexWrap="nowrap">
                 <Text dimColor>● </Text>
                 <Text>{e.text}</Text>
                 <Text dimColor>{`  ${e.ago}`}</Text>
@@ -701,14 +792,14 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   // MOD-392 (#547): the desktop and vscode panes have their own close, so the footer is drawn on the terminal and on mobile only
   const footer =
     p.surface === 'desktop' || p.surface === 'vscode' ? null : (
-      <Box key="work-footer" flexDirection="row">
+      <Box key="work-footer" flexDirection="row" flexWrap="nowrap">
         <Button key="work-close" label="Close" role="dismiss" onPress={hd.close} />
       </Box>
     )
 
   if (v.detail !== undefined && !side) {
     return (
-      <Box key="work-pane" flexDirection="column" gap={1}>
+      <Box key="work-pane" flexDirection="column" gap={gap}>
         {detailNode(v.detail)}
         {footer}
       </Box>
@@ -716,7 +807,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
   }
 
   return (
-    <Box key="work-pane" flexDirection="column" gap={1}>
+    <Box key="work-pane" flexDirection="column" gap={gap}>
       {toolbar}
       {v.notes.length > 0 ? (
         <Box flexDirection="column">
@@ -732,7 +823,7 @@ export function workTree(p: PaneTable, v: WorkView, hd: WorkHandlers): RenderNod
       ) : null}
       {remote && picking ? null : summary}
       {v.detail !== undefined ? (
-        <Box flexDirection="row" columnGap={2}>
+        <Box flexDirection="row" flexWrap="nowrap" columnGap={2}>
           {main()}
           {detailNode(v.detail)}
         </Box>
