@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.66 to 0.9.67
+
+No action needed. From engine 2.1.323 on, `claude plugin validate` type-checks the mod's hooks and tests, and it now reports no type error. Nothing changes at runtime. Detail: [CHANGELOG 0.9.67](../CHANGELOG.md).
+
 ### From 0.9.65 to 0.9.66
 
 No action needed. The Work pane's toolbar starts with a bold Work heading, and its notes fold behind one dim `N notes · show` line. Below 100 columns the board shows one column per lane, picked with a Column select (Working at first); mobile still stacks every column. On the desktop, the editor and mobile, each item type is drawn as a small coloured icon; the terminal keeps its glyphs. Detail: [CHANGELOG 0.9.66](../CHANGELOG.md).
