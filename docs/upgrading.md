@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.67 to 0.9.68
+
+No action needed. On the desktop, the editor and the phone the Work pane is redrawn: its rows stay on one line, its controls sit on lines of links, statuses are pills and progress is a thin bar. The terminal draws as before. Detail: [CHANGELOG 0.9.68](../CHANGELOG.md).
+
 ### From 0.9.66 to 0.9.67
 
 No action needed. From engine 2.1.323 on, `claude plugin validate` type-checks the mod's hooks and tests, and it now reports no type error. Nothing changes at runtime. Detail: [CHANGELOG 0.9.67](../CHANGELOG.md).

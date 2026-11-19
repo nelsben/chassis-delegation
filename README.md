@@ -71,4 +71,4 @@ To load it in VS Code, in the desktop app, or in every session, see [docs/instal
 - [Upgrading](docs/upgrading.md): `/delegation update`, and what to do at each version.
 - [Changelog](CHANGELOG.md).
 
-Version 0.9.67, MIT.
+Version 0.9.68, MIT.
