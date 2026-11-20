@@ -166,6 +166,7 @@ import {
   scopeSizeWarning,
   tierHint,
   hedgeHints,
+  redTestWarning,
   parseCard,
   parseDispatchArgs,
   parseDispatchTool,
@@ -9245,6 +9246,9 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   if (sizeWarn) out.push(`   ${sizeWarn}`)
   const economyHint = tierHint({ tier, scope: sizeScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest })
   if (economyHint) out.push(`   ${economyHint}`)
+  // MOD-408: a code card with no red test is said once (nothing is refused)
+  const noRedWarn = redTestWarning({ redTest: card.redTest, purpose: typeof card.fields.purpose === 'string' ? card.fields.purpose : undefined, kind: classKind, scope: sizeScope })
+  if (noRedWarn) out.push(`   ${noRedWarn}`)
   // MOD-140: a Done when line that hedges hands the worker a decision; said once per line, at most three (nothing is refused)
   for (const line of hedgeHints(doneWhenOf(card.body))) out.push(`   ${line}`)
   if (here) {
