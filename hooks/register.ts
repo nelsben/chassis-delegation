@@ -233,7 +233,7 @@ import { suggest as suggestPair, suggestionLine, type AdaptiveMode } from './lib
 import { cachedState, rememberState, landedTail, matchPlanned, openCandidates, MATCH_POOL, type StateCache, plannedFromLanded, plannedFromPlan, refusalLine, suggestionLine as plannedLine, issueMatchOf, type IssueMatchMode, type Planned, issueLinkCheck, ISSUE_LINK_HINT, type IssueLinkMode } from './lib/issuematch'
 import { choiceLine, cleanReason, historyLine, pairHistory, reasonsCut, type ClassOf } from './lib/choice'
 import { classOfCardText } from './lib/classof'
-import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
+import { cardClassName, cardKind, cardSize, liveClass, clampExplore, explorePlan, exploreLabel, type CardKind, type ExplorePlan } from './lib/explore'
 import { CARD_TOOL, cardsFromFields, fixesOf, spikeLinkOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, globGapWarnings, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
@@ -3373,7 +3373,7 @@ async function classOfFor($: Host, root: string, rows: LedgerRow[]): Promise<Cla
   const hit = classOfByRows.get(rows)
   if (hit) return hit
   const need = new Set<string>()
-  for (const r of rows) if (typeof r.task === 'string' && r.task !== '' && !(typeof r.class === 'string' && r.class !== '') && !classByTask.has(r.task)) need.add(r.task)
+  for (const r of rows) if (typeof r.task === 'string' && r.task !== '' && liveClass(r.class) === undefined && !classByTask.has(r.task)) need.add(r.task)
   if (need.size > 0) {
     const dir = `${root.replace(/\/+$/, '')}/${(cfg.cardDir || DEFAULT_CARD_DIR).replace(/^\/+|\/+$/g, '')}`
     let names: string[] = []
@@ -9189,7 +9189,7 @@ async function dispatchBody($: Host, parsed: DispatchArgs): Promise<string> {
   // MOD-274: the card's class (kind and size), named first on the history line and written on its attempts
   const classScope = (shownHeader?.fields.scope ?? '').split(',').filter(Boolean)
   const classKind = cardKind({ kind: card.fields.kind, purpose: card.fields.purpose, title: card.title, scope: classScope })
-  const className = cardClassName(classKind, cardSize(tierHint({ tier, scope: classScope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined))
+  const className = cardClassName(classKind, cardSize(classScope))
   const classLedger = await ledgerAt($, root)
   out.push(...choiceLines(classLedger.rows, { classOf: await classOfFor($, root, classLedger.rows), tier, alias, tierReason: cleanReason(card.fields.tier_reason), effort: typeof card.fields.effort === 'string' ? card.fields.effort : undefined, effortReason: cleanReason(card.fields.effort_reason), cls: className }).map(l => `   ${l}`))
   // MOD-366: the advisor rule is said only when the card set it
@@ -9971,7 +9971,7 @@ async function runCard($: Host, input: Record<string, unknown>): Promise<string>
       }
     }
     // MOD-275: the card's class, as the dry run names it, so the suggestion is for this kind of card
-    const cardClass = cardClassName(cardKind({ title: c.title, scope: c.scope }), cardSize(tierHint({ tier: c.tier, scope: c.scope, doneCount: doneStatementCount(doneWhenOf(c.text)), redTest: c.redTest }) !== undefined))
+    const cardClass = cardClassName(cardKind({ title: c.title, scope: c.scope }), cardSize(c.scope))
     const choiceLedger = await ledgerAt($, root)
     const choice = choiceLines(choiceLedger.rows, { classOf: await classOfFor($, root, choiceLedger.rows), tier: c.tier, alias, tierReason: c.tierReason ?? '', effort: c.effort, effortReason: c.effortReason ?? '', suggestCls: cardClass })
     shown.push([cardSummary(c, alias), ...choice, ...(second ? [second] : []), '', '```', header, '```', ...(notes.length > 0 ? ['', ...notes] : [])].join('\n'))

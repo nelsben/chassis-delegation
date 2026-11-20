@@ -7,13 +7,13 @@ const C = () => import('../../hooks/lib/choice.ts')
 const card = (fm, body = '## Done when\n\n- one thing\n') => `---\n${fm}\n---\n${body}`
 
 describe('MOD-277: classOfCardText', () => {
-  test('kind: wins; else inferred from the title and scope; size small when the economy hint fires', async () => {
+  test('kind: wins; else inferred from the title and scope; size by breadth', async () => {
     const { classOfCardText } = await K()
-    expect(classOfCardText(card('id: A-1\ntitle: Add a thing\ndomain: mod\ntier: standard\nkind: bug\nscope: [hooks/lib/x.ts]\nred_test: a test'))).toBe('bug/small')
-    expect(classOfCardText(card('id: A-2\ntitle: Fix the thing\ndomain: mod\ntier: standard\nscope: [hooks/**]\nred_test: a test'))).toBe('bug/large')
-    expect(classOfCardText(card('id: A-3\ntitle: Docs\ndomain: mod\ntier: standard\nscope: [docs/**, CHANGELOG.md]\nred_test: none'))).toBe('docs/large')
-    expect(classOfCardText(card('id: A-4\ntitle: Add tests\ndomain: mod\ntier: frontier\nscope: [tests/**]\nred_test: a test'))).toBe('test/large')
-    expect(classOfCardText(card('id: A-5\ntitle: Add a thing\ndomain: mod\nscope: [hooks/lib/a.ts, hooks/lib/b.ts]\nred_test: a test'))).toBe('feature/small')
+    expect(classOfCardText(card('id: A-1\ntitle: Add a thing\ndomain: mod\ntier: standard\nkind: bug\nscope: [hooks/lib/x.ts]\nred_test: a test'))).toBe('bug/narrow')
+    expect(classOfCardText(card('id: A-2\ntitle: Fix the thing\ndomain: mod\ntier: standard\nscope: [hooks/**]\nred_test: a test'))).toBe('bug/wide')
+    expect(classOfCardText(card('id: A-3\ntitle: Docs\ndomain: mod\ntier: standard\nscope: [docs/**, CHANGELOG.md]\nred_test: none'))).toBe('docs/narrow')
+    expect(classOfCardText(card('id: A-4\ntitle: Add tests\ndomain: mod\ntier: frontier\nscope: [tests/**]\nred_test: a test'))).toBe('test/narrow')
+    expect(classOfCardText(card('id: A-5\ntitle: Add a thing\ndomain: mod\nscope: [hooks/lib/a.ts, hooks/lib/b.ts]\nred_test: a test'))).toBe('feature/narrow')
   })
   test('text that is not a card has no class', async () => {
     const { classOfCardText } = await K()
@@ -31,13 +31,13 @@ describe('MOD-277: classOfFiles feeds cardOutcomes', () => {
       'MOD-10-other.md': card('id: MOD-10\ntitle: Other\ndomain: mod\nscope: [hooks/**]\nred_test: a test'),
     })
     const sp = (task, over = {}) => ({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', verdict: 'consistent', ...over })
-    const rows = [sp('MOD-1'), sp('MOD-10'), sp('MOD-2'), sp('MOD-3', { class: 'test/large' })]
-    expect(classOf('MOD-1')).toBe('bug/small')
-    expect(classOf('MOD-10')).toBe('feature/large') // MOD-1 never matches MOD-10's file
+    const rows = [sp('MOD-1'), sp('MOD-10'), sp('MOD-2'), sp('MOD-3', { class: 'test/wide' })]
+    expect(classOf('MOD-1')).toBe('bug/narrow')
+    expect(classOf('MOD-10')).toBe('feature/wide') // MOD-1 never matches MOD-10's file
     expect(classOf('MOD-2')).toBeUndefined()
-    expect(cardOutcomes(rows, 'bug/small', classOf).map(c => c.task)).toEqual(['MOD-1'])
-    expect(cardOutcomes(rows, 'feature/large', classOf).map(c => c.task)).toEqual(['MOD-10'])
-    expect(cardOutcomes(rows, 'test/large', classOf).map(c => c.task)).toEqual(['MOD-3'])
+    expect(cardOutcomes(rows, 'bug/narrow', classOf).map(c => c.task)).toEqual(['MOD-1'])
+    expect(cardOutcomes(rows, 'feature/wide', classOf).map(c => c.task)).toEqual(['MOD-10'])
+    expect(cardOutcomes(rows, 'test/wide', classOf).map(c => c.task)).toEqual(['MOD-3'])
     expect(cardOutcomes(rows, undefined, classOf).find(c => c.task === 'MOD-2').cls).toBeUndefined()
   })
 })

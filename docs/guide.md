@@ -188,6 +188,8 @@ The built-in `findings` gate checks the file at the worker's sha against the car
 
 A spike never explores: its card kind is `spike`, and the adaptive picks leave its model and effort alone. The gate makes no network call, so a URL it accepts may still be wrong; at review the brain spot-checks a few of the cited URLs.
 
+A card's class is `<kind>/<size>`, and the size is its breadth: the count of source paths in its scope (docs, tests and `.md` paths do not count). `narrow` is 0 to 2 source paths, `mid` is 3 or 4, and `wide` is 5 or more or any glob. The history line and the cheaper-pair suggestion work per class. A ledger row stamped with an older size (`/small` or `/large`) is classed again from its card file.
+
 A build card can say which spike it was planned from with `spike: <ID>` (one task id, e.g. `spike: MOD-372`; the card tool takes `spike` too). Its spawn rows in the ledger carry `spike`, so first-try pass rate can be compared for cards with and without one; a value that is not a task id is warned about at dispatch and not recorded.
 
 ## One-client resources

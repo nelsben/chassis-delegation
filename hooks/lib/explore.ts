@@ -9,11 +9,11 @@ import { clampEffort, EFFORTS, type Alias, type Effort, type Tier } from './tier
 // ---- the class ---------------------------------------------------------------------------------
 export const CARD_KINDS = ['release', 'docs', 'bug', 'test', 'feature', 'spike'] as const
 export type CardKind = (typeof CARD_KINDS)[number]
-export type CardSize = 'small' | 'large'
+export type CardSize = 'narrow' | 'mid' | 'wide'
 
 const isKind = (v: unknown): v is CardKind => typeof v === 'string' && (CARD_KINDS as readonly string[]).includes(v)
 
-const cleanPath = (s: string): string => s.trim().replace(/^\.?\//, '')
+export const cleanPath = (s: string): string => s.trim().replace(/^\.?\//, '')
 const VERSION_FILES = /^(?:package(?:-lock)?\.json|VERSION|\.claude-plugin\/(?:plugin|marketplace)\.json|hooks\/lib\/version\.ts)$/
 export const isDocsPath = (p: string): boolean => p === 'CHANGELOG.md' || p === 'docs' || p.startsWith('docs/') || VERSION_FILES.test(p)
 export const isTestPath = (p: string): boolean => p === 'tests' || p.startsWith('tests/')
@@ -35,10 +35,20 @@ export function cardKind(i: { kind?: unknown; purpose?: unknown; title: string; 
   return 'feature'
 }
 
-/** Small when the economy hint (tierHint) would fire for the card, else large. */
-export const cardSize = (economyHintFires: boolean): CardSize => (economyHintFires ? 'small' : 'large')
+/**
+ * MOD-409: a card's size by breadth: the source entries of its scope (cleaned, not empty, not a docs path, not a test path, not `.md`).
+ * Wide when any holds a glob character or there are 5 or more; mid for 3 or 4; narrow for 0 to 2.
+ */
+export function cardSize(scope: readonly string[]): CardSize {
+  const src = scope.map(cleanPath).filter(p => p !== '' && !isDocsPath(p) && !isTestPath(p) && !p.endsWith('.md'))
+  if (src.some(p => /[*?[\]{}]/.test(p)) || src.length >= 5) return 'wide'
+  return src.length >= 3 ? 'mid' : 'narrow'
+}
 
-/** `feature/large`. */
+/** MOD-409: a recorded class that is still live: a non-empty string not ending in the old `/small` or `/large` sizes. */
+export const liveClass = (cls: unknown): string | undefined => (typeof cls === 'string' && cls !== '' && !/\/(?:small|large)$/.test(cls) ? cls : undefined)
+
+/** `feature/narrow`. */
 export const cardClassName = (kind: CardKind, size: CardSize): string => `${kind}/${size}`
 
 // ---- the draw ----------------------------------------------------------------------------------

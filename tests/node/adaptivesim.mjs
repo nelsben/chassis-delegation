@@ -8,7 +8,7 @@ const X = () => import('../../hooks/lib/explore.ts')
 export const SEEDS = [110, 111, 112, 113, 114]
 export const MANY_SEEDS = Array.from({ length: 60 }, (_, i) => 201 + i)
 export const SHARES = [0.9, 0.05, 0.03, 0.01, 0.01]
-export const CLASSES = ['feature/large', 'bug/small', 'test/large', 'feature/small', 'bug/large']
+export const CLASSES = ['feature/wide', 'bug/narrow', 'test/wide', 'feature/narrow', 'bug/wide']
 export const CARDS = 300
 export const EXPLORE = 0.5 // the explore option's top value: the most evidence a 300-card ledger can gather
 export const CV = 0.9 // coefficient of variation of one attempt's usd, as measured on this repo

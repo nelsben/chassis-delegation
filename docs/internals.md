@@ -144,6 +144,8 @@ A prune writes `store: pruned <n> records (<x> MiB to <y> MiB of 4 MiB)` at sess
 
 ## Evidence
 
+A card's class (`<kind>/<size>`, on every spawn row) sizes the card by breadth (`cardSize` in `hooks/lib/explore.ts`): `narrow` for 0 to 2 source paths in scope, `mid` for 3 or 4, `wide` for 5 or more or any glob; docs, test and `.md` paths do not count. `liveClass` drops the older `/small` and `/large` stamps, so those rows are classed again from their card file (`classOfCardText`).
+
 `bin/evidence.mjs` reads the `.delegation/ledger.jsonl` files named on its command
 line and prints one JSON object: outcomes, cost and time, with repos labelled A, B, C
 in argument order. It reads only those files, writes nothing and needs only Node.

@@ -116,17 +116,17 @@ describe('MOD-277: the simulation counts a rescue', () => {
     const seen = []
     for (let i = 0; i < 400; i++) {
       const task = `V-${i}`
-      const plan = explorePlan({ task, attempt: 1, hasEffort: false, hasReason: false, tier: 'standard', kind: 'feature', className: 'feature/large', explore: 0.5, baseEffort: 'medium', maxEffort: 'high', aliasOfTier, rows })
+      const plan = explorePlan({ task, attempt: 1, hasEffort: false, hasReason: false, tier: 'standard', kind: 'feature', className: 'feature/wide', explore: 0.5, baseEffort: 'medium', maxEffort: 'high', aliasOfTier, rows })
       if (!plan) {
-        rows.push({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', class: 'feature/large', verdict: 'consistent', usd: 0.9 })
+        rows.push({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', class: 'feature/wide', verdict: 'consistent', usd: 0.9 })
         continue
       }
-      const tierCards = cardOutcomes(rows, 'feature/large').filter(c => c.explored && c.counted && c.alias === 'haiku' && c.effort === 'medium').length
+      const tierCards = cardOutcomes(rows, 'feature/wide').filter(c => c.explored && c.counted && c.alias === 'haiku' && c.effort === 'medium').length
       seen.push([plan.axis, tierCards])
       // every third explored card fails its first attempt and is rescued on the default pair: it still counts, for the pair it ran
       const fail = seen.length % 3 === 0
-      rows.push({ kind: 'spawn', task, attempt: 1, alias: plan.alias, effort: plan.effort, class: 'feature/large', explore: true, exploreFrom: 'sonnet/medium', verdict: fail ? 'refuted' : 'consistent', ...(fail ? { firstFailed: 'gate' } : {}), usd: 0.5 })
-      if (fail) rows.push({ kind: 'spawn', task, attempt: 2, alias: 'sonnet', effort: 'medium', class: 'feature/large', verdict: 'consistent', usd: 0.9 })
+      rows.push({ kind: 'spawn', task, attempt: 1, alias: plan.alias, effort: plan.effort, class: 'feature/wide', explore: true, exploreFrom: 'sonnet/medium', verdict: fail ? 'refuted' : 'consistent', ...(fail ? { firstFailed: 'gate' } : {}), usd: 0.5 })
+      if (fail) rows.push({ kind: 'spawn', task, attempt: 2, alias: 'sonnet', effort: 'medium', class: 'feature/wide', verdict: 'consistent', usd: 0.9 })
     }
     expect(seen.filter(([axis]) => axis === 'tier').length).toBe(30)
     for (const [axis, tierCards] of seen) expect(axis).toBe(tierCards < 30 ? 'tier' : 'effort')
@@ -177,7 +177,7 @@ describe('MOD-275: the simulation over many seeds (rates, not a lucky seed)', ()
 
 describe('MOD-275: the suggestion function, on hand-built ledgers', () => {
   const row = (task, alias, effort, pass, usd, over = {}) => ({
-    kind: 'spawn', task, attempt: 1, tier: 'standard', alias, effort, class: 'feature/large', effortSource: 'tier',
+    kind: 'spawn', task, attempt: 1, tier: 'standard', alias, effort, class: 'feature/wide', effortSource: 'tier',
     verdict: pass ? 'consistent' : 'refuted', ...(pass ? {} : { firstFailed: 'gate' }), usd, ...over,
   })
   const explored = (task, alias, effort, pass, usd) => row(task, alias, effort, pass, usd, { effortSource: 'explore', explore: true, exploreFrom: 'sonnet/medium' })
@@ -189,63 +189,63 @@ describe('MOD-275: the suggestion function, on hand-built ledgers', () => {
 
   test('the red case: an equal rate returns the cheaper pair with the numbers it used; none exists yet', async () => {
     const { suggest } = await A()
-    const s = suggest(ledger(60, 60), 'feature/large')
-    expect(s).toMatchObject({ class: 'feature/large', alias: 'sonnet', effort: 'low', n: 60, defaultAlias: 'sonnet', defaultEffort: 'medium', defaultRate: 1 })
+    const s = suggest(ledger(60, 60), 'feature/wide')
+    expect(s).toMatchObject({ class: 'feature/wide', alias: 'sonnet', effort: 'low', n: 60, defaultAlias: 'sonnet', defaultEffort: 'medium', defaultRate: 1 })
     expect(s.lowerBound > 0.9 && s.lowerBound < 1).toBe(true)
     expect(s.usdPerConfirmed).toBeCloseTo(0.5, 1)
     expect(s.defaultUsdPerConfirmed).toBeCloseTo(0.89, 1)
   })
   test('n under 20 returns none, and 20 is enough when the bound holds', async () => {
     const { suggest } = await A()
-    expect(suggest(ledger(60, 19), 'feature/large')).toBeUndefined()
-    expect(suggest(ledger(60, 200), 'feature/large')).toBeDefined()
-    expect(suggest(ledger(19, 60), 'feature/large')).toBeUndefined()
+    expect(suggest(ledger(60, 19), 'feature/wide')).toBeUndefined()
+    expect(suggest(ledger(60, 200), 'feature/wide')).toBeDefined()
+    expect(suggest(ledger(19, 60), 'feature/wide')).toBeUndefined()
   })
   test('the default pair is never suggested; another class and no class give none', async () => {
     const { suggest } = await A()
-    const s = suggest(ledger(60, 60), 'feature/large')
+    const s = suggest(ledger(60, 60), 'feature/wide')
     expect(`${s.alias}/${s.effort}`).not.toBe('sonnet/medium')
-    expect(suggest(ledger(60, 60), 'bug/small')).toBeUndefined()
-    expect(suggest([], 'feature/large')).toBeUndefined()
+    expect(suggest(ledger(60, 60), 'bug/narrow')).toBeUndefined()
+    expect(suggest([], 'feature/wide')).toBeUndefined()
   })
   test('hand-set cards (effort: or a reason) and cards on another tier are not in the population', async () => {
     const { suggest } = await A()
     const hand = ledger(60, 60).map(r => (r.explore ? r : { ...r, effortSource: 'card' }))
-    expect(suggest(hand, 'feature/large')).toBeUndefined()
+    expect(suggest(hand, 'feature/wide')).toBeUndefined()
     const reasoned = ledger(60, 60).map(r => (r.explore ? r : { ...r, tierReason: 'hard' }))
-    expect(suggest(reasoned, 'feature/large')).toBeUndefined()
+    expect(suggest(reasoned, 'feature/wide')).toBeUndefined()
     const economy = ledger(60, 60).map(r => ({ ...r, tier: 'economy' }))
-    expect(suggest(economy, 'feature/large')).toBeUndefined()
+    expect(suggest(economy, 'feature/wide')).toBeUndefined()
   })
   test('the cost gap must exceed one standard error of the candidate\'s own mean', async () => {
     const { suggest } = await A()
     // same mean, wide spread: no gap
     const noisy = ledger(60, 60).map(r => (r.explore ? { ...r, usd: Number(r.task.slice(2)) % 2 ? 0.05 : 1.7 } : r))
-    expect(suggest(noisy, 'feature/large')).toBeUndefined()
+    expect(suggest(noisy, 'feature/wide')).toBeUndefined()
     // dearer than the default: none
-    expect(suggest(ledger(60, 60).map(r => (r.explore ? { ...r, usd: 1.5 } : r)), 'feature/large')).toBeUndefined()
+    expect(suggest(ledger(60, 60).map(r => (r.explore ? { ...r, usd: 1.5 } : r)), 'feature/wide')).toBeUndefined()
   })
   test('the cheapest of the qualifying pairs is returned', async () => {
     const { suggest } = await A()
     const more = Array.from({ length: 60 }, (_, i) => explored(`H-${i}`, 'haiku', 'medium', true, 0.2 + (i % 2 ? 0.02 : -0.02)))
-    expect(suggest([...ledger(60, 60), ...more], 'feature/large')).toMatchObject({ alias: 'haiku', effort: 'medium' })
+    expect(suggest([...ledger(60, 60), ...more], 'feature/wide')).toMatchObject({ alias: 'haiku', effort: 'medium' })
   })
   test('a pair whose lower bound is more than 5 points under the default\'s rate is not suggested', async () => {
     const { suggest } = await A()
     const worse = ledger(60, 60).map((r, i) => (r.explore && i % 10 === 0 ? { ...r, verdict: 'refuted', firstFailed: 'gate' } : r))
-    expect(suggest(worse, 'feature/large')).toBeUndefined()
+    expect(suggest(worse, 'feature/wide')).toBeUndefined()
   })
   test('cards refuted on scope, files, branch or pr are left out of the rate', async () => {
     const { suggest } = await A()
     const scoped = Array.from({ length: 20 }, (_, i) => ({ ...explored(`Z-${i}`, 'sonnet', 'low', false, 0.5), firstFailed: 'scope' }))
     const withScope = [...ledger(60, 60), ...scoped]
-    expect(suggest(withScope, 'feature/large')).toMatchObject({ alias: 'sonnet', effort: 'low', n: 60 })
+    expect(suggest(withScope, 'feature/wide')).toMatchObject({ alias: 'sonnet', effort: 'low', n: 60 })
   })
   test('a recent failure on the suggested pair withdraws it', async () => {
     const { suggest } = await A()
     const rows = ledger(60, 60)
     rows.push({ ...explored('E-late', 'sonnet', 'low', false, 0.5) })
-    expect(suggest(rows, 'feature/large')).toBeUndefined()
+    expect(suggest(rows, 'feature/wide')).toBeUndefined()
   })
   test('the Wilson 90% lower bound is the standard score interval', async () => {
     const { wilsonLower } = await A()
@@ -257,8 +257,8 @@ describe('MOD-275: the suggestion function, on hand-built ledgers', () => {
   test('the suggestion line names the pair, the class and the numbers', async () => {
     const { suggestionLine } = await A()
     expect(
-      suggestionLine({ class: 'feature/large', alias: 'sonnet', effort: 'low', n: 24, lowerBound: 0.91, defaultRate: 0.96, usdPerConfirmed: 0.52, defaultUsdPerConfirmed: 0.89 }),
-    ).toBe('suggest sonnet/low for feature/large (n 24, lower bound 91% vs default 96%, $0.52 vs $0.89 per confirmed card)')
+      suggestionLine({ class: 'feature/wide', alias: 'sonnet', effort: 'low', n: 24, lowerBound: 0.91, defaultRate: 0.96, usdPerConfirmed: 0.52, defaultUsdPerConfirmed: 0.89 }),
+    ).toBe('suggest sonnet/low for feature/wide (n 24, lower bound 91% vs default 96%, $0.52 vs $0.89 per confirmed card)')
   })
 })
 

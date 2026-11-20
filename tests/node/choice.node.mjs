@@ -205,7 +205,7 @@ describe('MOD-276: top tiers need a reason, the tier mix and the frontier share'
 })
 
 describe('MOD-277: both arms are counted the same way', () => {
-  const sp = (task, over = {}) => ({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', verdict: 'consistent', usd: 1, class: 'feature/large', ...over })
+  const sp = (task, over = {}) => ({ kind: 'spawn', task, attempt: 1, alias: 'sonnet', effort: 'medium', verdict: 'consistent', usd: 1, class: 'feature/wide', ...over })
 
   test('an explored card refuted on attempt 1 and confirmed on attempt 2 counts as confirmed, with both attempts\' usd', async () => {
     const { cardOutcomes, pairHistory } = await C()
@@ -253,12 +253,12 @@ describe('MOD-277: classOf backfills a classless row', () => {
 
   test('classOf fills a row with no class; a row\'s own class wins; no answer leaves it unclassed', async () => {
     const { cardOutcomes, pairHistory } = await C()
-    const rows = [sp('A-1'), sp('A-2', { class: 'bug/small' }), sp('A-3')]
-    const classOf = t => (t === 'A-3' ? undefined : 'feature/large')
-    expect(cardOutcomes(rows, 'feature/large', classOf).map(c => c.task)).toEqual(['A-1'])
-    expect(cardOutcomes(rows, 'bug/small', classOf).map(c => c.task)).toEqual(['A-2'])
-    expect(cardOutcomes(rows, 'feature/large').map(c => c.task)).toEqual([])
-    expect(pairHistory(rows, 'feature/large', classOf)[0].n).toBe(1)
+    const rows = [sp('A-1'), sp('A-2', { class: 'bug/narrow' }), sp('A-3')]
+    const classOf = t => (t === 'A-3' ? undefined : 'feature/wide')
+    expect(cardOutcomes(rows, 'feature/wide', classOf).map(c => c.task)).toEqual(['A-1'])
+    expect(cardOutcomes(rows, 'bug/narrow', classOf).map(c => c.task)).toEqual(['A-2'])
+    expect(cardOutcomes(rows, 'feature/wide').map(c => c.task)).toEqual([])
+    expect(pairHistory(rows, 'feature/wide', classOf)[0].n).toBe(1)
     expect(cardOutcomes(rows, undefined, classOf)).toHaveLength(3)
   })
 })

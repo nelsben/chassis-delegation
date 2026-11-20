@@ -1,15 +1,13 @@
-// MOD-277: a card's class (`feature/large`) from its card file, for ledger rows written before MOD-274 recorded one. Pure: no host calls.
-import { doneStatementCount, doneWhenOf } from './card'
-import { parseCard, tierHint } from './dispatch'
+// MOD-277: a card's class (`feature/narrow`) from its card file, for ledger rows written before MOD-274 recorded one. Pure: no host calls.
+import { parseCard } from './dispatch'
 import { cardClassName, cardKind, cardSize } from './explore'
 
-/** The class of a card from its file's text (kind:, title, scope, and the economy-hint size rule); undefined when the text is not a card. */
+/** The class of a card from its file's text (kind:, title, scope, and the breadth size rule); undefined when the text is not a card. */
 export function classOfCardText(text: string): string | undefined {
   const card = parseCard(text)
   if ('error' in card) return undefined
   const kind = cardKind({ kind: card.fields.kind, purpose: card.fields.purpose, title: card.title, scope: card.scope })
-  const small = tierHint({ tier: card.tier ?? 'standard', scope: card.scope, doneCount: doneStatementCount(doneWhenOf(card.body)), redTest: card.redTest }) !== undefined
-  return cardClassName(kind, cardSize(small))
+  return cardClassName(kind, cardSize(card.scope))
 }
 
 /** A `classOf(task)` over card files: `files` maps a file name (`MOD-12-slug.md`) to its text; a task with no file has no class. */

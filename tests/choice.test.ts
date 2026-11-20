@@ -72,10 +72,10 @@ describe('MOD-270: the card tool takes the choice', () => {
 
 describe('MOD-275: the choice line suggests the cheapest pair that has passed for the class', () => {
   const input = { title: 'Rename the hair files', why: 'Mechanical.', doneWhen: ['the files are renamed'], redTest: 'none', repo: 'none', gate: 'check', scope: ['/out/hair/**'] }
-  // 60 default cards and 60 exploratory ones one effort level down, all passing, the exploratory ones cheaper; class feature/large
+  // 60 default cards and 60 exploratory ones one effort level down, all passing, the exploratory ones cheaper; class feature/wide
   const ledger = () => {
     const row = (task: string, effort: string, usd: number, over: Record<string, unknown> = {}) =>
-      JSON.stringify({ kind: 'spawn', task, attempt: 1, tier: 'standard', alias: 'sonnet', effort, class: 'feature/large', verdict: 'consistent', usd, effortSource: 'tier', ...over })
+      JSON.stringify({ kind: 'spawn', task, attempt: 1, tier: 'standard', alias: 'sonnet', effort, class: 'feature/wide', verdict: 'consistent', usd, effortSource: 'tier', ...over })
     return [
       ...Array.from({ length: 60 }, (_, i) => row(`D-${i}`, 'medium', i % 2 ? 0.99 : 0.79)),
       ...Array.from({ length: 60 }, (_, i) => row(`E-${i}`, 'low', i % 2 ? 0.55 : 0.45, { effortSource: 'explore', explore: true, exploreFrom: 'sonnet/medium' })),
@@ -86,7 +86,7 @@ describe('MOD-275: the choice line suggests the cheapest pair that has passed fo
     setup(on, { [`${tasksDir}/README.md`]: '', [`${ROOT}/.delegation/ledger.jsonl`]: ledger() })
     await $.session.start(sessionStart)
     const out = resultText(await $.tool.call({ tool: CARD_TOOL, ...input } as never))
-    expect(out).toMatch(/suggest sonnet\/low for feature\/large \(n 60, lower bound \d+% vs default 100%, \$0\.50 vs \$0\.89 per confirmed card\)/)
+    expect(out).toMatch(/suggest sonnet\/low for feature\/wide \(n 60, lower bound \d+% vs default 100%, \$0\.50 vs \$0\.89 per confirmed card\)/)
   })
 
   test('off: no suggestion line', { options: { ...OPTIONS, adaptive: 'off' } }, async ($, on) => {

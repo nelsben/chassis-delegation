@@ -23,7 +23,7 @@ const base = async (over = {}) => ({
   hasReason: false,
   tier: 'standard',
   kind: 'feature',
-  className: 'feature/large',
+  className: 'feature/wide',
   explore: 0.2,
   baseEffort: 'medium',
   maxEffort: 'high',
@@ -49,12 +49,13 @@ describe('MOD-274: the card class', () => {
     // docs scope with a Fix title is docs-only scope first: a title starting Fix on a docs-only card is still docs
     expect(cardKind({ title: 'Fix the guide', scope: ['docs/**'] })).toBe('docs')
   })
-  test('size: small when the economy hint would fire, else large; the class reads kind/size', async () => {
+  test('size: by breadth (MOD-409); the class reads kind/size', async () => {
     const { cardSize, cardClassName } = await X()
-    expect(cardSize(true)).toBe('small')
-    expect(cardSize(false)).toBe('large')
-    expect(cardClassName('feature', 'large')).toBe('feature/large')
-    expect(cardClassName('bug', 'small')).toBe('bug/small')
+    expect(cardSize(['a.ts'])).toBe('narrow')
+    expect(cardSize(['a.ts', 'b.ts', 'c.ts'])).toBe('mid')
+    expect(cardSize(['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts'])).toBe('wide')
+    expect(cardClassName('feature', 'wide')).toBe('feature/wide')
+    expect(cardClassName('bug', 'narrow')).toBe('bug/narrow')
   })
 })
 
@@ -120,7 +121,7 @@ describe('MOD-274: who explores', () => {
 })
 
 describe('MOD-274: the step is one axis, downward only', () => {
-  const row = (task, alias, effort, extra = {}) => ({ kind: 'spawn', task, attempt: 1, alias, effort, verdict: 'consistent', class: 'feature/large', ...extra })
+  const row = (task, alias, effort, extra = {}) => ({ kind: 'spawn', task, attempt: 1, alias, effort, verdict: 'consistent', class: 'feature/wide', ...extra })
   const many = (n, alias, effort) => Array.from({ length: n }, (_, i) => row(`R-${alias}${effort}-${i}`, alias, effort))
 
   test('MOD-277 standard medium: the tier-down pair is the one target until it has 30 counted explored cards in the class, then the effort-down pair', async () => {
@@ -138,10 +139,10 @@ describe('MOD-274: the step is one axis, downward only', () => {
     const ex = (n, over = {}) => many(n, 'haiku', 'medium').map(r => ({ ...r, explore: true, exploreFrom: 'sonnet/medium', ...over }))
     // not explored (default cards that happened to run haiku), another class, and uncounted (a scope refute) cards do not count
     expect(explorePlan(await base({ rows: many(40, 'haiku', 'medium') }))).toMatchObject({ axis: 'tier' })
-    expect(explorePlan(await base({ rows: ex(40, { class: 'bug/small' }) }))).toMatchObject({ axis: 'tier' })
+    expect(explorePlan(await base({ rows: ex(40, { class: 'bug/narrow' }) }))).toMatchObject({ axis: 'tier' })
     expect(explorePlan(await base({ rows: ex(40, { verdict: 'refuted', firstFailed: 'scope' }) }))).toMatchObject({ axis: 'tier' })
     // a classless row takes classOf
-    expect(explorePlan(await base({ rows: ex(30, { class: undefined }), classOf: () => 'feature/large' }))).toMatchObject({ axis: 'effort' })
+    expect(explorePlan(await base({ rows: ex(30, { class: undefined }), classOf: () => 'feature/wide' }))).toMatchObject({ axis: 'effort' })
     expect(explorePlan(await base({ rows: ex(30, { class: undefined }) }))).toMatchObject({ axis: 'tier' })
   })
   test('a standard card at low effort can only step the tier; at the engine default (no effort) too', async () => {
@@ -247,33 +248,33 @@ describe('MOD-274: pairHistory by class', () => {
 
   test('an optional class narrows the cards; no class is every card', async () => {
     const { pairHistory } = await C()
-    const rows = [row('A-1', 'feature/large'), row('A-2', 'feature/large'), row('A-3', 'bug/small')]
+    const rows = [row('A-1', 'feature/wide'), row('A-2', 'feature/wide'), row('A-3', 'bug/narrow')]
     expect(pairHistory(rows)[0].n).toBe(3)
-    expect(pairHistory(rows, 'feature/large')[0].n).toBe(2)
-    expect(pairHistory(rows, 'bug/small')[0].n).toBe(1)
-    expect(pairHistory(rows, 'test/large')).toEqual([])
+    expect(pairHistory(rows, 'feature/wide')[0].n).toBe(2)
+    expect(pairHistory(rows, 'bug/narrow')[0].n).toBe(1)
+    expect(pairHistory(rows, 'test/wide')).toEqual([])
   })
   test('the history line names the class first, and falls back to all classes', async () => {
     const { historyLine, pairHistory } = await C()
-    const rows = [row('A-1', 'feature/large')]
-    expect(historyLine(pairHistory(rows, 'feature/large'), 'feature/large')).toMatch(/^history feature\/large: sonnet\/medium 1 thin/)
-    expect(historyLine(pairHistory(rows), 'bug/small', true)).toMatch(/^history all classes \(none for bug\/small\): sonnet\/medium 1 thin/)
-    expect(historyLine([], 'bug/small', true)).toBe('history: none')
+    const rows = [row('A-1', 'feature/wide')]
+    expect(historyLine(pairHistory(rows, 'feature/wide'), 'feature/wide')).toMatch(/^history feature\/wide: sonnet\/medium 1 thin/)
+    expect(historyLine(pairHistory(rows), 'bug/narrow', true)).toMatch(/^history all classes \(none for bug\/narrow\): sonnet\/medium 1 thin/)
+    expect(historyLine([], 'bug/narrow', true)).toBe('history: none')
     expect(historyLine(pairHistory(rows))).toMatch(/^history: sonnet\/medium 1 thin/)
   })
   test('MOD-277: an exploratory card counts for the pair it ran, confirmed when any attempt was, with every attempt\'s usd', async () => {
     const { pairHistory } = await C()
     const rows = [
       // explored sonnet/low, refuted on a gate; attempt 2 (sonnet/medium) confirmed and cost more: the card is confirmed, the rescue cost is the explored pair's
-      row('E-1', 'feature/large', { effort: 'low', explore: true, exploreFrom: 'sonnet/medium', verdict: 'refuted', firstFailed: 'gate', usd: 0.4 }),
+      row('E-1', 'feature/wide', { effort: 'low', explore: true, exploreFrom: 'sonnet/medium', verdict: 'refuted', firstFailed: 'gate', usd: 0.4 }),
       { kind: 'spawn', task: 'E-1', attempt: 2, alias: 'sonnet', effort: 'medium', verdict: 'consistent', usd: 0.9 },
-      row('E-2', 'feature/large', { effort: 'low', explore: true, exploreFrom: 'sonnet/medium', verdict: 'consistent', usd: 0.5 }),
+      row('E-2', 'feature/wide', { effort: 'low', explore: true, exploreFrom: 'sonnet/medium', verdict: 'consistent', usd: 0.5 }),
     ]
-    const low = pairHistory(rows, 'feature/large').find(p => p.effort === 'low')
+    const low = pairHistory(rows, 'feature/wide').find(p => p.effort === 'low')
     expect(low.n).toBe(2)
     expect(low.confirmed).toBe(2)
     expect(low.usdPerConfirmed).toBeCloseTo(0.9, 5) // (0.4 + 0.9 + 0.5) over two confirmed cards
-    expect(pairHistory(rows, 'feature/large').find(p => p.effort === 'medium')).toBeUndefined()
+    expect(pairHistory(rows, 'feature/wide').find(p => p.effort === 'medium')).toBeUndefined()
     expect(low.approx).toBe(false)
   })
 })
