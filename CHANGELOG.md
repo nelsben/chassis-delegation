@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **A merge now writes a `## Testing` section on the merged card (above its `## Review`) and in the PR body (after the gates): the planned test, whether the red test failed first, each gate's result line and time, the test files changed and tests added, the fix rounds and the attempts; the record stays in the root as `.delegation/<ID>/testing.md` and `red.txt` after the finish** (MOD-407)
 - **The verdict row now records each gate run as `gates`: the gate id, whether it passed, how long it took in ms, its result line (such as `2074 pass, 0 fail`) and whether it was run again; nothing reads it yet and no verdict changes** (MOD-406)
 
 ## 0.9.68 — 2026-11-18

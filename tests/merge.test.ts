@@ -105,6 +105,10 @@ describe('MOD-75: /delegation merge <id>', () => {
       ['claude', 'plugin', 'validate', WT],
       ['node', '--no-warnings', '--import', './tests/node/register.mjs', 'tests/node/run.mjs'],
       ['claude', 'plugin', 'test', WT],
+      // MOD-407: the Testing section goes on the card in a second commit, after the gates
+      ['git', '-C', WT, 'add', '--', `docs/cards/${CARD_NAME}`],
+      ['git', '-C', WT, 'commit', '-q', '-m', `cards: ${ID} merged`, '-m', 'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>'],
+      ['git', '-C', WT, 'rev-parse', 'HEAD'],
     ])
     // every write and every gate ran in the worktree
     expect(w.runs.slice(from).filter(r => r.argv[0] !== 'git').every(r => r.cwd === WT)).toBe(true)
@@ -118,7 +122,11 @@ describe('MOD-75: /delegation merge <id>', () => {
     // the worktree's card reads merged, the rest as the root card
     const merged = w.files.get(WT_CARD) ?? ''
     expect(readsMerged(merged)).toBe(true)
-    expect(merged).toBe(CARD.replace('status: queued', 'status: merged'))
+    // MOD-407: the card gains the Testing section; the rest is the root card
+    expect(merged).toContain('## Testing\n\n- Planned: none\n- Red test: none\n- Gate validate: pass\n- Gate node: pass\n- Gate test: pass\n- Test files changed: none\n')
+    expect(merged.replace(/\n\n## Testing\n[\s\S]*$/, '\n')).toBe(CARD.replace('status: queued', 'status: merged'))
+    expect(w.files.get(`${ROOT}/.delegation/${ID}/testing.md`)).toBe(`## Testing\n\n${merged.split('## Testing\n\n')[1]}`)
+    expect(w.files.has(`${ROOT}/.delegation/${ID}/red.txt`)).toBe(false)
     // the gate output and the PR body
     expect(w.files.get(`${ROOT}/.delegation/${ID}/merge-gates.txt`)).toContain('## node: node --no-warnings')
     const pr = w.files.get(`${ROOT}/.delegation/${ID}/pr.md`) ?? ''
@@ -126,6 +134,8 @@ describe('MOD-75: /delegation merge <id>', () => {
     expect(pr).toContain('- [x] A test holds it.')
     expect(pr).toContain(`${ID} attempt 1: consistent at abc1234 · next=accept`)
     expect(pr).toContain('- validate (`claude plugin validate {worktree}`): pass')
+    expect(pr.indexOf('## Gates')).toBeLessThan(pr.indexOf('## Testing\n\n- Planned: none'))
+    expect(pr).toContain('- Gate node: pass\n')
     expect(pr.trimEnd().split('\n').at(-1)).toBe('🤖 Generated with [Claude Code](https://claude.com/claude-code)')
     expect(pr).not.toContain(ROOT)
     expect(pr).not.toMatch(/\/(Users|home)\//)
@@ -365,9 +375,12 @@ describe('MOD-75: /delegation merge <id>', () => {
     await $.command.run(mergeCmd(`${ID} --review Accepted as handed back; no fixes.`))
     expect(w.files.get(WT_CARD)).toContain('## Review\n\nAccepted as handed back; no fixes.')
     const commits = () => w.runs.filter(r => r.argv.includes('commit')).length
-    expect(commits()).toBe(1)
+    // the merged card, then (MOD-407) the Testing section
+    expect(commits()).toBe(2)
+    expect(w.files.get(WT_CARD)).toMatch(/## Testing\n\n[\s\S]*\n## Review\n/)
     const again = String((await $.command.run(mergeCmd(ID))).text)
-    expect(commits()).toBe(1)
+    expect(commits()).toBe(2)
+    expect(w.files.get(WT_CARD)?.match(/^## Testing$/gm)).toHaveLength(1)
     expect(again).toContain('the worktree already carries the merged card; nothing committed again')
     expect(blockOf(again)[0]).toBe(`git -C ${WT} push -u origin ${BRANCH}`)
   })

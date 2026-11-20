@@ -12,6 +12,7 @@ import { readVerdict } from './attempts'
 import { doneWhenOf } from './card'
 import { modelName } from './watch'
 import { mergedSubject } from './allow'
+import type { GateNote } from './gaterun'
 
 export { mergedSubject }
 
@@ -91,7 +92,7 @@ export const MERGE_TOOL = {
 
 // ---- the verdict a merge needs ------------------------------------------------------------
 
-export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha?: string; kind?: string; gateTree?: Record<string, string> }
+export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha?: string; kind?: string; gateTree?: Record<string, string>; /** MOD-407: the verifier's gate notes (MOD-406) and the fix rounds the worker made before its hand-back. */ gates?: GateNote[]; tried?: number }
 
 /**
  * The task's latest verdict row in the ledger text (main subtask). A reviewer's row that says
@@ -117,6 +118,19 @@ export function gateTreeOf(v: unknown): Record<string, string> | undefined {
  */
 export const onlyCardMoved = (diffOut: string, cardRel: string | undefined): boolean => diffOut.split('\n').map(l => l.trim()).filter(Boolean).every(l => l === cardRel)
 
+/** MOD-407: a verdict row's gates (the MOD-406 notes), keeping only well-formed entries; undefined when none. */
+export function gateNotesOf(v: unknown): GateNote[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out: GateNote[] = []
+  for (const n of v as unknown[]) {
+    if (!n || typeof n !== 'object') continue
+    const o = n as Record<string, unknown>
+    if (typeof o.id !== 'string' || typeof o.ok !== 'boolean' || typeof o.ms !== 'number' || !Number.isFinite(o.ms)) continue
+    out.push({ id: o.id, ok: o.ok, ms: o.ms, ...(typeof o.line === 'string' && o.line !== '' ? { line: o.line } : {}), ...(o.rerun === 'own' || o.rerun === 'timeouts' ? { rerun: o.rerun } : {}) })
+  }
+  return out.length > 0 ? out : undefined
+}
+
 function verdictRows(ledger: string, task: string): VerdictRow[] {
   const rows: VerdictRow[] = []
   for (const line of ledger.split('\n')) {
@@ -129,7 +143,7 @@ function verdictRows(ledger: string, task: string): VerdictRow[] {
     }
     if (!r || r.task !== task || typeof r.verdict !== 'string') continue
     if (r.subtask !== undefined && r.subtask !== 'main') continue
-    rows.push({ verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}), ...(typeof r.attempt === 'number' ? { attempt: r.attempt } : {}), ...(typeof r.sha === 'string' ? { sha: r.sha } : {}), ...(typeof r.kind === 'string' ? { kind: r.kind } : {}), ...(gateTreeOf(r.gateTree) ? { gateTree: gateTreeOf(r.gateTree) as Record<string, string> } : {}) })
+    rows.push({ verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}), ...(typeof r.attempt === 'number' ? { attempt: r.attempt } : {}), ...(typeof r.sha === 'string' ? { sha: r.sha } : {}), ...(typeof r.kind === 'string' ? { kind: r.kind } : {}), ...(gateTreeOf(r.gateTree) ? { gateTree: gateTreeOf(r.gateTree) as Record<string, string> } : {}), ...(gateNotesOf(r.gates) ? { gates: gateNotesOf(r.gates) as GateNote[] } : {}), ...(typeof r.tried === 'number' && Number.isFinite(r.tried) ? { tried: r.tried } : {}) })
   }
   return rows
 }
@@ -355,8 +369,8 @@ export function ownerRepoOf(url: string): string | undefined {
 
 // ---- the merged card ---------------------------------------------------------------------
 
-/** The card with `status: merged` in its front matter, and a `## Review` section appended when one is given. */
-export function markMerged(card: string, review?: string): string {
+/** The card with `status: merged` in its front matter, a `## Review` section appended when one is given, and (MOD-407) a `## Testing` section directly above `## Review` (at the end with no review) when `testing` lines are given; an old `## Testing` section is replaced. */
+export function markMerged(card: string, review?: string, testing?: readonly string[]): string {
   const lines = card.split('\n')
   if (lines[0]?.trim() === '---') {
     const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---')
@@ -368,7 +382,29 @@ export function markMerged(card: string, review?: string): string {
   }
   let out = lines.join('\n')
   if (review !== undefined && review.trim() !== '') out = `${out.replace(/\s*$/, '')}\n\n## Review\n\n${review.trim()}\n`
+  if (testing !== undefined && testing.length > 0) out = withTesting(out, testing)
   return out
+}
+
+const TESTING_HEADING = /^##\s+Testing\s*$/
+const REVIEW_HEADING = /^##\s+Review\s*$/
+
+/** MOD-407: the card text with its `## Testing` section (if any) taken out: from its heading to the next `## ` heading or the end. */
+function withoutTesting(text: string): string[] {
+  const lines = text.split('\n')
+  const at = lines.findIndex(l => TESTING_HEADING.test(l.trim()))
+  if (at < 0) return lines
+  const next = lines.findIndex((l, i) => i > at && /^##\s/.test(l))
+  return [...lines.slice(0, at), ...(next < 0 ? [] : lines.slice(next))]
+}
+
+/** MOD-407: the card text with `## Testing`, a blank line and the lines directly above `## Review` (at the end when there is none); an old section goes first. */
+function withTesting(text: string, testing: readonly string[]): string {
+  const lines = withoutTesting(text)
+  const block = ['## Testing', '', ...testing, '']
+  const at = lines.findIndex(l => REVIEW_HEADING.test(l.trim()))
+  if (at >= 0) return [...lines.slice(0, at), ...block, ...lines.slice(at)].join('\n')
+  return `${lines.join('\n').replace(/\s*$/, '')}\n\n${block.join('\n')}`
 }
 
 /** Does this card text read `status: merged` in its front matter? */
@@ -395,7 +431,7 @@ export function commitArgv(worktree: string, id: string, trailer: string | undef
 
 /**
  * The root card and the merged card on origin, compared with the `status:` line aside and the merged
- * card's trailing `## Review` section allowed as extra: empty when they match, else the lines that differ.
+ * card's `## Review` (trailing) and `## Testing` sections allowed as extra: empty when they match, else the lines that differ.
  */
 export function cardDiff(origin: string, root: string): string[] {
   const norm = (t: string, dropReview: boolean): string[] => {
@@ -408,7 +444,8 @@ export function cardDiff(origin: string, root: string): string[] {
     return lines
   }
   const rootHasReview = /^##\s+Review\s*$/m.test(root)
-  const a = norm(origin, !rootHasReview)
+  // MOD-407: a merged card may carry a `## Testing` section the root card lacks
+  const a = norm(/^##\s+Testing\s*$/m.test(root) ? origin : withoutTesting(origin).join('\n'), !rootHasReview)
   const b = norm(root, false)
   const out: string[] = []
   const n = Math.max(a.length, b.length)
@@ -463,8 +500,8 @@ export function doneChecklist(body: string): string[] {
   return lines.map(l => l.replace(/^(\s*)(?:[-*+]|\d+[.)])\s+(?!\[[ xX]\])/, '$1- [x] '))
 }
 
-/** pr.md: the Done-when checklist, the verdict line, the gate results, the trailing generated line. No absolute path survives. */
-export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[]; amends?: readonly string[]; issue?: number; rebase?: string }): string {
+/** pr.md: the Done-when checklist, the verdict line, the gate results, the Testing section (MOD-407), the trailing generated line. No absolute path survives. */
+export function prBody(o: { body: string; verdictLine: string; gates: readonly GateResult[]; folders: readonly string[]; amends?: readonly string[]; issue?: number; rebase?: string; testing?: readonly string[] }): string {
   const done = doneChecklist(o.body)
   const text = [
     '## Done when',
@@ -480,12 +517,74 @@ export function prBody(o: { body: string; verdictLine: string; gates: readonly G
     '',
     ...(o.gates.length > 0 ? o.gates.map(g => `- ${g.id} (\`${g.label}\`): ${g.ok ? 'pass' : 'fail'}`) : ['- (the card names no gate)']),
     '',
+    ...((o.testing ?? []).length > 0 ? ['## Testing', '', ...(o.testing ?? []), ''] : []),
     ...(o.rebase ? ['## Rebase', '', o.rebase, ''] : []),
     ...(o.issue !== undefined ? [`Refs #${o.issue}`, ''] : []),
     GENERATED,
     '',
   ].join('\n')
   return scrubPaths(text, o.folders)
+}
+
+// ---- the Testing section (MOD-407) --------------------------------------------------------
+
+export type TestingInput = {
+  /** The card's `red_test` as written. */
+  redTest: string
+  red?: { path: string; held: boolean }
+  gates: readonly GateResult[]
+  notes?: readonly GateNote[]
+  /** The gate ids the merge did not run again (the verifier's pass stood). */
+  reused?: readonly string[]
+  testFiles: readonly string[]
+  testsAdded: number
+  tried?: number
+  attempts: number
+}
+
+const TESTING_NAMES = 8
+
+/** A gate's time: `<n> s` under 90 s (whole seconds, at least 1), else `<n> min` to one decimal. */
+export function gateTime(ms: number): string {
+  if (ms < 90_000) return `${Math.max(1, Math.round(ms / 1000))} s`
+  return `${Math.round(ms / 6000) / 10} min`
+}
+
+/** MOD-407: the lines of the `## Testing` section (no heading): the planned test, the red result, each gate, the test files changed, the fix rounds, the attempts. */
+export function testingSection(i: TestingInput): string[] {
+  const planned = i.redTest.trim()
+  const out: string[] = [`- Planned: ${planned === '' || planned.toLowerCase() === 'none' ? 'none' : planned}`]
+  out.push(i.red ? (i.red.held ? `- Red test: failed before the change (${i.red.path})` : `- Red test: reported at ${i.red.path}, not confirmed`) : '- Red test: none')
+  for (const g of i.gates) {
+    const n = (i.notes ?? []).find(x => x.id === g.id)
+    const parts = [
+      ...(n?.line ? [n.line] : []),
+      ...(n ? [gateTime(n.ms)] : []),
+      ...(n?.rerun === 'timeouts' ? ['run again after timeouts'] : n?.rerun === 'own' ? ['green on a second run'] : []),
+      ...((i.reused ?? []).includes(g.id) ? ['verify pass reused at merge'] : []),
+    ]
+    out.push(`- Gate ${g.id}: ${g.ok ? 'pass' : 'fail'}${parts.length > 0 ? ` · ${parts.join(' · ')}` : ''}`)
+  }
+  const shown = i.testFiles.slice(0, TESTING_NAMES)
+  const more = i.testFiles.length - shown.length
+  const files = i.testFiles.length === 0 ? 'none' : `${i.testFiles.length} (${shown.join(', ')}${more > 0 ? `, +${more} more` : ''})`
+  out.push(`- Test files changed: ${files}${i.testsAdded > 0 ? `; tests added: ${i.testsAdded}` : ''}`)
+  if (i.tried !== undefined && i.tried > 0) out.push(`- Fix rounds before hand-back: ${i.tried}`)
+  if (i.attempts > 1) out.push(`- Attempts: ${i.attempts}`)
+  return out
+}
+
+/** MOD-407: is this repo-relative path a test file? */
+export function isTestFile(p: string): boolean {
+  if (p.startsWith('test/') || p.startsWith('tests/')) return true
+  if (p.includes('/test/') || p.includes('/tests/') || p.includes('/__tests__/')) return true
+  const name = p.split('/').pop() ?? p
+  return /[._-](?:test|spec)\.[A-Za-z]+$/.test(name) || /^test_.*\.py$/.test(name)
+}
+
+/** MOD-407: how many tests a unified diff adds: its added `test(`, `it(`, `it.each(` and `def test_` lines. */
+export function testsAdded(diff: string): number {
+  return diff.split('\n').filter(l => /^\+\s*(?:test|it)(?:\.\w+)?\s*\(/.test(l) || /^\+\s*(?:async\s+)?def\s+test_/.test(l)).length
 }
 
 export { issueRef, issueNote } from './card'
