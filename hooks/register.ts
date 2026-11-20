@@ -236,7 +236,7 @@ import { cardClassName, cardKind, cardSize, clampExplore, explorePlan, exploreLa
 import { CARD_TOOL, cardsFromFields, fixesOf, spikeLinkOf, slugOf, cardSummary, doneStatementCount, doneWhenOf, forbidCollisions, forbidFix, globGapWarnings, redTestWarnings, sayGo, type NewCard } from './lib/card'
 import { PATH_TOOLS, ROOT_MARKERS, SHADOWS, labelNames, treeLines as setupTreeLines, treeText as setupTreeText, untypedIssues, type TreeProbe, allRequiredHold, configLines, detectGate, foundOf, gateMapFirst, proposedSpend, handoverText, BRAIN_HANDOVER, scaffoldConfig, setupChecks, setupText, wouldSet, type SetupProbe } from './lib/setup'
 import { artefactsCheck, bashReadOnly, chargeDelta, commandNamesRoot, deltaPaths, defaultScratch, normalizePath, expandTilde, globList, globRoot, isAbsolute, isNotWorkTree, isOutsideFile, noRepoVerdict, outdirOf, outsideCheck, outsideFilePath, OUTSIDE_WALK_CEILING, outsideRoots, reportArtefacts, reportFiles, reportMetrics, scopeCheck, workTreeArgv, type ArtefactStat, type DeltaWindow, type OutsideInput, type RootListing, type WriteEvent } from './lib/norepo'
-import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeilingWith, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, gateDeadlineEnv, gateQueue, outputTail, GATE_TAIL_LINES as GATE_KEEP_LINES, type GateProgress } from './lib/gaterun'
+import { ceilingMs, gateIdOf, gateOutput, gateProgressText, pastCeilingWith, spawnExitCode, passedGateLines, shapeOldGates, GATES_SWEEP_BYTES, GATES_SWEEP_EXAMINE, GATES_SWEEP_REWRITE, gateDeadlineEnv, gateQueue, outputTail, GATE_TAIL_LINES as GATE_KEEP_LINES, type GateNote, type GateProgress } from './lib/gaterun'
 import { landedSha, predatesSpawn, mergedVerdict, noVerifierRunning, reopensAfterNoReport, reopensAfterPauseCap, noSuchAttempt, parseVerdictTool, rowRaceOpen, SLEEP_UNAVAILABLE, stillVerifying, VERDICT_TOOL, verdictFailLine, verdictRule, pollStep } from './lib/verdicttool'
 import { headMove, rebasedText, unverifiedWorkLine, type HeadMove } from './lib/rebase'
 import { glyphIssues, modelGlyph, parseGlyphs, withGlyph, type GlyphMap } from './lib/glyph'
@@ -6396,7 +6396,7 @@ async function probe($: Host) {
 }
 
 // ---- verify + verdict (5A: native) ---------------------------------------------------
-type VerifyResult = { verdict: Verdict; lines: string[]; live?: string; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true; metrics?: Record<string, string>; gateTree?: Record<string, string> }
+type VerifyResult = { verdict: Verdict; lines: string[]; live?: string; noRepo?: boolean; red?: string; redHash?: string; redHeld?: true; metrics?: Record<string, string>; gateTree?: Record<string, string>; gates?: GateNote[] }
 
 /** sha-256 of `bytes`, hex, by the environment's crypto.subtle; undefined when it cannot be taken. */
 async function sha256Hex(bytes: Uint8Array): Promise<string | undefined> {
@@ -6998,7 +6998,7 @@ async function runVerify($: Host, spawn: SpawnRecord, block: string, text: strin
   } finally {
     if (locked) await unlockWorktree($, taskRepo, lockPath)
   }
-  return { verdict: r.verdict, lines: [...amendLines, ...r.lines, ...(liveAtHandback ? [liveAtHandback] : [])], ...(liveAtHandback ? { live: liveAtHandback } : {}), ...(r.metrics ? { metrics: r.metrics } : {}), ...(r.gateTree ? { gateTree: r.gateTree } : {}), ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
+  return { verdict: r.verdict, lines: [...amendLines, ...r.lines, ...(liveAtHandback ? [liveAtHandback] : [])], ...(liveAtHandback ? { live: liveAtHandback } : {}), ...(r.metrics ? { metrics: r.metrics } : {}), ...(r.gateTree ? { gateTree: r.gateTree } : {}), ...(r.gates && r.gates.length > 0 ? { gates: r.gates } : {}), ...(r.red ? { red: r.red.path, ...(r.red.hash !== undefined ? { redHash: r.red.hash } : {}), ...(r.red.held ? { redHeld: true as const } : {}) } : {}) }
 }
 
 /**
@@ -7455,6 +7455,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   let noRepo = false
   let metrics: Record<string, string> | undefined
   let gateTree: Record<string, string> | undefined
+  let gates: GateNote[] | undefined
   let red: Pick<AttemptRecord, 'red' | 'redHash' | 'redHeld'> = {}
   // GH-16: a repo=here worker's claimed files go on its record before the verify, so a sibling verifying now subtracts them
   if (report && spawn.here && !spawn.adhoc) {
@@ -7506,6 +7507,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     noRepo = v.noRepo === true
     metrics = v.metrics
     gateTree = v.gateTree
+    gates = v.gates
     red = { ...(v.red !== undefined ? { red: v.red } : {}), ...(v.redHash !== undefined ? { redHash: v.redHash } : {}), redHeld: v.redHeld }
   }
   if (pauseCharge) lines = [...lines, pauseCharge]
@@ -7749,7 +7751,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
     const verdictBrief = spawn.briefPath !== undefined ? await readText($, spawn.briefPath) : undefined
     const brainAt = await brainStampNow($)
-    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), ...(brainAt ? { brain: brainAt } : {}), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), ...(triedRead && triedRead.count > 0 ? { tried: triedRead.count } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
+    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), ...(brainAt ? { brain: brainAt } : {}), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(gates && gates.length > 0 ? { gates } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), ...(triedRead && triedRead.count > 0 ? { tried: triedRead.count } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
   }
   return { full, line }
 }

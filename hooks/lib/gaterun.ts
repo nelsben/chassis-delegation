@@ -80,6 +80,23 @@ export function outputTail(stdout: string, stderr: string, n: number): string[] 
   return lines.slice(Math.max(0, lines.length - n))
 }
 
+/** MOD-406: what the verifier records of one gate id's runs: pass or fail, time in ms, its result line, and whether it was run again. */
+export type GateNote = { id: string; ok: boolean; ms: number; line?: string; rerun?: 'own' | 'timeouts' }
+
+const COUNT_LINE = /\b\d+\s+(?:pass|passed|passing|fail|failed|failing|skipped|tests?|errors?|warnings?)\b/i
+
+/**
+ * MOD-406: a gate's result in one line. Of the last 12 non-blank lines (each trimmed) the ones that read as a count
+ * (`2074 pass`, `0 fail`) joined with `, `; none, the last non-blank line; no output, `''`. Cut to 160 characters, the last `…`.
+ */
+export function gateSummaryLine(stdout: string, stderr: string): string {
+  const tail = outputTail(stdout, stderr, 12).map(l => l.trim())
+  if (tail.length === 0) return ''
+  const counts = tail.filter(l => COUNT_LINE.test(l))
+  const line = counts.length > 0 ? counts.join(', ') : tail[tail.length - 1]!
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line
+}
+
 /**
  * MOD-377 (#513): `pastCeiling`, and when the gate printed anything, `; last output: ` and its last 3 lines
  * (each trimmed, joined with ` | `), cut to 240 characters with a trailing `…` when cut.
