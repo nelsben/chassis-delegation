@@ -138,3 +138,21 @@ export function handbackTried(text: string): { count: number; lines: string[] } 
   }
   return { count: found.length, lines: found.slice(0, 6).map(l => l.slice(0, 160)) }
 }
+
+/** MOD-411: the `tested:` lines a worker lists above the last `[[report`: what it ran beyond the gate, or could not run. How many, and the first six, each cut to 160. Recorded, never judged. */
+export function handbackTested(text: string): { count: number; lines: string[] } {
+  const at = text.lastIndexOf('[[report')
+  const head = at === -1 ? text : text.slice(0, at)
+  const TESTED_LINE = /^ *(?:[-*] +)?`?tested:(.*)$/i
+  const seen = new Set<string>()
+  const found: string[] = []
+  for (const raw of head.split('\n')) {
+    const m = TESTED_LINE.exec(raw)
+    if (!m) continue
+    const body = m[1]!.trim().replace(/`$/, '').trim()
+    if (body === '' || seen.has(body)) continue
+    seen.add(body)
+    found.push(body)
+  }
+  return { count: found.length, lines: found.slice(0, 6).map(l => l.slice(0, 160)) }
+}

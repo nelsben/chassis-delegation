@@ -217,7 +217,7 @@ import { EMPTY_GATE_KEY, engineLockDecision, gateCommandTemplates, gateForDelta,
 import { findingsCheck, FINDINGS_GATE, spikeQuestions } from './lib/spike'
 import { ghWrites } from './lib/ghguard'
 import { gitWrites, guardDeny, joinDir, mergeTargets, parseGuardBranches, taskOfBranch } from './lib/gitguard'
-import { handbackAdvisor, handbackChoices, handbackMessages, handbackTried, workerSaid } from './lib/handback'
+import { handbackAdvisor, handbackChoices, handbackMessages, handbackTested, handbackTried, workerSaid } from './lib/handback'
 import { advisorAllowed, advisorCueLine, advisorCueRow, advisorFieldRefusal, advisorOverLine, advisorRuleInBrief, advisorRuleLine, advisorRuleOf, brainAdvisorLine, type AdvisorCue, type AdvisorRule } from './lib/advisor'
 import { AUTO_NOTICE, LATCH_LINE, allRefused, blockedByEnvironment, effectiveMode, hostRefusalText, isAutoMode, isHostRefusalError, resultWords, saysInputChanged, usableSha, withIdentity } from './lib/identity'
 import { INIT_FILES, PLUGIN_MANIFEST, PLUGIN_CARD_DIR, cardsLocalLine, initPlan, initText } from './lib/init'
@@ -3948,6 +3948,7 @@ async function mergeTesting($: Host, o: { id: string; wt: string; baseRef: strin
     testFiles,
     testsAdded: added,
     ...(o.row.tried !== undefined ? { tried: o.row.tried } : {}),
+    ...(o.row.testedLines ? { tested: o.row.testedLines } : {}),
     attempts,
   }).map(l => scrubPaths(l, o.folders))
   try {
@@ -7628,6 +7629,8 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
   // MOD-369: the `tried:` rounds a worker lists before it hands back on a failing gate, counted and never judged (no verdict, next step or budget reads it)
   const triedRead = spawn.adhoc || cardless ? undefined : handbackTried(text)
   if (triedRead && triedRead.count > 0) lines = [...lines, `tried: ${triedRead.count} round${triedRead.count === 1 ? '' : 's'} before handing back`]
+  // MOD-411: the `tested:` lines (what it ran beyond the gate, or could not run), kept on the verdict row for the merged card; no verdict, claim, next step or budget reads them
+  const testedRead = spawn.adhoc || cardless ? undefined : handbackTested(text)
   // MOD-279: a worker whose Bash the host refused and whose report has no usable sha was blocked by its environment: that is no
   // failure of the work (not charged, not escalated, not shown as a fabrication). The count is per attempt: read once, then cleared.
   let blocked: string | undefined
@@ -7861,7 +7864,7 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     if (verdict === 'refuted') void noteFriction($, { kind: 'refuted', detail: line, at: t })
     const verdictBrief = spawn.briefPath !== undefined ? await readText($, spawn.briefPath) : undefined
     const brainAt = await brainStampNow($)
-    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), ...(brainAt ? { brain: brainAt } : {}), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(gates && gates.length > 0 ? { gates } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), ...(triedRead && triedRead.count > 0 ? { tried: triedRead.count } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
+    await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt }), ...(brainAt ? { brain: brainAt } : {}), verdict, noRepo: noRepo || undefined, ...(gateTree ? { gateTree } : {}), ...(gates && gates.length > 0 ? { gates } : {}), ...(choiceRead && choiceRead.count > 0 ? { choiceLines: choiceRead.lines } : {}), ...(triedRead && triedRead.count > 0 ? { tried: triedRead.count } : {}), ...(testedRead && testedRead.count > 0 ? { testedLines: testedRead.lines } : {}), next: shortNext(next), sessionId: await sessionIdOf($), ...(verdictBrief !== undefined ? { briefHash: briefHash(verdictBrief) } : {}) })
   }
   return { full, line }
 }

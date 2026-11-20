@@ -142,6 +142,8 @@ A brief with no output folder has no `artefacts=` or `metrics=` in its report li
 
 **Choice lines (MOD-338).** Above the report line (and above any amend blocks), the worker lists each decision the card left to it, one per line: `choice: <what was open> -> <what you picked>`. With none it writes `choice: none`. The mod counts the distinct lines above the last report, records the count as `choices` on the attempt, and adds a verdict line `choices: <n> the card left open` (or `choices: none stated`); a hand-back with no choice line adds nothing. The count is never judged: it changes no verdict, next step, tier or budget. An ad hoc spawn and a cardless hand-back are not read.
 
+**Tested lines (MOD-411).** Above the report line, the worker lists what it ran beyond the gate and the red test, and what it could not run, one per line: `tested: <what you ran> -> <what it showed>` or `tested: could not run <what> (<why>)`. With nothing beyond the gate it writes none. The mod reads the distinct lines above the last report the way it reads `tried:` lines (an optional list marker and backtick, empty bodies skipped, the first six kept, each cut to 160 characters) and adds them to the verdict row as `testedLines`; the merge shows them under `- Worker ran:` in the card's `## Testing` section and in the PR body. They are recorded and never judged: no verdict line, claim, next step, tier or budget reads them. An ad hoc spawn and a cardless hand-back are not read.
+
 ### Amend
 
 A worker that had to change a file outside its scope says so on its own line, just above the report:

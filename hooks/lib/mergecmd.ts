@@ -92,7 +92,7 @@ export const MERGE_TOOL = {
 
 // ---- the verdict a merge needs ------------------------------------------------------------
 
-export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha?: string; kind?: string; gateTree?: Record<string, string>; /** MOD-407: the verifier's gate notes (MOD-406) and the fix rounds the worker made before its hand-back. */ gates?: GateNote[]; tried?: number }
+export type VerdictRow = { verdict: string; next?: string; attempt?: number; sha?: string; kind?: string; gateTree?: Record<string, string>; /** MOD-407: the verifier's gate notes (MOD-406) and the fix rounds the worker made before its hand-back. */ gates?: GateNote[]; tried?: number; /** MOD-411: the `tested:` lines the worker listed in its hand-back. */ testedLines?: string[] }
 
 /**
  * The task's latest verdict row in the ledger text (main subtask). A reviewer's row that says
@@ -131,6 +131,13 @@ export function gateNotesOf(v: unknown): GateNote[] | undefined {
   return out.length > 0 ? out : undefined
 }
 
+/** MOD-411: the string entries of a row's `testedLines`; undefined when there are none. */
+function testedLinesOf(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out = v.filter((x): x is string => typeof x === 'string')
+  return out.length > 0 ? out : undefined
+}
+
 function verdictRows(ledger: string, task: string): VerdictRow[] {
   const rows: VerdictRow[] = []
   for (const line of ledger.split('\n')) {
@@ -143,7 +150,7 @@ function verdictRows(ledger: string, task: string): VerdictRow[] {
     }
     if (!r || r.task !== task || typeof r.verdict !== 'string') continue
     if (r.subtask !== undefined && r.subtask !== 'main') continue
-    rows.push({ verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}), ...(typeof r.attempt === 'number' ? { attempt: r.attempt } : {}), ...(typeof r.sha === 'string' ? { sha: r.sha } : {}), ...(typeof r.kind === 'string' ? { kind: r.kind } : {}), ...(gateTreeOf(r.gateTree) ? { gateTree: gateTreeOf(r.gateTree) as Record<string, string> } : {}), ...(gateNotesOf(r.gates) ? { gates: gateNotesOf(r.gates) as GateNote[] } : {}), ...(typeof r.tried === 'number' && Number.isFinite(r.tried) ? { tried: r.tried } : {}) })
+    rows.push({ verdict: r.verdict, ...(typeof r.next === 'string' ? { next: r.next } : {}), ...(typeof r.attempt === 'number' ? { attempt: r.attempt } : {}), ...(typeof r.sha === 'string' ? { sha: r.sha } : {}), ...(typeof r.kind === 'string' ? { kind: r.kind } : {}), ...(gateTreeOf(r.gateTree) ? { gateTree: gateTreeOf(r.gateTree) as Record<string, string> } : {}), ...(gateNotesOf(r.gates) ? { gates: gateNotesOf(r.gates) as GateNote[] } : {}), ...(typeof r.tried === 'number' && Number.isFinite(r.tried) ? { tried: r.tried } : {}), ...(testedLinesOf(r.testedLines) ? { testedLines: testedLinesOf(r.testedLines) as string[] } : {}) })
   }
   return rows
 }
@@ -539,6 +546,8 @@ export type TestingInput = {
   testFiles: readonly string[]
   testsAdded: number
   tried?: number
+  /** MOD-411: what the worker said it ran beyond the gate, or could not run. */
+  tested?: readonly string[]
   attempts: number
 }
 
@@ -569,6 +578,7 @@ export function testingSection(i: TestingInput): string[] {
   const more = i.testFiles.length - shown.length
   const files = i.testFiles.length === 0 ? 'none' : `${i.testFiles.length} (${shown.join(', ')}${more > 0 ? `, +${more} more` : ''})`
   out.push(`- Test files changed: ${files}${i.testsAdded > 0 ? `; tests added: ${i.testsAdded}` : ''}`)
+  if (i.tested && i.tested.length > 0) out.push('- Worker ran:', ...i.tested.map(t => `  - ${t}`))
   if (i.tried !== undefined && i.tried > 0) out.push(`- Fix rounds before hand-back: ${i.tried}`)
   if (i.attempts > 1) out.push(`- Attempts: ${i.attempts}`)
   return out
