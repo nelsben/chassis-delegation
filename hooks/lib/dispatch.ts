@@ -9,6 +9,7 @@ import { isSpacedPath, listForHeader, parseBudget, parseHeader } from './brief'
 import { worktreePath as worktreePathOf } from './paths'
 import { DEFAULT_AGENT_TYPES, DEFAULT_DOMAINS } from './repoconfig'
 import { FINDINGS_GATE, spikeQuestions } from './spike'
+import { isDocsPath, isTestPath } from './explore'
 import { pathMatchesAny } from './verify-native'
 
 export { DEFAULT_AGENT_TYPES }
@@ -315,6 +316,18 @@ export function scopeSizeWarning(scope: readonly string[]): string | undefined {
   const globs = entries.filter(hasGlobChar).length
   const files = entries.length - globs
   return files > SCOPE_FILES_MAX ? `warning: scope names ${files} files (and ${globs} globs); cost tracks the files a card touches: split it` : undefined
+}
+
+/** MOD-408: the warning when a card that changes code names no red test (red_test none or empty); nothing is refused. Pure. */
+export function redTestWarning(input: { redTest: string; purpose?: string; kind: string; scope: readonly string[] }): string | undefined {
+  const rt = input.redTest.trim().toLowerCase()
+  if (!(rt === '' || rt.startsWith('none'))) return undefined
+  if ((input.purpose ?? '').trim().toLowerCase() === 'spike') return undefined
+  if (['docs', 'release', 'test', 'spike'].includes(input.kind)) return undefined
+  const n = input.scope
+    .map(s => s.trim().replace(/^\.?\//, ''))
+    .filter(p => p !== '' && !isDocsPath(p) && !isTestPath(p) && !/\.(?:md|json|ya?ml|toml)$/i.test(p)).length
+  return n > 0 ? `warning: red_test is none on a card that changes code (${n} source paths in scope): name a test that fails before the change` : undefined
 }
 
 /** MOD-54: the hint that economy would do for a small standard card; nothing is refused or changed. */

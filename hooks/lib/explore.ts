@@ -15,8 +15,8 @@ const isKind = (v: unknown): v is CardKind => typeof v === 'string' && (CARD_KIN
 
 const cleanPath = (s: string): string => s.trim().replace(/^\.?\//, '')
 const VERSION_FILES = /^(?:package(?:-lock)?\.json|VERSION|\.claude-plugin\/(?:plugin|marketplace)\.json|hooks\/lib\/version\.ts)$/
-const isDocsPath = (p: string): boolean => p === 'CHANGELOG.md' || p === 'docs' || p.startsWith('docs/') || VERSION_FILES.test(p)
-const isTestPath = (p: string): boolean => p === 'tests' || p.startsWith('tests/')
+export const isDocsPath = (p: string): boolean => p === 'CHANGELOG.md' || p === 'docs' || p.startsWith('docs/') || VERSION_FILES.test(p)
+export const isTestPath = (p: string): boolean => p === 'tests' || p.startsWith('tests/')
 
 /**
  * The card's kind. MOD-373: a `purpose: spike` (trimmed, any case) is `spike`, before the card's own `kind:`. Else the card's own `kind:` when it names one; else: a scope of only CHANGELOG, docs/** or version files is `release`
