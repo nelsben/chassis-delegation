@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **The scorecard script gains `--by-repo`, a `brain by repo` block that splits the brain setups by repo letter, and `--all <folder>`, which reads every `<name>/.delegation/ledger.jsonl` one level under a folder; output without them is unchanged** (MOD-410)
 - **A card's class now sizes it by breadth, `<kind>/narrow` (0 to 2 source paths in scope), `mid` (3 or 4) or `wide` (5 or more, or a glob), in place of `small` and `large`; ledger rows stamped with an old size are classed again from their card files** (MOD-409)
 - **Dispatch and the dry run now warn when a card that changes code has `red_test: none` (`warning: red_test is none on a card that changes code (<n> source paths in scope)`); the dispatch still goes ahead** (MOD-408)
 - **A merge now writes a `## Testing` section on the merged card (above its `## Review`) and in the PR body (after the gates): the planned test, whether the red test failed first, each gate's result line and time, the test files changed and tests added, the fix rounds and the attempts; the record stays in the root as `.delegation/<ID>/testing.md` and `red.txt` after the finish** (MOD-407)
