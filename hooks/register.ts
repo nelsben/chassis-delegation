@@ -371,6 +371,10 @@ import {
   finishStopLines,
   parseMergeTool,
   prBody,
+  scrubPaths,
+  testingSection,
+  isTestFile,
+  testsAdded,
   issueRef,
   issueNote,
   pushLines,
@@ -3879,6 +3883,90 @@ async function mergeWorktree($: Host, root: string, id: string): Promise<{ path:
   return listed === undefined ? undefined : worktreeOf(listed, id)
 }
 
+/** The merged card added and committed in the worktree; undefined on success, else the refusal line. */
+async function commitMergedCard($: Host, wt: string, id: string, cardRel: string): Promise<string | undefined> {
+  const added = await run($, ['git', '-C', wt, 'add', '--', cardRel], { cwd: wt, timeoutMs: 15000 })
+  if (!added.ok || added.exitCode !== 0) return `${id}: git add ${cardRel} failed in the worktree: ${whyOf(added)}`
+  let modelId: string | undefined
+  try {
+    modelId = await $.session.model()
+  } catch {
+    modelId = undefined
+  }
+  const made = await run($, commitArgv(wt, id, coAuthorTrailer(modelId)), { cwd: wt, timeoutMs: 30000 })
+  if (!made.ok || made.exitCode !== 0) return `${id}: the merged-card commit failed in the worktree: ${whyOf(made)}`
+  return undefined
+}
+
+/** MOD-407: a red file's path as the worktree holds it: a relative path without `..`, or an absolute one inside the worktree; else undefined. */
+function redFileIn(wt: string, p: string): string | undefined {
+  const dir = wt.replace(/\/+$/, '')
+  if (p === '' || p.split('/').includes('..')) return undefined
+  if (isAbsolute(p)) return p.startsWith(`${dir}/`) ? p : undefined
+  return `${dir}/${p}`
+}
+
+const RED_KEEP_BYTES = 64 * 1024
+
+/**
+ * MOD-407: the lines of the merged card's `## Testing` section, from what the merge has in hand: the card's red_test, the
+ * attempt records (the red file and its hold, the attempt count), the verdict row (gate notes, fix rounds), the merge's own
+ * gate results, the branch's changed test files and the tests its diff adds. Also writes `.delegation/<ID>/testing.md` and
+ * `red.txt` (the red file's first 64 KiB) in the root. Fails open: a part that cannot be read is left out, a write that fails
+ * is skipped, and the merge goes on.
+ */
+async function mergeTesting($: Host, o: { id: string; wt: string; baseRef: string; outDir: string; redTest: string; names: string; row: VerdictRow; results: readonly GateResult[]; reused: readonly string[]; folders: readonly string[] }): Promise<string[]> {
+  const { id, wt, outDir } = o
+  let testFiles: string[] = []
+  let added = 0
+  try {
+    testFiles = o.names.split('\n').map(l => l.trim()).filter(l => l !== '' && isTestFile(l))
+    if (testFiles.length > 0) {
+      const d = await run($, ['git', '-C', wt, 'diff', `${o.baseRef}..HEAD`, '--', ...testFiles.slice(0, 100)], { cwd: wt, timeoutMs: 30000 })
+      if (d.ok && d.exitCode === 0) added = testsAdded(d.stdout)
+    }
+  } catch (err) {
+    debug($, `${id}: test files not read: ${String(err)}`)
+  }
+  let red: { path: string; held: boolean } | undefined
+  let attempts = 1
+  try {
+    const records = attemptsFor(await loadAttempts($, { task: id }), 'main')
+    attempts = Math.max(1, ...records.map(r => r.attempt))
+    const withRed = records.findLast(r => r.red !== undefined && r.red !== '')
+    if (withRed?.red !== undefined) red = { path: withRed.red, held: withRed.redHeld === true }
+  } catch (err) {
+    debug($, `${id}: attempt records not read for the Testing section: ${String(err)}`)
+  }
+  const lines = testingSection({
+    redTest: o.redTest,
+    ...(red ? { red } : {}),
+    gates: o.results,
+    ...(o.row.gates ? { notes: o.row.gates } : {}),
+    reused: o.reused,
+    testFiles,
+    testsAdded: added,
+    ...(o.row.tried !== undefined ? { tried: o.row.tried } : {}),
+    attempts,
+  }).map(l => scrubPaths(l, o.folders))
+  try {
+    await $.fs.write(`${outDir}/testing.md`, `## Testing\n\n${lines.join('\n')}\n`)
+  } catch (err) {
+    debug($, `${id}: testing.md not written: ${String(err)}`)
+  }
+  try {
+    const src = red ? redFileIn(wt, red.path) : undefined
+    const text = src ? await readText($, src) : undefined
+    if (text !== undefined) {
+      const bytes = new TextEncoder().encode(text)
+      await $.fs.write(`${outDir}/red.txt`, bytes.length > RED_KEEP_BYTES ? new TextDecoder().decode(bytes.slice(0, RED_KEEP_BYTES)) : text)
+    }
+  } catch (err) {
+    debug($, `${id}: red.txt not written: ${String(err)}`)
+  }
+  return lines
+}
+
 async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: string; baseRef: string; def: string; cardDir: string; row: VerdictRow }): Promise<string> {
   const { root, id, baseRef, def, cardDir, row } = o
   // PREPARE 2: the worktree exists on its branch, with a clean tree
@@ -4003,20 +4091,12 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
     if (!(rootCard !== undefined && readsMerged(rootCard))) await $.fs.write(`${root}/${cardRel}`, markMerged(rootCard ?? (wtCard as string), review))
   } else if (!(wtCard !== undefined && readsMerged(wtCard))) {
     await $.fs.write(wtCardPath, markMerged(rootCard ?? (wtCard as string), review))
-    const added = await run($, ['git', '-C', wt.path, 'add', '--', cardRel], { cwd: wt.path, timeoutMs: 15000 })
-    if (!added.ok || added.exitCode !== 0) return `${id}: git add ${cardRel} failed in the worktree: ${whyOf(added)}`
-    let modelId: string | undefined
-    try {
-      modelId = await $.session.model()
-    } catch {
-      modelId = undefined
-    }
-    const made = await run($, commitArgv(wt.path, id, coAuthorTrailer(modelId)), { cwd: wt.path, timeoutMs: 30000 })
-    if (!made.ok || made.exitCode !== 0) return `${id}: the merged-card commit failed in the worktree: ${whyOf(made)}`
+    const failed = await commitMergedCard($, wt.path, id, cardRel)
+    if (failed) return failed
     committed = true
   }
-  const head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
-  const short = head.slice(0, 10) || '(unknown)'
+  let head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
+  let short = head.slice(0, 10) || '(unknown)'
   // what the branch changes against the base: the {files} list, and whether the version moved
   const names = okOut(await run($, ['git', '-C', wt.path, 'diff', '--name-only', `${baseRef}...HEAD`], { cwd: wt.path, timeoutMs: 15000 })) ?? ''
   const version = touchesVersion(names) ? versionOf(await readText($, `${wt.path}/${VERSION_FILE}`)) : undefined
@@ -4121,8 +4201,37 @@ async function mergePrepare($: Host, parsed: MergeArgs, o: { root: string; id: s
     home = ''
   }
   const prRepo = ownerRepoOf(gitConfigValue((await readText($, `${root}/.git/config`)) ?? '', 'remote "origin"', 'url') ?? '') || undefined
+  // MOD-407: the Testing section: on the merged card (a second commit with the same subject when the card is tracked, in place when it is git-ignored) and in the PR body; the root keeps the record
+  let testing: string[] | undefined
+  try {
+    testing = await mergeTesting($, { id, wt: wt.path, baseRef, outDir, redTest: fieldText(card.fields.red_test).trim(), names, row, results, reused: [...reusable.keys()], folders: [wt.path, root, $.plugin.root, home] })
+  } catch (err) {
+    debug($, `${id}: Testing section not built: ${String(err)}`)
+  }
+  if (testing && testing.length > 0) {
+    const cardPath = ignored ? `${root}/${cardRel}` : wtCardPath
+    let before: string | undefined
+    try {
+      before = await readText($, cardPath)
+      const next = before === undefined ? undefined : markMerged(before, undefined, testing)
+      if (before !== undefined && next !== undefined && next !== before) {
+        await $.fs.write(cardPath, next)
+        if (!ignored) {
+          const failed = await commitMergedCard($, wt.path, id, cardRel)
+          if (failed) debug($, `${id}: Testing section not committed: ${failed}`)
+          else {
+            head = (okOut(await run($, ['git', '-C', wt.path, 'rev-parse', 'HEAD'], { cwd: wt.path, timeoutMs: 15000 })) ?? '').trim()
+            short = head.slice(0, 10) || '(unknown)'
+            await storeSet($, K.mergePrep(id, await cardRepo($)), { head, ...(version ? { version } : {}), at: await now($) } satisfies MergePrep)
+          }
+        }
+      }
+    } catch (err) {
+      debug($, `${id}: Testing section not written on the card: ${String(err)}`)
+    }
+  }
   const verdictLine = `${id} attempt ${row.attempt ?? '?'}: consistent${row.sha ? ` at ${row.sha}` : ''} · next=accept`
-  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary), ...(rebaseLine ? { rebase: rebaseLine } : {}), ...(issueRef(card.fields.issue, prRepo) !== undefined ? { issue: issueRef(card.fields.issue, prRepo) as number } : {}) }))
+  await $.fs.write(prFile, prBody({ body: card.body, verdictLine, gates: results, folders: [wt.path, root, $.plugin.root, home], amends: amends.map(amendSummary), ...(testing && testing.length > 0 ? { testing } : {}), ...(rebaseLine ? { rebase: rebaseLine } : {}), ...(issueRef(card.fields.issue, prRepo) !== undefined ? { issue: issueRef(card.fields.issue, prRepo) as number } : {}) }))
   const title = card.title || `${id} merged`
   const lines = pushLines({ worktree: wt.path, branch: wt.branch, ownerRepo, defaultBranch: def, title, prFile, id, mergeStyle: cfg.mergeStyle })
   return [

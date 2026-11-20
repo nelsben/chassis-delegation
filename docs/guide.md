@@ -384,6 +384,27 @@ The steps, in order, for a repo that has its work in a backlog or in people's he
 
 Nothing else in the mod closes an issue.
 
+## What was tested
+
+A merge writes what was tested on the merged card and in the PR body (MOD-407). The card gains a `## Testing` section directly above its `## Review`, and `pr.md` gains the same lines after `## Gates`. A sample:
+
+```
+## Testing
+
+- Planned: node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs tests/node/a.node.mjs
+- Red test: failed before the change (.delegation/MOD-9/red-1.txt)
+- Gate validate: pass · Validation passed · 1 s · verify pass reused at merge
+- Gate node: pass · 2074 pass, 0 fail · 61 s
+- Gate test: pass · 88 pass, 0 fail · 2.5 min · green on a second run
+- Test files changed: 2 (tests/node/a.node.mjs, tests/b.test.ts); tests added: 7
+- Fix rounds before hand-back: 1
+- Attempts: 2
+```
+
+`Planned` is the card's `red_test`. The red line says whether the red test failed before the change (the verifier confirmed it) or only that the worker reported a file. Each gate line has the result and time the verifier recorded, and says when the merge did not run the gate again. `Fix rounds` and `Attempts` show only when above 0 and 1. Test files are the branch's changed files that sit in a test folder or have a test name; `tests added` counts the test lines its diff adds.
+
+The record outlives the worktree: the merge writes the section to `.delegation/<ID>/testing.md` in the main checkout, and copies the worker's red file (its first 64 KiB) to `.delegation/<ID>/red.txt`; `merge --finish` leaves both. The section goes on the card in a second commit with the same subject (`cards: <ID> merged`), after the gates have passed.
+
 ## Commands and tools
 
 | Name | Who calls it | What it does |
