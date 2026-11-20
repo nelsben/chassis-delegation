@@ -175,7 +175,7 @@ describe('bin/evidence.mjs', () => {
   test('an unknown -- argument exits 2 with the usage line on stderr', () => {
     const r = run('--nope', C)
     expect(r.status).toBe(2)
-    expect(r.stderr).toContain('usage: node bin/evidence.mjs [--scorecard] <ledger.jsonl> [<ledger.jsonl>...]')
+    expect(r.stderr).toContain('usage: node bin/evidence.mjs [--scorecard [--by-repo]] (<ledger.jsonl>... | --all <folder>)')
     expect(r.stdout).toBe('')
   })
 })
