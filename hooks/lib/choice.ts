@@ -1,6 +1,7 @@
 // MOD-270: the brain's choice of model and effort for a card, each with a reason, and the ledger's record of how each
 // (model, effort) pair did. Pure: no host calls.
 import { heldClaim, readVerdict } from './attempts'
+import { liveClass } from './explore'
 
 /** The efforts the card tool accepts; a clamp (maxEffort) is applied after this choice, not here. */
 export const CARD_EFFORTS = ['low', 'medium', 'high'] as const
@@ -100,7 +101,7 @@ export function cardOutcomes(rows: readonly LedgerRowLike[], cls?: string, class
   for (const [task, rs] of cards) {
     const first = rs.find(r => r.kind === 'spawn' && r.attempt === 1 && typeof r.verdict === 'string' && r.verdict !== '' && typeof r.effort === 'string' && r.effort !== '' && typeof r.alias === 'string')
     if (!first) continue
-    const own = typeof first.class === 'string' && first.class !== '' ? first.class : classOf?.(task)
+    const own = liveClass(first.class) ?? classOf?.(task)
     if (cls !== undefined && own !== cls) continue
     const explored = first.explore === true
     const verdicts = rs.filter(r => typeof r.verdict === 'string' && r.kind !== 'accept' && r.kind !== 'merged')
