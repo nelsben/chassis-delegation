@@ -311,6 +311,8 @@ The verdict may carry `note: <n> live process(es) name the worktree: …` when t
 gates (`claude plugin test`) take turns within a session through the store lock `delegation.engineGate`, which expires
 after the 9-minute gate timeout.
 
+**Gate notes.** The verdict row keeps each gate that ran as `gates`: one entry per gate id with its `id`, `ok` (true when every run of it exited 0), `ms` (the time in ms, a rerun and the wait for the engine-gate turn included), `line` (the result line, such as `2074 pass, 0 fail`; left out when the gate printed nothing) and `rerun` (`own` or `timeouts` when a run was run again). A gate that did not run or exited 126 or 127 has no entry. Nothing reads `gates` yet (MOD-406); no verdict, claim line, next step or budget depends on it.
+
 The changed paths go to `<root>/.delegation/<ID>/files.txt` before the gate runs; a gate command takes `{files}`,
 `{worktree}` and `{outdir}` (`gateMap` in [Configuration](configuration.md#configuration)). Naming `{outdir}` with no
 `outdir=` is "gate not re-run". The brief's gate line shows each gate id's command with `{worktree}` as the worktree

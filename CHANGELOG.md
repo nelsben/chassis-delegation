@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The verdict row now records each gate run as `gates`: the gate id, whether it passed, how long it took in ms, its result line (such as `2074 pass, 0 fail`) and whether it was run again; nothing reads it yet and no verdict changes** (MOD-406)
+
 ## 0.9.68 — 2026-11-18
 
 ### Changed

@@ -43,7 +43,7 @@ import { checkGateWords, gateForDelta, isEngineGate, resolveGateRuns, splitComma
 import { findingsCheck, spikeQuestions, splitFindingsGate } from './spike'
 import { artefactsCheck, attributeWrites, isAbsolute, isDelegationPath, metricsLine, outsideCheck, outsideRoots, reportArtefacts, reportMetrics, type ArtefactStat, type ClaimResult, type OutsideInput } from './norepo'
 import { isGitRef } from './repoconfig'
-import { gateIdOf } from './gaterun'
+import { gateIdOf, gateSummaryLine, type GateNote } from './gaterun'
 
 export type ExecOut = { ok: true; exitCode: number; stdout: string; stderr: string } | { ok: false; why: string }
 export type NativeIo = {
@@ -67,6 +67,8 @@ export type NativeIo = {
   stat?: (path: string) => Promise<ArtefactStat>
   /** MOD-230 (#323): the words for a loaded machine (`machine loaded (load x on n cores): …`), or nothing when it is not loaded or cannot be read. Called only after a red or timed-out gate; a throw reads as nothing. */
   load?: () => Promise<string | undefined>
+  /** MOD-406: the clock the gate loop times each run with, in ms; absent, Date.now. */
+  now?: () => number
 }
 
 export type NativeInput = {
@@ -146,6 +148,8 @@ export type NativeResult = {
   metrics?: Record<string, string>
   /** MOD-236: each gate id whose runs all exited 0, with the worktree tree hash they ran on (the id that ran, the `_empty` swap included). */
   gateTree?: Record<string, string>
+  /** MOD-406: one note per gate id that ran: pass or fail, time in ms, its result line, whether it was run again. Never judged. */
+  gates?: GateNote[]
 }
 
 /** What the mod read at a report's red= path (register.ts, through `$.fs`). */
@@ -999,6 +1003,8 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   // 5. the gate, re-run in the worker's own worktree at the sha (an honest gate=fail is never punished);
   //    repo=here: in the shared checkout as it stands, uncommitted changes and all
   let gateTree: Record<string, string> | undefined
+  // MOD-406: one note per gate id, in the order the ids first ran
+  const gateNotes = new Map<string, GateNote>()
   // MOD-372: with findings= and `findings` in gate=, the findings file is judged by the built-in check first; the other gate ids (if any) run as before
   const split = cardless ? { builtin: false, rest: contract.gate } : splitFindingsGate(contract.gate, contract.findings)
   let findingsPassed = false
@@ -1103,7 +1109,17 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
         }
       }
       for (const run of gates.runs) {
+        const startedAt = (io.now ?? Date.now)()
         const { r, rerun, timeouts, first, firstFailure } = await runGate(run)
+        const tookMs = (io.now ?? Date.now)() - startedAt
+        // MOD-406: a run that exited (any code but 126 and 127) is noted, the red one before the loop breaks
+        if (r.ok && r.exitCode !== 126 && r.exitCode !== 127) {
+          const id = idOf(run)
+          const prev = gateNotes.get(id)
+          const line = gateSummaryLine(r.stdout, r.stderr)
+          const kept = rerun ?? prev?.rerun
+          gateNotes.set(id, { id, ok: (prev?.ok ?? true) && r.exitCode === 0, ms: (prev?.ms ?? 0) + tookMs, ...(line !== '' ? { line } : {}), ...(kept ? { rerun: kept } : {}) })
+        }
         reranTimeouts += timeouts
         if (rerun !== undefined) anyRerun = true
         if (!r.ok) {
@@ -1254,5 +1270,5 @@ export async function verifyNative(input: NativeInput, io: NativeIo): Promise<Na
   if (hasMetrics) lines.push(metricsLine(metrics))
 
   const verdict: NativeVerdict = anyFailed ? 'refuted' : anyUnchecked ? 'unverified' : 'consistent'
-  return { verdict, lines: [...lines, ...notes], ...(red ? { red } : {}), ...(hasMetrics ? { metrics } : {}), ...(gateTree ? { gateTree } : {}) }
+  return { verdict, lines: [...lines, ...notes], ...(red ? { red } : {}), ...(hasMetrics ? { metrics } : {}), ...(gateTree ? { gateTree } : {}), ...(gateNotes.size > 0 ? { gates: [...gateNotes.values()] } : {}) }
 }
