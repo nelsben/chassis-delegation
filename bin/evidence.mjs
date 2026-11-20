@@ -3,14 +3,35 @@
 // With --scorecard it prints the weekly and per-model scorecard as plain text instead.
 // Reads only the files named, writes nothing, needs only Node built-ins.
 // Never emits a path, task id, sha, session id, agent id, brief path or free text.
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 
 const argv = process.argv.slice(2)
 const scorecardMode = argv.includes('--scorecard')
-const files = argv.filter(a => a !== '--scorecard')
-if (files.length === 0 || argv.some(a => a.startsWith('--') && a !== '--scorecard')) {
-  process.stderr.write('usage: node bin/evidence.mjs [--scorecard] <ledger.jsonl> [<ledger.jsonl>...]\n')
+const byRepo = argv.includes('--by-repo')
+const allAt = argv.indexOf('--all')
+const allFolder = allAt >= 0 ? argv[allAt + 1] : undefined
+const files = argv.filter((a, i) => !a.startsWith('--') && !(allAt >= 0 && i === allAt + 1))
+const usage = () => {
+  process.stderr.write('usage: node bin/evidence.mjs [--scorecard [--by-repo]] (<ledger.jsonl>... | --all <folder>)\n')
   process.exit(2)
+}
+if (argv.some(a => a.startsWith('--') && !['--scorecard', '--by-repo', '--all'].includes(a))) usage()
+if (byRepo && !scorecardMode) usage()
+if (allAt >= 0 ? (allFolder === undefined || allFolder.startsWith('--') || argv.filter(a => a === '--all').length > 1 || files.length > 0) : files.length === 0) usage()
+let ledgers = files
+if (allAt >= 0) {
+  ledgers = []
+  let names = []
+  try { names = readdirSync(allFolder).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) } catch {}
+  for (const n of names) {
+    const f = join(allFolder, n, '.delegation', 'ledger.jsonl')
+    if (existsSync(f)) ledgers.push(f)
+  }
+  if (ledgers.length === 0) {
+    process.stderr.write('error: no ledgers under the folder given\n')
+    process.exit(1)
+  }
 }
 
 const label = i => {
@@ -40,7 +61,7 @@ const weekOf = ms => {
 let skippedLines = 0
 const repos = {}
 const allDays = []
-files.forEach((file, i) => {
+ledgers.forEach((file, i) => {
   let text
   try { text = readFileSync(file, 'utf8') } catch {
     process.stderr.write(`error: cannot read ledger at argument ${i + 1}\n`)
@@ -400,7 +421,7 @@ const scorecardOf = repoMap => {
 }
 
 // The text form: one line per week oldest first, then one per model; right-aligned columns.
-const scorecardText = ({ weeks, models, brains, contexts }) => {
+const scorecardText = ({ weeks, models, brains, contexts }, byRepoRows = null) => {
   const pct = (n, d) => (d > 0 ? `${Math.round((100 * n) / d)}%` : '-')
   const dash = (v, f) => (v === null || v === undefined ? '-' : f(v))
   const head = ['week', 'cards', '1st try', 'strict', 'rework', 'choices', 'linked', 'escaped', 'repaired', 'brain', 'usd']
@@ -462,12 +483,27 @@ const scorecardText = ({ weeks, models, brains, contexts }) => {
     const crows = buckets.map(([name, e]) => [name, String(e.cards), rate(e), pct(e.firstTryStrict, e.cards), String(e.rework), String(e.repaired), dash(e.brainUsdPerCard, v => v.toFixed(2)), dash(e.stepsPerCard, v => v.toFixed(1))])
     lines.push('', ...block(chead, crows))
   }
+  if (byRepoRows) {
+    const rhead = ['repo', 'brain', 'cards', '1st try', 'rework', 'repaired', 'brain $/card', 'share']
+    const rrows = byRepoRows.map(([repo, name, e]) => [repo, name, String(e.cards), rate(e), String(e.rework), String(e.repaired), dash(e.brainUsdPerCard, v => v.toFixed(2)), dash(e.brainShare, v => `${Math.round(v * 100)}%`)])
+    if (rrows.length) lines.push('', 'brain by repo', ...block(rhead, rrows))
+  }
   return lines.join('\n') + '\n'
+}
+
+// the brain block's figures again, one repo at a time: rows by repo label, then cards descending
+const byRepoRows = () => {
+  const rows = []
+  for (const [name, R] of Object.entries(repos)) {
+    for (const [setup, e] of Object.entries(scorecardOf({ [name]: R }).brains)) if (e.cards > 0) rows.push([name, setup, e])
+  }
+  return rows.sort(([ra, sa, a], [rb, sb, b]) => (ra.length - rb.length || (ra < rb ? -1 : ra > rb ? 1 : 0)) || b.cards - a.cards || (sa < sb ? -1 : sa > sb ? 1 : 0))
 }
 
 const scorecard = scorecardOf(repos)
 if (scorecardMode) {
-  process.stdout.write(totals.judged === 0 ? 'no judged attempts\n' : scorecardText(scorecard))
+  if (allAt >= 0) process.stdout.write(`ledgers: ${ledgers.length}\n`)
+  process.stdout.write(totals.judged === 0 ? 'no judged attempts\n' : scorecardText(scorecard, byRepo ? byRepoRows() : null))
 } else {
   process.stdout.write(JSON.stringify({
     window: allDays.length ? { first: day(Math.min(...allDays)), last: day(Math.max(...allDays)) } : { first: null, last: null },
