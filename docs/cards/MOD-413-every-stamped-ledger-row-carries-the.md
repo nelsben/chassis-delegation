@@ -64,6 +64,19 @@ One engine test (in `tests/brain.test.ts` or `tests/drive.test.ts`, whichever al
 - The new node test file tests/node/braincalls.node.mjs covers stampKind, the counting helpers, brainStamp with and without a drive record, and the scorecard on a new fixture ledger; one engine test proves a stamped ledger row carries the counts
 - docs/internals.md, docs/guide.md and CHANGELOG.md (under `## Unreleased`) describe the field and the block
 
+## Testing
+
+- Planned: node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs tests/node/braincalls.node.mjs
+- Red test: failed before the change (.delegation/MOD-413/red-1.txt)
+- Gate validate: pass · ✔ Validation passed with warnings · 4 s · verify pass reused at merge
+- Gate node: pass · 2142 pass, 0 fail, 1226 skipped (engine tests: claude plugin test runs them) · 12 s · verify pass reused at merge
+- Gate test: pass · 2344 pass, 0 fail, Ran 2344 tests across 111 files. [488.95s] · 8.2 min · verify pass reused at merge
+- Test files changed: 5 (tests/brain.test.ts, tests/fixtures/evidence/ledger-f.jsonl, tests/merge.test.ts, tests/node/braincalls.node.mjs, tests/node/evidence.node.mjs); tests added: 16
+- Worker ran:
+  - node suite -> 2142 pass, 0 fail
+  - scorecard of tests/fixtures/evidence/ledger-f.jsonl by hand -> opus-5.5/medium 2 cards, callsPerCard run 2.5 read 3.0 edit 1.0 spawn 0.5 mod 2.5 git/gh 2.0 othe
+  - engine suite twice (once before and once after the two stamp expectation fixes) -> first run 2 fail (both MOD-342 exact stamps), second run 2344 pass
+
 ## Review
 
 Brain review (Fable 5.2): The diff does what the card decided and no more. `stampKind` falls back to mod, vcs or other only where `callKind` gives none, so the four old counts and the `brain calls:` line are untouched; `driveGuard` counts the new kinds through one shared helper and returns before the turn count and the watch; `brainStamp` writes `calls` only when a drive record is passed. The scorecard keeps a base for `calls` apart from the `pairs` base and reads `calls` before the `pairs` early return, so a row may carry either. I ran the new script over this repo's real ledger: it prints as before and no calls block, as it should for rows stamped before this card. The worker's engine test settles the open question: the general tool.call hook does see the mod's own tools. One cosmetic slip, the indent of the return line in `brainStampNow`, left as it is. The attempt ran on Haiku through the explore pick; its first hand-back was judged no-report because it stopped to wait on its own engine run, then it finished and was judged consistent on the same attempt.
