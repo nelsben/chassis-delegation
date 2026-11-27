@@ -190,14 +190,14 @@ export function handbackSection(result: ReviewedHandback, cap: number): string {
 // ---- the marker: how the spawn hook knows a spawn is a reviewer ---------------------------------
 
 /** Whose hand-back a reviewer reads: the task, the attempt, the worker's agent and the sha under review. */
-export type ReviewMarker = { task: string; subtask: string; attempt: number; worker?: string; sha?: string }
+export type ReviewMarker = { task: string; subtask: string; attempt: number; worker?: string; sha?: string; /** MOD-417: where the reviewer's copy of the hand-back came from, when not the worker's own turn. */ handback?: 'transcript' | 'report-only' }
 
 const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
 const WORD = /^[A-Za-z0-9_.:-]{1,80}$/
 
 /** The first line of a reviewer's prompt. The spawn hook reads it before it looks for a brief: the prompt names the brief by path, which would make it a worker's. */
 export const reviewMarker = (m: ReviewMarker): string =>
-  `[[review-of v=1 task=${m.task} subtask=${m.subtask} attempt=${m.attempt}${m.worker ? ` worker=${m.worker}` : ''}${m.sha ? ` sha=${m.sha}` : ''}]]`
+  `[[review-of v=1 task=${m.task} subtask=${m.subtask} attempt=${m.attempt}${m.worker ? ` worker=${m.worker}` : ''}${m.sha ? ` sha=${m.sha}` : ''}${m.handback ? ` handback=${m.handback}` : ''}]]`
 
 /** The marker a prompt opens with, else undefined: only the prompt's first line counts, so a worker's brief that quotes one is not hijacked. */
 export function parseReviewMarker(prompt: string): ReviewMarker | undefined {
@@ -213,10 +213,15 @@ export function parseReviewMarker(prompt: string): ReviewMarker | undefined {
   const attempt = kv.get('attempt') ?? ''
   const worker = kv.get('worker')
   const sha = kv.get('sha')
+  const from = kv.get('handback')
+  const handback = from === 'transcript' || from === 'report-only' ? from : undefined
   if (kv.get('v') !== '1' || !TASK_ID.test(task) || !TASK_ID.test(subtask) || !COUNT.test(attempt) || Number(attempt) < 1) return undefined
   if ((worker !== undefined && !WORD.test(worker)) || (sha !== undefined && !WORD.test(sha))) return undefined
-  return { task, subtask, attempt: Number(attempt), ...(worker !== undefined ? { worker } : {}), ...(sha !== undefined ? { sha } : {}) }
+  return { task, subtask, attempt: Number(attempt), ...(worker !== undefined ? { worker } : {}), ...(sha !== undefined ? { sha } : {}), ...(handback !== undefined ? { handback } : {}) }
 }
+
+/** MOD-417: the rows a review's ledger row keeps: the first 12 lines, each cut to 300 characters. */
+export const ledgerLines = (lines: readonly string[]): string[] => lines.slice(0, 12).map(l => cutTo(l, 300))
 
 // ---- the prompt and the spawn block --------------------------------------------------------------
 

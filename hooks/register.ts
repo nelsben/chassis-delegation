@@ -260,6 +260,7 @@ import {
   reviewClause,
   reviewHandback,
   handbackHasWords,
+  ledgerLines,
   handbackSection,
   gateRecord,
   reviewDue,
@@ -624,7 +625,7 @@ type SpawnRecord = {
    * MOD-21: set on a reviewer's record. `attempt` is the attempt it reviews; `worker` is that worker's agent id
    * (the resume goes to it), `sha` the commit under review. A reviewer is on no ladder, holds no slot, and edits nothing.
    */
-  review?: { worker?: string; sha?: string }
+  review?: { worker?: string; sha?: string; workerTier?: Tier; handback?: 'transcript' | 'report-only' }
   /** MOD-94: set (never stored) on a record a hand-back or the verdict tool rebuilt because the store had none. */
   fallback?: Fallback
 }
@@ -7985,7 +7986,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${label}: ${shortNext(next)}` : undefined
   await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'reviewed', line: quiet, at: t, ...(owed ? { owed } : {}) })
   if (counts && counts.refuted > 0) void noteFriction($, { kind: 'refuted', detail: quiet, at: t })
-  await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, kind: 'review', ...(counts ? { review: { confirmed: counts.confirmed, refuted: counts.refuted, unverifiable: counts.unverifiable, ...(misCount > 0 ? { misreported: misCount } : {}) } } : {}) }), verdict: 'reviewed', next: shortNext(next), sessionId: await sessionIdOf($) })
+  await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, kind: 'review', ...(counts ? { review: { confirmed: counts.confirmed, refuted: counts.refuted, unverifiable: counts.unverifiable, ...(misCount > 0 ? { misreported: misCount } : {}) } } : {}) }), ...(spawn.review?.workerTier ? { workerTier: spawn.review.workerTier } : {}), ...(spawn.review?.handback ? { handback: spawn.review.handback } : {}), ...(shown.length > 0 ? { refutedLines: ledgerLines(shown) } : {}), ...(misRows.length > 0 ? { misreportedLines: ledgerLines(misRows) } : {}), verdict: 'reviewed', next: shortNext(next), sessionId: await sessionIdOf($) })
   return { full: long, line }
 }
 
@@ -8033,7 +8034,7 @@ async function orphanReview($: Host, agentId: string | undefined, key: string, t
     ...(latest.briefPath ? { briefPath: latest.briefPath } : {}),
     ...(repo ? { repo } : {}),
     at: await now($),
-    review: { ...(latest.agentId ? { worker: latest.agentId } : {}), sha: latest.sha },
+    review: { ...(latest.agentId ? { worker: latest.agentId } : {}), sha: latest.sha, workerTier: latest.tier },
   }
   await storeSet($, K.spawn(spawn.key), spawn)
   const rendered = await finalizeReview($, spawn, text, {})
@@ -10887,7 +10888,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
     ...(usdAtStart !== undefined ? { usdAtStart } : {}),
     ...(lane ? { replay: true, ...(lane.base ? { base: lane.base } : {}) } : {}),
     at: t,
-    review: { ...(marker.worker ? { worker: marker.worker } : {}), ...(marker.sha ? { sha: marker.sha } : {}) },
+    review: { ...(marker.worker ? { worker: marker.worker } : {}), ...(marker.sha ? { sha: marker.sha } : {}), ...((worker?.tier ?? reviewed?.tier) ? { workerTier: (worker?.tier ?? reviewed?.tier) as Tier } : {}), ...(marker.handback ? { handback: marker.handback } : {}) },
   }
   await storeSet($, K.spawn(key), spawn)
   if (res.agentId) await storeSet($, K.agent(res.agentId), key)
@@ -10923,6 +10924,7 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
     handbackHasWords(input.text) || !agentId
       ? []
       : [...(handbacks.get(agentId) !== undefined ? [handbacks.get(agentId) as string] : []), ...(await transcriptHandbacks($, agentId))]
+  const handed = reviewHandback(input.text, heard, input.sha)
   const plan = reviewPlan({
     template,
     workerTier: spawn.tier,
@@ -10930,7 +10932,7 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
     tierMap: cfg.tierMap,
     allowFable: cfg.allowFable,
     label,
-    marker: { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, ...(spawn.agentId ? { worker: spawn.agentId } : {}), ...(input.sha ? { sha: input.sha } : {}) },
+    marker: { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, ...(spawn.agentId ? { worker: spawn.agentId } : {}), ...(input.sha ? { sha: input.sha } : {}), ...(handed.source !== 'given' ? { handback: handed.source } : {}) },
     vars: {
       id: spawn.task,
       subtask: spawn.subtask,
@@ -10943,7 +10945,7 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
       base,
       report: input.block,
       gaterecord: gateRecord(input.lines ?? [], gateTails.get(label) ?? []),
-      handback: handbackSection(reviewHandback(input.text, heard, input.sha), HANDBACK_CAP),
+      handback: handbackSection(handed, HANDBACK_CAP),
     },
   })
   return { block: plan.block }

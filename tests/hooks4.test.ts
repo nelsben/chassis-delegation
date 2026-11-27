@@ -301,7 +301,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     // a foreground Agent call: the reviewer's answer comes back in its result (hooks are registered before the first $ call)
     if (over.agentSays !== undefined) on('tool.call', { tool: 'Agent' }, () => agentResult(over.agentSays as string, 'agent-2'))
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, ...(over.cwd ? { cwd: over.cwd } : {}) }))
-    await $.turn.complete(turnInput('agent-4', 'Added the parser.\n' + REPORT('1234abcd')))
+    await $.turn.complete(turnInput('agent-4', 'Added the parser. It reads a/x.ts and the gate passes.\n' + REPORT('1234abcd')))
     return w
   }
   const review = async ($: Tester, w: Parameters<typeof delivered>[0]) => brainSpawn($, delivered(w), { tool_use_id: 'toolu_REVIEW01' })
@@ -441,7 +441,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     expect(out).toContain('next=review')
     const call = spawnCallOf(out) as SpawnCall
     expect(call.model).toBe('haiku')
-    expect(call.prompt.split('\n')[0]).toBe('[[review-of v=1 task=T-4 subtask=main attempt=1 sha=1234abcd]]')
+    expect(call.prompt.split('\n')[0]).toBe('[[review-of v=1 task=T-4 subtask=main attempt=1 sha=1234abcd handback=report-only]]')
     expect(w.spawns).toHaveLength(0)
   })
 
@@ -580,7 +580,7 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
 
     test('a worker that hands back again is reviewed again: the second consistent verdict prints a new block for the new sha', { options: { review: 'on', autoEscalate: true, ...FULL } }, async ($, on) => {
       const { w } = await reviewed($, on, REVIEW_REFUTED)
-      await $.turn.complete(turnInput('agent-4', 'Fixed the gate.\n' + REPORT('5678abcd')))
+      await $.turn.complete(turnInput('agent-4', 'Fixed the gate. The prettier check on a/x.ts now passes.\n' + REPORT('5678abcd')))
       expect(delivered(w)).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=2/2')
       expect(delivered(w)).toContain('[[review-of v=1 task=T-4 subtask=main attempt=2 worker=agent-4 sha=5678abcd]]')
     })

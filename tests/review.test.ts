@@ -434,6 +434,15 @@ describe('MOD-258: orphanReview through the hooks (MOD-224)', () => {
     expect(all.indexOf('refuted: a/x.ts gains the parser')).toBeLessThan(all.indexOf('misreported: 4 files changed'))
   })
 
+  test('MOD-417: an orphan review row carries workerTier from the reviewed attempt and no handback key', { options: OPTIONS }, async ($, on) => {
+    const w = await handedBack($, on)
+    await $.turn.complete(turnInput('agent-9', 'refuted: a/x.ts gains the parser — a/x.ts:12 has no parser\n[[review v=1 task=T-4 attempt=1 sha=1234abcd confirmed=0 refuted=1 unverifiable=0]]', usage('claude-haiku-4-5', 40_000, 2_000)))
+    const row = ledger(w).filter(l => l.kind === 'review').at(-1) as Record<string, unknown>
+    expect(row.workerTier).toBe(recs(w).find(r => r.kind !== 'review')?.tier)
+    expect(row.workerTier).toBe('standard')
+    expect('handback' in row).toBe(false)
+  })
+
   test('MOD-265: a block that names another attempt or sha appends nothing at turn.complete', { options: OPTIONS }, async ($, on) => {
     const w = await handedBack($, on)
     const before = w.appended.length
@@ -453,5 +462,38 @@ describe('MOD-258: orphanReview through the hooks (MOD-224)', () => {
     expect([...w.store.keys()].filter(k => k.startsWith('delegation.spawn.review-'))).toEqual([])
     const added = delivered(w).slice(before.shown.length).split('\n').filter(l => !l.includes('no transcript for'))
     expect(added.join('\n').trim()).toBe('')
+  })
+})
+
+describe('MOD-417: a reviewer spawned with a marker writes workerTier, handback, refutedLines and misreportedLines on its ledger row', () => {
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=2-attempts report=chassis.report.v1]]'
+  const REPORT = '[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
+  const OPTIONS = { review: 'on', verdictVerbosity: 'full', gateMap: '{"prettier":"npx prettier --check {files}"}' }
+  const MB = 'b'.repeat(40)
+  const run = (argv: string[]): RunAnswer | undefined => {
+    if (argv[0] === 'npx') return { exitCode: 0, stdout: 'ok\n' }
+    if (argv[0] !== 'git') return undefined
+    const sub = argv.slice(3)
+    const last = sub[sub.length - 1] ?? ''
+    if (sub[0] === 'rev-parse' && last.endsWith('^{commit}')) return { exitCode: 0, stdout: `${last.slice(0, -'^{commit}'.length).padEnd(40, '0')}\n` }
+    if (sub[0] === 'rev-parse' && sub[1] === '--verify') return { exitCode: 0, stdout: `${last === 'origin/main' ? MB : '1234abcd'.padEnd(40, '0')}\n` }
+    if (sub[0] === 'rev-parse' && last === 'HEAD' && sub[1] !== '--abbrev-ref') return { exitCode: 0, stdout: `${'1234abcd'.padEnd(40, '0')}\n` }
+    if (sub[0] === 'merge-base' && sub[1] !== '--is-ancestor') return { exitCode: 0, stdout: `${MB}\n` }
+    if (sub[0] === 'diff') return { exitCode: 0, stdout: 'A\ta/x.ts\n' }
+    return undefined
+  }
+  const ledger = (w: { files: Map<string, string> }) => (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+
+  test('the row has the worker tier, the marker handback word and the refuted and misreported lines; its tier is the reviewer\'s', { options: OPTIONS }, async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run, agentId: 'agent-4' })
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', 'Added the parser.\n' + REPORT))
+    await $.agent.spawn(spawnInput({ prompt: '[[review-of v=1 task=T-4 subtask=main attempt=1 worker=agent-4 sha=1234abcd handback=transcript]]\nReview it.', tool_use_id: 'toolu_REVIEW01' }))
+    const refuted = 'refuted: a/x.ts gains the parser — a/x.ts:12 has no parser'
+    const misreported = 'misreported: 4 files changed — git diff --stat shows 5'
+    await $.turn.complete(turnInput('agent-2', `${refuted}\n${misreported}\n[[review v=1 task=T-4 attempt=1 sha=1234abcd confirmed=0 refuted=1 unverifiable=0 misreported=1]]`, usage('claude-haiku-4-5', 40_000, 2_000)))
+    const row = ledger(w).filter(l => l.kind === 'review').at(-1)
+    expect(row).toMatchObject({ kind: 'review', verdict: 'reviewed', workerTier: 'standard', handback: 'transcript', refutedLines: [refuted], misreportedLines: [misreported], tier: 'economy', alias: 'haiku' })
   })
 })
