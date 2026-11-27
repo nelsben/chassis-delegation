@@ -9,6 +9,7 @@
 // resume, anything else (including no block at all) is next=accept. Pure: no `$`.
 import type { ReviewResult } from './attempts'
 import type { SpawnCall } from './dispatch'
+import { extractReport, parseReport } from './brief'
 import type { ReviewMode } from './repoconfig'
 import { finalAlias, reviewerTier, type Alias, type Tier } from './tier'
 import type { Advice } from './verify'
@@ -133,6 +134,58 @@ export const reviewDue = (mode: ReviewMode, workerTier: Tier): boolean => mode =
 /** The one line a reviewer's refused edit is told. */
 export const reviewerDeny = (tool: string, label: string): string =>
   `chassis-delegation: a reviewer never edits (${label} review): ${tool} refused. Label each claim confirmed, refuted or unverifiable, naming the command or file:line that decides it, and hand back.`
+
+// ---- the hand-back the reviewer is given (MOD-416) -----------------------------------------------
+
+const REPORT_BLOCK = /\[\[report[\s\S]*?\]\]/g
+const WORDS_OWN = 40
+
+/** MOD-416: a text has words of its own when, with every report block removed and whitespace collapsed, at least 40 characters remain. */
+export function handbackHasWords(text: string): boolean {
+  return text.replace(REPORT_BLOCK, ' ').replace(/\s+/g, ' ').trim().length >= WORDS_OWN
+}
+
+/** Which hand-back the reviewer reads: the worker's own given text, its transcript's (same sha), or the report line alone. */
+export type ReviewedHandback = { text: string; source: 'given' | 'transcript' | 'report-only' }
+
+/**
+ * MOD-416: the hand-back a reviewer is given. A given text with words of its own is read as it is. Else the newest
+ * transcript hand-back that has words of its own and whose last report names this sha (HEAD or an empty sha names
+ * none). Else the given text alone, which the prompt then says is only the report line.
+ */
+export function reviewHandback(given: string, transcript: readonly string[], sha: string): ReviewedHandback {
+  if (handbackHasWords(given)) return { text: given, source: 'given' }
+  const want = sha.trim()
+  if (want !== '' && want.toUpperCase() !== 'HEAD') {
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      const entry = transcript[i] as string
+      if (!handbackHasWords(entry)) continue
+      const block = extractReport(entry)
+      if (block === undefined) continue
+      const entrySha = parseReport(block).sha
+      if (entrySha !== undefined && sameShaWord(entrySha, want)) return { text: entry, source: 'transcript' }
+    }
+  }
+  return { text: given, source: 'report-only' }
+}
+
+/** MOD-416: the note a transcript hand-back is introduced with. */
+export const HANDBACK_NOTE_TRANSCRIPT =
+  "(The verifier judged this sha with no fresh hand-back. What follows is the worker's own hand-back for the same sha, read from its transcript.)"
+/** MOD-416: the note a report-only review is introduced with. */
+export const HANDBACK_NOTE_REPORT_ONLY =
+  "(Only the report line is available: the worker's own words for this sha could not be read. Take each Done-when statement of the card as one claim and check it against the diff. Write no row about what the hand-back says or leaves out.)"
+
+/**
+ * MOD-416: the hand-back section of the prompt. A given text is the whole section, cut at the cap as it always was;
+ * the other two sources are a note, an empty line, then the text cut at the cap (the note is not counted against it).
+ */
+export function handbackSection(result: ReviewedHandback, cap: number): string {
+  const text = result.text.length > cap ? `${result.text.slice(0, cap - 1)}…` : result.text
+  if (result.source === 'given') return text
+  const note = result.source === 'transcript' ? HANDBACK_NOTE_TRANSCRIPT : HANDBACK_NOTE_REPORT_ONLY
+  return `${note}\n\n${text}`
+}
 
 // ---- the marker: how the spawn hook knows a spawn is a reviewer ---------------------------------
 
