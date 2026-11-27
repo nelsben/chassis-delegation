@@ -30,7 +30,7 @@ Classes: (a) right, and about a defect in the work; (b) right, but only about th
 | A-36 | 2 | frontier | c | The same file credited two figures to an earlier task whose file does not hold them; the card's text is the only source | As above | 0.51 |
 | A-45 | 1 | frontier | c | A doc table's p95 column holds the worst frame's p95 next to a mean-over-frames column, and the label does not say so | Check by hand; the lead relabelled the column by hand at landing | 0.56 |
 | A-53 | 1 | frontier | b | The report read a 13 % pixel difference as a difference in one region; most of it is a broad one-level shift | Resume advised; the lead accepted; landed as it stood | 0.76 |
-| A-62 | 1 | frontier | b | The report's "within 0.004 on every score" was off by 0.0001 on one score | Check by hand; landed as it stood | 0.40 |
+| A-62 | 1 | frontier | b | The report gave one bound for every score, and one score exceeds it by 0.0001 | Check by hand; landed as it stood | 0.40 |
 | A-62 | 2 | frontier | c | A doc gave a range as 84-95 % where its own table gives 83-96 % | As above | 0.40 |
 | A-71 | 1 | frontier | d | Said the hand-back lacked the forbid-lift amend line. The worker's hand-back has it; the copy the reviewer was given did not | Check by hand (budget spent); landed as it stood | 0.36 |
 | A-80 | 1 | frontier | c | A doc sentence said one region's counts equal the control's; its own figures show one fewer at two poses | Check by hand; the lead reworded it by hand at landing | 0.40 |
@@ -50,7 +50,7 @@ Classes: (a) right, and about a defect in the work; (b) right, but only about th
 | C-1 | 1 | frontier | c | A protocol row holds a setup step done by a second actor, where the hand-back said each row has one actor | Same worker resumed over several rounds; merged | 0.38 |
 | C-1 | 2 | frontier | b | The report said a doubt marker sits on a fact; the doc states no such fact | As above | 0.38 |
 | C-7 | 1 | frontier | b | Line numbers cited in the report were off; the content is there | Same worker resumed twice; merged | 0.41 |
-| C-13 | 1 | frontier | d | Refuted "the file was not written" because the file existed when the reviewer looked; it was written after the hand-back, not by the worker | Resume advised; no later row of the task | 0.55 |
+| C-13 | 1 | frontier | d | Refuted the report's statement that one file had not been written, because the file existed when the reviewer looked; it was written after the hand-back, not by the worker | Resume advised; no later row of the task | 0.55 |
 | C-13 | 2 | frontier | c | Line cites in a findings file held only at an older commit, and the hand-back said so | As above | 0.55 |
 | D-1 | 1 | frontier | a | A spike doc went in with two unfilled placeholder sections, where the measurements the card asked for belong | Check by hand; a fresh attempt on the same task filled them; merged | 0.28 |
 | D-1 | 2 | frontier | b | The report said a device run passed; the only finished run failed at the parent commit, and the run at the sha never finished | As above | 0.28 |
@@ -164,7 +164,7 @@ These figures rest on 9 class (a) claims, and only the first two refutes of each
 **What the 16 class (b) refutes have in common.** Every one is a statement in the hand-back that is wrong while the work at the sha is right. There are three kinds:
 
 - 8 are a number in the report that is off: test counts, line numbers, a line count, a bound or a figure (A-1, A-18, A-27 ×2, A-62 claim 1, C-7, G-2 claim 2, H-1).
-- 4 are a universal word ("each", "every", "did not change") that one case breaks (B-1 ×2, B-9 claim 1, B-26).
+- 4 are a statement about all cases (all of a set, or no change at all) that one case breaks (B-1 ×2, B-9 claim 1, B-26).
 - 4 are a summary that reads more into the evidence than it holds (A-53, C-1 claim 2, D-1 claim 2, F-2).
 
 **What produces them.** The template asks for "every factual claim the hand-back makes" (`hooks/templates/review.md:11`), one row each (`hooks/templates/review.md:12`). It has one label for a false claim, whether the falsehood is in the work or in the report (`hooks/templates/review.md:14`). The mod then treats every refuted row alike. Any refuted row means a resume, or a check by hand (`hooks/lib/review.ts:262-270`). The resume text asks the worker to "correct the report where the claim was only misworded" (`hooks/lib/review.ts:280`), so a wrong count costs an attempt from `budget=` and another review (`docs/review-and-merge.md:43`). The parser has no way to tell the two apart (`hooks/lib/review.ts:88`, `hooks/lib/review.ts:107`).
@@ -174,7 +174,7 @@ These figures rest on 9 class (a) claims, and only the first two refutes of each
 - In F-1 and G-1 claim 2, the reviewer's prompt held only the `[[report …]]` line under "## The hand-back", where the worker's `SubagentHandback` ran to 3,459 and 5,152 characters.
 - In A-71, the prompt held a shorter, reworded copy that had lost the `[[amend …]]` line the worker wrote.
 - The prompt's hand-back is `input.text`, cut at 6,000 characters (`hooks/register.ts:10891`, `hooks/register.ts:10931`). The mod has a reader for the worker's transcript hand-back (`workerText`, `hooks/register.ts:6193`), but the reviewer is not given what it returns.
-- The template never says what to do when the hand-back is only the report line (`hooks/templates/review.md:36-37`). So the reviewer rebuilt the claims from the card's done-when ("the card's done-when requires this") and refuted that the hand-back made them.
+- The template never says what to do when the hand-back is only the report line (`hooks/templates/review.md:36-37`). So the reviewer rebuilt the claims from the card's done-when list and refuted that the hand-back made them.
 
 The fourth (C-13 claim 1) judged a file as it stood after the hand-back. With `sha=HEAD`, the template sends the reviewer to the live tree (`hooks/templates/review.md:8`) and never says to judge as of the hand-back.
 
@@ -182,7 +182,7 @@ The fourth (C-13 claim 1) judged a file as it stood after the hand-back. With `s
 
 **The smallest changes that remove them and keep the 9 class (a) refutes:**
 
-1. **Report-only refutes get their own label.** In `hooks/templates/review.md`, keep `refuted:` for a defect the diff or a file at the sha shows. Add `misreported:` for a wrong count, line number, "every", or summary in the hand-back when the work is right. Parse it in `hooks/lib/review.ts:88`. In `reviewAdvice` (`hooks/lib/review.ts:262`), misreported rows alone give `next=accept`, with the rows shown under the verdict (and copied into the card's Review section at merge), not a resume. All 9 class (a) claims are about the work at the sha, so none would move to the new label. This takes the 16 class (b) rows off the resume path.
+1. **Report-only refutes get their own label.** In `hooks/templates/review.md`, keep `refuted:` for a defect the diff or a file at the sha shows. Add `misreported:` for a wrong count, line number, all-cases statement or summary in the hand-back when the work is right. Parse it in `hooks/lib/review.ts:88`. In `reviewAdvice` (`hooks/lib/review.ts:262`), misreported rows alone give `next=accept`, with the rows shown under the verdict (and copied into the card's Review section at merge), not a resume. All 9 class (a) claims are about the work at the sha, so none would move to the new label. The advice is per review, not per claim, so this helps only a review whose refutes are all misreported. That is 9 of the 31 sampled reviews (29 %): A-1, A-18, A-27, A-53, B-1, B-26, C-7, F-2 and H-1, and every refute in each of them was audited. Those 9 hold 11 of the 16 class (b) claims. The other 5 class (b) claims (A-62 claim 1, C-1 claim 2, D-1 claim 2, G-2 claim 2, B-9 claim 1) share a review with a class (a) or (c) refute, which would still resume.
 2. **The reviewer reads the worker's real hand-back.** In `prepareReview` (`hooks/register.ts:10899`), when `input.text` is no longer than the report block, fill `{{handback}}` from the transcript's `SubagentHandback` (`workerText`). Add one template line: "Refute only what you can read. Check the card's done-when against the diff, and refute an item the diff lacks. Never refute that the hand-back says or leaves out something you cannot see; that is unverifiable." That keeps G-1 claim 1, which was a done-when item missing from the diff, and removes A-71, F-1 and G-1 claim 2.
 3. **Judge `sha=HEAD` as of the hand-back.** In `hooks/templates/review.md:8`, add: "a file written after the hand-back is unverifiable, not refuted." That removes C-13 claim 1.
 
@@ -200,7 +200,12 @@ The case for more review:
 The case against turning it on by default:
 
 - The sample holds no evidence for an economy reviewer, and none for cards below frontier. All 445 reviews ran at standard or frontier and read frontier or premium work (Q1). That follows from `on-frontier` (`hooks/lib/review.ts:125`, `docs/review-and-merge.md:13`).
-- Under today's handling, 20 of the 43 refutes (16 b and 4 d, 47 %) drove a resume or a check by hand that changed nothing in the work (`hooks/lib/review.ts:262-270`).
+- 20 of the 43 classed refutes (47 %) are class (b) or (d), 16 and 4 respectively. That is a share of claims. The mod's advice is per review (`hooks/lib/review.ts:262-270`), and many of those claims share a review with a class (a) or (c) refute.
+- Per review, 11 of the 31 sampled reviews (35 %) hold only class (b) or (d) refutes: A-1, A-18, A-27, A-53, A-71, B-1, B-26, C-7, F-1, F-2 and H-1. Each of them still sent the work back or to the lead:
+  - 7 got resume advice. In 5 the same worker was resumed, then merged (A-1, A-18, B-1, C-7, H-1). In 2 the lead accepted and it landed as it stood (A-53, F-2).
+  - 4 got a check by hand. In 3 it landed as it stood (A-27, A-71, F-1). In 1 the lead added an explanation to the doc by hand (B-26).
+  - Those 11 reviews cost $3.53 in review dollars and $3.20 in worker attempts after them. None of them found a defect in the work.
+- Only the first two refutes of each review were audited, and 7 of the 31 had more. So a review counted here as (b)/(d)-only could in principle hold a later refute of another class. None of the 11 had more than two refutes, so all of theirs were read.
 
 So "adopt" (every consistent card, an economy reviewer, as the default) is not supported, and "skip" throws away a stage that pays on frontier work. The named change: first separate report-only refutes and give the reviewer the real hand-back (Q4, changes 1 to 3). Then trial `"review": "on"` in one repo, which already puts an economy reviewer on standard cards (`docs/review-and-merge.md:12`, `docs/review-and-merge.md:15`). Re-run this audit on those economy reviews before any default changes.
 
