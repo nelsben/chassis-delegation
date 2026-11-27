@@ -45,7 +45,8 @@ export type AttemptVerdict = 'pending' | 'consistent' | 'unverified' | 'refuted'
 export type AttemptKind = 'spawn' | 'resume' | 'verify' | 'review'
 
 /** MOD-21: what a reviewer's `[[review]]` block counted. */
-export type ReviewResult = { confirmed: number; refuted: number; unverifiable: number }
+/** `misreported` (MOD-415) is present only when the reviewer's block carried it above 0. */
+export type ReviewResult = { confirmed: number; refuted: number; unverifiable: number; misreported?: number }
 
 export type AttemptRecord = {
   task: string

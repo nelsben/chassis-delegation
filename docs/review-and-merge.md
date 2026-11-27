@@ -16,7 +16,7 @@ The default is `on-frontier`. Set it in the repo file (`"review": "on"`), by `/d
 
 ### What the review must check
 
-The prompt is `hooks/templates/review.md`. It reads the brief, the hand-back (cut at 6000 characters) and the diff at the report's sha. Each claim gets one row: `confirmed`, `refuted` or `unverifiable`, with the deciding command or file and line.
+The prompt is `hooks/templates/review.md`. It reads the brief, the hand-back (cut at 6000 characters) and the diff at the report's sha. Each claim gets one row: `confirmed`, `refuted`, `misreported` or `unverifiable`, with the deciding command or file and line. `refuted` means the work is wrong and something must change before merge; `misreported` means the work at the sha is right and a statement in the hand-back about it is wrong (a count, a line number, an "all" that says too much).
 
 | Claim | Check |
 | --- | --- |
@@ -25,7 +25,7 @@ The prompt is `hooks/templates/review.md`. It reads the brief, the hand-back (cu
 | What was left alone | no path changed outside the claim |
 | CI or the runtime | usually `unverifiable` |
 
-It ends `[[review v=1 task=T-4 confirmed=1 refuted=1 unverifiable=1]]`. It never re-runs the gate or fixes anything.
+It ends `[[review v=1 task=T-4 confirmed=1 refuted=1 unverifiable=1 misreported=0]]`; `misreported=` is optional for the mod, and a block without it still parses. It never re-runs the gate or fixes anything.
 
 ### How it runs
 
@@ -37,12 +37,13 @@ It ends `[[review v=1 task=T-4 confirmed=1 refuted=1 unverifiable=1]]`. It never
 | The last `[[review]]` block | `next=` | The row says |
 | --- | --- | --- |
 | `refuted=0` | `accept` | `review: 3 confirmed, 1 unverifiable` |
+| `misreported>0` | never changes `next=`: `refuted=0` is still `accept`; the count is added to the clause as `, 2 misreported` and each misreported row is shown under the row, also on `accept` | `review: 3 confirmed, 1 unverifiable, 2 misreported` |
 | `refuted>0` | `resume agent=<the worker>` while the budget lasts, else `check by hand` | `review: 3 confirmed, 1 refuted, 0 unverifiable`, rows quoted |
 | missing, malformed, other task | `accept` | `review: no review block` |
 
 A failed review never blocks. Refuted rows go to the worker with `SendMessage` (the mod does it with `autoEscalate` on); that resume spends `budget=` and is reviewed again.
 
-With `verdictVerbosity: full` the row is `chassis-delegation: review task=T-4 attempt=1/3 confirmed=3 refuted=0 unverifiable=1 usd=… model=… next=accept`. The ledger keeps `review: {confirmed, refuted, unverifiable}`, verdict `reviewed`.
+With `verdictVerbosity: full` the row is `chassis-delegation: review task=T-4 attempt=1/3 confirmed=3 refuted=0 unverifiable=1 usd=… model=… next=accept`. The long row adds ` misreported=N` after `unverifiable=N` when it is above 0. The ledger keeps `review: {confirmed, refuted, unverifiable}` (plus `misreported`, present only when above 0), verdict `reviewed`.
 
 Not reviewed: a hand-back that is not consistent (`gate=fail` included), a `repo=none` brief, a `--replay` run, a cardless hand-back. A consistent `/dispatch <ID> --verify <sha>` is.
 

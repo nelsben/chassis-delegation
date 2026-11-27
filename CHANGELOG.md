@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **A reviewer now has a fourth label, `misreported` (the work at the sha is right and a statement in the hand-back about it is wrong), and its block may end `misreported=N`; only `refuted` rows send the work back, so a review with `refuted=0` is `next=accept` whatever it misreports, and the misreported rows are counted in the review line and shown under the verdict, stored as `review.misreported` when above 0; a resume also lists them for the worker to correct in its next hand-back** (MOD-415, #590)
+
 ### Changed
 
 - **Every brain stamp made with a drive record now carries `calls` by kind (`run`, `read`, `edit`, `spawn`, `mod`, `vcs`, `other`), counting the main loop's tool calls that the four old kinds skipped (the mod's own tools, git and gh, other tools); the scorecard script takes the per-card figures into a `brain calls/card` block and `callCards` and `callsPerCard` in its JSON, and prints no block when no setup has calls** (MOD-413)

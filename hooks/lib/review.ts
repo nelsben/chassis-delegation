@@ -49,6 +49,8 @@ export function parseReviewBlock(text: string, task?: string): ReviewCounts | un
       confirmed: Number(confirmed),
       refuted: Number(refuted),
       unverifiable: Number(unverifiable),
+      // MOD-415: the optional fourth count; absent or not a whole number, the key is left off
+      ...(kv.has('misreported') && COUNT.test(kv.get('misreported') as string) ? { misreported: Number(kv.get('misreported')) } : {}),
     }
   }
   return found
@@ -80,17 +82,17 @@ export function matchReview(text: string, wait: ReviewWait): ReviewMatch {
   return { kind: 'match', counts }
 }
 
-export type ReviewLabel = 'confirmed' | 'refuted' | 'unverifiable'
+export type ReviewLabel = 'confirmed' | 'refuted' | 'misreported' | 'unverifiable'
 /** One row of a reviewer's table: the label, the claim and what decides it as written, and the row as `<label>: <text>`. */
 export type ReviewRow = { label: ReviewLabel; text: string; line: string }
 
 /** A bullet or number, bold or code around the label, the label, then `:`, `|`, a dash, or ` - `. */
-const ROW = /^\s*(?:[-*•]\s+|\d+[.)]\s+)?(?:\*\*|__|`)?(confirmed|refuted|unverifiable)(?:\*\*|__|`)?(?:\s*[:|—–]\s*|\s+-\s+)(?:\*\*|__|`)?\s*(\S.*?)\s*$/i
+const ROW = /^\s*(?:[-*•]\s+|\d+[.)]\s+)?(?:\*\*|__|`)?(confirmed|refuted|misreported|unverifiable)(?:\*\*|__|`)?(?:\s*[:|—–]\s*|\s+-\s+)(?:\*\*|__|`)?\s*(\S.*?)\s*$/i
 const ROW_CAP = 400
 
 const cutTo = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
 
-/** Every row in a hand-back, in order: a line that opens with one of the three labels. Prose that merely starts with the word is no row. */
+/** Every row in a hand-back, in order: a line that opens with one of the four labels. Prose that merely starts with the word is no row. */
 export function reviewRows(text: string): ReviewRow[] {
   const rows: ReviewRow[] = []
   for (const raw of text.split(/\r?\n/)) {
@@ -106,6 +108,9 @@ export function reviewRows(text: string): ReviewRow[] {
 /** The refuted rows, each as `refuted: <claim> — <what decides it>`, in the order the reviewer wrote them. */
 export const refutedRows = (text: string): string[] => reviewRows(text).filter(r => r.label === 'refuted').map(r => r.line)
 
+/** MOD-415: the misreported rows, each as `misreported: <statement> — <what is true>`, in the order written. */
+export const misreportedRows = (text: string): string[] => reviewRows(text).filter(r => r.label === 'misreported').map(r => r.line)
+
 /**
  * The refuted rows a verdict row shows under it: the rows as written, or, when the block says something was
  * refuted and no row could be read, one line carrying the reviewer's own words (cut).
@@ -118,7 +123,8 @@ export function shownRefuted(counts: ReviewCounts | undefined, rows: readonly st
 /** `review: 3 confirmed, 1 unverifiable` when nothing was refuted; all three counts when something was; `review: no review block` when there is no (well-formed) block. */
 export function reviewClause(counts: ReviewTally | undefined): string {
   if (!counts) return 'review: no review block'
-  return counts.refuted === 0 ? `review: ${counts.confirmed} confirmed, ${counts.unverifiable} unverifiable` : `review: ${counts.confirmed} confirmed, ${counts.refuted} refuted, ${counts.unverifiable} unverifiable`
+  const mis = counts.misreported !== undefined && counts.misreported > 0 ? `, ${counts.misreported} misreported` : ''
+  return (counts.refuted === 0 ? `review: ${counts.confirmed} confirmed, ${counts.unverifiable} unverifiable` : `review: ${counts.confirmed} confirmed, ${counts.refuted} refuted, ${counts.unverifiable} unverifiable`) + mis
 }
 
 /** Is a reviewer due for a consistent verdict at this worker tier? `on-frontier` reviews frontier and premium cards only. */
@@ -220,7 +226,7 @@ export function reviewerPick(workerTier: Tier, override: Tier | undefined, tierM
 
 /** MOD-224: the closing line also names the hand-back read, so the mod can match the review without its spawn record (after a compaction). */
 const reviewKeys = (m: ReviewMarker): string =>
-  m.sha ? `\n\nIn that last line, write attempt=${m.attempt} sha=${m.sha} after the task, so the mod can match your review to this hand-back: [[review v=1 task=${m.task} attempt=${m.attempt} sha=${m.sha} confirmed=N refuted=N unverifiable=N]]` : ''
+  m.sha ? `\n\nIn that last line, write attempt=${m.attempt} sha=${m.sha} after the task, so the mod can match your review to this hand-back: [[review v=1 task=${m.task} attempt=${m.attempt} sha=${m.sha} confirmed=N refuted=N unverifiable=N misreported=N]]` : ''
 
 /** What a reviewer's spawn block ends with: the brain makes the call; the reviewer edits nothing. */
 export const REVIEW_STARTS =
@@ -272,11 +278,14 @@ export function reviewAdvice(i: ReviewAdviceInput): Advice {
 const SAID_CAP = 1500
 
 /** What a resume sends the worker: the refuted rows quoted; the reviewer's own words, cut, when no row could be read. */
-export function reviewResumeText(v: { label: string; attempt: number; budget: number; refuted: readonly string[]; said: string }): string {
+export function reviewResumeText(v: { label: string; attempt: number; budget: number; refuted: readonly string[]; said: string; misreported?: readonly string[] }): string {
   const rows = v.refuted.length > 0 ? [...v.refuted] : [cutTo(v.said.trim(), SAID_CAP)]
   return [
     `chassis-delegation: a reviewer read your hand-back for ${v.label} (attempt ${v.attempt}/${v.budget}) against the diff and refuted ${v.refuted.length > 0 ? `${v.refuted.length} claim${v.refuted.length === 1 ? '' : 's'}` : 'a claim'}:`,
     ...rows,
+    ...(v.misreported && v.misreported.length > 0
+      ? ['These statements in your hand-back were wrong though the work there is right; change nothing in the work for them and state them correctly in your next hand-back:', ...v.misreported]
+      : []),
     'Fix what is wrong in the same worktree, or correct the report where the claim was only misworded, re-run the gate, commit, and end with a fresh [[report v=1 …]] line.',
   ].join('\n')
 }
@@ -285,7 +294,7 @@ export function reviewResumeText(v: { label: string; attempt: number; budget: nu
 export function reviewVerdictLine(v: { task: string; attempt: number; budget: number; counts: ReviewCounts | undefined; usd?: number; usdApprox?: boolean; model?: string; next: string }): string {
   return (
     `chassis-delegation: review task=${v.task} attempt=${v.attempt}/${v.budget}` +
-    (v.counts ? ` confirmed=${v.counts.confirmed} refuted=${v.counts.refuted} unverifiable=${v.counts.unverifiable}` : '') +
+    (v.counts ? ` confirmed=${v.counts.confirmed} refuted=${v.counts.refuted} unverifiable=${v.counts.unverifiable}${v.counts.misreported !== undefined && v.counts.misreported > 0 ? ` misreported=${v.counts.misreported}` : ''}` : '') +
     (v.usd !== undefined && Number.isFinite(v.usd) ? ` usd=${v.usdApprox ? '~' : ''}${v.usd.toFixed(2)}` : '') +
     (v.model ? ` model=${v.model}` : '') +
     ` next=${v.next}`
