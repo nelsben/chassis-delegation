@@ -83,6 +83,16 @@ Engine tests: none. Do not edit `tests/waitstate.test.ts`; every expectation in 
 - The new node test file tests/node/waitwords.node.mjs holds the three real worker texts from the card as positives, word for word, and the card's negatives
 - CHANGELOG.md has one bold-led entry under the existing Unreleased section, under Changed, ending (MOD-418, #593) with the card's real id
 
+## Testing
+
+- Planned: node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs tests/node/waitwords.node.mjs
+- Red test: failed before the change (.delegation/MOD-418/red-1.txt)
+- Gate validate: pass · ✔ Validation passed with warnings · 15 s · verify pass reused at merge
+- Gate node: pass · 2199 pass, 0 fail, 1230 skipped (engine tests: claude plugin test runs them) · 19 s · verify pass reused at merge
+- Gate test: pass · 2348 pass, 0 fail, Ran 2348 tests across 111 files. [274.68s] · 4.6 min · verify pass reused at merge
+- Test files changed: 1 (tests/node/waitwords.node.mjs); tests added: 1
+- Attempts: 2
+
 ## Review
 
 Brain review (Fable 5.2): I read the whole diff at 0b41f72. It is the card's design and nothing more: the wait phrase built once and shared by two patterns, five more nouns and the you/your lookahead on the first, the present-tense running-in-the-background pattern, and the wait-for-it pattern that counts only with the word background in the paragraph. The guards, the last-paragraph rule and the rest of the file are untouched, and tests/waitstate.test.ts was not edited. The 18 node tests hold the three real worker texts word for word and the card's negatives. Limit I accept: the lists of nouns and forms are my judgment from four sightings, so another phrasing can still be missed, and a worker that is done but ends with one of these forms and no report will read as waiting until the 20-minute stall row. On this very card the worker stopped while its engine run was still going and the mod showed no-report with next=verify; I ran the verifier at the sha only after the worker's hand-back arrived, and the worker's hand-back was then delivered five more times as its background tasks ended. Not checked: the type-check (no tsc on PATH).
