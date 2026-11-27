@@ -66,6 +66,16 @@ The findings file holds one table of the sample, a line per audited claim: the s
 - The file names repos only by letter and sampled rows only by `<letter>-<rank>`, and holds no code, path, identifier, task id, card title or claim text from any repo but this one
 - No other file changes, in this repo or any other
 
+## Testing
+
+- Planned: none
+- Red test: none
+- Gate findings: pass · verify pass reused at merge
+- Test files changed: none
+- Worker ran:
+  - The file still has ## Q1 to ## Q5, the line `Verdict: adapt`, and no ⚠ mark outside a flag. The new dollar sums were recomputed from the ledger rows in the scra
+- Attempts: 2
+
 ## Review
 
 Brain review (Fable 5.2): I read the findings file whole at the first sha and the diff of the second commit. The sample follows the card's rule (210 rows, 8 repos, 31 rows, 45 claims) and the counts, shares and dollar sums agree with the sample table. The verdict (adapt) follows from the evidence: all 445 reviews read frontier or premium work with a standard reviewer, so nothing here supports an economy reviewer on every card. The spike corrected one thing in my card: a review row's `tier` is the reviewer's tier, not the worker's. Three reviews ran. The first gave one refuted row that said in its own words it was no defect, so I did not resume on it and re-ran the verifier at the same sha. The second, given only the report line as the hand-back, found a real overreach: Q5 said 20 of 43 refutes each drove a resume or hand check that changed nothing, though the advice is per review. The worker's second attempt restated it per review (11 of 31 sampled reviews hold only report-only or wrong refutes; my own count from the table agrees), fixed the same overreach in Q4 change 1 (the new label helps 9 of 31 reviews), and put quoted phrases from other repos into general words. The third review confirmed 13 rows and refuted none; it notes the $3.20 of following worker dollars is a floor, since one row's later attempts carry no dollars. Limits I accept: the class calls for repos A to F and H rest on the worker's own reading of diffs and transcripts outside this repo, and nine claims are flagged Unverified in the file.
