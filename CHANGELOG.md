@@ -8,6 +8,7 @@
 
 ### Changed
 
+- **A review's ledger row now carries `workerTier` (the tier of the worker whose hand-back was reviewed; the row's `tier` stays the reviewer's), `handback` (`transcript` or `report-only` when the reviewer's copy of the hand-back did not come with the worker's own turn, taken from a new `handback=` word on the review marker), and `refutedLines` and `misreportedLines` (the rows shown under the verdict, at most 12 each, each cut to 300 characters), so an audit of reviews reads the ledger and not the reviewers' transcripts; the stored attempt record gains none of them.** (MOD-417, #592)
 - **On a `--verify` the reviewer is given the worker's own hand-back: when the verifier passed only the report line, the prompt reads the worker's transcript for a hand-back at the same sha, says so when there is none, and tells the reviewer to label only what it can read, to write no row for what the hand-back leaves out, and to call a Done-when the diff does not meet refuted whatever the hand-back says** (MOD-416, #591)
 - **Every brain stamp made with a drive record now carries `calls` by kind (`run`, `read`, `edit`, `spawn`, `mod`, `vcs`, `other`), counting the main loop's tool calls that the four old kinds skipped (the mod's own tools, git and gh, other tools); the scorecard script takes the per-card figures into a `brain calls/card` block and `callCards` and `callsPerCard` in its JSON, and prints no block when no setup has calls** (MOD-413)
 

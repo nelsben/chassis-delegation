@@ -43,7 +43,7 @@ It ends `[[review v=1 task=T-4 confirmed=1 refuted=1 unverifiable=1 misreported=
 
 A failed review never blocks. Refuted rows go to the worker with `SendMessage` (the mod does it with `autoEscalate` on); that resume spends `budget=` and is reviewed again.
 
-With `verdictVerbosity: full` the row is `chassis-delegation: review task=T-4 attempt=1/3 confirmed=3 refuted=0 unverifiable=1 usd=… model=… next=accept`. The long row adds ` misreported=N` after `unverifiable=N` when it is above 0. The ledger keeps `review: {confirmed, refuted, unverifiable}` (plus `misreported`, present only when above 0), verdict `reviewed`.
+With `verdictVerbosity: full` the row is `chassis-delegation: review task=T-4 attempt=1/3 confirmed=3 refuted=0 unverifiable=1 usd=… model=… next=accept`. The long row adds ` misreported=N` after `unverifiable=N` when it is above 0. The ledger keeps `review: {confirmed, refuted, unverifiable}` (plus `misreported`, present only when above 0), verdict `reviewed`. The row also names the worker's tier (`workerTier`; its `tier` is the reviewer's), where the reviewer's copy of the hand-back came from (`handback`: `transcript` or `report-only`, absent when the worker's own turn supplied it) and the rows themselves (`refutedLines`, `misreportedLines`: at most 12 each, 300 characters a line), so an audit reads the ledger alone.
 
 Not reviewed: a hand-back that is not consistent (`gate=fail` included), a `repo=none` brief, a `--replay` run, a cardless hand-back. A consistent `/dispatch <ID> --verify <sha>` is.
 
