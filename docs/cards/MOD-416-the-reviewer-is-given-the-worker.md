@@ -72,6 +72,19 @@ Change no existing expectation. If an existing test fails, the code is wrong, no
 - The new node test file tests/node/reviewhandback.node.mjs covers both helpers and the template's new sentences; the engine suite proves the verify path's reviewer prompt holds the worker's own words when the transcript has a hand-back for the same sha, if a harness there can already give a subagent transcript
 - docs/review-and-merge.md says where the reviewer's copy of the hand-back comes from on the verify path and what the reviewer is told when only the report line is available; CHANGELOG.md has one bold-led entry under the existing Unreleased section
 
+## Testing
+
+- Planned: node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs tests/node/reviewhandback.node.mjs
+- Red test: failed before the change (.delegation/MOD-416/red-1.txt)
+- Gate validate: pass · ✔ Validation passed with warnings · 6 s · verify pass reused at merge
+- Gate node: pass · 2174 pass, 0 fail, 1228 skipped (engine tests: claude plugin test runs them) · 13 s · verify pass reused at merge
+- Gate test: pass · 2346 pass, 0 fail, Ran 2346 tests across 111 files. [227.77s] · 3.8 min · verify pass reused at merge
+- Test files changed: 1 (tests/node/reviewhandback.node.mjs); tests added: 19
+- Worker ran:
+  - node suite (full) -> 2174 pass, 0 fail
+  - engine suite (claude plugin test) before removing my engine test -> 2346 pass, 1 fail (my hooks4 test, removed)
+  - engine suite after removing it -> 2346 pass, 0 fail
+
 ## Review
 
 Brain review (Fable 5.2): I read the whole diff at c03779b. The attempt ran on Haiku through the explore pick and built the card's design as written: the three pure helpers in hooks/lib/review.ts, the two notes word for word, and six lines in prepareReview that read the worker's hand-backs only when the given text is a lone report line and the spawn names an agent. A hand-back with words of its own takes the old path and gives the same prompt. The sha match reuses the review block's own rule, and an empty sha or HEAD takes no transcript hand-back. The template gains the three sentences and loses none. Limit I accept: there is no engine test of the verify path with a transcript. The worker tried one on the worker path, found that path already carries the full hand-back, and removed it as the card allowed, so the wiring in prepareReview rests on my reading of the diff and the logic rests on 19 node tests. Not checked: the type-check (no tsc on PATH). The worker stopped twice to wait on its own engine run and the mod recorded both as waits, not as failed attempts.
