@@ -7982,7 +7982,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${label}: ${shortNext(next)}` : undefined
   await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'reviewed', line: quiet, at: t, ...(owed ? { owed } : {}) })
   if (counts && counts.refuted > 0) void noteFriction($, { kind: 'refuted', detail: quiet, at: t })
-  await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, kind: 'review' }), verdict: 'reviewed', next: shortNext(next), sessionId: await sessionIdOf($) })
+  await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, kind: 'review', ...(counts ? { review: { confirmed: counts.confirmed, refuted: counts.refuted, unverifiable: counts.unverifiable, ...(misCount > 0 ? { misreported: misCount } : {}) } } : {}) }), verdict: 'reviewed', next: shortNext(next), sessionId: await sessionIdOf($) })
   return { full: long, line }
 }
 
