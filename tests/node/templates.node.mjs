@@ -156,7 +156,7 @@ describe('MOD-21: hooks/templates/review.md, the reviewer prompt', () => {
 
   test('it ends with the review block the mod parses, and no line of it starts as a brief, report or amend block', () => {
     const t = read('hooks/templates/review.md').trimEnd()
-    expect(t.split('\n').at(-1)).toBe('[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]')
+    expect(t.split('\n').at(-1)).toBe('[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N misreported=N]]')
     for (const line of t.split('\n')) {
       expect(line.trim().startsWith('[[brief')).toBe(false)
       expect(line.trim().startsWith('[[report')).toBe(false)
@@ -234,7 +234,7 @@ describe('MOD-253: the review template reads the verifier\'s gate record', () =>
     expect(t.includes('do not re-run the suite')).toBe(true)
     expect(t.includes('run the suite')).toBe(true)
     expect(t.includes('a test run only if it writes nothing')).toBe(false)
-    expect(t.trimEnd().endsWith('[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]')).toBe(true)
+    expect(t.trimEnd().endsWith('[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N misreported=N]]')).toBe(true)
   })
 })
 

@@ -410,6 +410,29 @@ describe('MOD-258: orphanReview through the hooks (MOD-224)', () => {
     expect(w.appended.slice(before).filter(a => a.text.includes('no parser'))).toHaveLength(1)
   })
 
+  test('MOD-415: refuted=0 misreported=1 is next=accept, the misreported row is shown under the verdict and review.misreported is 1 on the ledger row', { options: OPTIONS }, async ($, on) => {
+    const w = await handedBack($, on)
+    const text = 'misreported: 4 files changed — git diff --stat shows 5\n[[review v=1 task=T-4 attempt=1 sha=1234abcd confirmed=1 refuted=0 unverifiable=0 misreported=1]]'
+    await $.turn.complete(turnInput('agent-9', text, usage('claude-haiku-4-5', 40_000, 2_000)))
+    const row = ledger(w).filter(l => l.kind === 'review').at(-1)
+    expect(row).toMatchObject({ verdict: 'reviewed', next: 'accept', review: { confirmed: 1, refuted: 0, unverifiable: 0, misreported: 1 } })
+    const lines = delivered(w).split('\n')
+    const at = lines.findIndex(l => l.includes('review task=T-4') && l.includes('misreported=1'))
+    expect(at).toBeGreaterThanOrEqual(0)
+    expect(lines.slice(at).some(l => l === 'misreported: 4 files changed — git diff --stat shows 5')).toBe(true)
+  })
+
+  test('MOD-415: refuted=1 misreported=1 still advises a resume and shows the refuted row, then the misreported row', { options: OPTIONS }, async ($, on) => {
+    const w = await handedBack($, on)
+    const text = 'refuted: a/x.ts gains the parser — a/x.ts:12 has no parser\nmisreported: 4 files changed — git diff --stat shows 5\n[[review v=1 task=T-4 attempt=1 sha=1234abcd confirmed=0 refuted=1 unverifiable=0 misreported=1]]'
+    await $.turn.complete(turnInput('agent-9', text, usage('claude-haiku-4-5', 40_000, 2_000)))
+    const row = ledger(w).filter(l => l.kind === 'review').at(-1)
+    expect(String(row?.next)).toContain('resume')
+    const all = delivered(w)
+    expect(all).toContain('refuted: a/x.ts gains the parser')
+    expect(all.indexOf('refuted: a/x.ts gains the parser')).toBeLessThan(all.indexOf('misreported: 4 files changed'))
+  })
+
   test('MOD-265: a block that names another attempt or sha appends nothing at turn.complete', { options: OPTIONS }, async ($, on) => {
     const w = await handedBack($, on)
     const before = w.appended.length

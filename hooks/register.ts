@@ -255,6 +255,7 @@ import {
   parseReviewBlock,
   parseReviewMarker,
   refutedRows,
+  misreportedRows,
   reviewAdvice,
   reviewClause,
   gateRecord,
@@ -7931,6 +7932,10 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   const counts = parseReviewBlock(text, spawn.task)
   const rows = counts && counts.refuted > 0 ? refutedRows(text) : []
   const shown = shownRefuted(counts, rows, text)
+  // MOD-415: misreported rows are read whatever the count says; the block's count wins, else the rows read; shown on accept too
+  const misRows = counts ? misreportedRows(text) : []
+  const misCount = counts ? (counts.misreported ?? misRows.length) : 0
+  const tally = counts && misCount > 0 ? { ...counts, misreported: misCount } : counts
   const before = await loadAttempts($, spawn)
   const worker = spawn.review?.worker ? await spawnByAgent($, spawn.review.worker) : undefined
   const advice = reviewAdvice({ counts, refuted: rows, ...(worker?.agentId ? { agentId: worker.agentId } : {}), attempts: attemptsFor(before, spawn.subtask, lane).length, budget: spawn.budget, label })
@@ -7938,7 +7943,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   const records = patchReview(before, spawn.key, {
     verdict: 'reviewed',
     verdictAt: t,
-    ...(counts ? { review: { confirmed: counts.confirmed, refuted: counts.refuted, unverifiable: counts.unverifiable } } : {}),
+    ...(counts ? { review: { confirmed: counts.confirmed, refuted: counts.refuted, unverifiable: counts.unverifiable, ...(misCount > 0 ? { misreported: misCount } : {}) } } : {}),
     ...(usd !== undefined ? { usd } : {}),
     ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
     ...(measured.tokens !== undefined ? { tokens: measured.tokens } : {}),
@@ -7955,7 +7960,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
     if (cfg.autoEscalate && worker.agentId) {
       let sent: { isDelivered: boolean; reason?: string }
       try {
-        sent = await $.session.send({ to: { agentId: worker.agentId }, text: reviewResumeText({ label, attempt: spawn.attempt, budget: spawn.budget, refuted: rows, said: text }) })
+        sent = await $.session.send({ to: { agentId: worker.agentId }, text: reviewResumeText({ label, attempt: spawn.attempt, budget: spawn.budget, refuted: rows, said: text, misreported: misRows }) })
       } catch (err) {
         sent = { isDelivered: false, reason: String(err) }
       }
@@ -7966,9 +7971,10 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
 
   // MOD-367: a review that refutes a claim raises the advisor cue, the last line the brain reads for it
   const cueLine = counts && counts.refuted > 0 ? await raiseAdvisorCue($, 'review', spawn) : ''
-  const cueShown = cueLine !== '' ? [...shown, cueLine] : shown
-  const long = [reviewVerdictLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, counts, usd, usdApprox, model, next }), reviewClause(counts), ...cueShown].join('\n')
-  const quiet = reviewLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), counts, next })
+  const underRow = [...shown, ...misRows]
+  const cueShown = cueLine !== '' ? [...underRow, cueLine] : underRow
+  const long = [reviewVerdictLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, counts: tally, usd, usdApprox, model, next }), reviewClause(tally), ...cueShown].join('\n')
+  const quiet = reviewLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), counts: tally, next })
   const line = [quiet, ...cueShown].join('\n')
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: long, verdictLine: line })

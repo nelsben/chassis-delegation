@@ -11,13 +11,15 @@ Read, in this order:
 - Take every factual claim the hand-back makes: what was built or changed, what the tests and the gate show, what was left alone, why a choice was made. The report's own fields (sha, files, gate, red) are already matched against git; spend yourself on what they cannot say.
 - Write one row per factual claim. Label it:
   - confirmed: the diff or a read-only command shows it is true;
-  - refuted: the diff or a read-only command shows it is false;
+  - refuted: the work is wrong: the diff or a read-only command shows the code, tests, docs or files at the sha are not what the hand-back says, and something has to change before merge (name what);
+  - misreported: the work at the sha is right, and a statement in the hand-back about it is wrong (a count, a line number, a file name, an "all" or "every" that says too much);
   - unverifiable: nothing you can read here decides it (say what would).
 - Name what decides each row: the command you ran, or the file:line you read. A row without it is an opinion; leave it out.
+- A refuted row sends the work back to the worker, so use it only when something in the work has to change before merge; when nothing has to change, the row is confirmed or misreported, never refuted.
 - Judge the claims, not the style. Do not list taste, naming or things you would have done differently.
 
 ## Rules
-- Edit nothing, and never fix anything: no Edit, Write, MultiEdit or NotebookEdit, no Bash command that writes a file, no commit, no push. The mod refuses them and a refused call is not a finding. If the worker got something wrong, say it in a refuted row; the worker is sent that row and fixes it.
+- Edit nothing, and never fix anything: no Edit, Write, MultiEdit or NotebookEdit, no Bash command that writes a file, no commit, no push. The mod refuses them and a refused call is not a finding. If the worker got something wrong, say it in a refuted row; the worker is sent that row and fixes it. A misreported row is shown to the lead and sends nothing back.
 - Run only read-only commands: git diff, show, log and status, cat, grep, ls.
 - The mod already ran the gate at the sha; read its record below and do not re-run the suite (about 2 minutes under a lock). Run the suite yourself only if a finding depends on an output the record does not show, and then only if it writes nothing outside a temporary folder.
 - Do not stray out of {{worktree}} and the brief.
@@ -26,6 +28,7 @@ Read, in this order:
 ## Rows (one per claim, each on its own line, nothing before the label)
 confirmed: <the claim> — <the command or file:line that decides it>
 refuted: <the claim> — <the command or file:line that decides it, and what it shows instead>
+misreported: <the statement> — <the command or file:line that decides it, and what is true instead>
 unverifiable: <the claim> — <what you could not read, and what would decide it>
 
 ## The report
@@ -37,4 +40,4 @@ unverifiable: <the claim> — <what you could not read, and what would decide it
 {{handback}}
 
 ## End (the last line of your hand-back, exactly; N is how many rows carry that label)
-[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]
+[[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N misreported=N]]
