@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.69 to 0.9.70
+
+No action needed. A reviewer has a fourth label, `misreported`: the work at the sha is right and a statement in the hand-back about it is wrong. Only `refuted` rows send the work back. After a `--verify` the reviewer is given the worker's own hand-back when the worker's transcript holds one for the same sha. A review's ledger row gains `workerTier`, `handback`, `refutedLines` and `misreportedLines`, and every brain stamp gains `calls` by kind; rows written before this version carry none of them. A worker that ends a turn saying its own run is still in the background is shown as waiting, not as no-report. Detail: [CHANGELOG 0.9.70](../CHANGELOG.md).
+
 ### From 0.9.68 to 0.9.69
 
 No action needed. A merged card and its PR now carry a `## Testing` section: the planned test, the red test's result, each gate's result line and time, and what the worker ran. Dispatch warns when a card that changes code has no red test; it still goes ahead. A card's class is now sized narrow, mid or wide by the source paths in its scope, so the history line starts again per new class. Detail: [CHANGELOG 0.9.69](../CHANGELOG.md).
