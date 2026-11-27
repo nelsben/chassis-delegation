@@ -15,7 +15,16 @@ export type DriveRecord = {
   ctxTokens: number
   /** The calls those turns made. */
   ctxCalls: number
+  /** MOD-413: the mod's own tool calls (mcp__chassis-delegation__*), the main loop's. Absent reads as 0. */
+  mod?: number
+  /** MOD-413: the git and gh commands the four old kinds skip. Absent reads as 0. */
+  vcs?: number
+  /** MOD-413: every other tool call the four old kinds skip. Absent reads as 0. */
+  other?: number
 }
+
+/** MOD-413: the seven kinds a stamp counts: the four of callKind, then the three stampKind names. */
+export type StampKind = DriveKind | 'mod' | 'vcs' | 'other'
 
 export const emptyDrive = (): DriveRecord => ({ run: 0, read: 0, edit: 0, spawn: 0, ctxTokens: 0, ctxCalls: 0 })
 
@@ -162,15 +171,40 @@ export function callKind(tool: string, input: { command?: unknown; run_in_backgr
   return 'run'
 }
 
+/** MOD-413: one of the three new counts, summed; written only when either side has it, so an old record stays as it was. */
+const sumOptional = (a: DriveRecord, b: DriveRecord, k: 'mod' | 'vcs' | 'other'): Partial<DriveRecord> => (a[k] === undefined && b[k] === undefined ? {} : { [k]: (a[k] ?? 0) + (b[k] ?? 0) })
+
 /** MOD-239: `a` plus `b`, field by field; none when both are none. */
 export const addDrive = (a: DriveRecord | undefined, b: DriveRecord | undefined): DriveRecord | undefined => {
   if (!a || !b) return a ?? b
-  return { run: a.run + b.run, read: a.read + b.read, edit: a.edit + b.edit, spawn: a.spawn + b.spawn, ctxTokens: a.ctxTokens + b.ctxTokens, ctxCalls: a.ctxCalls + b.ctxCalls }
+  return {
+    run: a.run + b.run,
+    read: a.read + b.read,
+    edit: a.edit + b.edit,
+    spawn: a.spawn + b.spawn,
+    ctxTokens: a.ctxTokens + b.ctxTokens,
+    ctxCalls: a.ctxCalls + b.ctxCalls,
+    ...sumOptional(a, b, 'mod'),
+    ...sumOptional(a, b, 'vcs'),
+    ...sumOptional(a, b, 'other'),
+  }
 }
 
-export const driveCall = (r: DriveRecord | undefined, kind: DriveKind): DriveRecord => {
+export const driveCall = (r: DriveRecord | undefined, kind: StampKind): DriveRecord => {
   const prev = r ?? emptyDrive()
-  return { ...prev, [kind]: prev[kind] + 1 }
+  return { ...prev, [kind]: (prev[kind] ?? 0) + 1 }
+}
+
+/**
+ * MOD-413: the kind a main-loop call is stamped with. callKind's kind when it has one (so the four old counts stay what
+ * the `brain calls:` line counts); else `mod` for the mod's own tools, `vcs` for a git or gh command, `other` for any other tool.
+ */
+export function stampKind(tool: string, input: { command?: unknown; run_in_background?: unknown; file_path?: unknown }, writes = false, repeat = false): StampKind {
+  const kind = callKind(tool, input, writes, repeat)
+  if (kind !== undefined) return kind
+  if (tool.startsWith('mcp__chassis-delegation__')) return 'mod'
+  const command = tool === 'Bash' && typeof input.command === 'string' ? input.command : ''
+  return SKIP_COMMANDS.includes(firstWord(command)) ? 'vcs' : 'other'
 }
 
 /** A finished main-loop turn that made `calls` calls: its input + cache-read tokens. */

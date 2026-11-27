@@ -41,6 +41,8 @@ const label = i => {
 }
 const day = ms => new Date(ms).toISOString().slice(0, 10)
 const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+// MOD-413: the seven kinds a brain stamp counts its calls by
+const CALL_KINDS = ['run', 'read', 'edit', 'spawn', 'mod', 'vcs', 'other']
 const round = (v, p) => Math.round(v * 10 ** p) / 10 ** p
 const bump = (o, k, by = 1) => { o[k] = (o[k] || 0) + by }
 const sortKeys = o => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
@@ -258,6 +260,7 @@ const scorecardOf = repoMap => {
       const sessionKey = JSON.stringify([name, since])
       let prevUsd = 0
       let base = null
+      let callsBase = null
       rows.forEach((row, i) => {
         const bs = row.brain
         // the brain's dollars between this stamp and the last one that had dollars, in the week of this row
@@ -266,6 +269,20 @@ const scorecardOf = repoMap => {
           wk.brainUsd += diff(bs.usd, prevUsd)
           wk.brainPlaced++
           prevUsd = bs.usd
+        }
+        // MOD-413: the calls by kind, counted as pairs are but on their own base (the last row that carried calls), so a row may carry either or both
+        if (bs.calls !== null && typeof bs.calls === 'object' && !Array.isArray(bs.calls)) {
+          if (callsBase || i === 0) {
+            const before = callsBase ?? {}
+            const cv = Object.fromEntries(CALL_KINDS.map(k => [k, diff(bs.calls[k], before[k])]))
+            const task = String(row.task ?? '')
+            if (task) {
+              const t = tasks.get(task) ?? { pairs: new Map(), usd: 0, steps: 0, ctx: 0 }
+              tasks.set(task, t)
+              t.calls = Object.fromEntries(CALL_KINDS.map(k => [k, (t.calls?.[k] ?? 0) + cv[k]]))
+            }
+          }
+          callsBase = bs.calls
         }
         if (bs.pairs === null || typeof bs.pairs !== 'object' || Array.isArray(bs.pairs)) return
         if (base || i === 0) {
@@ -344,6 +361,16 @@ const scorecardOf = repoMap => {
     }
   }
 
+  // MOD-413: a setup's calls per card over its task records that have a calls object; one decimal; null with no such card
+  const callsOf = e => {
+    const ts = [...e.tasks.values()].filter(t => t.calls !== undefined)
+    const cards = ts.length
+    if (cards === 0) return { callCards: 0, callsPerCard: null }
+    const sum = k => ts.reduce((n, t) => n + t.calls[k], 0)
+    const per = v => round(v / cards, 1)
+    const callsPerCard = { ...Object.fromEntries(CALL_KINDS.map(k => [k, per(sum(k))])), all: per(CALL_KINDS.reduce((n, k) => n + sum(k), 0)) }
+    return { callCards: cards, callsPerCard }
+  }
   const perCard = (e, cards) => {
     const ts = [...e.tasks.values()]
     const usd = ts.reduce((n, t) => n + t.usd, 0)
@@ -389,6 +416,7 @@ const scorecardOf = repoMap => {
   for (const [pair, e] of pairs) {
     if (!e.eligible) continue
     const pc = perCard(e, e.cards)
+    const cc = callsOf(e)
     brainOut[pair] = {
       sessions: e.sessions.size,
       brainUsd: round(e.usd, 2),
@@ -408,6 +436,8 @@ const scorecardOf = repoMap => {
       brainUsdPerCard: pc.brainUsdPerCard,
       brainUsdMedian: pc.brainUsdMedian,
       stepsPerCard: pc.stepsPerCard,
+      callCards: cc.callCards,
+      callsPerCard: cc.callsPerCard,
       brainShare: pc.usd + e.workerUsd > 0 ? round(pc.usd / (pc.usd + e.workerUsd), 2) : null,
     }
   }
@@ -476,6 +506,13 @@ const scorecardText = ({ weeks, models, brains, contexts }, byRepoRows = null) =
       e.brainUsd.toFixed(2),
     ])
     lines.push('', ...block(bhead, brows))
+    // MOD-413: the calls per card, one row per setup with a card that has calls, in the brain block's order
+    const callRows = setups.filter(([, e]) => e.callCards > 0)
+    if (callRows.length) {
+      const chead = ['brain calls/card', 'cards', 'run', 'read', 'edit', 'spawn', 'mod', 'git/gh', 'other', 'all']
+      const crows = callRows.map(([name, e]) => [name, String(e.callCards), ...['run', 'read', 'edit', 'spawn', 'mod', 'vcs', 'other', 'all'].map(k => e.callsPerCard[k].toFixed(1))])
+      lines.push('', ...block(chead, crows))
+    }
   }
   const buckets = Object.entries(contexts ?? {})
   if (buckets.length) {

@@ -328,7 +328,7 @@ describe('MOD-342: the judged ledger row carries the brain\'s running total', ()
     const rows = judged(w)
     expect(rows).toHaveLength(1)
     const brain = rows[0]?.brain as Record<string, unknown>
-    expect(brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0, pair: 'fable-5.1/default', window: 200000, compactions: 0, pairs: { 'fable-5.1/default': { usd: rec.usd, turns: 1, steps: 1, ctx: expect.any(Number) } } })
+    expect(brain).toEqual({ since: 0, usd: rec.usd, turns: 1, edits: 0, pair: 'fable-5.1/default', window: 200000, compactions: 0, pairs: { 'fable-5.1/default': { usd: rec.usd, turns: 1, steps: 1, ctx: expect.any(Number) } }, calls: { run: 0, read: 0, edit: 0, spawn: 0, mod: 0, vcs: 0, other: 0 } })
   })
 
   test('with no brain turn before the hand-back, the row has no brain key', async ($, on) => {
@@ -339,6 +339,31 @@ describe('MOD-342: the judged ledger row carries the brain\'s running total', ()
     const rows = judged(w)
     expect(rows).toHaveLength(1)
     expect('brain' in (rows[0] ?? {})).toBe(false)
+  })
+})
+
+describe('MOD-413: the stamped ledger row carries the brain\'s calls by kind', () => {
+  const FABLE = 'claude-fable-5-1'
+  const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
+  const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
+  const REPORT = '[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=1234abcd gate=pass files=a/x.ts]]'
+  const mainTurn = (u: ReturnType<typeof usage>) => ({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 'turn-main', reason: 'answer', usage: u }) as never
+
+  test('a Read, a git status, a mod tool and another tool by the main loop: the next stamped row has read 1, vcs 1, mod 1, other 1', async ($, on) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, agentId: 'agent-4', model: FABLE })
+    on('tool.call', () => ({ result: 'ok' }) as never)
+    await $.session.start(sessionStart)
+    await $.tool.call({ tool: 'Read', file_path: '/repo/a.ts' } as never)
+    await $.tool.call({ tool: 'Bash', command: 'git status' } as never)
+    await $.tool.call({ tool: 'mcp__chassis-delegation__dispatch' } as never)
+    await $.tool.call({ tool: 'ToolSearch' } as never)
+    await $.turn.complete(mainTurn(usage(FABLE, 100_000, 10_000)))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    await $.turn.complete(turnInput('agent-4', REPORT))
+    const rows = (w.files.get(`${ROOT}/.delegation/ledger.jsonl`) ?? '').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>).filter(r => r.event !== 'spawn' && typeof r.verdict === 'string')
+    expect(rows).toHaveLength(1)
+    const brain = rows[0]?.brain as { calls?: Record<string, number> }
+    expect(brain.calls).toEqual({ run: 0, read: 1, edit: 0, spawn: 0, mod: 1, vcs: 1, other: 1 })
   })
 })
 
