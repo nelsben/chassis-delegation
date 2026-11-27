@@ -16,7 +16,7 @@ The default is `on-frontier`. Set it in the repo file (`"review": "on"`), by `/d
 
 ### What the review must check
 
-The prompt is `hooks/templates/review.md`. It reads the brief, the hand-back (cut at 6000 characters) and the diff at the report's sha. Each claim gets one row: `confirmed`, `refuted`, `misreported` or `unverifiable`, with the deciding command or file and line. `refuted` means the work is wrong and something must change before merge; `misreported` means the work at the sha is right and a statement in the hand-back about it is wrong (a count, a line number, an "all" that says too much).
+The prompt is `hooks/templates/review.md`. It reads the brief, the hand-back (cut at 6000 characters) and the diff at the report's sha. After a `--verify` the hand-back is the worker's own, read from its transcript when its report names the same sha; when the transcript has none, the prompt says only the report line was available and tells the reviewer to check each Done-when statement of the card against the diff. The template also says that only what the reviewer can read is labelled, that what the hand-back leaves out is not a claim, and that a sha=HEAD difference a later write would explain is `unverifiable`, not `refuted`. Each claim gets one row: `confirmed`, `refuted`, `misreported` or `unverifiable`, with the deciding command or file and line. `refuted` means the work is wrong and something must change before merge; `misreported` means the work at the sha is right and a statement in the hand-back about it is wrong (a count, a line number, an "all" that says too much).
 
 | Claim | Check |
 | --- | --- |

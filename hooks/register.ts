@@ -258,6 +258,9 @@ import {
   misreportedRows,
   reviewAdvice,
   reviewClause,
+  reviewHandback,
+  handbackHasWords,
+  handbackSection,
   gateRecord,
   reviewDue,
   reviewerDeny,
@@ -10914,6 +10917,12 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
   const base = (briefBase && isGitRef(briefBase) ? briefBase : '') || cfg.baseRef || 'origin/main'
   const worktree = spawn.here ? root : await workerRepo($, spawn, header?.repo, root)
   const label = taskLabel(spawn.task, spawn.subtask)
+  // MOD-416: the worker's own words, read only when the verifier passed the report line alone (a spawn with an agentId)
+  const agentId = spawn.agentId
+  const heard: string[] =
+    handbackHasWords(input.text) || !agentId
+      ? []
+      : [...(handbacks.get(agentId) !== undefined ? [handbacks.get(agentId) as string] : []), ...(await transcriptHandbacks($, agentId))]
   const plan = reviewPlan({
     template,
     workerTier: spawn.tier,
@@ -10934,7 +10943,7 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
       base,
       report: input.block,
       gaterecord: gateRecord(input.lines ?? [], gateTails.get(label) ?? []),
-      handback: input.text.length > HANDBACK_CAP ? `${input.text.slice(0, HANDBACK_CAP - 1)}…` : input.text,
+      handback: handbackSection(reviewHandback(input.text, heard, input.sha), HANDBACK_CAP),
     },
   })
   return { block: plan.block }
