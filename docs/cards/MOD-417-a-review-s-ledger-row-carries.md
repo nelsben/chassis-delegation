@@ -64,6 +64,18 @@ Change no existing expectation. If an existing test fails, the code is wrong, no
 - The new node test file tests/node/reviewledger.node.mjs covers the marker round trip and the line cutting; the engine suite proves a review's ledger row carries workerTier, handback, refutedLines and misreportedLines, and that an orphan review's row carries workerTier and no handback key
 - docs/internals.md says a review row's tier is the reviewer's and names the four new keys; docs/review-and-merge.md names them where the ledger's review row is described; CHANGELOG.md has one bold-led entry under the existing Unreleased section
 
+## Testing
+
+- Planned: node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs tests/node/reviewledger.node.mjs
+- Red test: failed before the change (.delegation/MOD-417/red-1.txt)
+- Gate validate: pass · ✔ Validation passed with warnings · 12 s · verify pass reused at merge
+- Gate node: pass · 2181 pass, 0 fail, 1230 skipped (engine tests: claude plugin test runs them) · 18 s · verify pass reused at merge
+- Gate test: pass · 2348 pass, 0 fail, Ran 2348 tests across 111 files. [306.62s] · 5.1 min · verify pass reused at merge
+- Test files changed: 3 (tests/hooks4.test.ts, tests/node/reviewledger.node.mjs, tests/review.test.ts); tests added: 9
+- Worker ran:
+  - red test before the change -> `tests/node/reviewledger.node.mjs` failed because `review.ts` had no `ledgerLines` export (saved in red-1.txt).
+  - the two new engine tests -> both pass (spawn-hook ledger row and orphan row).
+
 ## Review
 
 Brain review (Fable 5.2): I read the whole diff at 62e92a2. It builds the card's design: the marker's optional handback word, written only when set and read only when it is one of the two words; the worker's tier and that word on the reviewer's spawn record; and the four keys on the ledger row alone, with the lists cut by one pure helper. The stored attempt record is untouched, and so is hooks/lib/attempts.ts, since the ledger row is an untyped record. The card said to change no existing expectation and the worker changed one, in tests/hooks4.test.ts, and said so: the verify-path test's expected marker now ends handback=report-only. That is the behaviour this card asks for, so the card's rule was too strict and the change stands. It also lengthened the worker's fixture text in two other tests there, which shows a consequence of MOD-416 I had not spelled out: a real hand-back with fewer than 40 characters of its own words beside the report is treated as report-only, gets the note and now the ledger word. I accept that: such a hand-back gives the reviewer nothing more than the report line, though the note's words (could not be read) are loose for that case. The worker's amend line for tests/hooks4.test.ts was not needed, as the scope's test glob already covers it. Its first two engine runs had load timeouts in unrelated tests; its third run and the verifier's own gate were clean. Not checked: the type-check (no tsc on PATH).
