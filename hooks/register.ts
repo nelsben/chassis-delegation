@@ -14,7 +14,7 @@ import type { AgentSpawnResult, EngineInterface, PluginOptions, Register, TurnUs
 import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from './types'
 import { addBounded, setBounded, MAP_CAPS } from './lib/cut'
 import { blocksFor, openItemLines } from './lib/dashboard'
-import { addDrive, callKind, driveCall, driveLines, driveOutput, driveSpeaks, driveStep, driveTurn, emptyWatch, ranBefore, freshSessionRow, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type Watch } from './lib/drive'
+import { addDrive, callKind, driveCall, driveLines, driveOutput, driveSpeaks, driveStep, driveTurn, emptyDrive, emptyWatch, ranBefore, freshSessionRow, stampKind, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type StampKind, type Watch } from './lib/drive'
 import { extractPause, pauseCapLine, pauseRow, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
 import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
 import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
@@ -1965,7 +1965,8 @@ async function compactTokensNow($: Host): Promise<number | undefined> {
 async function brainStampNow($: Host): Promise<BrainStamp | undefined> {
   try {
     const rec = await readBrain($)
-    return brainStamp(rec, brainSinceCache ?? 0)
+    // MOD-413: the stored drive counts plus the unflushed ones, so every stamp carries the brain's calls by kind
+  return brainStamp(rec, brainSinceCache ?? 0, (await readDrive($)) ?? emptyDrive())
   } catch {
     return undefined
   }
@@ -2117,7 +2118,17 @@ async function brainContextTokens($: Host): Promise<number> {
   }
 }
 
-/** MOD-48: a main-loop call is counted by kind; a Bash command the brain keeps re-running or polling at a large context raises one row a turn. */
+/**
+ * MOD-239: the count stays in memory; turn.complete (or the 5 s debounce) writes it. MOD-413: the same record and debounce
+ * for every kind, the three new ones included.
+ */
+async function countDrive($: Host, kind: StampKind): Promise<void> {
+  drivePending = driveCall(drivePending, kind)
+  if (driveFlushedAt === 0) driveFlushedAt = await now($)
+  else if ((await now($)) - driveFlushedAt >= DRIVE_DEBOUNCE_MS) await flushDrive($)
+}
+
+/** MOD-48: a main-loop call is counted by kind; a Bash command the brain keeps re-running or polling at a large context raises one row a turn. MOD-413: a call callKind leaves out is counted by stampKind's kind (mod, vcs, other) and the drive watch is left alone. */
 async function driveGuard($: Host, e: { tool: unknown; agentId?: string }): Promise<void> {
   const tool = String(e.tool)
   if (e.agentId) return
@@ -2126,13 +2137,14 @@ async function driveGuard($: Host, e: { tool: unknown; agentId?: string }): Prom
     const command = tool === 'Bash' && typeof input.command === 'string' ? input.command : ''
     if (command !== '') await loadRepoConfig($)
     const writes = command !== '' && bashWrites(command, await $.session.root(), (await $.env.get('HOME')) || undefined).paths.length > 0
-    const kind = callKind(tool, input, writes, command !== '' && ranBefore(driveWatch, command))
-    if (kind === undefined) return
+    const repeat = command !== '' && ranBefore(driveWatch, command)
+    const kind = callKind(tool, input, writes, repeat)
+    if (kind === undefined) {
+      await countDrive($, stampKind(tool, input, writes, repeat))
+      return
+    }
     driveTurnCalls += 1
-    // MOD-239: the count stays in memory; turn.complete (or the 5 s debounce) writes it
-    drivePending = driveCall(drivePending, kind)
-    if (driveFlushedAt === 0) driveFlushedAt = await now($)
-    else if ((await now($)) - driveFlushedAt >= DRIVE_DEBOUNCE_MS) await flushDrive($)
+    await countDrive($, kind)
     if (command === '') return
     // MOD-239: the live workers, the context and the model are read only when the step could speak
     const speaks = cfg.driveWarn && driveSpeaks(driveWatch, command)

@@ -3,6 +3,7 @@
 // adds to one record (tokens, dollars by model, turns, the brain's own source
 // edits); the dashboard and /delegation read it. Pure: no `$`.
 import { addTurn, priceFor, round4, tokensOf, usdOf, type Tokens, type UsageLike } from './cost'
+import type { DriveRecord } from './drive'
 
 export type BrainModel = { usd: number; tokens: number; turns: number }
 export type BrainRecord = {
@@ -95,10 +96,12 @@ export type BrainStamp = {
   compactTokens?: number
   /** MOD-348: the running totals of every pair; the difference of two stamps of one `since` is what the brain spent between them. */
   pairs?: Record<string, { usd: number; turns: number; steps: number; ctx: number }>
+  /** MOD-413: the running totals of the brain's main-loop calls by kind; the difference of two stamps of one `since` is what the brain made between them. Absent when the stamp was made without a drive record. */
+  calls?: { run: number; read: number; edit: number; spawn: number; mod: number; vcs: number; other: number }
 }
 
-/** MOD-342: the brain's running total for a ledger row; undefined before its first turn. */
-export function brainStamp(rec: BrainRecord | undefined, since: number): BrainStamp | undefined {
+/** MOD-342: the brain's running total for a ledger row; undefined before its first turn. MOD-413: a drive record (the stored counts plus the unflushed ones) adds `calls`. */
+export function brainStamp(rec: BrainRecord | undefined, since: number, drive?: DriveRecord): BrainStamp | undefined {
   if (!rec || !(rec.turns > 0)) return undefined
   const pairs = Object.entries(rec.byPair ?? {})
   const top = pairs.sort((a, b) => b[1].usd - a[1].usd || b[1].turns - a[1].turns || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0]
@@ -112,6 +115,7 @@ export function brainStamp(rec: BrainRecord | undefined, since: number): BrainSt
     ...(rec.window !== undefined ? { window: rec.window } : {}),
     compactions: rec.compactions ?? 0,
     ...(rec.compactTokens !== undefined ? { compactTokens: rec.compactTokens } : {}),
+    ...(drive ? { calls: { run: drive.run, read: drive.read, edit: drive.edit, spawn: drive.spawn, mod: drive.mod ?? 0, vcs: drive.vcs ?? 0, other: drive.other ?? 0 } } : {}),
   }
 }
 

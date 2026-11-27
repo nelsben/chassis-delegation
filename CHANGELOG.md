@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Every brain stamp made with a drive record now carries `calls` by kind (`run`, `read`, `edit`, `spawn`, `mod`, `vcs`, `other`), counting the main loop's tool calls that the four old kinds skipped (the mod's own tools, git and gh, other tools); the scorecard script takes the per-card figures into a `brain calls/card` block and `callCards` and `callsPerCard` in its JSON, and prints no block when no setup has calls** (MOD-413)
+
 ## 0.9.69 — 2026-11-20
 
 ### Changed

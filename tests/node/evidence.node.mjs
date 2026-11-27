@@ -142,8 +142,8 @@ describe('bin/evidence.mjs', () => {
   test('scorecard brains: the pairs of ledger-e', () => {
     const b = out(E).scorecard.brains
     expect(Object.keys(b)).toEqual(['fable-5.2/high', 'opus-5.5/medium'])
-    expect(b['opus-5.5/medium']).toEqual({ sessions: 2, brainUsd: 7, turns: 13, steps: 27, usdPerStep: 0.2593, ctxPerStep: 112963, compactions: 0, cards: 2, firstTry: 1, firstTryStrict: 1, rework: 1, choicesMean: 1, grants: 0, workerUsd: 3, repaired: 1, brainUsdPerCard: 3.25, brainUsdMedian: 3, stepsPerCard: 12.5, brainShare: 0.68 })
-    expect(b['fable-5.2/high']).toEqual({ sessions: 1, brainUsd: 5.5, turns: 5, steps: 11, usdPerStep: 0.5, ctxPerStep: 250000, compactions: 1, cards: 1, firstTry: 1, firstTryStrict: 0, rework: 0, choicesMean: 3, grants: 1, workerUsd: 1, repaired: 0, brainUsdPerCard: 6, brainUsdMedian: 6, stepsPerCard: 13, brainShare: 0.86 })
+    expect(b['opus-5.5/medium']).toEqual({ sessions: 2, brainUsd: 7, turns: 13, steps: 27, usdPerStep: 0.2593, ctxPerStep: 112963, compactions: 0, cards: 2, firstTry: 1, firstTryStrict: 1, rework: 1, choicesMean: 1, grants: 0, workerUsd: 3, repaired: 1, brainUsdPerCard: 3.25, brainUsdMedian: 3, stepsPerCard: 12.5, callCards: 0, callsPerCard: null, brainShare: 0.68 })
+    expect(b['fable-5.2/high']).toEqual({ sessions: 1, brainUsd: 5.5, turns: 5, steps: 11, usdPerStep: 0.5, ctxPerStep: 250000, compactions: 1, cards: 1, firstTry: 1, firstTryStrict: 0, rework: 0, choicesMean: 3, grants: 1, workerUsd: 1, repaired: 0, brainUsdPerCard: 6, brainUsdMedian: 6, stepsPerCard: 13, callCards: 0, callsPerCard: null, brainShare: 0.86 })
   })
   test('scorecard contexts: the buckets of ledger-e', () => {
     const c = out(E).scorecard.contexts
