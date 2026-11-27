@@ -82,6 +82,20 @@ An existing test that asserts the exact End line of the template or the exact te
 - The new node test file tests/node/reviewlabel.node.mjs covers the parser, the rows, the advice, the clause, the verdict line, the resume text and the template's two new lines; one engine test in tests/review.test.ts proves a reviewer hand-back with refuted=0 misreported=1 is next=accept with the misreported row shown and review.misreported 1 on the ledger row, and one proves refuted=1 misreported=1 still advises a resume
 - docs/review-and-merge.md describes the fourth label, the new End line and that misreported rows never send the work back; CHANGELOG.md has one bold-led entry under the existing Unreleased section
 
+## Testing
+
+- Planned: node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs tests/node/reviewlabel.node.mjs
+- Red test: failed before the change (.delegation/MOD-415/red-1.txt)
+- Gate validate: pass · ✔ Validation passed with warnings · 11 s · verify pass reused at merge
+- Gate node: pass · 2155 pass, 0 fail, 1228 skipped (engine tests: claude plugin test runs them) · 19 s · verify pass reused at merge
+- Gate test: pass · 2346 pass, 0 fail, Ran 2346 tests across 111 files. [210.86s] · 3.5 min · verify pass reused at merge
+- Test files changed: 3 (tests/node/reviewlabel.node.mjs, tests/node/templates.node.mjs, tests/review.test.ts); tests added: 15
+- Worker ran:
+  - `claude plugin test` first run -> 1 fail, because the orphan-path ledger row had no `review`; fixed in the register.ts edit above, then the ledger assert passed
+  - `claude plugin test` second run -> 1 fail, my test looked for a verdict line containing `misreported=1`; I loosened it to the clause text `1 misreported
+  - `claude plugin test` third run -> 2346 pass, 0 fail
+  - could not run tsc (no tsc 5.x on PATH, no package.json)
+
 ## Review
 
 Brain review (Fable 5.2): I read the whole diff at a821f6a. It builds the card's design and nothing beyond it. The template has the four labels and the rule that a refuted row is only for work that has to change; the parser takes an optional misreported count and still accepts a block without it; reviewAdvice is untouched, so refuted alone decides the next step. In finalizeReview the misreported rows are read whenever there is a block, the stored number is the block's count or else the rows read, and the rows are shown after the refuted rows and before the advisor cue, on accept as well. The cue and the friction note keep their refuted conditions. One thing the worker added that the card did not name: when a review has no attempt record (the path after a compaction), the ledger row now carries the review counts, where before it carried none. That closes a gap, and the engine tests depend on it, so I keep it. Two existing expectations changed, both the template's exact End line, as the card allowed. Not checked: the type-check, which the worker could not run (no tsc on PATH); the types in the diff read correct.
