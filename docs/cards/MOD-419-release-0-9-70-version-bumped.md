@@ -27,6 +27,13 @@ Issue #594. The reviewer's fourth label (MOD-415), the reviewer's copy of the wo
 - No other file changes.
 - The validate gate is green.
 
+## Testing
+
+- Planned: none
+- Red test: none
+- Gate validate: pass · ✔ Validation passed with warnings · 7 s · verify pass reused at merge
+- Test files changed: none
+
 ## Review
 
 Brain review (Fable 5.2): Mechanical and exact. I read the whole diff at cd08ec0: the version is 0.9.70 in all three places, the changelog heading is dated with an em dash and the rest of the file is untouched, and the upgrading section sits above 0.9.68 to 0.9.69 with the paragraph word for word. The engine suite was not run on this card (gate validate only); it last ran green on MOD-418's tree, which holds every change this release carries.
