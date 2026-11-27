@@ -14,18 +14,32 @@ export type WaitState = { since: number; stalled?: true }
 /** The resource a waiting worker's card names and the worker that holds it. */
 export type WaitOn = { resource: string; holder: string }
 
-const WAIT_NOW = /\b(?:waiting|(?:i['\u2019]?ll|i will|will|going to|still|now)\s+wait(?:ing)?)\s+(?:on|for)\s+(?:the\s+|a\s+|an\s+|my\s+|its\s+|another\s+)?(?:\w+\s+){0,3}?(?:background|job|task|process|render|build|lock|resource|agent|worker)/i
+// MOD-418 (#593): the wait phrase is built once, so the wait-on-a-noun test and the wait-for-it test cannot drift.
+const WAIT_PHRASE = String.raw`\b(?:waiting|(?:i['\u2019]?ll|i will|will|going to|still|now)\s+wait(?:ing)?)\s+(?:on|for)\s+`
+/** A wait on a noun the worker owns; a wait aimed at "you" or "your" (waiting for you to run it) is the lead's turn. */
+const WAIT_NOUN = new RegExp(
+  WAIT_PHRASE + String.raw`(?!you\b|your\b)(?:the\s+|a\s+|an\s+|my\s+|its\s+|another\s+)?(?:\w+\s+){0,3}?(?:background|job|task|process|render|build|lock|resource|agent|worker|monitor|suite|tests?\b|gate|notification)`,
+  'i',
+)
+/** The worker says something of its own is running in the background now (present tense only). */
+const RUNNING_NOW = /\b(?:is|are)\s+(?:(?:still|now|currently)\s+)?running(?:\s+again)?\s+in\s+the\s+background\b/i
+/** A wait aimed at "it", "that", "this", "them" or "those"; it counts only with the word background beside it. */
+const WAIT_IT = new RegExp(WAIT_PHRASE + String.raw`(?:it|that|this|them|those)\b`, 'i')
+const BACKGROUND = /\bbackground\b/i
 
 /**
  * A worker turn that ended with no report and whose last paragraph (at most its last 400 characters) says it is
- * waiting now on a job, task, process, render, build, lock, resource or another agent. A usage-limit text
- * (MOD-56) is never a wait; past tense or a bare "wait" elsewhere does not count.
+ * waiting now. Three forms count, all ignoring case: a wait on a job, task, process, render, build, lock, resource,
+ * agent, worker, monitor, suite, test, gate, notification or the background (not a wait on "you" or "your"); "is
+ * (still, now, currently) running (again) in the background" in the present tense; and a wait on "it", "that", "this",
+ * "them" or "those" when the paragraph also says background. A usage-limit text (MOD-56) is never a wait; past tense
+ * or a bare "wait" elsewhere does not count.
  */
 export function saysWaiting(text: string): boolean {
   if (extractReport(text) !== undefined || extractPause(text) !== undefined || detectRateLimit(text) !== undefined) return false
   const paras = text.trim().split(/\n\s*\n/)
   const last = (paras[paras.length - 1] ?? '').slice(-400)
-  return WAIT_NOW.test(last)
+  return WAIT_NOUN.test(last) || RUNNING_NOW.test(last) || (WAIT_IT.test(last) && BACKGROUND.test(last))
 }
 
 const minutes = (ms: number): number => Math.max(0, Math.round(ms / MIN_MS))
