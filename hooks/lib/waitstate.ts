@@ -68,6 +68,17 @@ export const PAUSE_CAP = 3
 
 export type Pause = { task?: string; reason: string; block: string }
 
+// MOD-422: a worker waiting on its own job is not charged an attempt.
+/** A pause reason that names the worker's own job, the background, a lease, the GPU lock, a queue or the gate. */
+const OWN_JOB = /\bbackground\b|\b(?:own|my)\s+(?:[\w-]+\s+){0,3}?(?:job|jobs|render|renders|build|bake|gate|tests?|suite|run)\b|\blease\b|\bgpu[_-]?lock\b|\bgate\b|\bqueued\b/i
+export const ownJobWait = (reason: string): boolean => OWN_JOB.test(reason)
+/** Own-job pauses allowed per attempt: a runaway guard, not a budget. The stall row (waitStallMin) still speaks. */
+export const OWN_WAIT_CAP = 12
+/** The pause cap for a reason: own-job waits get OWN_WAIT_CAP (or the repo's cap when higher), any other the repo's cap. */
+export const pauseCapFor = (reason: string, cap: number = PAUSE_CAP): number => (ownJobWait(reason) ? Math.max(OWN_WAIT_CAP, cap) : cap)
+/** The reason a hand-back with no report and no pause line gets when it says it is waiting (saysWaiting). */
+export const SAID_WAIT_REASON = 'waiting on its own background job (said, no pause line)'
+
 /**
  * The LAST line-anchored `[[pause v=1 task=<id> reason=<one line>]]` of a hand-back, else undefined. It is not read
  * when the hand-back holds a report line (a report wins), nor when its task= names another task than `task`.

@@ -181,11 +181,22 @@ export const HANDBACK_NOTE_REPORT_ONLY =
  * the other two sources are a note, an empty line, then the text cut at the cap (the note is not counted against it).
  */
 export function handbackSection(result: ReviewedHandback, cap: number): string {
-  const text = result.text.length > cap ? `${result.text.slice(0, cap - 1)}…` : result.text
+  // MOD-422: a cut copy says so, with both lengths
+  const text = result.text.length > cap ? `${result.text.slice(0, cap - 1)}…\n(cut at ${cap} of ${result.text.length} characters)` : result.text
   if (result.source === 'given') return text
   const note = result.source === 'transcript' ? HANDBACK_NOTE_TRANSCRIPT : HANDBACK_NOTE_REPORT_ONLY
   return `${note}\n\n${text}`
 }
+
+/** MOD-422: what a reviewer may read: the tree and the brief, and the card's output folder (the brief's outdir=) when there is one. */
+export const reviewReadable = (worktree: string, outdir?: string): string =>
+  outdir && outdir.trim() ? `${worktree}, the brief and the card's output folder ${outdir.trim()}` : `${worktree} and the brief`
+
+/** MOD-422: the rule that opens the output folder to the reviewer, read only; empty when the card has none. */
+export const outdirRule = (outdir?: string): string =>
+  outdir && outdir.trim()
+    ? ` The card's output folder ${outdir.trim()} is yours to read and never to write: ls and cat it, and open its images with the Read tool. A claim about a render, a sheet or another file there is decided by opening the file it names; say which file you opened.`
+    : ''
 
 // ---- the marker: how the spawn hook knows a spawn is a reviewer ---------------------------------
 
@@ -245,6 +256,10 @@ export type ReviewVars = {
   report: string
   /** What the worker said at the end of its run, cut. */
   handback: string
+  /** MOD-422: reviewReadable: the tree, the brief and the output folder when the card has one. */
+  readable?: string
+  /** MOD-422: outdirRule: the output-folder sentence, or empty. */
+  outdirrule?: string
 }
 
 /** The template with its `{{key}}`s filled in one pass: a key it lacks, and anything inside a value, stays as it is. */

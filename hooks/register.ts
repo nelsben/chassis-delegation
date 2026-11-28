@@ -15,7 +15,7 @@ import type { BandItem, DelegationVerdict, DelegationWorker, QueuedSpawn } from 
 import { addBounded, setBounded, MAP_CAPS } from './lib/cut'
 import { blocksFor, openItemLines } from './lib/dashboard'
 import { addDrive, callKind, driveCall, driveLines, driveOutput, driveSpeaks, driveStep, driveTurn, emptyDrive, emptyWatch, ranBefore, freshSessionRow, stampKind, DRIVE_THRESHOLD_TOKENS, FRESH_SESSION_TOKENS, type DriveRecord, type StampKind, type Watch } from './lib/drive'
-import { extractPause, pauseCapLine, pauseRow, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
+import { extractPause, pauseCapFor, pauseCapLine, pauseRow, SAID_WAIT_REASON, saysWaiting, textKey, waitStep, waitText, WAIT_STALL_DEFAULT_MIN, type Pause, type WaitState } from './lib/waitstate'
 import { bandTree, nudgeBandTree, rationBandTree } from './lib/band'
 import { describesWork, nudgeLine, parentNudge } from './lib/landnudge'
 import { bashCommits, bashWrites, emptyBrain, brainCompacted, brainEdit, brainFamily, brainLine, brainSummary, brainTurn, brainWindow, delegateDecision, DELEGATE_DENY, isRestricted, PREMIUM_POSTURE, toolPath, warnRow, WRITE_TOOLS, brainStamp, type BrainRecord, type BrainFamily, type BrainStamp } from './lib/brain'
@@ -271,6 +271,8 @@ import {
   reviewVerdictLine,
   shownRefuted,
   type ReviewMarker,
+  outdirRule,
+  reviewReadable,
 } from './lib/review'
 import { alreadyQueuedDeny, countTiers, limitSourceText, maxWorkersSourcedText, enqueue, fallbackDelay, fallbackDue, fallbackKind, fallbackRow, hasSlot, isFinalDeny, isQueuedDeny, parseReadyFallbackMinutes, planQueue, promptKey, heldLine, queuedDeny, queuedIndex, queuedText, readyCount, readyLine, readyWaitLine, resourceBlock, resourceDeny, runningDeny, startingOthers, tierFree, tierFull, waitedMinutes, waitsText, type FallbackKind, type ResourceWait, type TierCounts, type Wanting } from './lib/scheduler'
 import {
@@ -7542,17 +7544,17 @@ async function closeHandback($: Host, spawn: SpawnRecord, why: 'merged' | 'branc
  * The attempt stays open (its record stays pending, nothing is charged); the row says next=resume with the reason and
  * names the wait (MOD-99). The next hand-back that differs from this one reopens the same attempt (resumedIfNew).
  */
-async function pausedHandback($: Host, spawn: SpawnRecord, pause: Pause, n: number, text: string): Promise<Rendered> {
+async function pausedHandback($: Host, spawn: SpawnRecord, pause: Pause, n: number, text: string, cap: number = cfg.pauseCap): Promise<Rendered> {
   const label = taskLabel(spawn.task, spawn.subtask)
   const t = await now($)
   const since = spawn.agentId ? waitStates.get(spawn.agentId)?.since : undefined
-  const full = pauseRow({ task: label, attempt: spawn.attempt, budget: spawn.budget, n, reason: pause.reason, waited: since !== undefined ? t - since : 0, cap: cfg.pauseCap })
-  const quiet = `chassis-delegation: ${label} attempt ${spawn.attempt}/${spawn.budget} paused (${n}/${cfg.pauseCap - 1}) · ${waitText(label, since !== undefined ? t - since : 0)} · next=resume — ${pause.reason}`
+  const full = pauseRow({ task: label, attempt: spawn.attempt, budget: spawn.budget, n, reason: pause.reason, waited: since !== undefined ? t - since : 0, cap })
+  const quiet = `chassis-delegation: ${label} attempt ${spawn.attempt}/${spawn.budget} paused (${n}/${cap - 1}) · ${waitText(label, since !== undefined ? t - since : 0)} · next=resume — ${pause.reason}`
   await storeSet($, K.spawn(spawn.key), { ...((await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn), verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: full, verdictLine: quiet, pauses: n, pausedAs: textKey(text) })
   await setLastVerdict($, { task: label, attempt: spawn.attempt, verdict: 'paused', next: 'resume', at: t, text: full })
   await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'paused', line: quiet, at: t })
   await appendLedger($, { kind: 'pause', task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, pause: n, reason: pause.reason, at: t, sessionId: await sessionIdOf($) })
-  debug($, `${label}: attempt ${spawn.attempt} paused (${n}/${cfg.pauseCap - 1}): ${pause.reason}`)
+  debug($, `${label}: attempt ${spawn.attempt} paused (${n}/${cap - 1}): ${pause.reason}`)
   return { full, line: quiet }
 }
 
@@ -7611,12 +7613,17 @@ async function finalizeOnce($: Host, given: SpawnRecord, text: string, measured:
     if (why) return closeHandback($, spawn, why)
   }
   // MOD-226 (#270): a pause line and no report line is a pause: no attempt opened or charged; the third in one attempt is charged
-  const pause = !block && !spawn.adhoc && !spawn.review ? extractPause(text, spawn.task) : undefined
+  // MOD-422: a hand-back with neither line whose last paragraph says it waits (saysWaiting) is a pause too, and a pause
+  // whose reason names its own job, the background, a lease, the GPU lock or the gate may repeat up to OWN_WAIT_CAP times
+  const pause = !block && !spawn.adhoc && !spawn.review
+    ? extractPause(text, spawn.task) ?? (saysWaiting(text) ? { reason: SAID_WAIT_REASON, block: '' } : undefined)
+    : undefined
   let pauseCharge: string | undefined
   if (pause) {
     const n = (spawn.pauses ?? 0) + 1
-    if (n < cfg.pauseCap) return pausedHandback($, spawn, pause, n, text)
-    pauseCharge = pauseCapLine(n, spawn.attempt, cfg.pauseCap)
+    const cap = pauseCapFor(pause.reason, cfg.pauseCap)
+    if (n < cap) return pausedHandback($, spawn, pause, n, text, cap)
+    pauseCharge = pauseCapLine(n, spawn.attempt, cap)
   }
   const cardless = report !== undefined && isCardless(spawn)
   if (!block) verdict = 'no-report'
@@ -10898,7 +10905,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
 }
 
 /** What a hand-back may be quoted at in a reviewer's prompt. */
-const HANDBACK_CAP = 6000
+const HANDBACK_CAP = 40000 // MOD-422: the whole hand-back (was 6000; long ones run 8-15k characters)
 const GATE_TAIL_LINES = 8
 
 /**
@@ -10946,6 +10953,9 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
       report: input.block,
       gaterecord: gateRecord(input.lines ?? [], gateTails.get(label) ?? []),
       handback: handbackSection(handed, HANDBACK_CAP),
+      // MOD-422: the card's output folder is readable, read only
+      readable: reviewReadable(worktree, header?.fields.outdir),
+      outdirrule: outdirRule(header?.fields.outdir),
     },
   })
   return { block: plan.block }

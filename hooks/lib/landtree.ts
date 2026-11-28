@@ -2,8 +2,10 @@
 // the tool shape. No I/O, no gh; hooks/register.ts files the tree.
 import { contained } from './scopetree'
 
-export const TREE_TYPES = ['feature', 'epic', 'story', 'task'] as const
+export const TREE_TYPES = ['feature', 'epic', 'story', 'task', 'bug', 'spike'] as const   // MOD-422: the six levels land takes
 export type TreeType = (typeof TREE_TYPES)[number]
+/** Types the counts line names only when the plan has one, so a plan without them reads as before. */
+const EXTRA_TYPES: ReadonlySet<TreeType> = new Set<TreeType>(['bug', 'spike'])
 export const TREE_MAX_DEPTH = 4
 export const SUB_ISSUE_CAP = 100
 export const TREE_BATCH_DEFAULT = 20
@@ -136,7 +138,7 @@ export type TreeCounts = { byType: Record<TreeType, number>; total: number; fres
 
 /** Items per type, how many are new (no `issue` in the file), may be reused (have one) and will be filed closed. */
 export function treeCounts(plan: TreePlan): TreeCounts {
-  const byType: Record<TreeType, number> = { feature: 0, epic: 0, story: 0, task: 0 }
+  const byType: Record<TreeType, number> = { feature: 0, epic: 0, story: 0, task: 0, bug: 0, spike: 0 }
   let reuse = 0
   let closed = 0
   const all = flatten(plan.items)
@@ -161,7 +163,7 @@ export function treeLines(plan: TreePlan): string[] {
   return out
 }
 
-export const countsLine = (c: TreeCounts): string => `counts: ${TREE_TYPES.map(t => `${t} ${c.byType[t]}`).join(', ')} (${c.total} items); new ${c.fresh}, may reuse ${c.reuse}, filed closed ${c.closed}`
+export const countsLine = (c: TreeCounts): string => `counts: ${TREE_TYPES.filter(t => !EXTRA_TYPES.has(t) || c.byType[t] > 0).map(t => `${t} ${c.byType[t]}`).join(', ')} (${c.total} items); new ${c.fresh}, may reuse ${c.reuse}, filed closed ${c.closed}`
 
 /** The plan file as an absolute path, only when it is a .json file under <root>/.delegation/plans/ (no `..` out of it). */
 export function planFileOf(root: string, file: string): string | undefined {
@@ -220,7 +222,7 @@ export function parseTreeImportTool(input: Record<string, unknown>): { file: str
 export const TREE_IMPORT_TOOL = {
   name: 'tree_import',
   description:
-    'Files a large multi-level plan (feature, epic, story, task, up to 4 levels) from a JSON file under .delegation/plans/: {"version":1,"parent"?:n,"items":[{"type","title","paths"?,"note"?,"close"?,"children"?:[...]}]}. The whole file is checked first (every error names its item path). Without confirm it prints the tree with counts and files nothing, and runs no gh. With confirm: true it files parents before children, at most the treeImportBatch option (default 20) creates per run, writes each issue number back into the file as "issue", and a re-run files only what is missing. Show the dry run to the person and call with confirm: true only after they say yes.',
+    'Files a large multi-level plan (feature, epic, story, task, bug, spike; up to 4 levels) from a JSON file under .delegation/plans/: {"version":1,"parent"?:n,"items":[{"type","title","paths"?,"note"?,"close"?,"children"?:[...]}]}. The whole file is checked first (every error names its item path). Without confirm it prints the tree with counts and files nothing, and runs no gh. With confirm: true it files parents before children, at most the treeImportBatch option (default 20) creates per run, writes each issue number back into the file as "issue", and a re-run files only what is missing. Show the dry run to the person and call with confirm: true only after they say yes.',
   inputSchema: {
     type: 'object',
     properties: {

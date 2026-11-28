@@ -175,6 +175,7 @@ export const REVIEW_TEMPLATE = [
   'Report: {{report}}',
   'Hand-back:',
   '{{handback}}',
+  'Stay in {{readable}}.{{outdirrule}}',
   'Edit nothing. End with [[review v=1 task={{id}} confirmed=N refuted=N unverifiable=N]]',
 ].join('\n')
 

@@ -24,7 +24,7 @@ describe('MOD-215: parseTreePlan', () => {
     expect(r.errors).toEqual([
       'items[1].children[0]: a task needs at least one path',
       'items[1].children[1]: needs a title',
-      'items[1].children[2]: type must be one of feature, epic, story, task',
+      'items[1].children[2]: type must be one of feature, epic, story, task, bug, spike',
     ])
   })
   test('a child path outside a parent that has paths is refused; under a parent without paths it is free', async () => {
@@ -67,7 +67,7 @@ describe('MOD-215: counts, lines and the folder rule', () => {
   test('counts per type, new, may reuse and filed closed', async () => {
     const { parseTreePlan, treeCounts } = await lib()
     const r = parseTreePlan(file({ version: 1, items: [{ type: 'epic', title: 'F', issue: 5, children: [{ type: 'feature', title: 'E', close: 'shipped', children: [task('T1'), { ...task('T2'), issue: 8 }] }] }] }))
-    expect(treeCounts(r.plan)).toEqual({ byType: { feature: 1, epic: 1, story: 0, task: 2 }, total: 4, fresh: 2, reuse: 2, closed: 1 })
+    expect(treeCounts(r.plan)).toEqual({ byType: { feature: 1, epic: 1, story: 0, task: 2, bug: 0, spike: 0 }, total: 4, fresh: 2, reuse: 2, closed: 1 })
   })
   test('the preview indents two spaces a level', async () => {
     const { parseTreePlan, treeLines } = await lib()

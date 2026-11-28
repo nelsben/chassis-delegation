@@ -140,7 +140,7 @@ describe('5E: hooks/templates/debrief.md, the built-in debrief', () => {
 
 describe('MOD-21: hooks/templates/review.md, the reviewer prompt', () => {
   // the keys register.ts fills (hooks/lib/review.ts, ReviewVars)
-  const KEYS = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback', 'gaterecord']
+  const KEYS = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback', 'gaterecord', 'readable', 'outdirrule'] // MOD-422
 
   test('it fills only keys the mod knows, and uses the ones a reviewer cannot do without', () => {
     const t = read('hooks/templates/review.md')
@@ -151,7 +151,7 @@ describe('MOD-21: hooks/templates/review.md, the reviewer prompt', () => {
 
   test('it says: read the brief, the report and the diff at the sha; one row per claim; the three labels; the deciding command or file:line; edit nothing', () => {
     const t = read('hooks/templates/review.md')
-    for (const want of ['the brief', 'the report', 'the diff', 'one row per', 'confirmed', 'refuted', 'unverifiable', 'file:line', 'Edit nothing', 'never fix']) expect(t.includes(want)).toBe(true)
+    for (const want of ['The brief', 'the report', 'the diff', 'one row per', 'confirmed', 'refuted', 'unverifiable', 'file:line', 'Edit nothing', 'never fix']) expect(t.includes(want)).toBe(true)
   })
 
   test('it ends with the review block the mod parses, and no line of it starts as a brief, report or amend block', () => {
@@ -196,7 +196,7 @@ describe('MOD-28: what the mod loads is what it ships', () => {
   })
 
   test('the shipped review.md uses only keys the reviewer spawn fills, and debrief.md carries no {{ marker at all', () => {
-    const filled = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback', 'gaterecord']
+    const filled = ['id', 'subtask', 'attempt', 'budget', 'brief', 'worktree', 'branch', 'sha', 'base', 'report', 'handback', 'gaterecord', 'readable', 'outdirrule'] // MOD-422
     const keys = [...read('hooks/templates/review.md').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1])
     for (const k of keys) expect(filled.includes(k)).toBe(true)
     expect(read('hooks/templates/debrief.md').includes('{{')).toBe(false)
