@@ -52,6 +52,7 @@ import {
   readVerdict,
   isRetiredVerdict,
   supersededBy,
+  reviewsFor,
 } from './lib/attempts'
 import { briefDrift, briefNames, briefRewrittenLine, briefStaleRefusal, type BriefDrift } from './lib/crossbrief'
 import {
@@ -262,6 +263,8 @@ import {
   handbackHasWords,
   ledgerLines,
   handbackSection,
+  recheckOf,
+  recheckNote,
   gateRecord,
   reviewDue,
   reviewerDeny,
@@ -627,7 +630,7 @@ type SpawnRecord = {
    * MOD-21: set on a reviewer's record. `attempt` is the attempt it reviews; `worker` is that worker's agent id
    * (the resume goes to it), `sha` the commit under review. A reviewer is on no ladder, holds no slot, and edits nothing.
    */
-  review?: { worker?: string; sha?: string; workerTier?: Tier; handback?: 'transcript' | 'report-only' }
+  review?: { worker?: string; sha?: string; workerTier?: Tier; handback?: 'transcript' | 'report-only'; /** MOD-424: the count of rows a re-check reads, when this review is one. */ recheck?: number }
   /** MOD-94: set (never stored) on a record a hand-back or the verdict tool rebuilt because the store had none. */
   fallback?: Fallback
 }
@@ -7959,6 +7962,9 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
     ...(usd !== undefined && usdApprox ? { usdApprox: true as const } : {}),
     ...(measured.tokens !== undefined ? { tokens: measured.tokens } : {}),
     ...(model !== undefined ? { resolvedModel: model } : {}),
+    // MOD-424: what the review refuted and the sha it read, for the re-check of the next review
+    ...(rows.length > 0 ? { refutedLines: ledgerLines(rows) } : {}),
+    ...(spawn.review?.sha ? { reviewedSha: spawn.review.sha } : {}),
   })
   await saveAttempts($, spawn, records)
   const judged = records.find(r => r.kind === 'review' && r.toolUseId === spawn.key)
@@ -7984,8 +7990,10 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   const cueLine = counts && counts.refuted > 0 ? await raiseAdvisorCue($, 'review', spawn) : ''
   const underRow = [...shown, ...misRows]
   const cueShown = cueLine !== '' ? [...underRow, cueLine] : underRow
-  const long = [reviewVerdictLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, counts: tally, usd, usdApprox, model, next }), reviewClause(tally), ...cueShown].join('\n')
-  const quiet = reviewLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), counts: tally, next })
+  // MOD-424: a re-check says so on its clause and its quiet row
+  const rechecked = spawn.review?.recheck !== undefined
+  const long = [reviewVerdictLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, counts: tally, usd, usdApprox, model, next }), reviewClause(tally, rechecked), ...cueShown].join('\n')
+  const quiet = reviewLine({ task: label, attempt: spawn.attempt, budget: spawn.budget, alias: spawn.alias, glyph: glyphOf(spawn.alias), ...(usd !== undefined ? { usd, usdApprox } : {}), counts: tally, ...(rechecked ? { recheck: true } : {}), next })
   const line = [quiet, ...cueShown].join('\n')
   const latest = (await storeGet<SpawnRecord>($, K.spawn(spawn.key))) ?? spawn
   await storeSet($, K.spawn(spawn.key), { ...latest, verdictAttempt: spawn.attempt, lastFailed: false, verdictBlock: long, verdictLine: line })
@@ -7993,7 +8001,7 @@ async function finalizeReview($: Host, spawn: SpawnRecord, text: string, measure
   const owed = OWED_KINDS.includes(advice.kind) && !performed ? `${label}: ${shortNext(next)}` : undefined
   await noteRecent($, { task: label, attempt: spawn.attempt, verdict: 'reviewed', line: quiet, at: t, ...(owed ? { owed } : {}) })
   if (counts && counts.refuted > 0) void noteFriction($, { kind: 'refuted', detail: quiet, at: t })
-  await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, kind: 'review', ...(counts ? { review: { confirmed: counts.confirmed, refuted: counts.refuted, unverifiable: counts.unverifiable, ...(misCount > 0 ? { misreported: misCount } : {}) } } : {}) }), ...(spawn.review?.workerTier ? { workerTier: spawn.review.workerTier } : {}), ...(spawn.review?.handback ? { handback: spawn.review.handback } : {}), ...(shown.length > 0 ? { refutedLines: ledgerLines(shown) } : {}), ...(misRows.length > 0 ? { misreportedLines: ledgerLines(misRows) } : {}), verdict: 'reviewed', next: shortNext(next), sessionId: await sessionIdOf($) })
+  await appendLedger($, { ...(judged ?? { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, kind: 'review', ...(counts ? { review: { confirmed: counts.confirmed, refuted: counts.refuted, unverifiable: counts.unverifiable, ...(misCount > 0 ? { misreported: misCount } : {}) } } : {}) }), ...(spawn.review?.workerTier ? { workerTier: spawn.review.workerTier } : {}), ...(spawn.review?.handback ? { handback: spawn.review.handback } : {}), ...(spawn.review?.recheck !== undefined ? { recheck: spawn.review.recheck } : {}), ...(shown.length > 0 ? { refutedLines: ledgerLines(shown) } : {}), ...(misRows.length > 0 ? { misreportedLines: ledgerLines(misRows) } : {}), verdict: 'reviewed', next: shortNext(next), sessionId: await sessionIdOf($) })
   return { full: long, line }
 }
 
@@ -10895,7 +10903,7 @@ async function decideReview($: Host, e: SpawnEvent, marker: ReviewMarker, start:
     ...(usdAtStart !== undefined ? { usdAtStart } : {}),
     ...(lane ? { replay: true, ...(lane.base ? { base: lane.base } : {}) } : {}),
     at: t,
-    review: { ...(marker.worker ? { worker: marker.worker } : {}), ...(marker.sha ? { sha: marker.sha } : {}), ...((worker?.tier ?? reviewed?.tier) ? { workerTier: (worker?.tier ?? reviewed?.tier) as Tier } : {}), ...(marker.handback ? { handback: marker.handback } : {}) },
+    review: { ...(marker.worker ? { worker: marker.worker } : {}), ...(marker.sha ? { sha: marker.sha } : {}), ...((worker?.tier ?? reviewed?.tier) ? { workerTier: (worker?.tier ?? reviewed?.tier) as Tier } : {}), ...(marker.handback ? { handback: marker.handback } : {}), ...(marker.recheck ? { recheck: marker.recheck } : {}) },
   }
   await storeSet($, K.spawn(key), spawn)
   if (res.agentId) await storeSet($, K.agent(res.agentId), key)
@@ -10932,6 +10940,8 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
       ? []
       : [...(handbacks.get(agentId) !== undefined ? [handbacks.get(agentId) as string] : []), ...(await transcriptHandbacks($, agentId))]
   const handed = reviewHandback(input.text, heard, input.sha)
+  // MOD-424: a report-only review after a review that refuted rows, at another sha, is a re-check of those rows
+  const recheck = handed.source === 'report-only' ? recheckOf(reviewsFor(await loadAttempts($, spawn), spawn.subtask, laneOf(spawn)), input.sha) : undefined
   const plan = reviewPlan({
     template,
     workerTier: spawn.tier,
@@ -10939,7 +10949,7 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
     tierMap: cfg.tierMap,
     allowFable: cfg.allowFable,
     label,
-    marker: { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, ...(spawn.agentId ? { worker: spawn.agentId } : {}), ...(input.sha ? { sha: input.sha } : {}), ...(handed.source !== 'given' ? { handback: handed.source } : {}) },
+    marker: { task: spawn.task, subtask: spawn.subtask, attempt: spawn.attempt, ...(spawn.agentId ? { worker: spawn.agentId } : {}), ...(input.sha ? { sha: input.sha } : {}), ...(handed.source !== 'given' ? { handback: handed.source } : {}), ...(recheck ? { recheck: recheck.lines.length } : {}) },
     vars: {
       id: spawn.task,
       subtask: spawn.subtask,
@@ -10952,7 +10962,7 @@ async function prepareReview($: Host, spawn: SpawnRecord, input: { block: string
       base,
       report: input.block,
       gaterecord: gateRecord(input.lines ?? [], gateTails.get(label) ?? []),
-      handback: handbackSection(handed, HANDBACK_CAP),
+      handback: handbackSection(handed, HANDBACK_CAP, recheck ? recheckNote(recheck, worktree, input.sha) : undefined),
       // MOD-422: the card's output folder is readable, read only
       readable: reviewReadable(worktree, header?.fields.outdir),
       outdirrule: outdirRule(header?.fields.outdir),

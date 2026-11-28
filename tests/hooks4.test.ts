@@ -460,6 +460,32 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     expect(w.spawns).toHaveLength(0)
   })
 
+  test('MOD-424: a by-hand verify at another sha after a refuted review is a re-check: the prompt lists the refuted rows, not the whole card', ON, async ($, on) => {
+    const wt = `${ROOT}-T-4`
+    const card = '---\nid: T-4\ntitle: The thing\ndomain: frontend\ntier: standard\nstatus: queued\nscope: [a/**]\nforbid: [b/**]\nred_test: none\ngate: prettier\nbudget: 2-attempts\n---\n## Why\nA card.\n'
+    const repo = nativeRun({ gate: 0 })
+    const w = world(on, {
+      files: { [`${ROOT}/.delegation/briefs/T-4.brief.md`]: HEADER + '\nbody', [`${ROOT}/agents/tasks/T-4-the-thing.md`]: card },
+      dirs: { [wt]: [], [`${ROOT}/agents/tasks`]: ['T-4-the-thing.md'] },
+      run: argv => (argv[3] === 'diff' && !argv.includes('--name-status') ? { exitCode: 0, stdout: 'a/x.ts\n' } : repo(argv)),
+    })
+    await $.session.start(sessionStart)
+    // the first review: a verify at 1234abcd, its reviewer refutes a row
+    const first = String((await $.command.run(commandInput('T-4 --verify 1234abcd'))).text)
+    await brainSpawn($, first, { tool_use_id: 'toolu_REVIEW01' })
+    // a by-hand verify makes no worker spawn, so the reviewer is the first spawn: agent-1
+    await $.turn.complete(turnInput('agent-1', REVIEW_REFUTED, usage('claude-haiku-4-5', 40_000, 2_000)))
+    // the by-hand verify at 5678efab: the review after the refuted one
+    const second = String((await $.command.run(commandInput('T-4 --verify 5678efab'))).text)
+    expect(second).toContain('next=review')
+    const call = spawnCallOf(second) as SpawnCall
+    expect(call.prompt.split('\n')[0]).toMatch(/handback=report-only recheck=1\]\]$/)
+    expect(call.prompt).toContain('Refuted before:')
+    expect(call.prompt).toContain('refuted: the gate passes — ran npx prettier --check a/x.ts, exit 1')
+    expect(call.prompt).not.toContain('Take each Done-when statement of the card as one claim')
+    expect(w.spawns).toHaveLength(1) // the first reviewer only: the second verify spawns nothing
+  })
+
   test('a review template the mod cannot read: next=accept with the reason (a review never blocks on its own failure)', { options: { review: 'on', ...FULL } }, async ($, on) => {
     const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: nativeRun({ gate: 0 }), agentId: 'agent-4', noReviewTemplate: true })
     await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))

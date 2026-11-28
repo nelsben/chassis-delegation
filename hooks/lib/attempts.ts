@@ -80,6 +80,10 @@ export type AttemptRecord = {
   sha?: string
   /** MOD-21: a `review` attempt's counts; absent when its hand-back carried no (well-formed) review block. */
   review?: ReviewResult
+  /** MOD-424: a `review` attempt's refuted rows (the first 12, cut), kept so the review after it can re-check them. */
+  refutedLines?: string[]
+  /** MOD-424: the sha a `review` attempt read, kept apart from `sha` (its worker's report): the re-check reads the change since it. */
+  reviewedSha?: string
   /** The red evidence the report named (`red=`, as written) and read in the worker's tree (GH-20). */
   red?: string
   /** sha-256 of that file's bytes: a later attempt naming the same bytes is refuted on red. */

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **After a refuted review, the review of a by-hand verify is a re-check, not a new audit of the whole card: when the last review of the task refuted rows and the verified sha is a different one, the reviewer's prompt lists those rows under "Refuted before" and tells the reviewer to write rows only for them and for the change since that review (`git diff <old sha> <new sha>`), so a fix made by the lead is checked as a fix. The reviewer's first line carries `recheck=<n>`, the row says `re-check:` where it says `review:`, and the ledger row carries `recheck`. A hand-back with words of its own, the same sha, or a last review that refuted nothing gives the whole review as before** (MOD-424, #533)
+
 ## 0.9.72 — 2026-11-27
 
 ### Changed
