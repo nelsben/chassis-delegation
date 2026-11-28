@@ -47,6 +47,16 @@ new: gets a cap of 12 (or `pauseCap` when that is higher), so its twelfth pause 
 - No other file changes.
 - The validate and node gates are green.
 
+## Testing
+
+- Planned: none
+- Red test: none
+- Gate validate: pass · ✔ Validation passed with warnings · 4 s · verify pass reused at merge
+- Gate node: pass · 2220 pass, 0 fail, 1236 skipped (engine tests: claude plugin test runs them) · 12 s · verify pass reused at merge
+- Test files changed: none
+- Worker ran:
+  - none beyond the gates.
+
 ## Review
 
 Brain review (Fable 5.2): read the diff at 5fbd2b3. Version 0.9.72 in version.ts, plugin.json and the README line; the Unreleased heading is now the dated 0.9.72 heading; the upgrading section sits above 0.9.70 to 0.9.71 with the paragraph word for word; the four phrase swaps are exact (a cap of 12, so 11 pauses and the twelfth charged; "says it is queued"). Seven files, nothing else. Verifier gates green (validate, node 2220). Reviewer: 11 confirmed, 0 refuted, 1 unverifiable (no PR yet, which is a GitHub fact).
