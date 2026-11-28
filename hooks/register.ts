@@ -11359,6 +11359,7 @@ export const register: Register = (on, opts) => {
       task: `adhoc-${e.tool_use_id.slice(-8)}`,
       subtask: 'main',
       adhoc: true,
+      at: await now($),
       attempt: 1,
       lineage: 1,
       tier: 'standard',
