@@ -81,6 +81,16 @@ Refuted before:
 - The docs sentence and the changelog bullet are in.
 - The validate, node and test gates are green.
 
+## Testing
+
+- Planned: node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs tests/node/recheck.node.mjs
+- Red test: failed before the change (.delegation/MOD-424/red-1.txt)
+- Gate validate: pass · ✔ Validation passed with warnings · 10 s · verify pass reused at merge
+- Gate node: pass · 2238 pass, 0 fail, 1237 skipped (engine tests: claude plugin test runs them) · 31 s · verify pass reused at merge
+- Gate test: pass · 2361 pass, 0 fail, Ran 2361 tests across 111 files. [389.23s] · 6.5 min · verify pass reused at merge
+- Test files changed: 2 (tests/hooks4.test.ts, tests/node/recheck.node.mjs); tests added: 19
+- Attempts: 3
+
 ## Review
 
 Brain review (Fable 5.2): read the diff at 9440bf6. The design is as carded: review records keep refutedLines and reviewedSha; recheckOf looks at the last review only and needs refuted rows, a reviewed sha and a different sha now; the re-check note replaces the report-only note and ends with the rows under "Refuted before"; the marker carries recheck=<n> last, the clause and quiet row say re-check, the ledger review row carries recheck. No option to force a whole-card review, and nothing changes in what merge accepts. Eight files, all in scope. The worker's first two attempts were refuted on files because nothing was committed; the one red engine test was a fault in the new test (the reviewer of a by-hand verify is the first spawn, and the test makes one spawn itself), not in the source. Judged by a by-hand verify at 9440bf6: validate green, node 2238 pass, engine 2361 pass. Reviewer: 19 confirmed, 0 refuted, 4 unverifiable, 2 misreported (both are the worker's gate=fail claim, made before the verifier's full run showed green).
