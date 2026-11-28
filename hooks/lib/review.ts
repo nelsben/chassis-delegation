@@ -121,11 +121,15 @@ export function shownRefuted(counts: ReviewCounts | undefined, rows: readonly st
   return [`refuted: (no row could be read; the reviewer wrote) ${cutTo(said.replace(/\s+/g, ' ').trim(), 500)}`]
 }
 
-/** `review: 3 confirmed, 1 unverifiable` when nothing was refuted; all three counts when something was; `review: no review block` when there is no (well-formed) block. */
-export function reviewClause(counts: ReviewTally | undefined): string {
-  if (!counts) return 'review: no review block'
+/**
+ * `review: 3 confirmed, 1 unverifiable` when nothing was refuted; all three counts when something was; `review: no review block` when there is no (well-formed) block.
+ * MOD-424: a re-check says `re-check:` where a review says `review:`.
+ */
+export function reviewClause(counts: ReviewTally | undefined, recheck?: boolean): string {
+  const word = recheck ? 're-check' : 'review'
+  if (!counts) return `${word}: no review block`
   const mis = counts.misreported !== undefined && counts.misreported > 0 ? `, ${counts.misreported} misreported` : ''
-  return (counts.refuted === 0 ? `review: ${counts.confirmed} confirmed, ${counts.unverifiable} unverifiable` : `review: ${counts.confirmed} confirmed, ${counts.refuted} refuted, ${counts.unverifiable} unverifiable`) + mis
+  return (counts.refuted === 0 ? `${word}: ${counts.confirmed} confirmed, ${counts.unverifiable} unverifiable` : `${word}: ${counts.confirmed} confirmed, ${counts.refuted} refuted, ${counts.unverifiable} unverifiable`) + mis
 }
 
 /** Is a reviewer due for a consistent verdict at this worker tier? `on-frontier` reviews frontier and premium cards only. */
@@ -180,12 +184,43 @@ export const HANDBACK_NOTE_REPORT_ONLY =
  * MOD-416: the hand-back section of the prompt. A given text is the whole section, cut at the cap as it always was;
  * the other two sources are a note, an empty line, then the text cut at the cap (the note is not counted against it).
  */
-export function handbackSection(result: ReviewedHandback, cap: number): string {
+export function handbackSection(result: ReviewedHandback, cap: number, note?: string): string {
   // MOD-422: a cut copy says so, with both lengths
   const text = result.text.length > cap ? `${result.text.slice(0, cap - 1)}…\n(cut at ${cap} of ${result.text.length} characters)` : result.text
   if (result.source === 'given') return text
-  const note = result.source === 'transcript' ? HANDBACK_NOTE_TRANSCRIPT : HANDBACK_NOTE_REPORT_ONLY
-  return `${note}\n\n${text}`
+  // MOD-424: a report-only review after a refuted one is introduced with the re-check note instead
+  if (result.source === 'report-only' && note !== undefined) return `${note}\n\n${text}`
+  const own = result.source === 'transcript' ? HANDBACK_NOTE_TRANSCRIPT : HANDBACK_NOTE_REPORT_ONLY
+  return `${own}\n\n${text}`
+}
+
+// ---- the re-check after a refuted review (MOD-424) -----------------------------------------------
+
+/** MOD-424: what a review record keeps of the review before it: the sha it read and the refuted rows it wrote. */
+export type RecheckRecord = { reviewedSha?: string; refutedLines?: readonly string[] }
+/** MOD-424: the review a re-check reads: the sha the refuted rows were written at, and those rows. */
+export type Recheck = { sha: string; lines: string[] }
+
+/**
+ * MOD-424: is this review a re-check? The last review of the task refuted rows, named the sha it read, and the sha now
+ * under review is a different one (an empty sha or HEAD names none). Else undefined: the review is the whole card, as before.
+ */
+export function recheckOf(reviews: readonly RecheckRecord[], sha: string): Recheck | undefined {
+  const last = reviews[reviews.length - 1]
+  if (!last || !last.refutedLines || last.refutedLines.length === 0 || !last.reviewedSha) return undefined
+  const now = sha.trim()
+  if (now === '' || now.toUpperCase() === 'HEAD' || sameShaWord(last.reviewedSha, now)) return undefined
+  return { sha: last.reviewedSha, lines: [...last.refutedLines] }
+}
+
+/** MOD-424: the note a re-check's prompt opens with, the refuted rows at its end. */
+export function recheckNote(recheck: Recheck, worktree: string, sha: string): string {
+  const head =
+    `(Only the report line is available, and this is a re-check. An earlier review of this task, at ${recheck.sha}, refuted the rows listed under "Refuted before", and the work has changed since. ` +
+    'Do not audit the whole card again. Write rows for two things only. One: each row under "Refuted before". Read the work at this sha and write it as confirmed when the fault is gone, or as refuted when it is still there. ' +
+    `Two: the change since that review, which \`git -C ${worktree} diff ${recheck.sha} ${sha}\` shows. Write a refuted row only where that change itself breaks a Done-when statement of the card. ` +
+    'Write no row about a part of the work that change does not touch, and no row about what the hand-back says or leaves out.)'
+  return [head, '', 'Refuted before:', ...recheck.lines].join('\n')
 }
 
 /** MOD-422: what a reviewer may read: the tree and the brief, and the card's output folder (the brief's outdir=) when there is one. */
@@ -201,14 +236,14 @@ export const outdirRule = (outdir?: string): string =>
 // ---- the marker: how the spawn hook knows a spawn is a reviewer ---------------------------------
 
 /** Whose hand-back a reviewer reads: the task, the attempt, the worker's agent and the sha under review. */
-export type ReviewMarker = { task: string; subtask: string; attempt: number; worker?: string; sha?: string; /** MOD-417: where the reviewer's copy of the hand-back came from, when not the worker's own turn. */ handback?: 'transcript' | 'report-only' }
+export type ReviewMarker = { task: string; subtask: string; attempt: number; worker?: string; sha?: string; /** MOD-417: where the reviewer's copy of the hand-back came from, when not the worker's own turn. */ handback?: 'transcript' | 'report-only'; /** MOD-424: the rows a re-check reads (the count of them), when this review is one. */ recheck?: number }
 
 const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
 const WORD = /^[A-Za-z0-9_.:-]{1,80}$/
 
 /** The first line of a reviewer's prompt. The spawn hook reads it before it looks for a brief: the prompt names the brief by path, which would make it a worker's. */
 export const reviewMarker = (m: ReviewMarker): string =>
-  `[[review-of v=1 task=${m.task} subtask=${m.subtask} attempt=${m.attempt}${m.worker ? ` worker=${m.worker}` : ''}${m.sha ? ` sha=${m.sha}` : ''}${m.handback ? ` handback=${m.handback}` : ''}]]`
+  `[[review-of v=1 task=${m.task} subtask=${m.subtask} attempt=${m.attempt}${m.worker ? ` worker=${m.worker}` : ''}${m.sha ? ` sha=${m.sha}` : ''}${m.handback ? ` handback=${m.handback}` : ''}${m.recheck ? ` recheck=${m.recheck}` : ''}]]`
 
 /** The marker a prompt opens with, else undefined: only the prompt's first line counts, so a worker's brief that quotes one is not hijacked. */
 export function parseReviewMarker(prompt: string): ReviewMarker | undefined {
@@ -226,9 +261,11 @@ export function parseReviewMarker(prompt: string): ReviewMarker | undefined {
   const sha = kv.get('sha')
   const from = kv.get('handback')
   const handback = from === 'transcript' || from === 'report-only' ? from : undefined
+  const again = kv.get('recheck')
+  const recheck = again !== undefined && COUNT.test(again) && Number(again) >= 1 ? Number(again) : undefined
   if (kv.get('v') !== '1' || !TASK_ID.test(task) || !TASK_ID.test(subtask) || !COUNT.test(attempt) || Number(attempt) < 1) return undefined
   if ((worker !== undefined && !WORD.test(worker)) || (sha !== undefined && !WORD.test(sha))) return undefined
-  return { task, subtask, attempt: Number(attempt), ...(worker !== undefined ? { worker } : {}), ...(sha !== undefined ? { sha } : {}), ...(handback !== undefined ? { handback } : {}) }
+  return { task, subtask, attempt: Number(attempt), ...(worker !== undefined ? { worker } : {}), ...(sha !== undefined ? { sha } : {}), ...(handback !== undefined ? { handback } : {}), ...(recheck !== undefined ? { recheck } : {}) }
 }
 
 /** MOD-417: the rows a review's ledger row keeps: the first 12 lines, each cut to 300 characters. */

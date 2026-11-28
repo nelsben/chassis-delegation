@@ -146,6 +146,8 @@ export type ReviewLineInput = {
   usd?: number
   usdApprox?: boolean
   counts: ReviewTally | undefined
+  /** MOD-424: the review was a re-check; the clause says so. */
+  recheck?: boolean
   next: string
 }
 
@@ -157,7 +159,7 @@ export function reviewLine(v: ReviewLineInput): string {
   const parts = [`chassis-delegation: ${v.task} attempt ${v.attempt}/${v.budget} reviewed`]
   if (v.alias) parts.push(`${v.glyph ? `${v.glyph} ` : ''}${aliasLabel(v.alias)}`)
   if (v.usd !== undefined && Number.isFinite(v.usd)) parts.push(`${v.usdApprox ? '~' : ''}$${v.usd.toFixed(2)}`)
-  parts.push(reviewClause(v.counts))
+  parts.push(reviewClause(v.counts, v.recheck))
   parts.push(`next=${shortNext(v.next)}`)
   return parts.join(' · ')
 }
