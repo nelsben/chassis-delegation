@@ -26,6 +26,15 @@ Issue #602. The store prune fix (MOD-420, #600) reaches adopters only in a tagge
 - No other file changes.
 - The validate gate is green.
 
+## Testing
+
+- Planned: none
+- Red test: none
+- Gate validate: pass · ✔ Validation passed with warnings · 5 s · verify pass reused at merge
+- Test files changed: none
+- Worker ran:
+  - node suite (`node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs`) -> 2209 pass, 0 fail, 1230 skipped (engine tests, run by claude plugin t
+
 ## Review
 
 Brain review (Opus 5.5): Mechanical and exact. I read the whole diff at d9733f1: the version is 0.9.71 in all three places, the changelog heading is dated 2026-11-27 with an em dash and the rest of the file is untouched, and the upgrading section sits above 0.9.69 to 0.9.70 with the paragraph word for word. No reviewer ran: the repo's review-on trial line was stashed for MOD-420's merge, so the default on-frontier applied. The engine suite was not run on this card (gate validate only); it last ran green on MOD-420's tree, which holds every change this release carries.
