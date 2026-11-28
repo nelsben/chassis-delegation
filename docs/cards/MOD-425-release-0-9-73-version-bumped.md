@@ -24,6 +24,16 @@ The re-check review (MOD-424, #533) reaches adopters only in a tagged version.
 - No other file changes.
 - The validate and node gates are green.
 
+## Testing
+
+- Planned: none
+- Red test: none
+- Gate validate: pass · ✔ Validation passed with warnings · 12 s · verify pass reused at merge
+- Gate node: pass · 2238 pass, 0 fail, 1237 skipped (engine tests: claude plugin test runs them) · 45 s · verify pass reused at merge
+- Test files changed: none
+- Worker ran:
+  - none beyond the gates.
+
 ## Review
 
 Brain review (Fable 5.2): read the diff at aba007c. Version 0.9.73 in version.ts, plugin.json and the README line; the Unreleased heading is now the dated 0.9.73 heading; the upgrading section sits above 0.9.71 to 0.9.72 with the paragraph word for word. Five files, nothing else. Verifier gates green (validate, node 2238). Reviewer: 10 confirmed, 0 refuted, 2 unverifiable (no PR yet, and what the worker did in its own session).
