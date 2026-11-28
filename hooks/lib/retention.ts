@@ -58,11 +58,11 @@ export function storeBytes(entries: readonly StoreEntry[]): number {
 
 const P = 'delegation.'
 /** Per-task families keyed by the task id (MOD-97: `<ID>@<repo>` for a task of another repo). */
-const BY_TASK = ['classifier', 'effort', 'outside', 'taskRepo', 'mergePrep'].map(f => `${P}${f}.`)
+const BY_TASK = ['classifier', 'effort', 'tierReason', 'effortReason', 'cardClass', 'outside', 'taskRepo', 'mergePrep'].map(f => `${P}${f}.`)
 /** Per-attempt families keyed by the attempt key (`<label>[@replay…]:<lineage>:<attempt>`). */
 const BY_ATTEMPT = ['posted', 'postedRow'].map(f => `${P}${f}.`)
 /** Per-brief families keyed by the brief path (`…/<ID>.brief.md`, `…/<ID>.replay.brief.md`). */
-const BY_BRIEF = ['handoff', 'replay'].map(f => `${P}${f}.`)
+const BY_BRIEF = ['handoff', 'replay', 'baseSha'].map(f => `${P}${f}.`)
 const TASKS = `${P}tasks.`
 const SPAWN = `${P}spawn.`
 const AGENT = `${P}agent.`
@@ -72,6 +72,8 @@ const COST = `${P}cost.`
 const WRITES = `${P}writes.`
 /** MOD-305: paths that changed under a watched root during a command that never named it, keyed like the write log. */
 const FOREIGN = `${P}foreign.`
+/** MOD-420: paths changed while a worker and a sibling ran in one checkout, keyed like the write log. */
+const BOTH = `${P}both.`
 const RATION = `${P}ration.`
 /** MOD-233: session-level families keyed by the session id; aged out after RATION_RETAIN_MS by their newest timestamp. brain, postAsk and freshSession are not among them. */
 const SESSION = ['recent', 'debrief', 'merged', 'notes', 'friction'].map(f => `${P}${f}.`)
@@ -99,7 +101,8 @@ function newest(xs: readonly (number | undefined)[]): number | undefined {
   return best
 }
 
-type Meta = { key: string; task?: string; ts?: number; bytes: number }
+/** `owned`: the key belongs to one of the plan's families (a task, attempt, brief or agent record), not a session-level, ration or global key. */
+type Meta = { key: string; task?: string; ts?: number; bytes: number; owned?: boolean }
 
 /** Each key's task and newest timestamp: its own, else (and at least) that of the record it hangs off. */
 function metas(entries: readonly StoreEntry[]): Meta[] {
@@ -147,12 +150,13 @@ function metas(entries: readonly StoreEntry[]): Meta[] {
     else if (key.startsWith(COST)) m = spawnMeta(str(AGENT + key.slice(COST.length)))
     else if (key.startsWith(WRITES)) m = spawnMeta(str(AGENT + key.slice(WRITES.length)))
     else if (key.startsWith(FOREIGN)) m = spawnMeta(str(AGENT + key.slice(FOREIGN.length)))
+    else if (key.startsWith(BOTH)) m = spawnMeta(str(AGENT + key.slice(BOTH.length)))
     else if (BY_ATTEMPT.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_TASK.some(p => key.startsWith(p))) m = withTask(taskOfLabel(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (BY_BRIEF.some(p => key.startsWith(p))) m = withTask(taskOfBrief(key.slice(key.indexOf('.', P.length) + 1)), ownTs(value))
     else if (key.startsWith(RATION) || SESSION.some(p => key.startsWith(p))) return { key, bytes, ...(ownTs(value) !== undefined ? { ts: ownTs(value) as number } : {}) }
     else return { key, bytes } // session-level and global keys: never the plan's
-    return { key, bytes, ...(m.task ? { task: m.task } : {}), ...(m.ts !== undefined ? { ts: m.ts } : {}) }
+    return { key, bytes, owned: true, ...(m.task ? { task: m.task } : {}), ...(m.ts !== undefined ? { ts: m.ts } : {}) }
   })
 }
 
@@ -171,9 +175,11 @@ const byAge = (a: Meta, b: Meta): number => (a.ts as number) - (b.ts as number) 
 
 /**
  * The keys to delete, oldest first. A per-task record goes once its newest timestamp is more than RETAIN_MS old
- * and its task is not open; over PRESSURE_BYTES, closed records younger than that go too, oldest first, until the
- * store is under TARGET_BYTES. An open task's records, a record with no timestamp, the `keep` keys and the global
- * keys (adhoc, evals, alias, updateCheck, brain, postAsk) are never in it. MOD-233: a session-level key (recent,
+ * and its task is not open; over PRESSURE_BYTES, first the records of the plan's families that have no timestamp
+ * (their task record or agent pointer is gone: MOD-420) and whose task is not open go, in key order, then closed
+ * records younger than RETAIN_MS, oldest first, until the store is under TARGET_BYTES. Below PRESSURE_BYTES a record
+ * with no timestamp stays. An open task's records, the `keep` keys, the session-level and ration keys without a
+ * timestamp and the global keys (adhoc, evals, alias, updateCheck, brain, postAsk, prune) are never in it. MOD-233: a session-level key (recent,
  * debrief, merged, notes, friction) goes RATION_RETAIN_MS after its newest timestamp, pressure or not.
  */
 export function retentionPlan(input: RetentionInput): RetentionPlan {
@@ -181,7 +187,8 @@ export function retentionPlan(input: RetentionInput): RetentionPlan {
   const before = storeBytes(entries)
   const open = openTasks(entries, input.open, now)
   const keep = new Set(input.keep ?? [])
-  const closed = metas(entries).filter(m => m.ts !== undefined && !keep.has(m.key) && !(m.task !== undefined && open.has(m.task)))
+  const all = metas(entries)
+  const closed = all.filter(m => m.ts !== undefined && !keep.has(m.key) && !(m.task !== undefined && open.has(m.task)))
   const old = closed.filter(m => now - (m.ts as number) > retainFor(m.key))
   const gone = new Set(old.map(m => m.key))
   let count = entries.length
@@ -195,7 +202,15 @@ export function retentionPlan(input: RetentionInput): RetentionPlan {
     size -= m.bytes + (count > 1 ? 1 : 0)
     count -= 1
   }
+  const undated: Meta[] = []
   if (before > PRESSURE_BYTES) {
+    // MOD-420: no timestamp to age by, so they go first, in key order; the plan's families only, never an open task's
+    const loose = all.filter(m => m.owned && m.ts === undefined && !keep.has(m.key) && !(m.task !== undefined && open.has(m.task))).sort((a, b) => a.key.localeCompare(b.key))
+    for (const m of loose) {
+      if (size < TARGET_BYTES) break
+      drop(m)
+      undated.push(m)
+    }
     // a task's records that share a timestamp go together, so a spawn is not left without its agent pointer
     const young = closed.filter(m => !gone.has(m.key) && m.task !== undefined).sort(byAge)
     for (let i = 0; i < young.length && size >= TARGET_BYTES; ) {
@@ -204,7 +219,7 @@ export function retentionPlan(input: RetentionInput): RetentionPlan {
     }
   }
   const order = closed.filter(m => gone.has(m.key)).sort(byAge)
-  return { delete: order.map(m => m.key), before, after: size }
+  return { delete: [...order.map(m => m.key), ...undated.map(m => m.key)], before, after: size }
 }
 
 /** x.xx, rounded down so a store under the cap never reads as 4.00. */

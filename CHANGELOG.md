@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Over 3.5 MiB the store prune now also deletes records that carry no timestamp of their own and whose task record or agent pointer is gone or whose task is closed (an ad hoc `postedRow` or `posted`, a `both` log with no agent pointer, a `postedRow`, `tierReason`, `effortReason`, `cardClass` or `baseSha` of a task with no record), in key order and before any younger dated record, and stops once the store is under 3 MiB; below 3.5 MiB they stay, and global, session and ration keys are never in it; the plan now knows `tierReason`, `effortReason`, `cardClass`, `baseSha` and `both`, and an ad hoc spawn record carries its time** (MOD-420, #600)
+
 ## 0.9.70 — 2026-11-26
 
 ### Added
