@@ -73,8 +73,9 @@ describe('MOD-416: handbackSection', () => {
     expect(R.handbackSection({ text: 'short words here', source: 'given' }, 100)).toBe('short words here')
     const long = 'x'.repeat(50)
     const cut = R.handbackSection({ text: long, source: 'given' }, 20)
-    expect(cut).toBe(`${'x'.repeat(19)}…`)
-    expect(cut.length).toBe(20)
+    // MOD-422: then a line saying it was cut
+    expect(cut).toBe(`${'x'.repeat(19)}…\n(cut at 20 of 50 characters)`)
+    expect(cut.split('\n')[0].length).toBe(20)
   })
   test('for transcript, the first line is the exact note, the second empty, the rest the cut text', () => {
     const note = '(The verifier judged this sha with no fresh hand-back. What follows is the worker\'s own hand-back for the same sha, read from its transcript.)'
@@ -82,7 +83,7 @@ describe('MOD-416: handbackSection', () => {
     const lines = out.split('\n')
     expect(lines[0]).toBe(note)
     expect(lines[1]).toBe('')
-    expect(out.slice(note.length + 2)).toBe(`${'y'.repeat(19)}…`)
+    expect(out.slice(note.length + 2)).toBe(`${'y'.repeat(19)}…\n(cut at 20 of 50 characters)`)
   })
   test('for report-only, the first line is the exact note, the second empty, the rest the text', () => {
     const note = '(Only the report line is available: the worker\'s own words for this sha could not be read. Take each Done-when statement of the card as one claim and check it against the diff. Write no row about what the hand-back says or leaves out.)'
@@ -112,5 +113,38 @@ describe('MOD-416: the template', () => {
   test('what the hand-back does not say is not a claim, and a Done-when the diff does not meet is refuted whether or not it is mentioned', () => {
     expect(T).toContain('What the hand-back does not say is not a claim')
     expect(T).toContain('whether or not the hand-back mentions it')
+  })
+})
+
+describe('MOD-422: the output folder and the whole hand-back', () => {
+  test('a text over the cap is cut and says so, with both lengths', () => {
+    const out = R.handbackSection({ text: 'x'.repeat(50), source: 'given' }, 20)
+    expect(out).toBe(`${'x'.repeat(19)}…\n(cut at 20 of 50 characters)`)
+  })
+  test('a 20,000-character hand-back reaches the section whole at the 40,000 cap; a 50,000 one is cut', () => {
+    const t = 'w'.repeat(20000)
+    expect(R.handbackSection({ text: t, source: 'given' }, 40000)).toBe(t)
+    expect(R.handbackSection({ text: 'w'.repeat(50000), source: 'given' }, 40000)).toContain('(cut at 40000 of 50000 characters)')
+  })
+  test('reviewReadable names the output folder when the brief has one, else the tree and the brief', () => {
+    expect(R.reviewReadable('/wt/T-4', '/out/T-4')).toBe("/wt/T-4, the brief and the card's output folder /out/T-4")
+    expect(R.reviewReadable('/wt/T-4')).toBe('/wt/T-4 and the brief')
+    expect(R.reviewReadable('/wt/T-4', '  ')).toBe('/wt/T-4 and the brief')
+  })
+  test('outdirRule opens the folder read only and asks for the file opened; empty with no folder', () => {
+    const r = R.outdirRule('/out/T-4')
+    expect(r.startsWith(' ')).toBe(true)
+    expect(r).toContain('/out/T-4 is yours to read and never to write')
+    expect(r).toContain('Read tool')
+    expect(r).toContain('say which file you opened')
+    expect(R.outdirRule()).toBe('')
+    expect(R.outdirRule('')).toBe('')
+  })
+  test('the template uses {{readable}} in the label and stray rules and {{outdirrule}} on the label line', () => {
+    const T = read('hooks/templates/review.md')
+    expect(T).toContain('A statement about something outside {{readable}} and this prompt')
+    expect(T).toContain('is unverifiable.{{outdirrule}}')
+    expect(T).toContain('- Do not stray out of {{readable}}.')
+    expect(T).not.toContain('Do not stray out of {{worktree}} and the brief.')
   })
 })

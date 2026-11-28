@@ -313,6 +313,21 @@ describe('MOD-21: an optional reviewer stage after a consistent verdict', () => 
     return { w, row: since(w, m) }
   }
 
+  test('MOD-422: a brief with outdir= opens the output folder to the reviewer, read only', ON, async ($, on) => {
+    const OUT = '/Users/someone/out/T-4'
+    const w = await handBack($, on, { header: HEADER.replace(' report=', ` outdir=${OUT} report=`) })
+    const call = spawnCallOf(delivered(w)) as SpawnCall
+    expect(call.prompt).toContain(`the brief and the card's output folder ${OUT}.`)
+    expect(call.prompt).toContain(`${OUT} is yours to read and never to write`)
+  })
+
+  test('MOD-422: a brief with no outdir= gives the reviewer the tree and the brief, as before', ON, async ($, on) => {
+    const w2 = await handBack($, on)
+    const call2 = spawnCallOf(delivered(w2)) as SpawnCall
+    expect(call2.prompt).toContain(' and the brief.\nEdit nothing.')
+    expect(call2.prompt).not.toContain('output folder')
+  })
+
   test('review off in the repo file (MOD-166: the default is on-frontier): a consistent hand-back says next=accept and prints no spawn block', { options: FULL }, async ($, on) => {
     const w = await handBack($, on, { files: { [`${ROOT}/.chassis-delegation.json`]: '{"review":"off"}' } })
     expect(delivered(w)).toContain('chassis-delegation: verdict=consistent task=T-4 attempt=1/2 usd=~0.00 model=claude-sonnet-5-5 next=accept')

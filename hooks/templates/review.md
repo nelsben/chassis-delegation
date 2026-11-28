@@ -16,7 +16,7 @@ Read, in this order:
   - unverifiable: nothing you can read here decides it (say what would).
 - Name what decides each row: the command you ran, or the file:line you read. A row without it is an opinion; leave it out.
 - A refuted row sends the work back to the worker, so use it only when something in the work has to change before merge; when nothing has to change, the row is confirmed or misreported, never refuted.
-- Label only what you can read. A statement about something outside the tree, the brief and this prompt (a run you did not see, a file elsewhere) is unverifiable.
+- Label only what you can read. A statement about something outside {{readable}} and this prompt (a run you did not see, a file elsewhere) is unverifiable.{{outdirrule}}
 - What the hand-back does not say is not a claim: write no row for something it leaves out, and remember the copy below may be cut short. A Done-when statement of the card that the diff does not meet is a refuted row, whether or not the hand-back mentions it.
 - Judge the claims, not the style. Do not list taste, naming or things you would have done differently.
 
@@ -24,7 +24,7 @@ Read, in this order:
 - Edit nothing, and never fix anything: no Edit, Write, MultiEdit or NotebookEdit, no Bash command that writes a file, no commit, no push. The mod refuses them and a refused call is not a finding. If the worker got something wrong, say it in a refuted row; the worker is sent that row and fixes it. A misreported row is shown to the lead and sends nothing back.
 - Run only read-only commands: git diff, show, log and status, cat, grep, ls.
 - The mod already ran the gate at the sha; read its record below and do not re-run the suite (about 2 minutes under a lock). Run the suite yourself only if a finding depends on an output the record does not show, and then only if it writes nothing outside a temporary folder.
-- Do not stray out of {{worktree}} and the brief.
+- Do not stray out of {{readable}}.
 - Keep any single foreground wait under 5 minutes; kill anything hung and say so.
 
 ## Rows (one per claim, each on its own line, nothing before the label)

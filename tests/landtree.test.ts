@@ -2,7 +2,7 @@
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
 import { world, sessionStart, ROOT } from './harness'
-import { parseTreePlan } from '../hooks/lib/landtree'
+import { parseTreePlan, treeCounts, countsLine } from '../hooks/lib/landtree'
 
 const LANDED = `${ROOT}/.delegation/landed`
 const PLANS = `${ROOT}/.delegation/plans`
@@ -212,5 +212,34 @@ describe('MOD-215: tree import', () => {
 describe('MOD-215: the validator is the same one the engine uses', () => {
   test('imports', () => {
     expect('errors' in parseTreePlan('{"version":1,"items":[{"type":"epic","title":"A"}]}')).toBe(false)
+  })
+})
+
+describe('MOD-422: tree import takes bug and spike', () => {
+  const plan = (items: unknown[]) => JSON.stringify({ version: 1, items })
+  test('a bug under a story and a spike under a feature parse, and the counts line names them', () => {
+    const r = parseTreePlan(plan([
+      { type: 'epic', title: 'A', children: [
+        { type: 'feature', title: 'B', paths: ['src/**'], children: [
+          { type: 'story', title: 'C', paths: ['src/**'], children: [{ type: 'bug', title: 'D', paths: ['src/a.ts'] }] },
+          { type: 'spike', title: 'E', paths: ['src/b.ts'] },
+        ] },
+      ] },
+    ]))
+    expect('errors' in r).toBe(false)
+    if ('plan' in r) expect(countsLine(treeCounts(r.plan))).toContain('counts: feature 1, epic 1, story 1, task 0, bug 1, spike 1 (5 items)')
+  })
+  test('a plan without them prints the old counts line', () => {
+    const r = parseTreePlan(plan([{ type: 'epic', title: 'A', children: [{ type: 'task', title: 'B', paths: ['src/a.ts'] }] }]))
+    if (!('plan' in r)) throw new Error('did not parse')
+    expect(countsLine(treeCounts(r.plan))).toBe('counts: feature 0, epic 1, story 0, task 1 (2 items); new 2, may reuse 0, filed closed 0')
+  })
+  test('a task under a bug is refused by the order rule', () => {
+    const r = parseTreePlan(plan([{ type: 'bug', title: 'A', paths: ['src/**'], children: [{ type: 'task', title: 'B', paths: ['src/a.ts'] }] }]))
+    expect('errors' in r && r.errors.join('\n')).toContain('a task cannot hang under a bug')
+  })
+  test('an unknown type is refused and the message lists the six', () => {
+    const r = parseTreePlan(plan([{ type: 'chore', title: 'A', paths: ['src/a.ts'] }]))
+    expect('errors' in r && r.errors.join('\n')).toContain('type must be one of feature, epic, story, task, bug, spike')
   })
 })

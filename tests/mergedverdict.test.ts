@@ -6,7 +6,8 @@ import { world, spawnInput, turnInput, sessionStart, ROOT, SCRATCH, type RunAnsw
 const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
 const HEADER = '[[brief v=1 task=T-4 subtask=main purpose=build tier=standard model=sonnet scope=a/** forbid=b/** gate=prettier budget=3-attempts report=chassis.report.v1]]'
 const REPORT = '[[report v=1 task=T-4 subtask=main branch=agent/frontend/T-4 pr=none sha=cafe123 gate=pass files=a/x.ts]]'
-const PAUSE = '[[pause v=1 task=T-4 reason=bench running in the background, back when it ends]]'
+// MOD-422: a pause that is not a wait on the worker's own job, so the cap of 3 still charges it
+const PAUSE = '[[pause v=1 task=T-4 reason=need the lead to answer which scope to keep]]'
 const OPTS = { gateMap: '{"prettier":"npx prettier --check {files}"}' }
 const resultText = (r: { result?: unknown; text?: string }): string => (typeof r.result === 'string' ? r.result : r.text ?? '')
 const MB = 'b'.repeat(40)

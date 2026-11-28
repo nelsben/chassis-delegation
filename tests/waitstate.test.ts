@@ -1,7 +1,7 @@
 import { expect, describe } from 'claude-code/testing'
 import { test } from './harness'
-import { world, spawnInput, turnInput, SCRATCH, type RunAnswer } from './harness'
-import { saysWaiting, waitStep, waitText, stallText } from '../hooks/lib/waitstate'
+import { world, spawnInput, turnInput, agentResult, SCRATCH, type RunAnswer } from './harness'
+import { saysWaiting, waitStep, waitText, stallText, ownJobWait, pauseCapFor, OWN_WAIT_CAP } from '../hooks/lib/waitstate'
 
 // MOD-99 (#161): a worker that is waiting wakes the brain once per state, says what it waits on, and says stalled past a ceiling.
 const BRIEF = `${SCRATCH}/briefs/T-4.brief.md`
@@ -166,13 +166,73 @@ describe('MOD-226: a pause line is a pause, not an attempt', () => {
     expect(texts(w).join('\n')).not.toContain('paused')
   })
 
+  // MOD-422: the cap of 3 now holds for a pause that is not a wait on the worker's own job
+  const ASK = '[[pause v=1 task=T-4 reason=need the lead to answer which scope to keep]]'
   test('the third pause in one attempt is charged, with a row saying why', { options: { ...OPTS } }, async ($, on) => {
     const w = await setup($ as never, on as never)
-    for (let i = 1; i <= 2; i++) await $.turn.complete(turnInput('agent-4', `Still running (${i}).\n` + PAUSE, undefined, `turn-p${i}`))
+    for (let i = 1; i <= 2; i++) await $.turn.complete(turnInput('agent-4', `Stopped (${i}).\n` + ASK, undefined, `turn-p${i}`))
     expect(texts(w).join('\n')).not.toContain('no-report')
-    await $.turn.complete(turnInput('agent-4', 'Still running (3).\n' + PAUSE, undefined, 'turn-p3'))
+    await $.turn.complete(turnInput('agent-4', 'Stopped (3).\n' + ASK, undefined, 'turn-p3'))
     const last = texts(w).at(-1) ?? ''
     expect(last).toContain('no-report')
     expect(last).toContain('pause cap')
+  })
+})
+
+// MOD-422: a worker waiting on its own job is not charged an attempt.
+describe('MOD-422: an own-job wait is not an attempt', () => {
+  const setup = async ($: never, on: never) => {
+    const w = world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo, agentId: 'agent-4' })
+    await ($ as { agent: { spawn: (x: never) => Promise<unknown> } }).agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.` }))
+    return w
+  }
+  const texts = (w: { submitted: { text: string }[] }) => w.submitted.map(s => s.text)
+
+  test('ownJobWait reads own-job, lease, lock and gate reasons, and not a question for the lead', () => {
+    for (const r of ['waiting on my render (gpu_lock)', 'render lease queued', 'my gate run', 'bench running in the background', 'my own two renders'])
+      expect(ownJobWait(r)).toBe(true)
+    for (const r of ["need the lead's answer", 'blocked on a decision', 'no reason given']) expect(ownJobWait(r)).toBe(false)
+  })
+  test('pauseCapFor gives own-job waits the larger cap and keeps a higher repo cap', () => {
+    expect(pauseCapFor('my render', 3)).toBe(OWN_WAIT_CAP)
+    expect(pauseCapFor('my render', 20)).toBe(20)
+    expect(pauseCapFor('a question', 3)).toBe(3)
+  })
+  test('four own-job pauses in one attempt are all paused, none charged; the report is attempt 1', { options: { ...OPTS } }, async ($, on) => {
+    const w = await setup($ as never, on as never)
+    for (let i = 1; i <= 4; i++) await $.turn.complete(turnInput('agent-4', `Render ${i} going.\n` + PAUSE, undefined, `turn-o${i}`))
+    const all = texts(w).join('\n')
+    expect(all).not.toContain('no-report')
+    expect(all).not.toContain('pause cap')
+    expect(all).toContain('paused (4/11)')
+    await $.turn.complete(turnInput('agent-4', 'Done.\n' + REPORT, undefined, 'turn-done'))
+    const last = texts(w).at(-1) ?? ''
+    expect(last).toContain('T-4 attempt 1')
+    expect(last).not.toContain('attempt 2')
+  })
+  test('the twelfth own-job pause is charged', { options: { ...OPTS } }, async ($, on) => {
+    const w = await setup($ as never, on as never)
+    for (let i = 1; i <= 11; i++) await $.turn.complete(turnInput('agent-4', `Render ${i} going.\n` + PAUSE, undefined, `turn-t${i}`))
+    expect(texts(w).join('\n')).not.toContain('no-report')
+    await $.turn.complete(turnInput('agent-4', 'Render 12 going.\n' + PAUSE, undefined, 'turn-t12'))
+    const last = texts(w).at(-1) ?? ''
+    expect(last).toContain('no-report')
+    expect(last).toContain('pause cap')
+  })
+  test('no report and no pause line, last paragraph waits on its own background run: a paused row, no no-report row', { options: { ...OPTS } }, async ($, on) => {
+    world(on, { files: { [BRIEF]: HEADER + '\nbody' }, run: repo, agentId: 'agent-4' })
+    on('tool.call', { tool: 'Agent' }, () => agentResult('Bench started.\n\nI am waiting on my background render to finish.', 'agent-4'))
+    await $.agent.spawn(spawnInput({ prompt: `Your brief is the file ${BRIEF}.`, tool_use_id: 'toolu_fg000001' }))
+    const r = await $.tool.call({ tool: 'Agent', description: 'T-4', prompt: `Your brief is the file ${BRIEF}.` })
+    const ours = (r.context ?? []).filter(c => c.startsWith('chassis-delegation:')).join('\n')
+    expect(ours).toContain('paused')
+    expect(ours).not.toContain('no-report')
+  })
+  test('a report wins over a wait sentence', { options: { ...OPTS } }, async ($, on) => {
+    const w = await setup($ as never, on as never)
+    await $.turn.complete(turnInput('agent-4', 'Waiting on the background render.\n' + REPORT, undefined, 'turn-r'))
+    const last = texts(w).at(-1) ?? ''
+    expect(last).not.toContain('paused')
+    expect(last).toContain('T-4 attempt 1')
   })
 })
