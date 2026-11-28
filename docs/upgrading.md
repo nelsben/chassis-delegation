@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.70 to 0.9.71
+
+No action needed, but reload every session soon: the plugin store is shared by every session, and only a session running this version prunes the records that filled it. Over 3.5 MiB the prune now also deletes records that carry no timestamp of their own and whose task is closed or gone, and it knows the tierReason, effortReason, cardClass, baseSha and both records; below 3.5 MiB nothing changes. An ad hoc agent's spawn record now carries its time. Detail: [CHANGELOG 0.9.71](../CHANGELOG.md).
+
 ### From 0.9.69 to 0.9.70
 
 No action needed. A reviewer has a fourth label, `misreported`: the work at the sha is right and a statement in the hand-back about it is wrong. Only `refuted` rows send the work back. After a `--verify` the reviewer is given the worker's own hand-back when the worker's transcript holds one for the same sha. A review's ledger row gains `workerTier`, `handback`, `refutedLines` and `misreportedLines`, and every brain stamp gains `calls` by kind; rows written before this version carry none of them. A worker that ends a turn saying its own run is still in the background is shown as waiting, not as no-report. Detail: [CHANGELOG 0.9.70](../CHANGELOG.md).
