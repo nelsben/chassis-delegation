@@ -67,6 +67,18 @@ Engine tests: none required. Whether an engine test can cheaply assert the ad ho
 - How the node file builds its filler and groups its cases.
 - Whether to add an engine test for the ad hoc spawn's `at` (see Tests).
 
+## Testing
+
+- Planned: node --no-warnings --import ./tests/node/register.mjs tests/node/run.mjs tests/node/retentionundated.node.mjs
+- Red test: failed before the change (.delegation/MOD-420/red-1.txt)
+- Gate validate: pass · ✔ Validation passed with warnings · 4 s · verify pass reused at merge
+- Gate node: pass · 2209 pass, 0 fail, 1230 skipped (engine tests: claude plugin test runs them) · 10 s · verify pass reused at merge
+- Gate test: pass · 2348 pass, 0 fail, Ran 2348 tests across 111 files. [205.85s] · 3.4 min · verify pass reused at merge
+- Test files changed: 1 (tests/node/retentionundated.node.mjs); tests added: 10
+- Worker ran:
+  - could not run an engine test for the ad hoc spawn's `at` (the fallback record is built deep inside the Agent post-tool hook, which the harness cannot drive chea
+  - plan outputs on synthetic stores -> the 10 node cases pass (undated deleted over pressure, none below it, open and pending-attempt tasks kept, `keep` kept, glob
+
 ## Review
 
 Brain review (Opus 5.5): I read the whole diff at 4815f78. It is the card's design and nothing more: tierReason, effortReason and cardClass join the per-task families, baseSha the per-brief ones, both resolves through the agent pointer like writes; Meta gains owned on every plan-family branch; over PRESSURE_BYTES an undated pass runs after the old pass and before the young one, takes owned keys with no timestamp that are not in keep and whose task is unknown or not open, in key order, and stops under TARGET_BYTES; the undated keys are appended to delete after the dated ones, and they cannot be counted twice because closed still requires a timestamp. register.ts gains only at: await now($) on the ad hoc fallback spawn. I ran the new plan read-only on the backup of the store as it was when it filled: 4,206,692 bytes to 3,145,597, 2,178 keys (agent 12, baseSha 991, both 48, cardClass 1,127), stopping before postedRow because key order reached the target first. The live store is at 3,514,564 bytes, below pressure, so today's plan deletes nothing. The economy reviewer confirmed 14 rows, 2 unverifiable (red-before-fix order; the harness claim), none refuted. Limits I accept: the undated pass picks by key order, not by size, so it can delete many small records before a few large ones; an ad hoc agent of another session that is still live can lose its postedRow under pressure (its record is only a re-post guard). Not checked: the type-check (no tsc on PATH).
