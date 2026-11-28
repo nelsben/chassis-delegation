@@ -10,6 +10,10 @@
 4. **Check the version.** `/delegation` prints `mod: chassis-delegation <version> loaded from <folder>`. A `code: running X, folder holds Y` line means a reload is still owed. Then run `/delegation setup` in the repo: in a set-up repo it changes no file.
 5. **Read your step** below for what to do.
 
+### From 0.9.72 to 0.9.73
+
+No action needed. When a review refuted rows and you then verify by hand at another sha, the review that follows is a re-check: the reviewer's prompt lists those rows under "Refuted before" and asks for rows only on them and on the change since that review, so a fix is checked as a fix and the whole card is not audited again. The reviewer's first line carries `recheck=<n>`, the row says `re-check:` where it said `review:`, and the ledger review row carries `recheck`. A custom `review.md` needs no change. Detail: [CHANGELOG 0.9.73](../CHANGELOG.md).
+
 ### From 0.9.71 to 0.9.72
 
 No action needed. A pause that waits on the worker's own job, a lease, the GPU lock or the gate gets a pause cap of 12 per attempt (or your `pauseCap` when higher), so it may pause 11 times before the twelfth is charged, and a hand-back with no report that says it is waiting on its own run is now a pause, not a no-report; other pauses keep the cap of 3. When a brief names an output folder (`outdir=`), the reviewer is told it may read it, images included, and never write there, and its copy of the hand-back is cut at 40,000 characters (was 6,000); a custom `review.md` keeps working and can use the new keys `{{readable}}` and `{{outdirrule}}`. A tree import plan may now hold `bug` and `spike` items, filed like tasks with their own `type:` label (create the `type:bug` and `type:spike` labels if your repo lacks them). Detail: [CHANGELOG 0.9.72](../CHANGELOG.md).
